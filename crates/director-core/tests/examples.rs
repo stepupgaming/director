@@ -130,6 +130,11 @@ fn example_features_effects() {
 }
 
 #[test]
+fn example_features_shaders_gallery() {
+    validate_script("examples/features/shaders_gallery.rhai");
+}
+
+#[test]
 fn example_features_masking() {
     validate_script("examples/features/masking.rhai");
 }

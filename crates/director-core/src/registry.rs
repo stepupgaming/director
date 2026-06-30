@@ -202,6 +202,76 @@ impl CapabilityRegistry {
                 description: "Film grain overlay",
                 params: vec![("intensity", "f32"), ("size", "f32")],
             },
+            EffectInfo {
+                name: "Temperature",
+                description: "Cool/warm color shift",
+                params: vec![("warmth", "f32")],
+            },
+            EffectInfo {
+                name: "Duotone",
+                description: "Two-color luminance grade",
+                params: vec![("shadow", "Color"), ("highlight", "Color")],
+            },
+            EffectInfo {
+                name: "Posterize",
+                description: "Reduce color levels",
+                params: vec![("levels", "f32")],
+            },
+            EffectInfo {
+                name: "Threshold",
+                description: "Black/white luminance cutoff",
+                params: vec![("level", "f32")],
+            },
+            EffectInfo {
+                name: "Warp",
+                description: "Sine-wave displacement distortion",
+                params: vec![("amplitude", "f32"), ("frequency", "f32"), ("direction", "f32"), ("speed", "f32")],
+            },
+            EffectInfo {
+                name: "Swirl",
+                description: "Rotational twist around center",
+                params: vec![("radius", "f32"), ("angle", "f32")],
+            },
+            EffectInfo {
+                name: "Ripple",
+                description: "Concentric waves from center",
+                params: vec![("amplitude", "f32"), ("frequency", "f32"), ("speed", "f32")],
+            },
+            EffectInfo {
+                name: "Glass",
+                description: "Frosted-glass refraction",
+                params: vec![("scale", "f32"), ("intensity", "f32")],
+            },
+            EffectInfo {
+                name: "Shake",
+                description: "Block-based jitter displacement",
+                params: vec![("intensity", "f32"), ("speed", "f32")],
+            },
+            EffectInfo {
+                name: "Scanlines",
+                description: "CRT scanline overlay",
+                params: vec![("intensity", "f32"), ("count", "f32")],
+            },
+            EffectInfo {
+                name: "Glitch",
+                description: "RGB split + block displacement",
+                params: vec![("intensity", "f32"), ("speed", "f32")],
+            },
+            EffectInfo {
+                name: "EdgeDetect",
+                description: "Sobel edge outline",
+                params: vec![("intensity", "f32")],
+            },
+            EffectInfo {
+                name: "ZoomBlur",
+                description: "Radial motion blur from center",
+                params: vec![("strength", "f32")],
+            },
+            EffectInfo {
+                name: "Kaleidoscope",
+                description: "Mirror symmetry segments",
+                params: vec![("segments", "f32")],
+            },
         ];
 
         for effect in effects {

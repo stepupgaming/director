@@ -49,7 +49,7 @@ cargo run --release -- examples/basics/hello_world.rhai output.mp4
 | **Layout** | Flexbox via Taffy (justify, align, padding, margin, absolute positioning) |
 | **Text** | SkParagraph with rich spans, weights, colors, backgrounds, shrink-to-fit |
 | **Animation** | Keyframes + easing, spring physics, per-property animation |
-| **Effects** | Blur, grayscale, sepia, invert, custom SkSL shaders |
+| **Effects** | Blur, color matrices, drop shadow, custom SkSL shaders, cinematic + extended library (vignette, glitch, warp, swirl, duotone, kaleidoscope, and more) |
 | **Compositing** | Alpha masking, blend modes (multiply, screen, overlay, etc.) |
 | **Media** | Image loading, video embedding, multi-track audio |
 | **Transitions** | Scene transitions (fade, slide, wipe) with ripple edit |

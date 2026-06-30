@@ -57,7 +57,7 @@ Adds a physics-based spring animation.
 (Text only) Adds a per-character animator.
 
 ### `apply_effect(name[, value/map])`
-Applies a visual effect (grayscale, sepia, invert, contrast, brightness, blur, shader).
+Applies a visual effect to a node. Named (no arg): grayscale, sepia, invert. Float: contrast, brightness, saturation, exposure, hue_rotate, blur, temperature. Map: shader, directional_blur, grain, vignette, chromatic_aberration, pixelate, sharpen, glow, warp, swirl, ripple, glass, shake, duotone, posterize, threshold, scanlines, glitch, edge_detect, zoom_blur, kaleidoscope.
 
 ### `set_style(props)`
 Updates layout and visual style properties.

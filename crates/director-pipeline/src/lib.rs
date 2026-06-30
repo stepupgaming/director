@@ -270,6 +270,72 @@ fn build_node_recursive(
                     intensity: Animated::new(*intensity),
                     size: Animated::new(*size),
                 },
+                EffectConfig::Warp {
+                    amplitude,
+                    frequency,
+                    direction,
+                    speed,
+                } => EffectType::Warp {
+                    amplitude: Animated::new(*amplitude),
+                    frequency: Animated::new(*frequency),
+                    direction: Animated::new(*direction),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::Swirl { radius, angle } => EffectType::Swirl {
+                    radius: Animated::new(*radius),
+                    angle: Animated::new(*angle),
+                },
+                EffectConfig::Ripple {
+                    amplitude,
+                    frequency,
+                    speed,
+                } => EffectType::Ripple {
+                    amplitude: Animated::new(*amplitude),
+                    frequency: Animated::new(*frequency),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::Glass { scale, intensity } => EffectType::Glass {
+                    scale: Animated::new(*scale),
+                    intensity: Animated::new(*intensity),
+                },
+                EffectConfig::Shake { intensity, speed } => EffectType::Shake {
+                    intensity: Animated::new(*intensity),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::Duotone { shadow, highlight } => EffectType::Duotone {
+                    shadow: shadow.unwrap_or(Color::new(0.05, 0.05, 0.2, 1.0)),
+                    highlight: highlight.unwrap_or(Color::new(1.0, 0.8, 0.4, 1.0)),
+                },
+                EffectConfig::Posterize { levels } => {
+                    EffectType::Posterize(Animated::new(*levels))
+                }
+                EffectConfig::Threshold { level } => {
+                    EffectType::Threshold(Animated::new(*level))
+                }
+                EffectConfig::Temperature { warmth } => {
+                    let w = *warmth;
+                    EffectType::ColorMatrix(vec![
+                        1.0 + w * 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                        1.0 - w * 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+                    ])
+                }
+                EffectConfig::Scanlines { intensity, count } => EffectType::Scanlines {
+                    intensity: Animated::new(*intensity),
+                    count: Animated::new(*count),
+                },
+                EffectConfig::Glitch { intensity, speed } => EffectType::Glitch {
+                    intensity: Animated::new(*intensity),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::EdgeDetect { intensity } => {
+                    EffectType::EdgeDetect(Animated::new(*intensity))
+                }
+                EffectConfig::ZoomBlur { strength } => {
+                    EffectType::ZoomBlur(Animated::new(*strength))
+                }
+                EffectConfig::Kaleidoscope { segments } => {
+                    EffectType::Kaleidoscope(Animated::new(*segments))
+                }
             };
             Box::new(EffectNode {
                 effects: vec![effect],

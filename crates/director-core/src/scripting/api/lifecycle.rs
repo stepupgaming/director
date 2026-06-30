@@ -575,6 +575,9 @@ fn add_transition_internal(
         "zoom_in" | "zoom-in" | "zoomin" => TransitionType::ZoomIn,
         "radial_wipe" | "radial-wipe" | "radialwipe" => TransitionType::RadialWipe,
         "pixelate" | "pixelate_dissolve" | "pixelate-dissolve" => TransitionType::PixelateDissolve,
+        "cross_zoom" | "cross-zoom" | "crosszoom" => TransitionType::CrossZoom,
+        "wind" => TransitionType::Wind,
+        "burn" => TransitionType::Burn,
         _ => TransitionType::Fade,
     };
     add_transition_with_kind(movie, from, to, duration, easing_str, kind);

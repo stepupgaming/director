@@ -32,6 +32,7 @@ pub mod composition;
 pub use composition::CompositionNode;
 
 pub mod effect;
+pub mod effect_shaders;
 pub use effect::{build_effect_filter, EffectNode, EffectType, ShaderUniform};
 
 #[cfg(feature = "wgpu")]

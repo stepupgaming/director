@@ -65,6 +65,76 @@ pub enum EffectType {
         /// Grain size/scale (pixels)
         size: Animated<f32>,
     },
+    /// Vignette: darkens edges of frame.
+    Vignette {
+        intensity: Animated<f32>,
+        radius: Animated<f32>,
+        feather: Animated<f32>,
+    },
+    /// Chromatic Aberration: RGB channel offset.
+    ChromaticAberration(Animated<f32>),
+    /// Pixelate: blocky pixelation grid.
+    Pixelate(Animated<f32>),
+    /// Sharpen: unsharp mask via 3x3 Laplacian.
+    Sharpen(Animated<f32>),
+    /// Glow: additive bright-area glow.
+    Glow {
+        intensity: Animated<f32>,
+        threshold: Animated<f32>,
+    },
+    /// Warp: sine-wave displacement distortion.
+    Warp {
+        amplitude: Animated<f32>,
+        frequency: Animated<f32>,
+        direction: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// Swirl: rotational twist around the center.
+    Swirl {
+        radius: Animated<f32>,
+        angle: Animated<f32>,
+    },
+    /// Ripple: concentric waves from the center.
+    Ripple {
+        amplitude: Animated<f32>,
+        frequency: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// Glass: frosted-glass refraction and blur.
+    Glass {
+        scale: Animated<f32>,
+        intensity: Animated<f32>,
+    },
+    /// Shake: block-based jitter displacement.
+    Shake {
+        intensity: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// Duotone: luminance-mapped two-color grade.
+    Duotone {
+        shadow: Color,
+        highlight: Color,
+    },
+    /// Posterize: reduce color levels.
+    Posterize(Animated<f32>),
+    /// Threshold: black/white luminance cutoff.
+    Threshold(Animated<f32>),
+    /// Scanlines: CRT-style scanline overlay.
+    Scanlines {
+        intensity: Animated<f32>,
+        count: Animated<f32>,
+    },
+    /// Glitch: RGB split with block displacement.
+    Glitch {
+        intensity: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// Edge detect: Sobel outline.
+    EdgeDetect(Animated<f32>),
+    /// Zoom blur: radial motion blur from the center.
+    ZoomBlur(Animated<f32>),
+    /// Kaleidoscope: mirror symmetry segments.
+    Kaleidoscope(Animated<f32>),
 }
 
 impl EffectType {
@@ -98,6 +168,68 @@ impl EffectType {
                 intensity.update(time);
                 size.update(time);
             }
+            EffectType::Vignette {
+                intensity, radius, feather,
+            } => {
+                intensity.update(time);
+                radius.update(time);
+                feather.update(time);
+            }
+            EffectType::ChromaticAberration(a) => a.update(time),
+            EffectType::Pixelate(a) => a.update(time),
+            EffectType::Sharpen(a) => a.update(time),
+            EffectType::Glow {
+                intensity, threshold,
+            } => {
+                intensity.update(time);
+                threshold.update(time);
+            }
+            EffectType::Warp {
+                amplitude,
+                frequency,
+                direction,
+                speed,
+            } => {
+                amplitude.update(time);
+                frequency.update(time);
+                direction.update(time);
+                speed.update(time);
+            }
+            EffectType::Swirl { radius, angle } => {
+                radius.update(time);
+                angle.update(time);
+            }
+            EffectType::Ripple {
+                amplitude,
+                frequency,
+                speed,
+            } => {
+                amplitude.update(time);
+                frequency.update(time);
+                speed.update(time);
+            }
+            EffectType::Glass { scale, intensity } => {
+                scale.update(time);
+                intensity.update(time);
+            }
+            EffectType::Shake { intensity, speed } => {
+                intensity.update(time);
+                speed.update(time);
+            }
+            EffectType::Duotone { .. } => {}
+            EffectType::Posterize(a) => a.update(time),
+            EffectType::Threshold(a) => a.update(time),
+            EffectType::Scanlines { intensity, count } => {
+                intensity.update(time);
+                count.update(time);
+            }
+            EffectType::Glitch { intensity, speed } => {
+                intensity.update(time);
+                speed.update(time);
+            }
+            EffectType::EdgeDetect(a) => a.update(time),
+            EffectType::ZoomBlur(a) => a.update(time),
+            EffectType::Kaleidoscope(a) => a.update(time),
         }
     }
 }
@@ -289,6 +421,331 @@ half4 main(float2 pos) {
                     }
                 }
             }
+            EffectType::Vignette {
+                intensity,
+                radius,
+                feather,
+            } => if let Some(cache_arc) = shader_cache {
+                let sksl = r#"
+uniform shader image;
+uniform float2 u_resolution;
+uniform float u_intensity;
+uniform float u_radius;
+uniform float u_feather;
+
+half4 main(float2 pos) {
+    half4 color = image.eval(pos);
+    float2 center = u_resolution * 0.5;
+    float dist = distance(pos, center) / length(center);
+    float v = 1.0 - smoothstep(u_radius - u_feather, u_radius + u_feather, dist) * u_intensity;
+    return half4(color.rgb * v, color.a);
+}
+"#;
+                let cache_key = "__vignette__".to_string();
+                let mut cache = cache_arc.lock().unwrap();
+                if !cache.contains_key(&cache_key) {
+                    match RuntimeEffect::make_for_shader(sksl, None) {
+                        Ok(effect) => cache.insert(cache_key.clone(), effect),
+                        Err(e) => {
+                            error!("Vignette shader compilation error: {}", e);
+                            continue;
+                        }
+                    };
+                }
+                if let Some(effect) = cache.get(&cache_key) {
+                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
+                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
+                    let _ = builder.set_uniform_float("u_intensity", &[intensity.current_value]);
+                    let _ = builder.set_uniform_float("u_radius", &[radius.current_value]);
+                    let _ = builder.set_uniform_float("u_feather", &[feather.current_value]);
+                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
+                }
+            }
+            EffectType::ChromaticAberration(strength) => if let Some(cache_arc) = shader_cache {
+                let sksl = r#"
+uniform shader image;
+uniform float2 u_resolution;
+uniform float u_strength;
+
+half4 main(float2 pos) {
+    half4 color = image.eval(pos);
+    float r = image.eval(pos + float2(u_strength, 0.0)).r;
+    float g = color.g;
+    float b = image.eval(pos - float2(u_strength, 0.0)).b;
+    return half4(r, g, b, color.a);
+}
+"#;
+                let cache_key = "__chromatic_aberration__".to_string();
+                let mut cache = cache_arc.lock().unwrap();
+                if !cache.contains_key(&cache_key) {
+                    match RuntimeEffect::make_for_shader(sksl, None) {
+                        Ok(effect) => cache.insert(cache_key.clone(), effect),
+                        Err(e) => {
+                            error!("ChromaticAberration shader compilation error: {}", e);
+                            continue;
+                        }
+                    };
+                }
+                if let Some(effect) = cache.get(&cache_key) {
+                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
+                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
+                    let _ = builder.set_uniform_float("u_strength", &[strength.current_value]);
+                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
+                }
+            }
+            EffectType::Pixelate(block_size) => if let Some(cache_arc) = shader_cache {
+                let sksl = r#"
+uniform shader image;
+uniform float2 u_resolution;
+uniform float u_block_size;
+
+half4 main(float2 pos) {
+    float2 block = floor(pos / u_block_size) * u_block_size + u_block_size * 0.5;
+    return image.eval(block);
+}
+"#;
+                let cache_key = "__pixelate__".to_string();
+                let mut cache = cache_arc.lock().unwrap();
+                if !cache.contains_key(&cache_key) {
+                    match RuntimeEffect::make_for_shader(sksl, None) {
+                        Ok(effect) => cache.insert(cache_key.clone(), effect),
+                        Err(e) => {
+                            error!("Pixelate shader compilation error: {}", e);
+                            continue;
+                        }
+                    };
+                }
+                if let Some(effect) = cache.get(&cache_key) {
+                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
+                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
+                    let _ = builder.set_uniform_float("u_block_size", &[block_size.current_value]);
+                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
+                }
+            }
+            EffectType::Sharpen(strength) => if let Some(cache_arc) = shader_cache {
+                let sksl = r#"
+uniform shader image;
+uniform float2 u_resolution;
+uniform float u_strength;
+
+half4 main(float2 pos) {
+    half4 center = image.eval(pos);
+    half4 n[8];
+    n[0] = image.eval(pos + float2(-1, -1));
+    n[1] = image.eval(pos + float2(0, -1));
+    n[2] = image.eval(pos + float2(1, -1));
+    n[3] = image.eval(pos + float2(-1, 0));
+    n[4] = image.eval(pos + float2(1, 0));
+    n[5] = image.eval(pos + float2(-1, 1));
+    n[6] = image.eval(pos + float2(0, 1));
+    n[7] = image.eval(pos + float2(1, 1));
+    half4 sum = n[0] + n[1] + n[2] + n[3] + n[4] + n[5] + n[6] + n[7];
+    half4 laplacian = center * 9.0 - sum;
+    return center + laplacian * u_strength;
+}
+"#;
+                let cache_key = "__sharpen__".to_string();
+                let mut cache = cache_arc.lock().unwrap();
+                if !cache.contains_key(&cache_key) {
+                    match RuntimeEffect::make_for_shader(sksl, None) {
+                        Ok(effect) => cache.insert(cache_key.clone(), effect),
+                        Err(e) => {
+                            error!("Sharpen shader compilation error: {}", e);
+                            continue;
+                        }
+                    };
+                }
+                if let Some(effect) = cache.get(&cache_key) {
+                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
+                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
+                    let _ = builder.set_uniform_float("u_strength", &[strength.current_value]);
+                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
+                }
+            }
+            EffectType::Glow {
+                intensity,
+                threshold,
+            } => if let Some(cache_arc) = shader_cache {
+                let sksl = r#"
+uniform shader image;
+uniform float2 u_resolution;
+uniform float u_intensity;
+uniform float u_threshold;
+
+half4 main(float2 pos) {
+    half4 color = image.eval(pos);
+    float lum = dot(color.rgb, half3(0.2126, 0.7152, 0.0722));
+    half4 blur = half4(0);
+    float radius = 4.0;
+    int count = 0;
+    for (float x = -radius; x <= radius; x += 2.0) {
+        for (float y = -radius; y <= radius; y += 2.0) {
+            blur += image.eval(pos + float2(x, y));
+            count++;
+        }
+    }
+    blur /= float(count);
+    float glow_lum = dot(blur.rgb, half3(0.2126, 0.7152, 0.0722));
+    float mask = smoothstep(u_threshold, 1.0, glow_lum) * u_intensity;
+    return half4(min(color.rgb + blur.rgb * mask, 1.0), color.a);
+}
+"#;
+                let cache_key = "__glow__".to_string();
+                let mut cache = cache_arc.lock().unwrap();
+                if !cache.contains_key(&cache_key) {
+                    match RuntimeEffect::make_for_shader(sksl, None) {
+                        Ok(effect) => cache.insert(cache_key.clone(), effect),
+                        Err(e) => {
+                            error!("Glow shader compilation error: {}", e);
+                            continue;
+                        }
+                    };
+                }
+                if let Some(effect) = cache.get(&cache_key) {
+                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
+                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
+                    let _ = builder.set_uniform_float("u_intensity", &[intensity.current_value]);
+                    let _ = builder.set_uniform_float("u_threshold", &[threshold.current_value]);
+                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
+                }
+            }
+            EffectType::Warp {
+                amplitude,
+                frequency,
+                direction,
+                speed,
+            } => {
+                current_filter = super::effect_shaders::build_warp(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    amplitude.current_value,
+                    frequency.current_value,
+                    direction.current_value,
+                    speed.current_value,
+                );
+            }
+            EffectType::Swirl { radius, angle } => {
+                current_filter = super::effect_shaders::build_swirl(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    radius.current_value,
+                    angle.current_value,
+                );
+            }
+            EffectType::Ripple {
+                amplitude,
+                frequency,
+                speed,
+            } => {
+                current_filter = super::effect_shaders::build_ripple(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    amplitude.current_value,
+                    frequency.current_value,
+                    speed.current_value,
+                );
+            }
+            EffectType::Glass { scale, intensity } => {
+                current_filter = super::effect_shaders::build_glass(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    scale.current_value,
+                    intensity.current_value,
+                );
+            }
+            EffectType::Shake { intensity, speed } => {
+                current_filter = super::effect_shaders::build_shake(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    intensity.current_value,
+                    speed.current_value,
+                );
+            }
+            EffectType::Duotone { shadow, highlight } => {
+                current_filter = super::effect_shaders::build_duotone(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    *shadow,
+                    *highlight,
+                );
+            }
+            EffectType::Posterize(levels) => {
+                current_filter = super::effect_shaders::build_posterize(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    levels.current_value,
+                );
+            }
+            EffectType::Threshold(level) => {
+                current_filter = super::effect_shaders::build_threshold(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    level.current_value,
+                );
+            }
+            EffectType::Scanlines { intensity, count } => {
+                current_filter = super::effect_shaders::build_scanlines(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    intensity.current_value,
+                    count.current_value,
+                );
+            }
+            EffectType::Glitch { intensity, speed } => {
+                current_filter = super::effect_shaders::build_glitch(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    intensity.current_value,
+                    speed.current_value,
+                );
+            }
+            EffectType::EdgeDetect(intensity) => {
+                current_filter = super::effect_shaders::build_edge_detect(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    intensity.current_value,
+                );
+            }
+            EffectType::ZoomBlur(strength) => {
+                current_filter = super::effect_shaders::build_zoom_blur(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    strength.current_value,
+                );
+            }
+            EffectType::Kaleidoscope(segments) => {
+                current_filter = super::effect_shaders::build_kaleidoscope(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    segments.current_value,
+                );
+            }
         }
     }
     current_filter
@@ -410,6 +867,76 @@ impl Element for EffectNode {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod shader_compile_tests {
+    use super::*;
+    use crate::animation::Animated;
+    use crate::types::Color;
+
+    fn cache() -> Arc<Mutex<HashMap<String, RuntimeEffect>>> {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
+
+    /// Every extended SkSL effect must compile and build an ImageFilter.
+    #[test]
+    fn new_shader_effects_compile() {
+        let cache = cache();
+        let sc = Some(&cache);
+        let res = (64.0_f32, 64.0_f32);
+        let t = 0.0_f32;
+        let cases: Vec<EffectType> = vec![
+            EffectType::Warp {
+                amplitude: Animated::new(1.0),
+                frequency: Animated::new(0.02),
+                direction: Animated::new(0.0),
+                speed: Animated::new(1.0),
+            },
+            EffectType::Swirl {
+                radius: Animated::new(50.0),
+                angle: Animated::new(180.0),
+            },
+            EffectType::Ripple {
+                amplitude: Animated::new(2.0),
+                frequency: Animated::new(0.05),
+                speed: Animated::new(1.0),
+            },
+            EffectType::Glass {
+                scale: Animated::new(0.01),
+                intensity: Animated::new(2.0),
+            },
+            EffectType::Shake {
+                intensity: Animated::new(4.0),
+                speed: Animated::new(10.0),
+            },
+            EffectType::Duotone {
+                shadow: Color::new(0.0, 0.0, 0.2, 1.0),
+                highlight: Color::new(1.0, 0.8, 0.4, 1.0),
+            },
+            EffectType::Posterize(Animated::new(4.0)),
+            EffectType::Threshold(Animated::new(0.5)),
+            EffectType::Scanlines {
+                intensity: Animated::new(0.4),
+                count: Animated::new(200.0),
+            },
+            EffectType::Glitch {
+                intensity: Animated::new(1.0),
+                speed: Animated::new(10.0),
+            },
+            EffectType::EdgeDetect(Animated::new(1.0)),
+            EffectType::ZoomBlur(Animated::new(0.3)),
+            EffectType::Kaleidoscope(Animated::new(6.0)),
+        ];
+        for (i, eff) in cases.iter().enumerate() {
+            let filter = build_effect_filter(std::slice::from_ref(eff), sc, res, t);
+            assert!(
+                filter.is_some(),
+                "effect #{i} ({:?}) did not produce an ImageFilter (SkSL compile failed)",
+                eff
+            );
         }
     }
 }

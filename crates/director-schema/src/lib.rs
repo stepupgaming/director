@@ -219,6 +219,98 @@ pub enum EffectConfig {
         #[serde(default = "default_grain_size")]
         size: f32,
     },
+    /// Sine-wave displacement distortion.
+    Warp {
+        #[serde(default)]
+        amplitude: f32,
+        #[serde(default)]
+        frequency: f32,
+        #[serde(default)]
+        direction: f32,
+        #[serde(default)]
+        speed: f32,
+    },
+    /// Rotational swirl/twist around the center.
+    Swirl {
+        #[serde(default)]
+        radius: f32,
+        #[serde(default)]
+        angle: f32,
+    },
+    /// Concentric ripple waves from the center.
+    Ripple {
+        #[serde(default)]
+        amplitude: f32,
+        #[serde(default)]
+        frequency: f32,
+        #[serde(default)]
+        speed: f32,
+    },
+    /// Frosted-glass refraction and blur.
+    Glass {
+        #[serde(default)]
+        scale: f32,
+        #[serde(default)]
+        intensity: f32,
+    },
+    /// Block-based jitter displacement.
+    Shake {
+        #[serde(default)]
+        intensity: f32,
+        #[serde(default)]
+        speed: f32,
+    },
+    /// Two-color luminance grade.
+    Duotone {
+        #[serde(default)]
+        shadow: Option<Color>,
+        #[serde(default)]
+        highlight: Option<Color>,
+    },
+    /// Reduce color levels.
+    Posterize {
+        #[serde(default)]
+        levels: f32,
+    },
+    /// Black/white luminance cutoff.
+    Threshold {
+        #[serde(default)]
+        level: f32,
+    },
+    /// Cool/warm color shift (warmth: -1 cool .. +1 warm).
+    Temperature {
+        #[serde(default)]
+        warmth: f32,
+    },
+    /// CRT-style scanline overlay.
+    Scanlines {
+        #[serde(default)]
+        intensity: f32,
+        #[serde(default)]
+        count: f32,
+    },
+    /// RGB split with block displacement.
+    Glitch {
+        #[serde(default)]
+        intensity: f32,
+        #[serde(default)]
+        speed: f32,
+    },
+    /// Sobel edge outline.
+    EdgeDetect {
+        #[serde(default)]
+        intensity: f32,
+    },
+    /// Radial motion blur from the center.
+    ZoomBlur {
+        #[serde(default)]
+        strength: f32,
+    },
+    /// Mirror symmetry segments.
+    Kaleidoscope {
+        #[serde(default)]
+        segments: f32,
+    },
 }
 
 fn default_blur() -> f32 {

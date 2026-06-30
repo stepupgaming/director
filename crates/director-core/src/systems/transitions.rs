@@ -48,6 +48,12 @@ pub enum TransitionType {
     RadialWipe,
     /// Pixelate Dissolve: grid cells individually flip from A to B.
     PixelateDissolve,
+    /// CrossZoom: A zooms out while B zooms in simultaneously.
+    CrossZoom,
+    /// Wind: horizontal sweep with wavy shear distortion.
+    Wind,
+    /// Burn: heat-edge burn effect expanding from center.
+    Burn,
 }
 
 /// A definition of a transition between two scenes.
@@ -294,6 +300,62 @@ pub fn get_transition_shader(kind: &TransitionType) -> &'static str {
                 half4 colorA = imageA.eval(p);
                 half4 colorB = imageB.eval(p);
                 return mix(colorA, colorB, mask);
+            }
+        "#
+        }
+        TransitionType::CrossZoom => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float2 center = resolution / 2.0;
+                float scaleA = 1.0 + progress * 0.2;
+                float scaleB = 1.0 + (1.0 - progress) * 0.2;
+                float2 pa = (p - center) / scaleA + center;
+                float2 pb = (p - center) / scaleB + center;
+                half4 colorA = imageA.eval(pa);
+                half4 colorB = imageB.eval(pb);
+                return mix(colorA, colorB, smoothstep(0.0, 1.0, progress));
+            }
+        "#
+        }
+        TransitionType::Wind => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float sweep = p.x / resolution.x - progress;
+                float wind = sin(p.y * 0.05 + progress * 30.0) * 0.1;
+                float edge = sweep + wind;
+                float mask = 1.0 - smoothstep(-0.05, 0.05, edge);
+                half4 colorA = imageA.eval(p);
+                half4 colorB = imageB.eval(p);
+                return mix(colorA, colorB, mask);
+            }
+        "#
+        }
+        TransitionType::Burn => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float2 center = resolution / 2.0;
+                float dist = distance(p, center);
+                float radius = length(resolution) * progress * 0.7;
+                float edge = dist - radius;
+                float heat = exp(-abs(edge) * 0.02);
+                half4 colorA = imageA.eval(p);
+                half4 colorB = imageB.eval(p);
+                colorA.rgb += half3(heat * 0.5, heat * 0.3, 0.0);
+                colorA.rgb = min(colorA.rgb, 1.0);
+                float reveal = smoothstep(-5.0, 5.0, edge);
+                return mix(colorA, colorB, reveal);
             }
         "#
         }

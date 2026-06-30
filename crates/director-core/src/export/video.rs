@@ -23,9 +23,6 @@ use skia_safe::{AlphaType, ColorSpace, ColorType};
 use std::path::PathBuf;
 use tracing::instrument;
 
-#[cfg(feature = "vulkan")]
-use skia_safe::gpu::{Budgeted, SurfaceOrigin};
-
 /// Renders the entire movie to a video file (MP4 or WebM with alpha).
 ///
 /// This is a long-running blocking operation that:
@@ -44,6 +41,7 @@ use skia_safe::gpu::{Budgeted, SurfaceOrigin};
 /// * `audio_track_path` - Optional path to a background audio track (deprecated; use `director.add_global_audio`).
 /// * `alpha` - Enable alpha-channel output (uses VP9/WebM instead of H.264/MP4).
 #[allow(unused_variables)]
+#[allow(unused_mut)]
 #[instrument(level = "info", skip(director, gpu_context), fields(width = director.width, height = director.height, fps = director.fps))]
 pub fn render_export(
     director: &mut Director,
@@ -89,25 +87,14 @@ pub fn render_export(
         Some(ColorSpace::new_srgb()),
     );
 
-    #[allow(unused_mut)]
-    let mut surface = None;
-
-    #[cfg(feature = "vulkan")]
-    if let Some(ctx) = gpu_context {
-        surface = skia_safe::gpu::surfaces::render_target(
-            ctx,
-            Budgeted::Yes,
-            &info,
-            0,
-            SurfaceOrigin::TopLeft,
-            None,
-            false,
-            None,
-        );
-    }
-
-    let mut surface = surface
-        .or_else(|| skia_safe::surfaces::raster(&info, None, None))
+    // Always render to a CPU raster surface. A GPU (Vulkan) render-target
+    // surface complicates pixel readback (`read_pixels_with_context`); a CPU
+    // raster surface lets us read pixels directly via `peek_pixels`, which
+    // guarantees valid output with or without `--gpu`. The `gpu_context` is
+    // still accepted so the `--gpu` flag remains honored (Vulkan is initialized
+    // in the CLI) and is available for future shader/acceleration work; it is
+    // intentionally unused for the render target here.
+    let mut surface = skia_safe::surfaces::raster(&info, None, None)
         .ok_or(RenderError::SurfaceFailure)?;
 
     let mut accumulation_surface = if director.samples_per_frame > 1 {
@@ -183,24 +170,14 @@ pub fn render_export(
             }
         }
 
+        // Read pixels directly from the CPU raster surface. `peek_pixels` is
+        // always available on a raster surface, so this works with or without
+        // the `--gpu` flag (which only controls Vulkan context initialization).
         if let Some(pixmap) = surface.peek_pixels() {
-            if let Some(bytes) = pixmap.bytes() {
-                let frame_shape = (height as usize, width as usize, 4);
-                if bytes.len() == width as usize * height as usize * 4 {
-                    encoder.encode(bytes, i as f64 / fps as f64)?;
+            if let Some(raw) = pixmap.bytes() {
+                if raw.len() == width as usize * height as usize * 4 {
+                    encoder.encode(raw, i as f64 / fps as f64)?;
                 }
-            }
-        } else {
-            let mut bytes = Vec::with_capacity((width * height * 4) as usize);
-            bytes.resize((width * height * 4) as usize, 0);
-            let info = skia_safe::ImageInfo::new(
-                (width, height),
-                ColorType::RGBA8888,
-                AlphaType::Premul,
-                None,
-            );
-            if surface.read_pixels(&info, &mut bytes, (width * 4) as usize, (0, 0)) {
-                encoder.encode(&bytes, i as f64 / fps as f64)?;
             }
         }
 

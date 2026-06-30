@@ -16,6 +16,7 @@ Reference scripts demonstrating the Rhai API. All examples are validated by the 
 | Script | Description |
 |--------|-------------|
 | [effects.rhai](features/effects.rhai) | Blur, grayscale, sepia, invert filters |
+| [shaders_gallery.rhai](features/shaders_gallery.rhai) | Extended shader/effect library (warp, swirl, ripple, glass, shake, duotone, posterize, threshold, scanlines, glitch, edge_detect, zoom_blur, kaleidoscope) |
 | [masking.rhai](features/masking.rhai) | Alpha masking and blend modes |
 | [transitions.rhai](features/transitions.rhai) | Scene transitions (fade, slide, wipe) |
 | [z_index.rhai](features/z_index.rhai) | Z-index ordering with absolute positioning |
