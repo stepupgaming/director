@@ -1,0 +1,3 @@
+crates/lottie-*/
+**/tests/**/*.json
+.grits/topology.json

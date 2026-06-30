@@ -1,0 +1,32 @@
+[package]
+name = "director-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for the Director rendering engine"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4.5.53", features = ["derive"] }
+director-core = { path = "../director-core" }
+rhai = "1.23.6"
+tracing = "0.1.43"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
+image = "0.25.9"
+lottie-core = { path = "../lottie-core" }
+lottie-data = { path = "../lottie-data" }
+lottie-skia = { path = "../lottie-skia" }
+serde_json = "1.0"
+skia-safe = "0.90.0"
+
+[features]
+default = ["video"]
+video = []
+mock_video = ["director-core/mock_video"]
+
+[[bin]]
+name = "director-engine"
+path = "src/main.rs"
+
+[[bin]]
+name = "review_visuals"
+path = "src/bin/review_visuals.rs"

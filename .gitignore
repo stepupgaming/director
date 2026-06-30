@@ -1,0 +1,16 @@
+target/
+assets/
+!ultimate_showcase.mp4
+# Keep the bundled test font for deterministic visual regression snapshots.
+!crates/director-core/assets/
+crates/director-core/assets/*
+!crates/director-core/assets/fonts/
+crates/director-core/assets/fonts/*
+!crates/director-core/assets/fonts/Roboto-Regular.ttf
+.director-smoke/
+out.png
+out2.png
+NUL
+.env
+repomix-output.xml
+.grits/grits.db

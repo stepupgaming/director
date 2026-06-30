@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/director-core",
+    "crates/director-cli",
+    "crates/director-schema",
+    "crates/director-pipeline",
+    "crates/lottie-core",
+    "crates/lottie-data",
+    "crates/lottie-skia",
+    "crates/director-view",
+    "crates/director-developer"
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0.17"
+anyhow = "1.0"
+glam = "0.24"
+kurbo = "0.9"
+skia-safe = "0.90.0"
+schemars = "0.8"
+ron = "0.8"
+
+# Internal
+lottie-core = { path = "crates/lottie-core", version = "0.1.0" }
+lottie-data = { path = "crates/lottie-data", version = "0.1.0" }
+lottie-skia = { path = "crates/lottie-skia", version = "0.1.0" }
+director-core = { path = "crates/director-core", version = "1.1.1" }
+
