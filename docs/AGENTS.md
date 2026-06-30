@@ -26,6 +26,6 @@
 
 ## Child DOX Index
 
-- `architecture/` - Overview and roadmap documents.
+- `architecture/` - Overview documents.
 - `contributing/` - Development and documentation workflow.
 - `specs/` - Technical API and architecture specification documents.

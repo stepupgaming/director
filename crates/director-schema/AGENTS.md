@@ -10,7 +10,7 @@
 ## Local Contracts
 
 - Types intended for developer introspection must derive or support JSON schema generation.
-- Schema changes may require updates in `crates/director-developer`, `.director-dev/`, docs, and specs.
+- Schema changes may require updates in docs and specs.
 
 ## Work Guidance
 
@@ -20,7 +20,6 @@
 ## Verification
 
 - `cargo test -p director-schema`
-- `cargo run -p director-developer -- dump --output .director-dev` when reflected schema changes.
 
 ## Child DOX Index
 

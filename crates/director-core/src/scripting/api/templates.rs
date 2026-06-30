@@ -451,6 +451,13 @@ fn build_split_screen(
 
     let mut root = make_box_node(None);
     parse_layout_style(props, &mut root.style);
+    root.style.position = taffy::style::Position::Absolute;
+    root.style.inset = Rect {
+        left: LengthPercentageAuto::length(0.0),
+        right: LengthPercentageAuto::length(0.0),
+        top: LengthPercentageAuto::length(0.0),
+        bottom: LengthPercentageAuto::length(0.0),
+    };
     root.style.size = Size {
         width: Dimension::percent(1.0),
         height: Dimension::percent(1.0),
@@ -842,14 +849,6 @@ fn build_subscribe_button(
         .get("position")
         .and_then(|v| v.clone().into_string().ok())
         .unwrap_or_else(|| "bottom_center".to_string());
-    let width = props
-        .get("width")
-        .and_then(|v| v.as_float().ok())
-        .unwrap_or(400.0) as f32;
-    let height = props
-        .get("height")
-        .and_then(|v| v.as_float().ok())
-        .unwrap_or(64.0) as f32;
     let border_radius = props
         .get("border_radius")
         .and_then(|v| v.as_float().ok())
@@ -859,10 +858,6 @@ fn build_subscribe_button(
     let mut root = make_box_node(bg_color);
     parse_layout_style(props, &mut root.style);
     root.style.position = taffy::style::Position::Absolute;
-    root.style.size = Size {
-        width: Dimension::length(width),
-        height: Dimension::length(height),
-    };
     root.style.flex_direction = FlexDirection::Row;
     root.style.align_items = Some(AlignItems::Center);
     root.style.padding = Rect {
@@ -989,10 +984,10 @@ fn build_progress_bar(
         .get("border_radius")
         .and_then(|v| v.as_float().ok())
         .unwrap_or(height as f64 / 2.0) as f32;
-    let width = props
+    let width_pct = props
         .get("width")
         .and_then(|v| v.as_float().ok())
-        .unwrap_or(600.0) as f32;
+        .unwrap_or(80.0) as f32;
     let font_family = props.get("font_family").and_then(|v| v.clone().into_string().ok());
 
     let mut root = make_box_node(None);
@@ -1038,7 +1033,7 @@ fn build_progress_bar(
     // Bar track
     let mut track = make_box_node(Some(bg_color));
     track.style.size = Size {
-        width: Dimension::length(width),
+        width: Dimension::percent(width_pct / 100.0),
         height: Dimension::length(height),
     };
     track.border_radius = Animated::new(border_radius);

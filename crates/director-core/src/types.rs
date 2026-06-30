@@ -46,26 +46,37 @@ impl Default for ObjectFit {
 pub type NodeId = usize;
 
 /// State for a node currently animating along an SVG path.
-#[derive(Clone)]
 pub struct PathAnimationState {
     pub path: Path,
     pub progress: Animated<f32>,
     /// Whether the node should rotate to follow the path tangent.
     pub follow_tangent: bool,
+    /// Playback speed multiplier (1.0 = normal).
+    pub speed: f32,
+    /// Loop mode: 0 = play once, -1 = infinite, >0 = N times.
+    pub loop_count: i32,
+    /// Total duration of one animation loop in seconds.
+    pub duration: f64,
     /// Cached total length of the path (computed once on creation).
     cached_length: f32,
+    /// Cached PathMeasure to avoid re-flattening the path each frame.
+    measure: Option<PathMeasure>,
 }
 
 impl PathAnimationState {
     /// Create a new path animation state.
-    pub fn new(path: Path, follow_tangent: bool) -> Self {
+    pub fn new(path: Path, follow_tangent: bool, duration: f64) -> Self {
         let mut measure = PathMeasure::new(&path, false, None);
         let length = measure.length();
         Self {
             path,
             progress: Animated::new(0.0),
             follow_tangent,
+            speed: 1.0,
+            loop_count: 0,
+            duration,
             cached_length: length,
+            measure: Some(measure),
         }
     }
 
@@ -75,10 +86,10 @@ impl PathAnimationState {
     }
 
     /// Sample a position and tangent at a given distance along the path.
-    /// Creates a temporary PathMeasure for sampling.
+    /// Reuses the cached PathMeasure instead of creating a new one each frame.
     /// Returns (position, tangent_angle_in_radians).
-    pub fn sample(&self, distance: f32) -> Option<(skia_safe::Point, f32)> {
-        let mut measure = PathMeasure::new(&self.path, false, None);
+    pub fn sample(&mut self, distance: f32) -> Option<(skia_safe::Point, f32)> {
+        let measure = self.measure.get_or_insert_with(|| PathMeasure::new(&self.path, false, None));
         measure.pos_tan(distance).map(|(pos, tangent)| {
             let angle = tangent.y.atan2(tangent.x);
             (pos, angle)
@@ -86,39 +97,80 @@ impl PathAnimationState {
     }
 }
 
+impl Clone for PathAnimationState {
+    fn clone(&self) -> Self {
+        Self {
+            path: self.path.clone(),
+            progress: self.progress.clone(),
+            follow_tangent: self.follow_tangent,
+            speed: self.speed,
+            loop_count: self.loop_count,
+            duration: self.duration,
+            cached_length: self.cached_length,
+            measure: None,
+        }
+    }
+}
+
 /// State for a node animating between two SVG paths (path morphing).
-#[derive(Clone)]
 pub struct PathMorphState {
     pub from_path: Path,
     pub to_path: Path,
     pub progress: Animated<f32>,
     pub follow_tangent: bool,
+    /// Playback speed multiplier (1.0 = normal).
+    pub speed: f32,
+    /// Loop mode: 0 = play once, -1 = infinite, >0 = N times.
+    pub loop_count: i32,
+    /// Total duration of one animation loop in seconds.
+    pub duration: f64,
     cached_from_length: f32,
     cached_to_length: f32,
+    from_measure: Option<PathMeasure>,
+    to_measure: Option<PathMeasure>,
 }
 
 impl PathMorphState {
-    pub fn new(from_path: Path, to_path: Path, follow_tangent: bool) -> Self {
+    pub fn new(from_path: Path, to_path: Path, follow_tangent: bool, duration: f64) -> Self {
         let from_len = PathMeasure::new(&from_path, false, None).length();
         let to_len = PathMeasure::new(&to_path, false, None).length();
+        let from_measure = Some(PathMeasure::new(&from_path, false, None));
+        let to_measure = Some(PathMeasure::new(&to_path, false, None));
         Self {
             from_path,
             to_path,
             progress: Animated::new(0.0),
             follow_tangent,
+            speed: 1.0,
+            loop_count: 0,
+            duration,
             cached_from_length: from_len,
             cached_to_length: to_len,
+            from_measure,
+            to_measure,
         }
     }
 
     /// Sample both paths at a proportional distance (0..1) and interpolate.
+    /// Reuses cached PathMeasures instead of creating new ones each frame.
     /// Returns (position, tangent_angle_in_radians).
-    pub fn sample_morph(&self, t: f32, progress_dist: f32) -> Option<(Point, f32)> {
+    pub fn sample_morph(&mut self, t: f32, progress_dist: f32) -> Option<(Point, f32)> {
         let from_dist = progress_dist * self.cached_from_length;
         let to_dist = progress_dist * self.cached_to_length;
 
-        let from_pos = self.sample_path(&self.from_path, from_dist)?;
-        let to_pos = self.sample_path(&self.to_path, to_dist)?;
+        let from_measure = self.from_measure.get_or_insert_with(|| PathMeasure::new(&self.from_path, false, None));
+        let from_pos = {
+            let (pos, tangent) = from_measure.pos_tan(from_dist)?;
+            let angle = tangent.y.atan2(tangent.x);
+            (pos, angle)
+        };
+
+        let to_measure = self.to_measure.get_or_insert_with(|| PathMeasure::new(&self.to_path, false, None));
+        let to_pos = {
+            let (pos, tangent) = to_measure.pos_tan(to_dist)?;
+            let angle = tangent.y.atan2(tangent.x);
+            (pos, angle)
+        };
 
         let pos = Point::new(
             from_pos.0.x + (to_pos.0.x - from_pos.0.x) * t,
@@ -129,16 +181,26 @@ impl PathMorphState {
         Some((pos, angle))
     }
 
-    fn sample_path(&self, path: &Path, distance: f32) -> Option<(Point, f32)> {
-        let mut measure = PathMeasure::new(path, false, None);
-        measure.pos_tan(distance).map(|(pos, tangent)| {
-            let angle = tangent.y.atan2(tangent.x);
-            (pos, angle)
-        })
-    }
-
     pub fn from_length(&self) -> f32 { self.cached_from_length }
     pub fn to_length(&self) -> f32 { self.cached_to_length }
+}
+
+impl Clone for PathMorphState {
+    fn clone(&self) -> Self {
+        Self {
+            from_path: self.from_path.clone(),
+            to_path: self.to_path.clone(),
+            progress: self.progress.clone(),
+            follow_tangent: self.follow_tangent,
+            speed: self.speed,
+            loop_count: self.loop_count,
+            duration: self.duration,
+            cached_from_length: self.cached_from_length,
+            cached_to_length: self.cached_to_length,
+            from_measure: None,
+            to_measure: None,
+        }
+    }
 }
 
 /// Represents the affine transformation state of a node.

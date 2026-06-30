@@ -2,7 +2,6 @@
 //!
 //! The central orchestrator for the video rendering engine.
 //!
-// TODO: Re-enable Rayon for parallel node updates and rendering.
 //!
 //! ## Responsibilities
 //! - **Timeline Management**: Maintains a `Vec<TimelineItem>` of scenes.
@@ -15,7 +14,7 @@
 //! - `TimelineItem`: A scene with start time, duration, optional name, and transitions.
 //! - `DirectorContext`: Shared state for nested compositions.
 
-// use rayon::prelude::*; // Rayon disabled due to Taffy !Send
+use rayon::prelude::*;
 use crate::audio::{AudioAnalyzer, AudioMixer, AudioTrack};
 use crate::scene::SceneGraph;
 use crate::systems::assets::AssetManager;
@@ -322,8 +321,8 @@ impl Director {
             }
         }
 
-        // Pass 2: Serial Update (Rayon removed)
-        for (node_id, node_opt) in self.scene.nodes.iter_mut().enumerate() {
+        // Pass 2: Parallel node update via Rayon
+        self.scene.nodes.par_iter_mut().enumerate().for_each(|(node_id, node_opt)| {
             if let Some(node) = node_opt {
                 if (node.last_visit_time - global_time).abs() < 0.0001 {
                     if node.element.update(node.local_time) {
@@ -341,7 +340,19 @@ impl Director {
 
                     // Update Path Animation (using cached PathMeasure)
                     if let Some(path_anim) = &mut node.path_animation {
-                        path_anim.progress.update(node.local_time);
+                        let effective_time = node.local_time * path_anim.speed as f64;
+                        let loop_dur = path_anim.duration;
+                        let wrapped = if loop_dur > 0.0 && effective_time >= loop_dur {
+                            let elapsed = (effective_time / loop_dur) as i32;
+                            if path_anim.loop_count < 0 || elapsed < path_anim.loop_count {
+                                effective_time % loop_dur
+                            } else {
+                                loop_dur
+                            }
+                        } else {
+                            effective_time.min(loop_dur)
+                        };
+                        path_anim.progress.update(wrapped);
                         let length = path_anim.length();
                         let dist = path_anim.progress.current_value * length;
                         if let Some((p, angle)) = path_anim.sample(dist) {
@@ -358,7 +369,19 @@ impl Director {
                     // progress controls both position along the path AND the morph blend.
                     // At 0% -> start of from_path. At 100% -> end of to_path.
                     if let Some(morph) = &mut node.path_morph {
-                        morph.progress.update(node.local_time);
+                        let effective_time = node.local_time * morph.speed as f64;
+                        let loop_dur = morph.duration;
+                        let wrapped = if loop_dur > 0.0 && effective_time >= loop_dur {
+                            let elapsed = (effective_time / loop_dur) as i32;
+                            if morph.loop_count < 0 || elapsed < morph.loop_count {
+                                effective_time % loop_dur
+                            } else {
+                                loop_dur
+                            }
+                        } else {
+                            effective_time.min(loop_dur)
+                        };
+                        morph.progress.update(wrapped);
                         let t = morph.progress.current_value.clamp(0.0, 1.0);
                         if let Some((p, angle)) = morph.sample_morph(t, t) {
                             node.transform.translate_x.current_value = p.x;
@@ -379,7 +402,7 @@ impl Director {
                     }
                 }
             }
-        }
+        });
 
         // Pass 3: Audio Reactive Bindings
         // Process after animations so audio values take priority

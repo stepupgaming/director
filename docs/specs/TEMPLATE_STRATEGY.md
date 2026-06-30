@@ -21,7 +21,7 @@ We classify templates into three distinct layers of abstraction:
   * **Definition:** A pre-configured `Composition` (Node Tree) that has built-in internal logic. It isn't just a layout; it reacts to its content.
   * **Storage:** `assets/components/smart_lower_third.dirproj`
   * **Examples:**
-      * **"Smart Lower Third":** A text box that automatically resizes based on the length of the name *and* ensures it doesn't cover the face (using SAM 3 data passed from the parent).
+      * **"Smart Lower Third":** A text box that automatically resizes based on the length of the name.
       * **"Auto-B-Roll Frame":** A picture-in-picture frame that slowly zooms in ("Ken Burns effect") and automatically cuts to the next image when the audio hits a silence gap.
   * **The "Interface":** These components expose specific "Props" to the main timeline (e.g., `Color`, `Name`, `Position`), hiding the complex node graph inside.
 
@@ -42,40 +42,3 @@ We classify templates into three distinct layers of abstraction:
         3.  Action: Cuts 30s clip.
         4.  Action: Auto-reframes to 9:16 keeping active speaker centered.
 
------
-
-## 2\. The "Adaptive" Strategy (Cloud vs. Local)
-
-You raised a critical point: *What if the user has a weak computer?*
-
-Our templates must be **Capability-Aware**.
-In the Rhai environment, we expose a capability flag: `engine.capabilities.has_gpu`.
-
-**Example: The "Background Removal" Template**
-
-```rust
-// Inside `assets/scripts/std/effects.rhai`
-
-fn remove_background(video_node) {
-    if engine.capabilities.has_gpu && engine.capabilities.sam3_loaded {
-        // High-End: Use SAM 3 for perfect segmentation
-        let mask = video.track_object("person");
-        video_node.set_mask(mask);
-    } else {
-        // Low-End / Fallback: Use a simple center crop or vignette
-        // Graceful degradation so the video can still be rendered
-        print("Warning: GPU not found. Falling back to simple mask.");
-        let circle_mask = create_circle_mask();
-        video_node.set_mask(circle_mask);
-    }
-}
-```
-
-**Benefit:** You build *one* template. It works on an RTX 4090 (Cinema Quality) and a MacBook Air (Draft Quality) automatically.
-
-## 3\. Implementation: The "Asset Store"
-
-Since these templates are just files (Rhai scripts or `.dirproj` JSONs), they are highly portable.
-
-  * **Community Library:** Users can share "Recipes" (e.g., "Here is my script for 'VSauce-style' pacing").
-  * **Official Packs:** You sell curated, high-quality "Smart Components" (e.g., "The Youtuber Essentials Pack" - includes Animated Subtitles, Like/Subscribe buttons that auto-color match).

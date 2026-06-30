@@ -549,7 +549,7 @@ fn add_transition_internal(
     type_str: &str,
     duration: f64,
     easing_str: &str,
-    _params: Option<rhai::Map>,
+    params: Option<rhai::Map>,
 ) {
     let kind = match type_str {
         "fade" => TransitionType::Fade,
@@ -558,6 +558,23 @@ fn add_transition_internal(
         "wipe_left" | "wipe-left" => TransitionType::WipeLeft,
         "wipe_right" | "wipe-right" => TransitionType::WipeRight,
         "circle_open" | "circle-open" => TransitionType::CircleOpen,
+        "wave" => TransitionType::Wave {
+            amplitude: params.as_ref().and_then(|m| m.get("amplitude").and_then(|v| v.as_float().ok().map(|f| f as f32))).unwrap_or(0.1),
+            frequency: params.as_ref().and_then(|m| m.get("frequency").and_then(|v| v.as_float().ok().map(|f| f as f32))).unwrap_or(5.0),
+        },
+        "glitch" => TransitionType::Glitch {
+            intensity: params.as_ref().and_then(|m| m.get("intensity").and_then(|v| v.as_float().ok().map(|f| f as f32))).unwrap_or(0.5),
+        },
+        "iris" => TransitionType::Iris {
+            start_radius: params.as_ref().and_then(|m| m.get("start_radius").and_then(|v| v.as_float().ok().map(|f| f as f32))).unwrap_or(0.0),
+            end_radius: params.as_ref().and_then(|m| m.get("end_radius").and_then(|v| v.as_float().ok().map(|f| f as f32))).unwrap_or(500.0),
+        },
+        "spiral" => TransitionType::Spiral {
+            rotations: params.as_ref().and_then(|m| m.get("rotations").and_then(|v| v.as_float().ok().map(|f| f as f32))).unwrap_or(2.0),
+        },
+        "zoom_in" | "zoom-in" | "zoomin" => TransitionType::ZoomIn,
+        "radial_wipe" | "radial-wipe" | "radialwipe" => TransitionType::RadialWipe,
+        "pixelate" | "pixelate_dissolve" | "pixelate-dissolve" => TransitionType::PixelateDissolve,
         _ => TransitionType::Fade,
     };
     add_transition_with_kind(movie, from, to, duration, easing_str, kind);

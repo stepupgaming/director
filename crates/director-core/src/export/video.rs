@@ -1,9 +1,6 @@
 //! # Video Export
 //!
-//! Renders Director timeline to video files (MP4).
-//!
-// TODO: Enable alpha-channel output using ProRes 4444 or VP9 via CLI.
-// TODO: Enable GPU-accelerated rendering and hardware video encoding for V1.
+//! Renders Director timeline to video files (MP4/WebM).
 //!
 //! ## Responsibilities
 //! - **Frame Loop**: Iterates through all frames.
@@ -29,7 +26,7 @@ use tracing::instrument;
 #[cfg(feature = "vulkan")]
 use skia_safe::gpu::{Budgeted, SurfaceOrigin};
 
-/// Renders the entire movie to a video file (MP4).
+/// Renders the entire movie to a video file (MP4 or WebM with alpha).
 ///
 /// This is a long-running blocking operation that:
 /// 1. Initializes the video encoder (FFmpeg).
@@ -42,9 +39,10 @@ use skia_safe::gpu::{Budgeted, SurfaceOrigin};
 ///
 /// # Arguments
 /// * `director` - The director instance containing the movie state.
-/// * `out_path` - Destination path for the .mp4 file.
+/// * `out_path` - Destination path for the output video file.
 /// * `gpu_context` - Optional GPU context for hardware acceleration.
 /// * `audio_track_path` - Optional path to a background audio track (deprecated; use `director.add_global_audio`).
+/// * `alpha` - Enable alpha-channel output (uses VP9/WebM instead of H.264/MP4).
 #[allow(unused_variables)]
 #[instrument(level = "info", skip(director, gpu_context), fields(width = director.width, height = director.height, fps = director.fps))]
 pub fn render_export(
@@ -52,6 +50,7 @@ pub fn render_export(
     out_path: PathBuf,
     gpu_context: Option<&mut GpuContext>,
     audio_track_path: Option<PathBuf>,
+    alpha: bool,
 ) -> Result<()> {
     let width = director.width;
     let height = director.height;
@@ -78,8 +77,9 @@ pub fn render_export(
         }
     }
 
-    let settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize, false)
-        .with_encoder_mode(director.encoder_mode);
+    let settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
+        .with_encoder_mode(director.encoder_mode)
+        .with_alpha(alpha);
     let mut encoder = Encoder::new(&out_path, settings)?;
 
     let info = skia_safe::ImageInfo::new(

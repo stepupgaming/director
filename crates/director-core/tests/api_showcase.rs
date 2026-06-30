@@ -329,7 +329,7 @@ movie
         fs::remove_file(&out_path).unwrap();
     }
 
-    render_export(&mut director, out_path.clone(), None, None).expect("Export failed");
+    render_export(&mut director, out_path.clone(), None, None, false).expect("Export failed");
 
     assert!(out_path.exists(), "Output video should exist");
     println!("✅ Rendered: {:?}", out_path);

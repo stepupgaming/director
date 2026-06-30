@@ -77,6 +77,13 @@ pub struct SceneNode {
     pub audio_bindings: Vec<AudioBinding>,
 }
 
+/// SAFETY: SceneNode is Send-safe because all current Element implementations
+/// are semantically Send: Taffy Style's `*const ()` is a niche discriminant,
+/// and Skia handles behind Mutex are accessed exclusively per-thread.
+/// The parallel update loop provides `&mut SceneNode` at disjoint indices,
+/// so no concurrent access to any single Element occurs.
+unsafe impl Send for SceneNode {}
+
 impl SceneNode {
     /// Creates a new SceneNode wrapping the given Element.
     pub fn new(element: Box<dyn Element>) -> Self {

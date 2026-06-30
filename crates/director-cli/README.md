@@ -29,6 +29,4 @@ cargo build --release -p director-cli
 | 1 | Script error |
 | 2 | Render error |
 
----
 
-*See [scripting-guide.md](../../docs/user/scripting-guide.md) for script syntax.*

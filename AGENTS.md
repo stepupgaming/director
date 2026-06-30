@@ -88,7 +88,7 @@ When the user requests a durable behavior change, record it here or in the relev
 ## Work Guidance
 
 - Use Cargo workspace conventions from `Cargo.toml`; prefer package-scoped checks while iterating and workspace checks before broad closeout.
-- Keep Rust crate ownership clear: public API and shared runtime behavior belong in `crates/director-core`, command-line concerns in `crates/director-cli`, schema reflection in `crates/director-schema`, generated truth tooling in `crates/director-developer`, and Lottie-specific logic in the `lottie-*` crates.
+- Keep Rust crate ownership clear: public API and shared runtime behavior belong in `crates/director-core`, command-line concerns in `crates/director-cli`, schema reflection in `crates/director-schema`, and Lottie-specific logic in the `lottie-*` crates.
 - Rhai examples are executable reference material. Update examples and tests when scripting-facing behavior changes.
 - Generated or downloaded assets should not become durable source unless the relevant AGENTS.md explicitly says they are owned there.
 - For Python scripts, keep dependencies executable through existing tooling and install packages only with `uv` when installation is necessary.
@@ -101,12 +101,11 @@ When the user requests a durable behavior change, record it here or in the relev
 - Rust tests: `cargo test --workspace`
 - Rust lint: `cargo clippy --workspace --all-targets -- -D warnings`
 - Visual regression: `cargo test --test visual_suite --no-default-features --features mock_video` from `crates/director-core`
-- Frontend: `bun run build` and `bun run lint` from `crates/director-view/frontend`
+
 
 ## Child DOX Index
 
 - `.agent/AGENTS.md` - Local agent skills and reference material for Director-specific workflows.
-- `.director-dev/AGENTS.md` - Generated system-truth JSON dumps from `director-developer`.
 - `.github/AGENTS.md` - GitHub workflows and issue templates.
 - `.grits/AGENTS.md` - Local issue/focus records.
 - `crates/AGENTS.md` - Rust workspace crates and package-level ownership.

@@ -71,10 +71,9 @@ title.pop_in(0.5);
 ### 2. Capability-Aware
 ```rhai
 fn remove_background(video_node) {
-    if engine.capabilities.has_gpu && engine.capabilities.sam3_loaded {
-        // High-End: SAM 3 segmentation
-        let mask = video.track_object("person");
-        video_node.set_mask(mask);
+    if engine.capabilities.has_gpu {
+        // GPU-Accelerated: Skia shader-based background removal
+        video_node.set_effect("chroma_key");
     } else {
         // Fallback: Simple center crop
         video_node.set_mask(create_circle_mask());
@@ -89,7 +88,6 @@ fn remove_background(video_node) {
 | Rhai scripts | Native SDK calls | Direct API |
 | JSON/REST | `MovieRequest` | `director-schema` → `director-pipeline` |
 | AI Agents | Natural language → structured | Generate L1/L2 calls |
-| GUI (Dioxus) | Visual nodes | Generate `MovieRequest` |
 
 ---
 
@@ -132,14 +130,13 @@ Implement core animation presets:
 
 ### Phase 3: L2 Smart Components
 Implement reusable compositions:
-- Smart Lower Third (auto-resize, SAM-aware)
+- Smart Lower Third (auto-resize)
 - Quote Card (styled container + text)
 - Progress Bar (animated fill)
 
 ### Phase 4: Capability System
 Expose `engine.capabilities` to Rhai:
 - `has_gpu`
-- `sam3_loaded`
 - `memory_available`
 
 ---
@@ -155,4 +152,4 @@ Expose `engine.capabilities` to Rhai:
 ## Related Documents
 
 - [TEMPLATE_STRATEGY.md](TEMPLATE_STRATEGY.md) — Original 3-layer vision
-- [RHAI_API_SPEC.md](RHAI_API_SPEC.md) — Proposed standard library
+

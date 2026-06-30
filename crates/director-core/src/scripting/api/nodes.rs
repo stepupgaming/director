@@ -179,6 +179,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     img_node.object_fit = fit;
                 }
             }
+            if let Some(v) = props.get("border_radius").and_then(|v| v.as_float().ok()) {
+                img_node.border_radius = Animated::new(v as f32);
+            }
 
             let id = d.scene.add_node(Box::new(img_node));
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
@@ -221,6 +224,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 if let Some(fit) = parse_object_fit(&fit_str) {
                     img_node.object_fit = fit;
                 }
+            }
+            if let Some(v) = props.get("border_radius").and_then(|v| v.as_float().ok()) {
+                img_node.border_radius = Animated::new(v as f32);
             }
 
             let id = d.scene.add_node(Box::new(img_node));
@@ -557,6 +563,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     vid_node.object_fit = fit;
                 }
             }
+            if let Some(v) = props.get("border_radius").and_then(|v| v.as_float().ok()) {
+                vid_node.border_radius = Animated::new(v as f32);
+            }
 
             let id = d.scene.add_node(Box::new(vid_node));
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
@@ -635,6 +644,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 if let Some(fit) = parse_object_fit(&fit_str) {
                     vid_node.object_fit = fit;
                 }
+            }
+            if let Some(v) = props.get("border_radius").and_then(|v| v.as_float().ok()) {
+                vid_node.border_radius = Animated::new(v as f32);
             }
 
             let id = d.scene.add_node(Box::new(vid_node));

@@ -377,7 +377,7 @@ pub fn register(engine: &mut Engine) {
                 // Try to parse SVG path
                 if let Some(path) = Path::from_svg(svg) {
                     let ease_fn = parse_easing(ease);
-                    let mut state = PathAnimationState::new(path, false);
+                    let mut state = PathAnimationState::new(path, false, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     n.path_animation = Some(state);
                 } else {
@@ -399,7 +399,7 @@ pub fn register(engine: &mut Engine) {
                 // Try to parse SVG path
                 if let Some(path) = Path::from_svg(svg) {
                     let ease_fn = parse_easing(ease);
-                    let mut state = PathAnimationState::new(path, true);
+                    let mut state = PathAnimationState::new(path, true, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     n.path_animation = Some(state);
                 } else {
@@ -421,7 +421,7 @@ pub fn register(engine: &mut Engine) {
                 if let Some(from_path) = Path::from_svg(from_svg) {
                     if let Some(to_path) = Path::from_svg(to_svg) {
                         let ease_fn = parse_easing(ease);
-                        let mut state = PathMorphState::new(from_path, to_path, false);
+                        let mut state = PathMorphState::new(from_path, to_path, false, dur);
                         state.progress.add_keyframe(1.0, dur, ease_fn);
                         n.path_morph = Some(state);
                     } else {
@@ -445,8 +445,80 @@ pub fn register(engine: &mut Engine) {
                 if let Some(from_path) = Path::from_svg(from_svg) {
                     if let Some(to_path) = Path::from_svg(to_svg) {
                         let ease_fn = parse_easing(ease);
-                        let mut state = PathMorphState::new(from_path, to_path, true);
+                        let mut state = PathMorphState::new(from_path, to_path, true, dur);
                         state.progress.add_keyframe(1.0, dur, ease_fn);
+                        n.path_morph = Some(state);
+                    } else {
+                        error!("Failed to parse target SVG path: {}", to_svg);
+                    }
+                } else {
+                    error!("Failed to parse source SVG path: {}", from_svg);
+                }
+            }
+        },
+    );
+
+    // ========== PATH_ANIMATE_OPTS (with loop count and speed) ==========
+    engine.register_fn(
+        "path_animate_opts",
+        |node: &mut NodeHandle, svg: &str, dur: f64, ease: &str, loop_count: i64, speed: f64| {
+            let mut d = match node.lock_director() {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            if let Some(n) = d.scene.get_node_mut(node.id) {
+                if let Some(path) = Path::from_svg(svg) {
+                    let ease_fn = parse_easing(ease);
+                    let mut state = PathAnimationState::new(path, false, dur);
+                    state.progress.add_keyframe(1.0, dur, ease_fn);
+                    state.loop_count = loop_count as i32;
+                    state.speed = speed as f32;
+                    n.path_animation = Some(state);
+                } else {
+                    error!("Failed to parse SVG path: {}", svg);
+                }
+            }
+        },
+    );
+
+    engine.register_fn(
+        "path_animate_opts",
+        |node: &mut NodeHandle, svg: &str, dur: f64, ease: &str, loop_count: i64, speed: f64, follow_tangent: bool| {
+            let mut d = match node.lock_director() {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            if let Some(n) = d.scene.get_node_mut(node.id) {
+                if let Some(path) = Path::from_svg(svg) {
+                    let ease_fn = parse_easing(ease);
+                    let mut state = PathAnimationState::new(path, follow_tangent, dur);
+                    state.progress.add_keyframe(1.0, dur, ease_fn);
+                    state.loop_count = loop_count as i32;
+                    state.speed = speed as f32;
+                    n.path_animation = Some(state);
+                } else {
+                    error!("Failed to parse SVG path: {}", svg);
+                }
+            }
+        },
+    );
+
+    // ========== PATH_MORPH_OPTS (with loop count and speed) ==========
+    engine.register_fn(
+        "path_morph_opts",
+        |node: &mut NodeHandle, from_svg: &str, to_svg: &str, dur: f64, ease: &str, loop_count: i64, speed: f64| {
+            let mut d = match node.lock_director() {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            if let Some(n) = d.scene.get_node_mut(node.id) {
+                if let Some(from_path) = Path::from_svg(from_svg) {
+                    if let Some(to_path) = Path::from_svg(to_svg) {
+                        let ease_fn = parse_easing(ease);
+                        let mut state = PathMorphState::new(from_path, to_path, false, dur);
+                        state.progress.add_keyframe(1.0, dur, ease_fn);
+                        state.loop_count = loop_count as i32;
+                        state.speed = speed as f32;
                         n.path_morph = Some(state);
                     } else {
                         error!("Failed to parse target SVG path: {}", to_svg);

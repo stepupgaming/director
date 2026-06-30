@@ -8,8 +8,7 @@ members = [
     "crates/lottie-core",
     "crates/lottie-data",
     "crates/lottie-skia",
-    "crates/director-view",
-    "crates/director-developer"
+
 ]
 
 [workspace.package]

@@ -42,6 +42,12 @@ pub enum TransitionType {
     Spiral {
         rotations: f32,
     },
+    /// Zoom In: image B scales up from center while A fades out.
+    ZoomIn,
+    /// Radial Wipe: A is swept away clockwise revealing B.
+    RadialWipe,
+    /// Pixelate Dissolve: grid cells individually flip from A to B.
+    PixelateDissolve,
 }
 
 /// A definition of a transition between two scenes.
@@ -234,6 +240,60 @@ pub fn get_transition_shader(kind: &TransitionType) -> &'static str {
                 half4 colorA = imageA.eval(p);
                 half4 colorB = imageB.eval(p);
                 return mix(colorA, colorB, spiral_mask);
+            }
+        "#
+        }
+        TransitionType::ZoomIn => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float2 center = resolution / 2.0;
+                float scale = 1.0 + progress * 0.3;
+                float2 zoomed_p = (p - center) / scale + center;
+                half4 colorA = imageA.eval(p);
+                half4 colorB = imageB.eval(zoomed_p);
+                return mix(colorA, colorB, smoothstep(0.0, 1.0, progress));
+            }
+        "#
+        }
+        TransitionType::RadialWipe => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float2 center = resolution / 2.0;
+                float2 uv = p - center;
+                float angle = atan(uv.y, uv.x);
+                float t = (angle / 6.28318) + 0.5;
+                t = fract(t + 0.75);
+                float mask = 1.0 - smoothstep(progress - 0.02, progress + 0.02, t);
+                half4 colorA = imageA.eval(p);
+                half4 colorB = imageB.eval(p);
+                return mix(colorA, colorB, mask);
+            }
+        "#
+        }
+        TransitionType::PixelateDissolve => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float cells = 40.0;
+                float2 cell_size = resolution / cells;
+                float2 cell = floor(p / cell_size);
+                float hash = fract(sin(dot(cell, float2(12.9898, 78.233))) * 43758.5453);
+                float reveal = hash * 0.8 + 0.1;
+                float mask = smoothstep(reveal - 0.05, reveal + 0.05, progress);
+                half4 colorA = imageA.eval(p);
+                half4 colorB = imageB.eval(p);
+                return mix(colorA, colorB, mask);
             }
         "#
         }

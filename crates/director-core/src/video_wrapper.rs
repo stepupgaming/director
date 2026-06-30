@@ -89,10 +89,11 @@ pub struct EncoderSettings {
     pub hardware_accel: HardwareAccel,
     pub fps: u32,
     pub encoder_mode: EncoderMode,
+    pub alpha: bool,
 }
 
 impl EncoderSettings {
-    pub fn preset_h264_yuv420p(w: usize, h: usize, _b: bool) -> Self {
+    pub fn preset_h264_yuv420p(w: usize, h: usize) -> Self {
         Self {
             width: w,
             height: h,
@@ -100,11 +101,17 @@ impl EncoderSettings {
             hardware_accel: HardwareAccel::Auto,
             fps: 30,
             encoder_mode: EncoderMode::Auto,
+            alpha: false,
         }
     }
 
     pub fn with_encoder_mode(mut self, mode: EncoderMode) -> Self {
         self.encoder_mode = mode;
+        self
+    }
+
+    pub fn with_alpha(mut self, alpha: bool) -> Self {
+        self.alpha = alpha;
         self
     }
 }
@@ -337,6 +344,7 @@ pub struct Encoder {
     width: usize,
     height: usize,
     sample_rate: i32,
+    audio_codec: &'static str,
 }
 
 impl Encoder {
@@ -346,22 +354,13 @@ impl Encoder {
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_nanos();
 
-        let video_temp_path = temp_dir.join(format!("director_vid_{}.mp4", uuid));
+        let (video_temp_path, audio_codec) = if settings.alpha {
+            (temp_dir.join(format!("director_vid_{}.webm", uuid)), "libopus")
+        } else {
+            (temp_dir.join(format!("director_vid_{}.mp4", uuid)), "aac")
+        };
         let audio_path = temp_dir.join(format!("director_aud_{}.raw", uuid));
 
-        // Select encoder based on settings
-        let codec = get_encoder_codec(settings.encoder_mode);
-        let is_hardware = codec != "libx264";
-
-        tracing::info!(
-            "Initializing video encoder: {} ({})",
-            codec,
-            if is_hardware { "Hardware" } else { "Software" }
-        );
-
-        // Spawn Video Encoder with quality-preserving settings
-        // ffmpeg -y -f rawvideo -pixel_format rgba -video_size WxH -framerate FPS -i pipe:0
-        //        -c:v [codec] -pix_fmt yuv420p [quality_flags] video_temp.mp4
         let mut cmd = Command::new(FFmpegDriver::binary());
         cmd.arg("-y")
             .arg("-f")
@@ -373,56 +372,61 @@ impl Encoder {
             .arg("-framerate")
             .arg(settings.fps.to_string())
             .arg("-i")
-            .arg("pipe:0")
-            .arg("-c:v")
-            .arg(codec)
-            .arg("-pix_fmt")
-            .arg("yuv420p");
+            .arg("pipe:0");
 
-        // Add quality-preserving settings based on encoder
-        if is_hardware {
-            // Hardware encoder settings (NVENC, QSV, AMF)
-            match codec {
-                "h264_nvenc" => {
-                    // NVENC quality settings - preserve visual quality
-                    cmd.arg("-preset")
-                        .arg("slow")
-                        .arg("-rc")
-                        .arg("constqp")
-                        .arg("-qp")
-                        .arg("20")
-                        .arg("-bf")
-                        .arg("2");
-                }
-                "h264_qsv" => {
-                    // Intel QSV quality settings
-                    cmd.arg("-preset")
-                        .arg("veryslow")
-                        .arg("-global_quality")
-                        .arg("20");
-                }
-                "h264_amf" => {
-                    // AMD AMF quality settings
-                    cmd.arg("-rc")
-                        .arg("cqp")
-                        .arg("-qp_i")
-                        .arg("20")
-                        .arg("-qp_p")
-                        .arg("20");
-                }
-                _ => {}
-            }
-
+        if settings.alpha {
+            let codec = "libvpx-vp9";
+            tracing::info!("Initializing video encoder: {} (Software, Alpha)", codec);
+            cmd.arg("-c:v")
+                .arg(codec)
+                .arg("-pix_fmt")
+                .arg("yuva420p")
+                .arg("-lossless")
+                .arg("1")
+                .arg("-cpu-used")
+                .arg("2")
+                .arg("-row-mt")
+                .arg("1");
         } else {
-            // Software encoder (libx264) - highest quality
-            cmd.arg("-preset")
-                .arg("slow")
-                .arg("-crf")
-                .arg("18")
-                .arg("-profile:v")
-                .arg("high")
-                .arg("-tune")
-                .arg("film");
+            let codec = get_encoder_codec(settings.encoder_mode);
+            let is_hardware = codec != "libx264";
+
+            tracing::info!(
+                "Initializing video encoder: {} ({})",
+                codec,
+                if is_hardware { "Hardware" } else { "Software" }
+            );
+
+            cmd.arg("-c:v")
+                .arg(codec)
+                .arg("-pix_fmt")
+                .arg("yuv420p");
+
+            if is_hardware {
+                match codec {
+                    "h264_nvenc" => {
+                        cmd.arg("-preset").arg("slow")
+                            .arg("-rc").arg("constqp")
+                            .arg("-qp").arg("20")
+                            .arg("-bf").arg("2");
+                    }
+                    "h264_qsv" => {
+                        cmd.arg("-preset").arg("veryslow")
+                            .arg("-global_quality").arg("20");
+                    }
+                    "h264_amf" => {
+                        cmd.arg("-rc").arg("cqp")
+                            .arg("-qp_i").arg("20")
+                            .arg("-qp_p").arg("20");
+                    }
+                    _ => {}
+                }
+            } else {
+                cmd.arg("-preset").arg("slow")
+                    .arg("-crf").arg("18")
+                    .arg("-profile:v").arg("high")
+                    .arg("-tune").arg("film");
+            }
         }
 
         let video_process = cmd
@@ -444,6 +448,7 @@ impl Encoder {
             width: settings.width,
             height: settings.height,
             sample_rate: settings.sample_rate,
+            audio_codec,
         })
     }
 
@@ -496,7 +501,7 @@ impl Encoder {
             .arg("-c:v")
             .arg("copy")
             .arg("-c:a")
-            .arg("aac")
+            .arg(self.audio_codec)
             .arg(&self.dest_path)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())

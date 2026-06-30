@@ -3,7 +3,7 @@
 //! Visual effects functions for Rhai scripts.
 //!
 //! ## Responsibilities
-//! - **Color Effects**: `apply_effect` for grayscale, sepia, invert, contrast, brightness
+//! - **Color Effects**: `apply_effect` for grayscale, sepia, invert, contrast, brightness, saturation
 //! - **Blur Effect**: `apply_effect("blur", value)` for Gaussian blur
 //! - **Custom Shaders**: `apply_effect("shader", {...})` for SkSL shaders
 //! - **Cinematic Shaders**:
@@ -95,6 +95,15 @@ pub fn register(engine: &mut Engine) {
                     1.0, 0.0, 0.0, 0.0, val, 0.0, 1.0, 0.0, 0.0, val, 0.0, 0.0, 1.0, 0.0, val, 0.0,
                     0.0, 0.0, 1.0, 0.0,
                 ])),
+                "saturation" => {
+                    let s = val;
+                    Some(EffectType::ColorMatrix(vec![
+                        0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s, 0.0, 0.0,
+                        0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s, 0.0, 0.0,
+                        0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s, 0.0, 0.0,
+                        0.0, 0.0, 0.0, 1.0, 0.0,
+                    ]))
+                }
                 "blur" => Some(EffectType::Blur(Animated::new(val))),
                 _ => None,
             };

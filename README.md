@@ -1,6 +1,6 @@
 # Director
 
-[![CI](https://github.com/babybirdprd/director/actions/workflows/ci.yml/badge.svg)](https://github.com/babybirdprd/director/actions/workflows/ci.yml)
+[![CI](https://github.com/stepupgaming/director/actions/workflows/ci.yml/badge.svg)](https://github.com/stepupgaming/director/actions/workflows/ci.yml)
 
 > ⚠️ **Pre-release** — API may change before v1.0
 
@@ -109,7 +109,7 @@ cargo run --release -- examples/basics/hello_world.rhai output.mp4
 | FFmpeg | `apt install libavutil-dev libavformat-dev libavcodec-dev libswscale-dev` | `brew install ffmpeg` | [gyan.dev build](https://www.gyan.dev/ffmpeg/builds/) |
 | Clang (for Skia) | `apt install clang` | Xcode | LLVM |
 
-See [docs/BUILD_GUIDE.md](docs/BUILD_GUIDE.md) for detailed setup.
+See [docs/contributing/development.md](docs/contributing/development.md) for detailed setup.
 
 ---
 
@@ -117,11 +117,8 @@ See [docs/BUILD_GUIDE.md](docs/BUILD_GUIDE.md) for detailed setup.
 
 | Document | Description |
 |----------|-------------|
-| [DOCS_INDEX.md](DOCS_INDEX.md) | Documentation navigation index |
-| [docs/user/scripting-guide.md](docs/user/scripting-guide.md) | Complete Rhai API reference |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Engine internals |
 | [docs/contributing/development.md](docs/contributing/development.md) | Build guide & contributing |
-| [docs/architecture/roadmap.md](docs/architecture/roadmap.md) | Development milestones |
 | [examples/README.md](examples/README.md) | Example scripts index |
 
 
@@ -170,7 +167,8 @@ fn main() -> anyhow::Result<()> {
         &mut director,
         "output.mp4".into(),
         None,
-        None
+        None,
+        false,
     )?;
     
     Ok(())

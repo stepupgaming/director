@@ -4,7 +4,7 @@ use crate::errors::RenderError;
 use crate::node::{calculate_object_fit_rect, parse_easing};
 use crate::types::ObjectFit;
 use crate::video_wrapper::{RenderMode, VideoLoader, VideoResponse};
-use skia_safe::{AlphaType, Canvas, ClipOp, Color4f, ColorSpace, ColorType, Data, Image, Paint, Rect};
+use skia_safe::{AlphaType, Canvas, ClipOp, Color4f, ColorSpace, ColorType, Data, Image, Paint, Rect, RRect};
 use std::any::Any;
 use std::io::Write;
 use std::path::PathBuf;
@@ -30,6 +30,7 @@ pub struct VideoNode {
     pub opacity: Animated<f32>,
     pub style: Style,
     pub object_fit: ObjectFit,
+    pub border_radius: Animated<f32>,
     current_frame: Mutex<Option<(f64, Image)>>,
 
     loader: Option<VideoLoader>,
@@ -55,6 +56,7 @@ impl Clone for VideoNode {
             opacity: self.opacity.clone(),
             style: self.style.clone(),
             object_fit: self.object_fit,
+            border_radius: self.border_radius.clone(),
             current_frame: Mutex::new(None),
             loader,
             render_mode: self.render_mode,
@@ -88,6 +90,7 @@ impl VideoNode {
             opacity: Animated::new(1.0),
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
+            border_radius: Animated::new(0.0),
             current_frame: Mutex::new(None),
             loader,
             render_mode: mode,
@@ -119,6 +122,7 @@ impl Element for VideoNode {
 
     fn update(&mut self, time: f64) -> bool {
         self.opacity.update(time);
+        self.border_radius.update(time);
 
         if let Some(loader) = &mut self.loader {
             match loader {
@@ -198,7 +202,11 @@ impl Element for VideoNode {
             );
 
             canvas.save();
-            if self.object_fit == ObjectFit::Cover {
+            let radius = self.border_radius.current_value;
+            if radius > 0.0 {
+                let rrect = RRect::new_rect_xy(&rect, radius, radius);
+                canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+            } else if self.object_fit == ObjectFit::Cover {
                 canvas.clip_rect(rect, ClipOp::Intersect, true);
             }
             canvas.draw_image_rect(img, None, draw_rect, &paint);
@@ -221,8 +229,10 @@ impl Element for VideoNode {
         easing: &str,
     ) {
         let ease_fn = parse_easing(easing);
-        if property == "opacity" {
-            self.opacity.add_segment(start, target, duration, ease_fn);
+        match property {
+            "opacity" => self.opacity.add_segment(start, target, duration, ease_fn),
+            "border_radius" => self.border_radius.add_segment(start, target, duration, ease_fn),
+            _ => {}
         }
     }
 
@@ -233,12 +243,22 @@ impl Element for VideoNode {
         target: f32,
         config: crate::animation::SpringConfig,
     ) {
-        if property == "opacity" {
-            if let Some(s) = start {
-                self.opacity.add_spring_with_start(s, target, config);
-            } else {
-                self.opacity.add_spring(target, config);
+        match property {
+            "opacity" => {
+                if let Some(s) = start {
+                    self.opacity.add_spring_with_start(s, target, config);
+                } else {
+                    self.opacity.add_spring(target, config);
+                }
             }
+            "border_radius" => {
+                if let Some(s) = start {
+                    self.border_radius.add_spring_with_start(s, target, config);
+                } else {
+                    self.border_radius.add_spring(target, config);
+                }
+            }
+            _ => {}
         }
     }
 }

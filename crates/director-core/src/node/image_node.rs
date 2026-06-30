@@ -3,7 +3,7 @@ use crate::element::Element;
 use crate::errors::RenderError;
 use crate::node::{calculate_object_fit_rect, parse_easing};
 use crate::types::ObjectFit;
-use skia_safe::{Canvas, ClipOp, Color4f, Data, Image, Paint, Rect};
+use skia_safe::{Canvas, ClipOp, Color4f, Data, Image, Paint, Rect, RRect};
 use std::any::Any;
 use taffy::style::Style;
 
@@ -15,6 +15,7 @@ pub struct ImageNode {
     pub opacity: Animated<f32>,
     pub style: Style,
     pub object_fit: ObjectFit,
+    pub border_radius: Animated<f32>,
 }
 
 impl ImageNode {
@@ -25,6 +26,7 @@ impl ImageNode {
             opacity: Animated::new(1.0),
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
+            border_radius: Animated::new(0.0),
         }
     }
 
@@ -34,6 +36,7 @@ impl ImageNode {
             opacity: Animated::new(1.0),
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
+            border_radius: Animated::new(0.0),
         }
     }
 }
@@ -60,6 +63,7 @@ impl Element for ImageNode {
 
     fn update(&mut self, time: f64) -> bool {
         self.opacity.update(time);
+        self.border_radius.update(time);
         true
     }
 
@@ -88,7 +92,11 @@ impl Element for ImageNode {
             );
 
             canvas.save();
-            if self.object_fit == ObjectFit::Cover {
+            let radius = self.border_radius.current_value;
+            if radius > 0.0 {
+                let rrect = RRect::new_rect_xy(&rect, radius, radius);
+                canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+            } else if self.object_fit == ObjectFit::Cover {
                 canvas.clip_rect(rect, ClipOp::Intersect, true);
             }
             canvas.draw_image_rect_with_sampling_options(img, None, draw_rect, sampling, &paint);
@@ -107,8 +115,10 @@ impl Element for ImageNode {
         easing: &str,
     ) {
         let ease_fn = parse_easing(easing);
-        if property == "opacity" {
-            self.opacity.add_segment(start, target, duration, ease_fn);
+        match property {
+            "opacity" => self.opacity.add_segment(start, target, duration, ease_fn),
+            "border_radius" => self.border_radius.add_segment(start, target, duration, ease_fn),
+            _ => {}
         }
     }
 
@@ -119,12 +129,22 @@ impl Element for ImageNode {
         target: f32,
         config: crate::animation::SpringConfig,
     ) {
-        if property == "opacity" {
-            if let Some(s) = start {
-                self.opacity.add_spring_with_start(s, target, config);
-            } else {
-                self.opacity.add_spring(target, config);
+        match property {
+            "opacity" => {
+                if let Some(s) = start {
+                    self.opacity.add_spring_with_start(s, target, config);
+                } else {
+                    self.opacity.add_spring(target, config);
+                }
             }
+            "border_radius" => {
+                if let Some(s) = start {
+                    self.border_radius.add_spring_with_start(s, target, config);
+                } else {
+                    self.border_radius.add_spring(target, config);
+                }
+            }
+            _ => {}
         }
     }
 }
