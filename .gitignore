@@ -14,3 +14,5 @@ NUL
 .env
 repomix-output.xml
 .grits/grits.db
+
+vendor/

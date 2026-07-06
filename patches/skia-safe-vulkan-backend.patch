@@ -1,0 +1,18 @@
+--- a/src/gpu/vk/vulkan_backend_context.rs
++++ b/src/gpu/vk/vulkan_backend_context.rs
+@@ -147,10 +147,9 @@ impl BackendContext<'_> {
+ 
+ struct EndResolving {}
+ 
+ impl Drop for EndResolving {
+     fn drop(&mut self) {
+-        // Original: clears THREAD_LOCAL_GET_PROC here, but Skia calls
+-        // get_proc lazily during flush/readback after this guard is gone.
+-        // This causes STATUS_ACCESS_VIOLATION across the FFI boundary.
+-        THREAD_LOCAL_GET_PROC.with(|get_proc| { *get_proc.borrow_mut() = None; });
++        // Keep the thread-local resolver alive for lazy Vulkan function
++        // resolution (readback, flush, etc.). The closure was leaked
++        // to static lifetime, so the pointer stays valid.
+     }
+ }
+ 
