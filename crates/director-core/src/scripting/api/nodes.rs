@@ -1624,6 +1624,7 @@ fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Vec<
                                 text: word_text,
                                 start_sec: w_start,
                                 end_sec: w_end,
+                                display_line_idx: words.len(),
                             });
                         }
                     }
@@ -1665,14 +1666,6 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
             node.style.spoken_color = col;
         }
     }
-    if let Some(c) = props.get("background_color").and_then(|v| v.clone().into_string().ok()) {
-        if let Some(col) = parse_hex_color(&c) {
-            node.style.background_color = col;
-        }
-    }
-    if let Some(p) = props.get("background_padding").and_then(|v| v.as_float().ok()) {
-        node.style.background_padding = p as f32;
-    }
     if let Some(p) = props.get("caption_position").and_then(|v| v.clone().into_string().ok()) {
         node.style.position = CaptionPosition::from_str(&p);
     }
@@ -1696,20 +1689,11 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     if let Some(s) = props.get("line_spacing").and_then(|v| v.as_float().ok()) {
         node.style.line_spacing = s as f32;
     }
-    if let Some(d) = props.get("word_transition_duration").and_then(|v| v.as_float().ok()) {
-        node.style.word_transition_duration = d;
+    if let Some(d) = props.get("color_transition_duration").and_then(|v| v.as_float().ok()) {
+        node.style.color_transition_duration = d;
     }
-    if let Some(d) = props.get("scale_transition_duration").and_then(|v| v.as_float().ok()) {
-        node.style.scale_transition_duration = d;
-    }
-    if let Some(d) = props.get("fade_in_duration").and_then(|v| v.as_float().ok()) {
-        node.style.fade_in_duration = d;
-    }
-    if let Some(d) = props.get("fade_out_duration").and_then(|v| v.as_float().ok()) {
-        node.style.fade_out_duration = d;
-    }
-    if let Some(s) = props.get("active_scale").and_then(|v| v.as_float().ok()) {
-        node.style.active_scale = s as f32;
+    if let Some(s) = props.get("color_pulse_amplitude").and_then(|v| v.as_float().ok()) {
+        node.style.color_pulse_amplitude = s as f32;
     }
     if let Some(o) = props.get("future_opacity").and_then(|v| v.as_float().ok()) {
         node.style.future_opacity = o as f32;
@@ -1720,7 +1704,23 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     if let Some(o) = props.get("active_opacity").and_then(|v| v.as_float().ok()) {
         node.style.active_opacity = o as f32;
     }
-    // Shadow / outline
+    // Glow
+    if let Some(v) = props.get("glow_enabled").and_then(|v| v.as_bool().ok()) {
+        node.style.glow_enabled = v;
+    }
+    if let Some(v) = props.get("glow_blur").and_then(|v| v.as_float().ok()) {
+        node.style.glow_blur = v as f32;
+    }
+    if let Some(v) = props.get("glow_pulse_amplitude").and_then(|v| v.as_float().ok()) {
+        node.style.glow_pulse_amplitude = v as f32;
+    }
+    if let Some(v) = props.get("glow_pulse_hz").and_then(|v| v.as_float().ok()) {
+        node.style.glow_pulse_hz = v as f32;
+    }
+    if let Some(d) = props.get("entry_glow_ramp").and_then(|v| v.as_float().ok()) {
+        node.style.entry_glow_ramp = d;
+    }
+    // Shadow
     if let Some(v) = props.get("text_shadow_enabled").and_then(|v| v.as_bool().ok()) {
         node.style.text_shadow_enabled = v;
     }

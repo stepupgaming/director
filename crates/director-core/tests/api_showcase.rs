@@ -399,10 +399,9 @@ fn caption_renders_visible_pixels() {
     let mut caption = CaptionNode::new(lines, font_collection);
     caption.style.font_size = 48.0;
     caption.style.color = Color::new(1.0, 0.0, 0.0, 1.0);
-    caption.style.background_color = Color::new(1.0, 1.0, 0.0, 1.0);
     caption.style.position = CaptionPosition::Bottom;
     caption.style.bottom_margin = 40.0;
-    caption.style.background_padding = 12.0;
+    caption.style.glow_enabled = true;
     caption.style_cache.position = Position::Absolute;
     caption.style_cache.inset.bottom = LengthPercentage::length(0.0).into();
     caption.style_cache.inset.left = LengthPercentage::length(0.0).into();
