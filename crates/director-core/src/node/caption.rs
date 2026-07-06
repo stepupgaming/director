@@ -199,6 +199,31 @@ impl CaptionNode {
             .collect()
     }
 
+    /// Cubic-bezier "ease out back" overshoot easing. Returns a value above
+    /// 1.0 mid-curve which gives an elastic bounce. Clamps to [0, 1+overshoot].
+    fn ease_out_back(t: f32) -> f32 {
+        let c1 = 1.70158_f32;
+        let c3 = c1 + 1.0;
+        let x = t.clamp(0.0, 1.0);
+        1.0 + c3 * (x - 1.0).powi(3) + c1 * (x - 1.0).powi(2)
+    }
+
+    /// Continuous y-offset applied to a paragraph that contains the active
+    /// word, simulating a kinetic "lift" so the line breathes in/out.
+    fn line_kinetic_lift(&self, line: &CaptionLine, time: f64) -> f32 {
+        let any_active = line
+            .words
+            .iter()
+            .any(|w| time >= w.start_sec && time < w.end_sec);
+        if !any_active {
+            return 0.0;
+        }
+        let freq = 1.4_f64;
+        let amp = 2.5_f32;
+        let phase = (time - line.start_sec) * freq * std::f64::consts::TAU;
+        (phase.sin() as f32) * amp
+    }
+
     fn build_base_paragraph_style(&self) -> ParagraphStyle {
         let mut ps = ParagraphStyle::new();
         ps.set_text_align(self.style.text_align);
@@ -220,7 +245,10 @@ impl CaptionNode {
     }
 
     /// Compute the per-word visual state at `time`. Includes smooth color
-    /// and scale transitions across word boundaries.
+    /// and scale transitions across word boundaries, plus continuous organic
+    /// motion (heartbeat wobble + color shimmer + opacity pulse) while the
+    /// word is the active one. The continuous motion is what makes the
+    /// caption look animated rather than a slideshow.
     fn compute_word_state(
         &self,
         word: &CaptionWord,
@@ -237,8 +265,8 @@ impl CaptionNode {
         let is_past = time >= end;
         let is_future = time < start;
 
-        // Color state: future=base, active=highlight, past=spoken
-        let color = if is_future {
+        // ── Color: smooth transition on enter/exit + active shimmer ──
+        let base_color = if is_future {
             self.style.color
         } else if is_past {
             let transition = (word_dur * 0.3).min(t_dur).max(0.001);
@@ -249,42 +277,64 @@ impl CaptionNode {
                 self.style.spoken_color
             }
         } else {
-            let enter_transition = (word_dur * 0.35).min(t_dur).max(0.001);
-            if time < start + enter_transition {
-                let p = ((time - start) / enter_transition) as f32;
+            let enter_t = (word_dur * 0.35).min(t_dur).max(0.001);
+            if time < start + enter_t {
+                let p = ((time - start) / enter_t) as f32;
                 Color::ease(self.style.color, self.style.highlight_color, p.clamp(0.0, 1.0))
             } else {
                 self.style.highlight_color
             }
         };
 
-        // Scale state: triangular ramp up at start, ramp down at end
-        let scale = if is_future {
-            1.0
-        } else if is_past {
-            1.0
-        } else if time < start + s_dur {
-            let p = ((time - start) / s_dur) as f32;
-            1.0 + (peak - 1.0) * p.clamp(0.0, 1.0).min(1.0)
-        } else if time > end - s_dur {
-            let p = ((end - time) / s_dur) as f32;
-            1.0 + (peak - 1.0) * p.clamp(0.0, 1.0)
+        // Active-only shimmer: pulse 0..0.12 toward white at ~1.5Hz so the
+        // active word visibly breathes in/out across frames.
+        let color = if is_active {
+            let shimmer = ((time * 1.5 * std::f64::consts::TAU).sin().max(0.0)) as f32 * 0.12;
+            Color::ease(base_color, Color::WHITE, shimmer)
         } else {
-            peak
+            base_color
         };
 
-        let opacity = if is_future {
+        // ── Scale: bouncy ease-out-back overshoot + heartbeat wobble ──
+        let s_enter = s_dur.min(word_dur * 0.5);
+        let s_exit = s_dur.min(word_dur * 0.5);
+
+        let scale = if is_future || is_past {
+            1.0
+        } else if time < start + s_enter {
+            let p = ((time - start) / s_enter) as f32;
+            1.0 + (peak - 1.0) * Self::ease_out_back(p)
+        } else if time >= end - s_exit {
+            let p = ((end - time) / s_exit.max(0.001)) as f32;
+            1.0 + (peak - 1.0) * Self::ease_out_back(p)
+        } else {
+            // Plateau: peak with a continuous ~2.5Hz heartbeat wobble.
+            // Amplitude = 30% of (peak - 1). The scale visibly oscillates
+            // between adjacent 30fps frames so motion is observable.
+            let wobble_amp = (peak - 1.0).max(0.0) * 0.30;
+            let wobble = ((time * 2.5 * std::f64::consts::TAU).sin()) as f32 * wobble_amp;
+            peak + wobble
+        };
+
+        // ── Opacity ─────────────────────────────────────────────
+        let base_opacity = if is_future {
             self.style.future_opacity
         } else if is_past {
             self.style.spoken_opacity
         } else {
             self.style.active_opacity
         };
+        let opacity = if is_active {
+            let pulse = ((time * 2.0 * std::f64::consts::TAU).sin()) as f32 * 0.05;
+            (base_opacity + pulse).clamp(0.5, 1.0)
+        } else {
+            base_opacity.clamp(0.0, 1.0)
+        };
 
         WordVisualState {
             color,
             font_size: self.style.font_size * scale,
-            opacity: opacity.clamp(0.0, 1.0),
+            opacity,
             is_active,
         }
     }
@@ -372,10 +422,13 @@ impl CaptionNode {
     }
 
     /// Build a per-word TextStyle. Adds shadow/outline as configured, and
-    /// applies per-word color and font_size.
+    /// applies per-word color and font_size. Outline thickness and shadow
+    /// opacity pulse continuously while the word is active so the outline
+    /// visibly breathes frame-by-frame.
     fn make_word_text_style(
         &self,
         state: &WordVisualState,
+        time: f64,
         shadow_color_override: Option<Color>,
     ) -> TextStyle {
         let mut ts = TextStyle::new();
@@ -395,10 +448,27 @@ impl CaptionNode {
         paint.set_anti_alias(true);
         ts.set_foreground_paint(&paint);
 
+        // Active-only outline/thickness pulse: outline thickness multiplies
+        // by (1 + 0.30 * sin) so the outline visibly grows/shrinks between
+        // adjacent frames, complementing the scale wobble.
+        let outline_pulse = if state.is_active {
+            1.0 + ((time * 3.5 * std::f64::consts::TAU).sin()) as f32 * 0.30
+        } else {
+            1.0
+        };
+
+        // Shadow alpha pulse: shadow color alpha multiplies by (1 + 0.18 *
+        // sin) so the drop shadow visibly breathes.
+        let shadow_alpha_pulse = if state.is_active {
+            1.0 + ((time * 4.2 * std::f64::consts::TAU).sin()) as f32 * 0.18
+        } else {
+            1.0
+        };
+
         // Shadow for legibility on varied backgrounds
         if self.style.text_shadow_enabled {
             let mut sc = shadow_color_override.unwrap_or(self.style.text_shadow_color);
-            sc.a *= state.opacity;
+            sc.a *= state.opacity * shadow_alpha_pulse.clamp(0.0, 1.5);
             let shadow = TextShadow::new(
                 sc.to_skia(),
                 Point::new(
@@ -412,9 +482,9 @@ impl CaptionNode {
 
         // Outline: 8-direction fake-outline for maximum legibility
         if self.style.outline_enabled {
-            let r = self.style.outline_thickness;
+            let r = self.style.outline_thickness * outline_pulse;
             let mut sc = shadow_color_override.unwrap_or(self.style.text_shadow_color);
-            sc.a *= state.opacity;
+            sc.a *= state.opacity * shadow_alpha_pulse.clamp(0.0, 1.5);
             let offsets = [
                 (r, 0.0),
                 (-r, 0.0),
@@ -465,7 +535,7 @@ impl CaptionNode {
         let word_count = line.words.len();
         for (i, word) in line.words.iter().enumerate() {
             let state = self.compute_word_state(word, time);
-            let ts = self.make_word_text_style(&state, shadow_override);
+            let ts = self.make_word_text_style(&state, time, shadow_override);
             builder.push_style(&ts);
             builder.add_text(&word.text);
             builder.pop();
@@ -803,26 +873,28 @@ impl Element for CaptionNode {
         canvas.clip_rect(rect, skia_safe::ClipOp::Intersect, true);
 
         let mut current_y = text_origin_y;
-        for (para, line_opacity) in &paragraphs {
+        for ((para, line_opacity), line) in paragraphs.iter().zip(active.iter()) {
+            let lift = self.line_kinetic_lift(line, current_time);
+            let y_for_paint = current_y + lift;
             let para_opacity = effective_opacity * line_opacity;
             if para_opacity < 0.99 {
                 let mut text_paint = Paint::default();
                 text_paint.set_alpha_f(para_opacity);
                 let layer_bounds = Rect::from_xywh(
                     text_x,
-                    current_y,
+                    y_for_paint - 6.0,
                     rect.width(),
-                    para.height() + self.style.line_spacing + 4.0,
+                    para.height() + self.style.line_spacing + 12.0,
                 );
                 canvas.save_layer(
                     &skia_safe::canvas::SaveLayerRec::default()
                         .bounds(&layer_bounds)
                         .paint(&text_paint),
                 );
-                para.paint(canvas, (text_x, current_y));
+                para.paint(canvas, (text_x, y_for_paint));
                 canvas.restore();
             } else {
-                para.paint(canvas, (text_x, current_y));
+                para.paint(canvas, (text_x, y_for_paint));
             }
             current_y += para.height() + self.style.line_spacing;
         }
@@ -1229,7 +1301,8 @@ mod tests {
         let active = node.compute_word_state(word, word.start_sec + 0.4);
         let spoken = node.compute_word_state(word, word.end_sec + 1.0);
         assert!((future.opacity - 0.7).abs() < 0.01);
-        assert!((active.opacity - 1.0).abs() < 0.01);
+        // Active opacity oscillates around 1.0 (continuous pulse for motion)
+        assert!(active.opacity > 0.95 && active.opacity <= 1.0);
         assert!((spoken.opacity - 0.4).abs() < 0.01);
     }
 
@@ -1244,5 +1317,139 @@ mod tests {
         assert!(node.style.text_shadow_enabled);
         // Default active scale > 1
         assert!(node.style.active_scale > 1.0);
+    }
+
+    /// Active scale wobble: at successive moments within the same active
+    /// period, the active scale MUST differ by more than zero (continuous
+    /// motion). Without this, the caption looks like still frames.
+    #[test]
+    fn test_active_scale_wobbles_continuously() {
+        let mut line = CaptionLine {
+            text: "alpha beta".to_string(),
+            words: Vec::new(),
+            start_sec: 0.0,
+            end_sec: 4.0,
+        };
+        auto_time_words(&mut line);
+        let fc = Arc::new(Mutex::new(skia_safe::textlayout::FontCollection::new()));
+        let mut node = CaptionNode::new(vec![line], fc);
+        node.style.active_scale = 1.2;
+        node.style.scale_transition_duration = 0.2;
+        let word = &node.lines[0].words[0];
+
+        // Sample at the middle of the active plateau (well past entry ramp).
+        // At 2.5Hz wobble, sampling 33ms apart (one frame at 30fps) should
+        // produce scale values differing by at least 0.005.
+        let s1 = node.compute_word_state(word, word.start_sec + 0.8).font_size;
+        let s2 = node.compute_word_state(word, word.start_sec + 0.83).font_size;
+        let s3 = node.compute_word_state(word, word.start_sec + 0.86).font_size;
+        let max = s1.max(s2).max(s3);
+        let min = s1.min(s2).min(s3);
+        assert!(
+            (max - min).abs() > 0.005,
+            "active scale must wobble continuously; got s1={s1}, s2={s2}, s3={s3}",
+        );
+    }
+
+    /// Color shimmer: while active, the color must change between frames so
+    /// the active word visibly pulses.
+    #[test]
+    fn test_active_color_shimmers() {
+        let mut line = CaptionLine {
+            text: "alpha beta".to_string(),
+            words: Vec::new(),
+            start_sec: 0.0,
+            end_sec: 4.0,
+        };
+        auto_time_words(&mut line);
+        let fc = Arc::new(Mutex::new(skia_safe::textlayout::FontCollection::new()));
+        let mut node = CaptionNode::new(vec![line], fc);
+        node.style.color = Color::new(1.0, 1.0, 1.0, 1.0);
+        node.style.highlight_color = Color::new(1.0, 0.84, 0.04, 1.0);
+        let word = &node.lines[0].words[0];
+
+        let c1 = node.compute_word_state(word, word.start_sec + 0.8).color;
+        let c2 = node.compute_word_state(word, word.start_sec + 1.0).color;
+        let max_r = c1.r.max(c2.r);
+        let min_r = c1.r.min(c2.r);
+        let max_g = c1.g.max(c2.g);
+        let min_g = c1.g.min(c2.g);
+        assert!(
+            (max_r - min_r).abs() > 0.005 || (max_g - min_g).abs() > 0.005,
+            "active color must shimmer; got c1=({:.3},{:.3},{:.3})  c2=({:.3},{:.3},{:.3})",
+            c1.r, c1.g, c1.b, c2.r, c2.g, c2.b,
+        );
+    }
+
+    /// Line kinetic lift: lines containing the active word MUST have a
+    /// non-zero vertical offset at some moment and zero otherwise.
+    #[test]
+    fn test_line_kinetic_lift_applies_when_active() {
+        let fc = Arc::new(Mutex::new(skia_safe::textlayout::FontCollection::new()));
+        let mut line = CaptionLine {
+            text: "alpha".to_string(),
+            words: vec![CaptionWord {
+                text: "alpha".to_string(),
+                start_sec: 0.0,
+                end_sec: 2.0,
+            }],
+            start_sec: 0.0,
+            end_sec: 2.0,
+        };
+        line.words = vec![CaptionWord {
+            text: "alpha".to_string(),
+            start_sec: 0.0,
+            end_sec: 2.0,
+        }];
+        let node = CaptionNode::new(vec![line], fc);
+
+        // Pre-active: lift = 0
+        let pre = node.line_kinetic_lift(&node.lines[0], -1.0);
+        assert_eq!(pre, 0.0);
+        // Post-active: lift = 0
+        let post = node.line_kinetic_lift(&node.lines[0], 3.0);
+        assert_eq!(post, 0.0);
+        // During active: lift is non-zero at some point and oscillates
+        let mut saw_nonzero = false;
+        let mut saw_positive = false;
+        let mut saw_negative = false;
+        let mut saw_same_after_change = false;
+        let mut prev = 0.0;
+        for k in 0..120 {
+            let t = (k as f64) / 60.0; // 0..2s with 60 samples/sec
+            let v = node.line_kinetic_lift(&node.lines[0], t);
+            if v.abs() > 0.01 {
+                saw_nonzero = true;
+            }
+            if v > 0.5 {
+                saw_positive = true;
+            }
+            if v < -0.5 {
+                saw_negative = true;
+            }
+            if k > 0 && (v - prev).abs() > 0.05 {
+                saw_same_after_change = true;
+            }
+            prev = v;
+        }
+        assert!(saw_nonzero, "kinetic lift should be non-zero during active");
+        assert!(saw_positive && saw_negative, "kinetic lift should oscillate both directions");
+        assert!(saw_same_after_change, "kinetic lift should differ between samples");
+    }
+
+    /// ease_out_back should overshoot 1.0 at some point so the active
+    /// word visibly bounces past its target scale on entry.
+    #[test]
+    fn test_ease_out_back_overshoots_one() {
+        // Sample many points to find max
+        let mut max_over = 0.0f32;
+        for k in 0..100 {
+            let t = k as f32 / 100.0;
+            let v = CaptionNode::ease_out_back(t);
+            if v > max_over {
+                max_over = v;
+            }
+        }
+        assert!(max_over > 1.0, "ease_out_back must overshoot 1.0; max was {}", max_over);
     }
 }
