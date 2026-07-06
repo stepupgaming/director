@@ -1692,35 +1692,21 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     if let Some(d) = props.get("color_transition_duration").and_then(|v| v.as_float().ok()) {
         node.style.color_transition_duration = d;
     }
-    if let Some(s) = props.get("color_pulse_amplitude").and_then(|v| v.as_float().ok()) {
-        node.style.color_pulse_amplitude = s as f32;
-    }
     if let Some(o) = props.get("future_opacity").and_then(|v| v.as_float().ok()) {
         node.style.future_opacity = o as f32;
     }
     if let Some(o) = props.get("spoken_opacity").and_then(|v| v.as_float().ok()) {
-        node.style.spoken_opacity = o as f32;
+        node.style.spoken_color_opacity = o as f32;
     }
     if let Some(o) = props.get("active_opacity").and_then(|v| v.as_float().ok()) {
         node.style.active_opacity = o as f32;
     }
-    // Glow
     if let Some(v) = props.get("glow_enabled").and_then(|v| v.as_bool().ok()) {
         node.style.glow_enabled = v;
     }
     if let Some(v) = props.get("glow_blur").and_then(|v| v.as_float().ok()) {
-        node.style.glow_blur = v as f32;
+        node.style.glow_blur_radius = v as f32;
     }
-    if let Some(v) = props.get("glow_pulse_amplitude").and_then(|v| v.as_float().ok()) {
-        node.style.glow_pulse_amplitude = v as f32;
-    }
-    if let Some(v) = props.get("glow_pulse_hz").and_then(|v| v.as_float().ok()) {
-        node.style.glow_pulse_hz = v as f32;
-    }
-    if let Some(d) = props.get("entry_glow_ramp").and_then(|v| v.as_float().ok()) {
-        node.style.entry_glow_ramp = d;
-    }
-    // Shadow
     if let Some(v) = props.get("text_shadow_enabled").and_then(|v| v.as_bool().ok()) {
         node.style.text_shadow_enabled = v;
     }
@@ -1738,11 +1724,23 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     if let Some(v) = props.get("text_shadow_offset_y").and_then(|v| v.as_float().ok()) {
         node.style.text_shadow_offset_y = v as f32;
     }
-    if let Some(v) = props.get("outline_enabled").and_then(|v| v.as_bool().ok()) {
-        node.style.outline_enabled = v;
+    if let Some(v) = props.get("active_pop_scale").and_then(|v| v.as_float().ok()) {
+        node.style.active_pop_scale = (v as f32).clamp(1.0, 1.10);
     }
-    if let Some(v) = props.get("outline_thickness").and_then(|v| v.as_float().ok()) {
-        node.style.outline_thickness = v as f32;
+    if let Some(d) = props.get("active_pop_duration").and_then(|v| v.as_float().ok()) {
+        node.style.active_pop_duration = (d as f64).clamp(0.05, 0.15);
+    }
+    if let Some(v) = props.get("line_reveal_offset_1").and_then(|v| v.as_float().ok()) {
+        let f = v as f32;
+        if node.style.line_reveal_offsets.len() >= 2 {
+            node.style.line_reveal_offsets[1] = f;
+        }
+    }
+    if let Some(v) = props.get("line_reveal_duration_1").and_then(|v| v.as_float().ok()) {
+        let d = v as f32;
+        if node.style.line_reveal_durations.len() >= 2 {
+            node.style.line_reveal_durations[1] = d;
+        }
     }
     if let Some(v) = props.get("auto_adapt_shadow").and_then(|v| v.as_bool().ok()) {
         node.style.auto_adapt_shadow = v;

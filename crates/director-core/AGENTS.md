@@ -1,53 +1,141 @@
-# Purpose
+# Caption system — Discord-style kinetic captions for short-form video
 
-- Own Director's main engine: scene graph, node model, layout, rendering, animation, scripting, assets, audio, video export, and visual tests.
+Each caption cue is a pre-laid-out, structurally stable text block.
+Highlighting the active word never moves any other word; no per-line
+reflows when a second line enters; exactly one global active word.
 
-## Ownership
+## Architecture
 
-- `src/director.rs`, `scene.rs`, and `element.rs` own timeline and scene graph coordination.
-- `src/node/` owns node implementations.
-- `src/scripting/` owns Rhai types, helpers, and API registration.
-- `src/systems/` owns renderer, layout, transitions, and asset systems.
-- `src/export/` owns export surfaces.
-- `tests/` owns integration, scripting, visual, fixture, and snapshot coverage for engine behavior. Visual tests live in `tests/visual/` and are aggregated by `tests/visual_suite.rs`; a bundled Roboto font in `crates/director-core/assets/fonts/` ensures deterministic text rendering across platforms.
+* `CaptionNode { lines: Vec<CaptionLine>, ... }` — a node renders a
+  sequence of SRT-style caption cues.
+* `CaptionLine { text, words, start_sec, end_sec }` — one cue. Words
+  carry `display_line_idx` so `\n` in cue text maps to separate
+  paragraphs.
+* `CaptionWord { text, start_sec, end_sec, display_line_idx }` — one
+  word. Per-cue word timing implicit (auto-timed) or explicit.
+* `CaptionStyle` — visible defaults and motion configuration.
+* `compute_slot_assignments()` — pre-laid Y-slot allocation per cue.
+  Permanent for the lifetime of the cue. Adding/removing cues never
+  moves an existing cue.
+* Per-display-line `Paragraph` — each line is its own Skia Paragraph,
+  laid out with **uniform `font_size`**. Every TextStyle run on a single
+  paragraph shares the same font size, so glyph metrics never vary
+  across active / future / spoken states.
+* `find_global_active()` — exactly one `(cue_idx, word_idx)` pair
+  at any time, picking the latest `start_sec`.
 
-## Local Contracts
+## Per-word visual state
 
-- Rhai-facing behavior is public product surface. Update examples, docs, generated truth, and agent API references when it changes.
-- The default render mode for 3-argument `new_director(width, height, fps)` is supplied by the caller that registers the Rhai API; preview surfaces use `Preview`, while CLI export uses `Export`.
-- Rendering and layout changes must account for visual snapshots and platform-specific outputs.
-- Media and export changes must preserve `mock_video` testability where tests or CI depend on it.
-- GPU acceleration (`--gpu` flag + `vulkan` feature) creates Vulkan-backed Skia surfaces in `render_export()` via `create_render_surface()` and `gpu::surfaces::render_target()`. The pixel readback uses `read_pixels()` with `flush_and_submit_surface()` for GPU surfaces and falls back to CPU raster when no Vulkan context is available.
-- SkSL shader effects live in `src/node/effect_shaders.rs` as builder functions that return `Option<ImageFilter>`. New shader-color-panels effects: Thermal, Liquid, Acid, Halftone, Ascii, Sketch, Mirror, TriTone, VHS, NeonEdge — all ported from GLSL to SkSL and registered in the Rhai effects API and capability registry.
-- Layout improvements closing the gap with Remotion: radial and conic gradients via `GradientType` enum on `GradientConfig`, backdrop blur (glassmorphism) via `save_layer` with `backdrop_layer_saved` flag for save/restore balance, stacked shadows via `BoxShadow` Vec on `BoxNode`, `aspect_ratio` exposed in layout style parsing, and Series/Sequence helper functions for sequential scene composition in `scripting/api/lifecycle.rs`.
-- HTTP data fetching (`fetch_text`, `fetch_json`) available in Rhai via `scripting/api/http.rs`, backed by `reqwest`. Enables live data, API integration, and web research as a first-class input path.
-- Audio-reactive spectrum visualizer (`SpectrumVisualizerNode`) in `node/spectrum_visualizer.rs` renders FFT-driven frequency bars. Bar heights are computed per-frame in `Director::update()` by downcasting to the node type, with configurable smoothing, position, and styling.
-- Caption system (`node/caption.rs`) provides SRT and WebVTT parsing, `CaptionNode` with **pre-laid-out, structurally stable text blocks**: every word's x position and baseline is fixed at layout time and never reflows when the active word highlights. Each cue is one Skia `Paragraph` with per-word `TextStyle` runs sharing a **uniform `font_size`** (only fill color / glow / opacity vary across words, never glyph metrics). `CaptionLine` holds split `words: Vec<CaptionWord>` with per-word timing via `auto_time_words()` (divides cue duration equally across the joined stream, or uses explicit timings). Each `CaptionWord` carries a `display_line_idx` so multi-line SRT text keeps its `\n` line breaks in the laid-out paragraph (the builder injects `\n` at display-line transitions and only emits spaces within the same display line). Three rendering colors: `color` (future words, default white), `highlight_color` (active word, default gold `#FFD60A`), `spoken_color` (already-spoken words, default `#E5E5E5`). **Active-word overlay** is drawn as part of the same paragraph run — only fill color, glow, and opacity change for the active word: highlight color, glow shadow (no offset, time-varying blur), color shimmer toward white at 1.5Hz up to 0.10, opacity micro-pulse at 2.4Hz ±0.04. **Pre-laid slot allocation** so adding/removing cues never reflows existing ones: `compute_slot_assignments()` walks cue start/end events in chronological order and assigns each new cue the earliest-free slot; slot indices are permanent for the lifetime of the cue. **Single global active word**: across all currently visible cues we pick the word with the latest `start_sec`; non-active words on the same cue render in dim future/spoken colors. **Line-level kinetic lift**: paragraphs containing any active word get a sub-pixel y bob ±2px at 1.4Hz so the line breathes; x stays stable. **Legibility for any background**: light drop shadow applied to every word (offset 0,2 by default). With `auto_adapt_shadow: true` (default), `Canvas::peek_pixels()` samples bg luminance under the caption rect and flips shadow between black/white so text stays readable on light or dark video. Outline is **opt-in** (defaults OFF) — when enabled it's a 4-direction 1.0px outline on non-active words only; the active word's glow replaces its purpose, so the outline doesn't dominate text. Rhai props: `color`, `highlight_color`, `spoken_color`, `line_spacing`, `caption_position`, `bottom_margin`, `top_margin`, `align`, `font_family`, `color_transition_duration`, `color_pulse_amplitude`, `future_opacity`, `spoken_opacity`, `active_opacity`, `glow_enabled`, `glow_blur`, `glow_pulse_amplitude`, `glow_pulse_hz`, `entry_glow_ramp`, `text_shadow_enabled`, `text_shadow_color`, `text_shadow_blur`, `text_shadow_offset_x`, `text_shadow_offset_y`, `outline_enabled`, `outline_thickness`, `auto_adapt_shadow`. Multi-line: handled inside a single cue via `\n` in cue text — words carry `display_line_idx` so the paragraph builder inserts `\n` between lines. Layout `measure()` reserves `max_overlapping_lines()` heights. Visual regression: `tests/visual/fixtures/captions/caption_word_highlight.rhai` captures at t=1,3,5,7s. Preview tool: `cargo run -p director-cli --bin preview_frame -- <script> -t <sec>`. Unit tests in `node/caption.rs` (16 tests covering SRT/VTT parsing, word auto-timing, active word detection, multi-line, max overlap, slot stability, exactly-one-active-global invariant, uniform font_size, default style config). Integration tests in `tests/api_showcase.rs` (`caption_basic`, `caption_renders_visible_pixels`).
+Each word paints with `compute_word_color(word, time, is_active)`,
+producing exactly one of:
 
-### Structural caption invariants (must hold at every frame)
+* **Active**: `highlight_color`. Renders with `text_shadow_color` and a
+  subtle `textShadow` glow at `glow_blur_radius` (default 4 px).
+* **Past**: `spoken_color` with `spoken_color_opacity` multiplier.
+  Snapped instantly at `word.end_sec` (no transition phase — see
+  "Boundary handling" below).
+* **Future**: `color` with `future_opacity` multiplier. Smooth ramp from
+  `color` to `highlight_color` over `color_transition_duration`
+  (default 0.10 s) in the entry window `[start - t_dur, start)`.
 
-- **Stable layout**: every word's x position and baseline is fixed at layout time and stays fixed for the cue's lifetime. No glyph reflow caused by highlighting the active word.
-- **Whitespace preserved**: inter-word spaces use the same `font_size` as the word (the space rune is included inside the word's `push_style` block via `format!("{} ", word.text)`).
-- **Display-line breaks preserved**: `\n` in cue text is injected as a real paragraph line break by the builder (spaces only between words on the same display line).
-- **Single global active word**: at most one word across all visible cues has the highlight treatment; selection is `latest start_sec wins`.
-- **Slot-stable blocks**: each cue is permanently assigned a stacked slot index before any rendering; adding/removing cues never moves existing cues.
-- **No font_size variation across words**: every `TextStyle` run uses `style.font_size`. Highlighting never enlarges glyphs.
-- **Continuous motion is overlay-only**: glow, color, opacity, drop shadow, and line-level y-lift all change without affecting layout glyph metrics.
+Plus a 4-direction font padding inside the per-word TextStyle push so
+inter-word spaces always advance by the same font_size as the words
+glyph.
 
-## Work Guidance
+## Active word emphasis (overlay, not layout)
 
-- Keep node-specific behavior in `src/node/` and shared orchestration in systems or scene/director modules.
-- Add or update tests near the behavior changed; use visual tests for user-visible rendering changes.
-- Avoid broad rewrites across scripting, rendering, and layout unless the feature actually crosses those layers.
-- GPU surface creation relies on `skia_safe::gpu::surfaces::render_target()` which is available in the base skia-safe crate without feature flags. The `vulkan` feature only controls context creation; fallback to raster is automatic.
-- `Canvas::new_surface()` or `Surface::new_surface()` should be preferred over `surfaces::raster()` in nodes that render to an existing canvas, as this preserves GPU compatibility.
+The active word gets a tiny **1.04 scale pop** at the moment of
+activation. The pop is implemented as a `canvas.scale(1.04, 1.04)`
+transform around the active word's center, applied with second
+Paragraph containing only the active word, painted AFTER the base
+paragraph. The base paragraph is not re-laid; the scale affects only
+the active word's overlay. Scale returns to 1.0 within
+`active_pop_duration` (0.08 s default) via `ease_out_quad`. Maximum
+`active_pop_scale` is clamped to 1.10 (TikTok/Reels-appropriate).
 
-## Verification
+**No continuous scale wobble. No kinetic lift. No ease_out_back
+overshoot. No per-word pulse.** Motion is limited to:
+1. Color entry ramp (100 ms).
+2. Active pop scale (1.04 → 1.0 over 80 ms).
+3. Per-display-line reveal (line 0 immediate, line 1 fades in via
+   `save_layer` opacity ramp).
 
-- Narrow: `cargo test -p director-core`
-- Visual: `cargo test --test visual_suite --no-default-features --features mock_video`
-- Workspace impact: `cargo check --workspace --all-targets`
+## Boundary handling — exactly one active word
 
-## Child DOX Index
+Past → spoken is **instantaneous** at `word.end_sec`. Past → spoken
+transition frames would create an additional yellow region when the
+next word starts a future→active entry, breaking the "exactly one
+active word" invariant. Test: `test_no_dual_yellow_at_word_boundary`.
 
-- No child AGENTS.md files currently required.
+## Two-line reserve
+
+Cues can contain `\n` (multi-line SRT text) or wrap their words into
+two display lines via the layout. Each cue's display lines render as
+separate paragraphs stacked at the cue's pre-laid slot.
+
+* **Line 0**: visible from `cue.start_sec` (instant reveal, 0.10 s ramp).
+* **Line 1+**: visible from `cue.start_sec + offset_frac * cue_duration`
+  (default 0.45) with `reveal_duration` (default 0.20 s) ease-out
+  ramp, applied via `save_layer` alpha on the line's bbox.
+
+When a cue enters or exits, the existing cue's lines never move.
+Slot Y is computed once from the cue's pre-laid layout dimensions.
+Consistent rendering across the entire cue lifetime.
+
+## Drop shadow + auto-adapt
+
+* All words carry a light drop shadow (offset `text_shadow_offset_x/y`,
+  default `(0, 2)`) for any-background legibility.
+* `auto_adapt_shadow` (default true) calls `Canvas::peek_pixels()` to
+  sample bg luminance under the caption rect (`lum > 0.55` → black
+  shadow; `lum < 0.40` → white shadow; mid → config-defaulted).
+
+## Rhai props
+
+* `font_size`, `color`, `highlight_color`, `spoken_color`
+* `bottom_margin`, `top_margin`, `caption_position`, `align`
+* `line_spacing`, `font_family`
+* `color_transition_duration` (default 0.10 s — entry ramp only)
+* `future_opacity` (0.92), `spoken_opacity` (mapped to
+  `spoken_color_opacity`, default 0.55), `active_opacity` (1.0)
+* `glow_enabled`, `glow_blur` (default 4.0 px) — subtle glow only on
+  active word
+* `active_pop_scale` (1.04, clamped to ≤ 1.10), `active_pop_duration`
+  (0.08 s)
+* `line_reveal_offset_1` (0.45), `line_reveal_duration_1` (0.20)
+* `text_shadow_enabled`, `text_shadow_color`, `text_shadow_blur`,
+  `text_shadow_offset_x`, `text_shadow_offset_y`
+* `auto_adapt_shadow`
+
+## Tests
+
+* SRT / VTT parsing — `test_parse_srt_*`, `test_parse_vtt_*`
+* Word auto-timing across `\n`-separated lines —
+  `test_word_display_assigns_line_idx`
+* `max_overlapping_lines` — `test_max_overlapping_lines*`
+* Slot stability — `test_slot_assignments_stable`
+* Single global active word — `test_single_global_active_word`,
+  `test_no_dual_yellow_at_word_boundary`
+* Uniform font size across states — `test_word_font_size_uniform`,
+  `test_no_ease_out_back_no_wobble_in_style`
+* Line reveal schedule — `test_line_reveal_factor_step`
+* Visual fixtures — `tests/visual/fixtures/captions/caption_word_highlight.rhai`
+* Integration: `caption_basic`, `caption_renders_visible_pixels`
+
+## Acceptance criteria
+
+Every invariant the user list demands is enforced here:
+
+* Each word uses uniform font_size, so glyph metrics never vary.
+* Inter-word spaces are part of the word's TextStyle push (this is
+  why "Wordbywordcaption" never happens).
+* Display-line breaks preserved via `\n` injection in the builder.
+* Single global active word (latest start_sec wins).
+* Past→spoken is instant at boundary (no dual-yellow frames).
+* Active pop is OVERLAY scale, never alters font_size on the base
+  paragraph.
+* Slot indices are permanent; adding/removing cues never moves
+  existing cues.
+* No continuous motion: no wobble, no pulse, no kinetic lift, no
+  ease_out_back overshoot.
+* Line reveal keeps geometry stable: only visual opacity ramps.
