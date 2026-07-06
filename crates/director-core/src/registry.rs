@@ -153,6 +153,13 @@ impl CapabilityRegistry {
                 animatable_properties: vec!["opacity"],
                 features: vec!["wgpu_gpu_compute"],
             },
+            NodeTypeInfo {
+                name: "Caption",
+                description: "Timed subtitle text with background pill styling",
+                supports_children: false,
+                animatable_properties: vec!["opacity", "font_size"],
+                features: vec!["srt_import", "vtt_import", "auto_caption"],
+            },
         ];
 
         for node in nodes {
@@ -272,6 +279,56 @@ impl CapabilityRegistry {
                 description: "Mirror symmetry segments",
                 params: vec![("segments", "f32")],
             },
+            EffectInfo {
+                name: "Thermal",
+                description: "Heat map color spectrum (luminance to blue/cyan/yellow/red/white)",
+                params: vec![],
+            },
+            EffectInfo {
+                name: "Liquid",
+                description: "Bidirectional sine/cosine coordinate warp",
+                params: vec![("frequency", "f32"), ("amplitude", "f32")],
+            },
+            EffectInfo {
+                name: "Acid",
+                description: "Fluorescent acid melt (wave distortion + color morph)",
+                params: vec![("color", "Color"), ("speed", "f32")],
+            },
+            EffectInfo {
+                name: "Halftone",
+                description: "Pop-art dot grid (luminance to dot size mapping)",
+                params: vec![("dot_size", "f32")],
+            },
+            EffectInfo {
+                name: "Ascii",
+                description: "Terminal ASCII art effect",
+                params: vec![("scale", "f32"), ("color", "Color")],
+            },
+            EffectInfo {
+                name: "Sketch",
+                description: "Charcoal pencil sketch (edge detection + hatching + paper texture)",
+                params: vec![("contrast", "f32")],
+            },
+            EffectInfo {
+                name: "Mirror",
+                description: "Quad-mirror symmetry (4-way reflection)",
+                params: vec![],
+            },
+            EffectInfo {
+                name: "TriTone",
+                description: "Three-color luminance grade with adjustable midpoint",
+                params: vec![("shadow", "Color"), ("mid", "Color"), ("highlight", "Color"), ("midpoint", "f32")],
+            },
+            EffectInfo {
+                name: "VHS",
+                description: "Combined CRT glitch (jitter + scanlines + noise + RGB shift)",
+                params: vec![("distortion", "f32"), ("scanline", "f32")],
+            },
+            EffectInfo {
+                name: "NeonEdge",
+                description: "Edge detect with configurable glow color and darkened background",
+                params: vec![("glow_color", "Color"), ("threshold", "f32")],
+            },
         ];
 
         for effect in effects {
@@ -320,6 +377,22 @@ impl CapabilityRegistry {
             TransitionInfo {
                 name: "Spiral",
                 description: "Spiral transition with configurable rotations",
+            },
+            TransitionInfo {
+                name: "Dissolve",
+                description: "Crossfade with slight blur for a dreamy dissolve",
+            },
+            TransitionInfo {
+                name: "Flip",
+                description: "3D card flip using scale_x perspective trick",
+            },
+            TransitionInfo {
+                name: "ClockWipe",
+                description: "Radial sweep from 12 o'clock position",
+            },
+            TransitionInfo {
+                name: "Cube",
+                description: "3D cube rotation between scenes",
             },
         ];
 

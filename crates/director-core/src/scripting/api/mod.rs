@@ -13,6 +13,7 @@
 pub mod animation;
 pub mod audio;
 pub mod effects;
+pub mod http;
 pub mod lifecycle;
 pub mod nodes;
 pub mod properties;
@@ -35,6 +36,7 @@ pub fn register_all_with_default_mode(
     animation::register(engine);
     audio::register(engine);
     effects::register(engine);
+    http::register(engine);
     properties::register(engine);
     templates::register(engine);
 }

@@ -77,6 +77,17 @@ pub struct ClipHandle {
     pub clip_idx: usize,
 }
 
+/// Handle to a Sequence builder for chaining scenes back-to-back.
+/// Mirrors Remotion's `<Series>` primitive.
+#[derive(Clone)]
+pub struct SequenceHandle {
+    pub director: Arc<Mutex<Director>>,
+    /// Current cursor time in seconds (where the next scene will start).
+    pub current_time: f64,
+}
+
+impl_lock_director!(SequenceHandle);
+
 impl_lock_director!(TrackHandle);
 
 impl_lock_director!(ClipHandle);

@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use taffy::prelude::*;
 use tracing::warn;
 
-use super::super::types::{ClipHandle, MovieHandle, SceneHandle, TrackHandle};
+use super::super::types::{ClipHandle, MovieHandle, SceneHandle, SequenceHandle, TrackHandle};
 use super::super::utils::parse_easing;
 
 /// Register lifecycle-related Rhai functions.
@@ -29,6 +29,162 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
         use rand::Rng;
         rand::thread_rng().gen_range(min..max)
     });
+
+    // ========== NOISE UTILITY ==========
+    // Simple 2D value noise for organic animation (mirrors Remotion's @remotion/noise)
+    engine.register_fn("noise2d", |x: f64, y: f64| -> f64 {
+        noise2d_impl(x, y)
+    });
+
+    // 3D noise (time-based: noise3d(x, y, t))
+    engine.register_fn("noise3d", |x: f64, y: f64, z: f64| -> f64 {
+        // Interpolate between 2D noise slices
+        let n1 = noise2d_impl(x, y + z * 17.0);
+        let n2 = noise2d_impl(x + z * 13.0, y);
+        (n1 + n2) / 2.0
+    });
+
+    // ========== INTERPOLATE COLORS UTILITY ==========
+    // Maps progress (0..1) to a color between two hex colors
+    engine.register_fn("interpolate_color", |from: &str, to: &str, progress: f64| -> String {
+        let c1 = crate::scripting::utils::parse_hex_color(from);
+        let c2 = crate::scripting::utils::parse_hex_color(to);
+        if let (Some(a), Some(b)) = (c1, c2) {
+            let t = progress.clamp(0.0, 1.0) as f32;
+            let mixed = crate::types::Color::new(
+                a.r + (b.r - a.r) * t,
+                a.g + (b.g - a.g) * t,
+                a.b + (b.b - a.b) * t,
+                a.a + (b.a - a.a) * t,
+            );
+            format!("#{:02x}{:02x}{:02x}{:02x}",
+                (mixed.r * 255.0) as u8,
+                (mixed.g * 255.0) as u8,
+                (mixed.b * 255.0) as u8,
+                (mixed.a * 255.0) as u8)
+        } else {
+            from.to_string()
+        }
+    });
+
+    // ========== MEASURE TEXT UTILITY ==========
+    // Returns the approximate width of text in pixels for a given font size
+    engine.register_fn("measure_text", |text: &str, font_size: f64| -> f64 {
+        // Approximate: average character width is ~0.5 * font_size for most fonts
+        let char_count = text.chars().count() as f64;
+        char_count * font_size * 0.5
+    });
+
+    // ========== LOOP SCENE PRIMITIVE ==========
+    // Repeat a scene's content N times by creating N copies on the timeline
+    engine.register_fn("add_loop", |movie: &mut MovieHandle, scene: SceneHandle, count: i64| {
+        let mut d = match movie.lock_director() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        let n = count.max(1) as usize;
+        let scene_duration = scene.duration;
+        let root_id = scene.root_id;
+        let start = scene.start_time + scene_duration;
+        for i in 1..n {
+            let item = TimelineItem {
+                scene_root: root_id,
+                name: Some(format!("loop_{}", i)),
+                start_time: start + (i as f64) * scene_duration,
+                duration: scene_duration,
+                z_index: 0,
+                audio_tracks: Vec::new(),
+            };
+            d.timeline.push(item);
+        }
+    });
+
+    // ========== FREEZE SCENE PRIMITIVE ==========
+    // Create a frozen hold of a scene at a specific time point
+    engine.register_fn("add_freeze", |movie: &mut MovieHandle, scene: SceneHandle, freeze_at: f64, hold_duration: f64| {
+        let mut d = match movie.lock_director() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        // Create a new timeline item that references the same scene root
+        // but has a start_offset so it renders frozen at `freeze_at`
+        let freeze_start = scene.start_time + scene.duration;
+        let item = TimelineItem {
+            scene_root: scene.root_id,
+            name: Some("freeze".to_string()),
+            start_time: freeze_start,
+            duration: hold_duration,
+            z_index: 0,
+            audio_tracks: Vec::new(),
+        };
+        d.timeline.push(item);
+        // Note: The scene will render at its natural time; for true frame freezing
+        // the renderer would need a freeze_time field. This creates a hold frame
+        // by reusing the scene's last rendered state.
+        let _ = freeze_at; // Mark as used — future: pass to renderer as freeze_time
+    });
+
+    // ========== SERIES / SEQUENCE HELPERS ==========
+    // These mirror Remotion's <Series> and <Sequence> primitives for
+    // sequential scene building without manual start-time bookkeeping.
+
+    /// `add_sequence(movie, duration)` — creates a scene and returns a SequenceHandle.
+    /// Use `sequence.next(duration)` to chain scenes back-to-back.
+    engine.register_type_with_name::<super::super::types::SequenceHandle>("Sequence");
+
+    engine.register_fn(
+        "add_sequence",
+        |movie: &mut MovieHandle| -> super::super::types::SequenceHandle {
+            super::super::types::SequenceHandle {
+                director: movie.director.clone(),
+                current_time: 0.0,
+            }
+        },
+    );
+
+    /// `sequence.next(duration)` — adds a scene at the current sequence time,
+    /// then advances the cursor by `duration`. Returns a SceneHandle.
+    engine.register_fn(
+        "next",
+        |seq: &mut super::super::types::SequenceHandle,
+         duration: f64|
+         -> Result<SceneHandle, Box<rhai::EvalAltResult>> {
+            let scene = add_scene_internal_at(seq, duration);
+            seq.current_time += duration;
+            Ok(scene)
+        },
+    );
+
+    /// `sequence.next_with_overlap(duration, overlap)` — adds a scene but
+    /// only advances the cursor by `duration - overlap` (for transitions).
+    engine.register_fn(
+        "next_with_overlap",
+        |seq: &mut super::super::types::SequenceHandle,
+         duration: f64,
+         overlap: f64|
+         -> Result<SceneHandle, Box<rhai::EvalAltResult>> {
+            let scene = add_scene_internal_at(seq, duration);
+            seq.current_time += (duration - overlap).max(0.0);
+            Ok(scene)
+        },
+    );
+
+    /// `sequence.skip(duration)` — advances the cursor without adding a scene
+    /// (creates a gap/blank period in the timeline).
+    engine.register_fn(
+        "skip",
+        |seq: &mut super::super::types::SequenceHandle, duration: f64| {
+            seq.current_time += duration;
+        },
+    );
+
+    /// `sequence.current_time()` — returns the current cursor position.
+    engine.register_fn(
+        "current_time",
+        |seq: &mut super::super::types::SequenceHandle| -> f64 {
+            seq.current_time
+        },
+    );
 
     // 1. Director/Movie
     engine.register_type_with_name::<MovieHandle>("Movie");
@@ -477,6 +633,78 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     );
 }
 
+/// Helper: 2D value noise implementation (used by noise2d and noise3d Rhai functions).
+fn noise2d_impl(x: f64, y: f64) -> f64 {
+    let ix = x.floor() as i32;
+    let iy = y.floor() as i32;
+    let fx = x - x.floor();
+    let fy = y - y.floor();
+    let smooth = |t: f64| t * t * (3.0 - 2.0 * t);
+    let hash = |i: i32, j: i32| -> f64 {
+        let n = (i.wrapping_mul(374761393).wrapping_add(j.wrapping_mul(668265263))) as u32;
+        let n = (n ^ (n >> 13)).wrapping_mul(1274126177);
+        ((n ^ (n >> 16)) as f64) / (u32::MAX as f64) * 2.0 - 1.0
+    };
+    let a = hash(ix, iy);
+    let b = hash(ix + 1, iy);
+    let c = hash(ix, iy + 1);
+    let d = hash(ix + 1, iy + 1);
+    let sx = smooth(fx);
+    let sy = smooth(fy);
+    let ab = a + (b - a) * sx;
+    let cd = c + (d - c) * sx;
+    ab + (cd - ab) * sy
+}
+
+/// Add a scene at a specific start time (used by Sequence builder).
+fn add_scene_internal_at(
+    seq: &SequenceHandle,
+    duration: f64,
+) -> SceneHandle {
+    let mut d = match seq.lock_director() {
+        Ok(d) => d,
+        Err(_) => return SceneHandle {
+            director: seq.director.clone(),
+            root_id: 0,
+            start_time: 0.0,
+            duration: 0.0,
+            audio_tracks: Vec::new(),
+        },
+    };
+    let track_idx = d.default_track_idx;
+    let start_time = seq.current_time;
+
+    let mut root = BoxNode::new();
+    root.style.size = taffy::geometry::Size {
+        width: Dimension::percent(1.0),
+        height: Dimension::percent(1.0),
+    };
+    let id = d.scene.add_node(Box::new(root));
+
+    let clip = TrackClip::new(id, start_time, duration);
+    if track_idx < d.tracks.len() {
+        d.tracks[track_idx].clips.push(clip);
+    }
+
+    let item = TimelineItem {
+        scene_root: id,
+        name: None,
+        start_time,
+        duration,
+        z_index: 0,
+        audio_tracks: Vec::new(),
+    };
+    d.timeline.push(item);
+
+    SceneHandle {
+        director: seq.director.clone(),
+        root_id: id,
+        start_time,
+        duration,
+        audio_tracks: Vec::new(),
+    }
+}
+
 fn add_scene_internal(
     movie: &mut MovieHandle,
     duration: f64,
@@ -578,6 +806,10 @@ fn add_transition_internal(
         "cross_zoom" | "cross-zoom" | "crosszoom" => TransitionType::CrossZoom,
         "wind" => TransitionType::Wind,
         "burn" => TransitionType::Burn,
+        "dissolve" => TransitionType::Dissolve,
+        "flip" => TransitionType::Flip,
+        "clock_wipe" | "clock-wipe" | "clockwipe" => TransitionType::ClockWipe,
+        "cube" => TransitionType::Cube,
         _ => TransitionType::Fade,
     };
     add_transition_with_kind(movie, from, to, duration, easing_str, kind);

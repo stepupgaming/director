@@ -124,7 +124,9 @@ impl Element for CompositionNode {
                 AlphaType::Premul,
                 Some(skia_safe::ColorSpace::new_srgb()),
             );
-            *surface_opt = skia_safe::surfaces::raster(&info, None, None);
+            *surface_opt = canvas
+                .new_surface(&info, None)
+                .or_else(|| skia_safe::surfaces::raster(&info, None, None));
         }
 
         if let Some(surface) = surface_opt.as_mut() {

@@ -2,7 +2,6 @@
 //!
 //! Handles visual output via Skia.
 //!
-// TODO: Enable GPU-accelerated rendering and hardware video encoding for V1.
 // TODO: Re-enable Rayon for parallel node updates and rendering.
 //!
 //! ## Responsibilities
@@ -116,13 +115,19 @@ pub fn render_recursive(
             }
         };
 
-        // Check if we need a save layer for blending or masking
-        let need_layer =
-            node.mask_node.is_some() || node.blend_mode != skia_safe::BlendMode::SrcOver;
+        // Check if we need a save layer for blending, masking, or filters
+        let need_layer = node.mask_node.is_some()
+            || node.blend_mode != skia_safe::BlendMode::SrcOver
+            || node.filter.has_effects();
 
         let result = if need_layer {
             let mut paint = skia_safe::Paint::default();
             paint.set_blend_mode(node.blend_mode);
+
+            // Apply CSS-like image filters (blur, brightness, contrast, saturation, hue-rotate)
+            if let Some(filter) = node.filter.to_image_filter() {
+                paint.set_image_filter(filter);
+            }
 
             // Create an isolated layer.
             canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&paint));

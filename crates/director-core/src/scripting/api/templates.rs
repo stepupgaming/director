@@ -32,7 +32,7 @@
 
 use crate::animation::Animated;
 use crate::element::{TextFit, TextSpan};
-use crate::node::{BoxNode, ImageNode, TextNode};
+use crate::node::{BoxNode, ImageNode, SpectrumVisualizerNode, TextNode};
 use crate::scripting::types::{NodeHandle, SceneHandle};
 use crate::scripting::utils::{parse_hex_color, parse_layout_style, parse_object_fit};
 use crate::types::Color;
@@ -118,6 +118,20 @@ pub fn register(engine: &mut Engine) {
             build_social_handle_overlay(scene, &props)
         },
     );
+
+    engine.register_fn(
+        "add_counter",
+        |scene: &mut SceneHandle, props: rhai::Map| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            build_counter(scene, &props)
+        },
+    );
+
+    engine.register_fn(
+        "add_waveform_visualizer",
+        |scene: &mut SceneHandle, props: rhai::Map| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            build_waveform_visualizer(scene, &props)
+        },
+    );
 }
 
 // ============================================================================
@@ -137,6 +151,8 @@ fn make_text_node(d: &mut crate::director::Director, text: &str, color: Option<C
         stroke_width: None,
         stroke_color: None,
         fill_gradient: None,
+        letter_spacing: None,
+        line_height: None,
     };
     let mut node = TextNode::new(vec![span], d.assets.font_collection.clone());
     node.default_font_size = Animated::new(size);
@@ -194,6 +210,33 @@ fn attach_child(
 
 fn to_eval_err(e: String) -> Box<rhai::EvalAltResult> {
     e.into()
+}
+
+fn attach_image_or_placeholder(
+    scene: &mut crate::scene::SceneGraph,
+    parent_id: usize,
+    image: Option<skia_safe::Image>,
+    size: Size<Dimension>,
+    object_fit: crate::types::ObjectFit,
+    fallback_color: Color,
+    opacity: Option<f32>,
+) -> Result<(), String> {
+    if let Some(img_data) = image {
+        let mut img = ImageNode::from_image(Some(img_data));
+        img.style.size = size;
+        img.object_fit = object_fit;
+        if let Some(op) = opacity {
+            img.opacity = Animated::new(op);
+        }
+        let img_id = scene.add_node(Box::new(img));
+        attach_child(scene, parent_id, img_id)?;
+    } else {
+        let mut placeholder = make_box_node(Some(fallback_color));
+        placeholder.style.size = size;
+        let ph_id = scene.add_node(Box::new(placeholder));
+        attach_child(scene, parent_id, ph_id)?;
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -301,6 +344,189 @@ fn build_title_card(
         let sub_id = d.scene.add_node(Box::new(sub_node));
         attach_child(&mut d.scene, root_id, sub_id).map_err(to_eval_err)?;
     }
+
+    Ok(NodeHandle {
+        director: scene.director.clone(),
+        id: root_id,
+    })
+}
+
+// ============================================================================
+// Counter / Number Ticker
+// ============================================================================
+
+fn build_counter(
+    scene: &mut SceneHandle,
+    props: &rhai::Map,
+) -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+    let mut d = scene.lock_director()?;
+
+    let start = props.get("start").and_then(|v| v.as_float().ok()).unwrap_or(0.0) as f32;
+    let end = props.get("end").and_then(|v| v.as_float().ok()).unwrap_or(100.0) as f32;
+    let duration = props.get("duration").and_then(|v| v.as_float().ok()).unwrap_or(2.0) as f64;
+    let decimals = props.get("decimals").and_then(|v| v.as_int().ok()).unwrap_or(0) as usize;
+    let prefix = props.get("prefix").map(|v| v.to_string()).unwrap_or_default();
+    let suffix = props.get("suffix").map(|v| v.to_string()).unwrap_or_default();
+    let thousands_sep = props
+        .get("thousands_sep")
+        .and_then(|v| v.as_bool().ok())
+        .unwrap_or(false);
+    let text_color = props
+        .get("text_color")
+        .and_then(|v| v.clone().into_string().ok())
+        .and_then(|s| parse_hex_color(&s))
+        .unwrap_or(Color::new(1.0, 1.0, 1.0, 1.0));
+    let font_size = props
+        .get("font_size")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(72.0) as f32;
+    let font_family = props.get("font_family").and_then(|v| v.clone().into_string().ok());
+    let easing = props
+        .get("easing")
+        .and_then(|v| v.clone().into_string().ok())
+        .unwrap_or_else(|| "ease_out".to_string());
+
+    // Create root box
+    let mut root = make_box_node(None);
+    root.style.position = taffy::style::Position::Absolute;
+    root.style.inset = Rect {
+        left: LengthPercentageAuto::length(0.0),
+        right: LengthPercentageAuto::length(0.0),
+        top: LengthPercentageAuto::length(0.0),
+        bottom: LengthPercentageAuto::length(0.0),
+    };
+    root.style.size = Size {
+        width: Dimension::percent(1.0),
+        height: Dimension::percent(1.0),
+    };
+    root.style.flex_direction = FlexDirection::Column;
+    root.style.align_items = Some(AlignItems::Center);
+    root.style.justify_content = Some(JustifyContent::Center);
+
+    let root_id = d.scene.add_node(Box::new(root));
+    if !d.scene.try_add_child(scene.root_id, root_id) {
+        d.scene.destroy_node(root_id);
+        return Err("Failed to attach counter to scene".into());
+    }
+    set_root_z_index(&mut d.scene, root_id, props);
+
+    // Build counter config first so we can format the initial text correctly
+    let counter_cfg = crate::node::text::CounterConfig {
+        decimals,
+        prefix,
+        suffix,
+        thousands_sep,
+    };
+
+    // Create text node with the fully formatted initial value
+    let initial_text = counter_cfg.format_value(start);
+    let mut text_node = make_text_node(&mut d, &initial_text, Some(text_color), font_size, Some(800), font_family);
+    text_node.style.size = Size {
+        width: Dimension::auto(),
+        height: Dimension::auto(),
+    };
+    let text_id = d.scene.add_node(Box::new(text_node));
+    attach_child(&mut d.scene, root_id, text_id).map_err(to_eval_err)?;
+
+    // Configure counter animation on the text node: per-frame interpolation
+    // of the numeric value with the given formatting, easing, and duration.
+    if let Some(node) = d.scene.get_node_mut(text_id) {
+        if let Some(text_node) = node.element.as_any_mut().downcast_mut::<TextNode>() {
+            text_node.counter = Some(counter_cfg);
+            text_node.counter_value = crate::animation::Animated::new(start);
+            let ease_fn = crate::node::parse_easing(&easing);
+            text_node.counter_value.add_segment(start, end, duration, ease_fn);
+        }
+    }
+
+    Ok(NodeHandle {
+        director: scene.director.clone(),
+        id: root_id,
+    })
+}
+
+// ============================================================================
+// Audio Waveform Visualizer
+// ============================================================================
+
+fn build_waveform_visualizer(
+    scene: &mut SceneHandle,
+    props: &rhai::Map,
+) -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+    let mut d = scene.lock_director()?;
+
+    let bar_count = props.get("bars").and_then(|v| v.as_int().ok()).unwrap_or(32) as usize;
+    let bar_color = props
+        .get("bar_color")
+        .and_then(|v| v.clone().into_string().ok())
+        .and_then(|s| parse_hex_color(&s))
+        .unwrap_or(Color::new(0.3, 0.7, 1.0, 1.0));
+    let bar_gap = props
+        .get("gap")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(4.0) as f32;
+    let max_height_pct = props
+        .get("max_height")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(80.0) as f32 / 100.0;
+    let min_height_pct = props
+        .get("min_height")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(2.0) as f32 / 100.0;
+    let position = props
+        .get("position")
+        .and_then(|v| v.clone().into_string().ok())
+        .unwrap_or_else(|| "bottom".to_string());
+    let track_id = props
+        .get("track_id")
+        .and_then(|v| v.as_int().ok())
+        .unwrap_or(0) as usize;
+    let smoothing = props
+        .get("smoothing")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(0.6) as f32;
+    let border_radius = props
+        .get("border_radius")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(2.0) as f32;
+
+    let mut visualizer = SpectrumVisualizerNode::new(
+        track_id,
+        bar_count.max(1),
+        bar_color,
+        bar_gap,
+        smoothing,
+        position,
+        min_height_pct,
+        max_height_pct,
+        border_radius,
+    );
+
+    // Position the visualizer within the scene
+    visualizer.style.position = taffy::style::Position::Absolute;
+    visualizer.style.inset = Rect {
+        left: LengthPercentageAuto::length(0.0),
+        right: LengthPercentageAuto::length(0.0),
+        top: LengthPercentageAuto::length(0.0),
+        bottom: LengthPercentageAuto::length(0.0),
+    };
+    visualizer.style.size = Size {
+        width: Dimension::percent(1.0),
+        height: Dimension::percent(1.0),
+    };
+    visualizer.style.padding = Rect {
+        left: LengthPercentage::length(40.0),
+        right: LengthPercentage::length(40.0),
+        top: LengthPercentage::length(40.0),
+        bottom: LengthPercentage::length(40.0),
+    };
+
+    let root_id = d.scene.add_node(Box::new(visualizer));
+    if !d.scene.try_add_child(scene.root_id, root_id) {
+        d.scene.destroy_node(root_id);
+        return Err("Failed to attach waveform visualizer to scene".into());
+    }
+    set_root_z_index(&mut d.scene, root_id, props);
 
     Ok(NodeHandle {
         director: scene.director.clone(),
@@ -491,14 +717,19 @@ fn build_split_screen(
 
     if let Some(path) = left_path {
         let image = d.assets.load_image(&path);
-        let mut img = ImageNode::from_image(image);
-        img.style.size = Size {
-            width: Dimension::percent(1.0),
-            height: Dimension::percent(1.0),
-        };
-        img.object_fit = parse_object_fit("cover").unwrap_or(crate::types::ObjectFit::Cover);
-        let img_id = d.scene.add_node(Box::new(img));
-        attach_child(&mut d.scene, left_id, img_id).map_err(to_eval_err)?;
+        let fallback_color = left_color.unwrap_or(Color::new(0.2, 0.2, 0.3, 1.0));
+        attach_image_or_placeholder(
+            &mut d.scene,
+            left_id,
+            image,
+            Size {
+                width: Dimension::percent(1.0),
+                height: Dimension::percent(1.0),
+            },
+            crate::types::ObjectFit::Cover,
+            fallback_color,
+            None,
+        ).map_err(to_eval_err)?;
     }
 
     let mut right_panel = make_box_node(right_color);
@@ -513,14 +744,19 @@ fn build_split_screen(
 
     if let Some(path) = right_path {
         let image = d.assets.load_image(&path);
-        let mut img = ImageNode::from_image(image);
-        img.style.size = Size {
-            width: Dimension::percent(1.0),
-            height: Dimension::percent(1.0),
-        };
-        img.object_fit = parse_object_fit("cover").unwrap_or(crate::types::ObjectFit::Cover);
-        let img_id = d.scene.add_node(Box::new(img));
-        attach_child(&mut d.scene, right_id, img_id).map_err(to_eval_err)?;
+        let fallback_color = right_color.unwrap_or(Color::new(0.2, 0.2, 0.3, 1.0));
+        attach_image_or_placeholder(
+            &mut d.scene,
+            right_id,
+            image,
+            Size {
+                width: Dimension::percent(1.0),
+                height: Dimension::percent(1.0),
+            },
+            crate::types::ObjectFit::Cover,
+            fallback_color,
+            None,
+        ).map_err(to_eval_err)?;
     }
 
     Ok(NodeHandle {
@@ -592,14 +828,18 @@ fn build_reaction_overlay(
 
     if let Some(path) = main_path {
         let image = d.assets.load_image(&path);
-        let mut img = ImageNode::from_image(image);
-        img.style.size = Size {
-            width: Dimension::percent(1.0),
-            height: Dimension::percent(1.0),
-        };
-        img.object_fit = parse_object_fit("cover").unwrap_or(crate::types::ObjectFit::Cover);
-        let img_id = d.scene.add_node(Box::new(img));
-        attach_child(&mut d.scene, root_id, img_id).map_err(to_eval_err)?;
+        attach_image_or_placeholder(
+            &mut d.scene,
+            root_id,
+            image,
+            Size {
+                width: Dimension::percent(1.0),
+                height: Dimension::percent(1.0),
+            },
+            crate::types::ObjectFit::Cover,
+            Color::new(0.15, 0.15, 0.25, 1.0),
+            None,
+        ).map_err(to_eval_err)?;
     } else {
         // Fallback: solid background when no main image provided
         let mut placeholder = make_box_node(Some(Color::new(0.15, 0.15, 0.25, 1.0)));
@@ -647,14 +887,18 @@ fn build_reaction_overlay(
 
     if let Some(path) = facecam_path {
         let image = d.assets.load_image(&path);
-        let mut img = ImageNode::from_image(image);
-        img.style.size = Size {
-            width: Dimension::percent(1.0),
-            height: Dimension::percent(1.0),
-        };
-        img.object_fit = parse_object_fit("cover").unwrap_or(crate::types::ObjectFit::Cover);
-        let img_id = d.scene.add_node(Box::new(img));
-        attach_child(&mut d.scene, fc_id, img_id).map_err(to_eval_err)?;
+        attach_image_or_placeholder(
+            &mut d.scene,
+            fc_id,
+            image,
+            Size {
+                width: Dimension::percent(1.0),
+                height: Dimension::percent(1.0),
+            },
+            crate::types::ObjectFit::Cover,
+            Color::new(0.3, 0.3, 0.5, 1.0),
+            None,
+        ).map_err(to_eval_err)?;
     } else {
         // Fallback: colored placeholder when no facecam image
         let mut placeholder = make_box_node(Some(Color::new(0.3, 0.3, 0.5, 1.0)));
@@ -772,14 +1016,19 @@ fn build_bento_grid(
 
             if let Some(path) = item_image {
                 let image = d.assets.load_image(&path);
-                let mut img = ImageNode::from_image(image);
-                img.style.size = Size {
-                    width: Dimension::percent(1.0),
-                    height: Dimension::percent(1.0),
-                };
-                img.object_fit = parse_object_fit("cover").unwrap_or(crate::types::ObjectFit::Cover);
-                let img_id = d.scene.add_node(Box::new(img));
-                attach_child(&mut d.scene, cell_id, img_id).map_err(to_eval_err)?;
+                let fallback_color = item_bg.unwrap_or(Color::new(0.2, 0.2, 0.3, 1.0));
+                attach_image_or_placeholder(
+                    &mut d.scene,
+                    cell_id,
+                    image,
+                    Size {
+                        width: Dimension::percent(1.0),
+                        height: Dimension::percent(1.0),
+                    },
+                    crate::types::ObjectFit::Cover,
+                    fallback_color,
+                    None,
+                ).map_err(to_eval_err)?;
             }
 
             if let Some(text) = item_text {
@@ -1562,19 +1811,22 @@ fn build_watermark(
 
     if let Some(path) = image_path {
         let image = d.assets.load_image(&path);
-        let mut img = ImageNode::from_image(image);
-        img.opacity = Animated::new(opacity);
         let size = props
             .get("size")
             .and_then(|v| v.as_float().ok())
             .unwrap_or(48.0) as f32;
-        img.style.size = Size {
-            width: Dimension::length(size),
-            height: Dimension::length(size),
-        };
-        img.object_fit = parse_object_fit("contain").unwrap_or(crate::types::ObjectFit::Contain);
-        let img_id = d.scene.add_node(Box::new(img));
-        attach_child(&mut d.scene, root_id, img_id).map_err(to_eval_err)?;
+        attach_image_or_placeholder(
+            &mut d.scene,
+            root_id,
+            image,
+            Size {
+                width: Dimension::length(size),
+                height: Dimension::length(size),
+            },
+            crate::types::ObjectFit::Contain,
+            Color::new(0.3, 0.3, 0.5, 1.0),
+            Some(opacity),
+        ).map_err(to_eval_err)?;
     } else if let Some(text_content) = text {
         let mut text_color = props
             .get("color")
@@ -1600,3 +1852,4 @@ fn build_watermark(
         id: root_id,
     })
 }
+

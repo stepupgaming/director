@@ -19,6 +19,11 @@ Reference scripts demonstrating the Rhai API. All examples are validated by the 
 | [shaders_gallery.rhai](features/shaders_gallery.rhai) | Extended shader/effect library (warp, swirl, ripple, glass, shake, duotone, posterize, threshold, scanlines, glitch, edge_detect, zoom_blur, kaleidoscope) |
 | [masking.rhai](features/masking.rhai) | Alpha masking and blend modes |
 | [transitions.rhai](features/transitions.rhai) | Scene transitions (fade, slide, wipe) |
+| [new_transitions.rhai](features/new_transitions.rhai) | New transitions (dissolve, flip, clock_wipe, cube) |
+| [new_templates.rhai](features/new_templates.rhai) | Counter ticker, waveform visualizer, loop, freeze |
+| [text_and_shapes.rhai](features/text_and_shapes.rhai) | Typography utilities, clip-path polygons, color interpolation, noise |
+| [http_fetching.rhai](features/http_fetching.rhai) | Live HTTP/JSON data fetching inside scripts (web research) |
+| [audio_spectrum_visualizer.rhai](features/audio_spectrum_visualizer.rhai) | FFT-driven audio-reactive spectrum bar visualizer |
 | [z_index.rhai](features/z_index.rhai) | Z-index ordering with absolute positioning |
 | [image.rhai](features/image.rhai) | Image loading and animation |
 

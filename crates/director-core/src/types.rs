@@ -16,7 +16,7 @@ use crate::animation::Animated;
 use keyframe::CanTween;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use skia_safe::{Color4f, Path, PathMeasure, Point};
+use skia_safe::{Color4f, ImageFilter, Path, PathMeasure, Point, TileMode};
 
 /// Specifies how the content of a replaceable element (img, video) should
 /// be resized to fit its container.
@@ -349,7 +349,205 @@ impl CanTween for Color {
     }
 }
 
-/// Configuration for a linear gradient fill.
+/// CSS-like image filter configuration applied to a node during rendering.
+///
+/// Filters are applied via `canvas.save_layer()` so they affect the entire
+/// subtree (element + children), matching CSS `filter` semantics.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FilterConfig {
+    /// Gaussian blur sigma (0.0 = no blur).
+    pub blur: f32,
+    /// Brightness multiplier (1.0 = unchanged, 0.0 = black, >1.0 = brighter).
+    pub brightness: f32,
+    /// Contrast multiplier (1.0 = unchanged, 0.0 = gray).
+    pub contrast: f32,
+    /// Saturation multiplier (1.0 = unchanged, 0.0 = grayscale).
+    pub saturation: f32,
+    /// Hue rotation in degrees (0.0 = unchanged).
+    pub hue_rotate: f32,
+}
+
+impl Default for FilterConfig {
+    fn default() -> Self {
+        Self {
+            blur: 0.0,
+            brightness: 1.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            hue_rotate: 0.0,
+        }
+    }
+}
+
+impl FilterConfig {
+    /// Returns true if any filter effect is active.
+    pub fn has_effects(&self) -> bool {
+        self.blur > 0.0
+            || self.brightness != 1.0
+            || self.contrast != 1.0
+            || self.saturation != 1.0
+            || self.hue_rotate != 0.0
+    }
+
+    /// Builds a Skia `ImageFilter` chain from this configuration.
+    pub fn to_image_filter(&self) -> Option<ImageFilter> {
+        if !self.has_effects() {
+            return None;
+        }
+
+        // Build color filter matrix (combining brightness, contrast, saturation, hue-rotate)
+        let mut matrix = identity_color_matrix();
+
+        if self.brightness != 1.0 {
+            matrix = multiply_color_matrices(&brightness_matrix(self.brightness), &matrix);
+        }
+        if self.contrast != 1.0 {
+            matrix = multiply_color_matrices(&contrast_matrix(self.contrast), &matrix);
+        }
+        if self.saturation != 1.0 {
+            matrix = multiply_color_matrices(&saturation_matrix(self.saturation), &matrix);
+        }
+        if self.hue_rotate != 0.0 {
+            matrix = multiply_color_matrices(&hue_rotate_matrix(self.hue_rotate), &matrix);
+        }
+
+        let mut filter: Option<ImageFilter> = None;
+
+        // Apply color adjustments first
+        let cf = skia_safe::color_filters::matrix_row_major(&matrix, skia_safe::color_filters::Clamp::Yes);
+        filter = skia_safe::image_filters::color_filter(cf, filter, None);
+
+        // Then blur
+        if self.blur > 0.0 {
+            filter = skia_safe::image_filters::blur(
+                (self.blur, self.blur),
+                TileMode::Clamp,
+                filter,
+                None,
+            );
+        }
+
+        filter
+    }
+}
+
+/// Identity 4x5 color matrix (20 elements in row-major order).
+fn identity_color_matrix() -> [f32; 20] {
+    [
+        1.0, 0.0, 0.0, 0.0, 0.0, // R
+        0.0, 1.0, 0.0, 0.0, 0.0, // G
+        0.0, 0.0, 1.0, 0.0, 0.0, // B
+        0.0, 0.0, 0.0, 1.0, 0.0, // A
+    ]
+}
+
+/// Brightness matrix: scales R, G, B channels.
+fn brightness_matrix(v: f32) -> [f32; 20] {
+    [
+        v, 0.0, 0.0, 0.0, 0.0, // R
+        0.0, v, 0.0, 0.0, 0.0, // G
+        0.0, 0.0, v, 0.0, 0.0, // B
+        0.0, 0.0, 0.0, 1.0, 0.0, // A
+    ]
+}
+
+/// Contrast matrix: scales around 0.5.
+fn contrast_matrix(v: f32) -> [f32; 20] {
+    let t = 0.5 * (1.0 - v);
+    [
+        v, 0.0, 0.0, 0.0, t, // R
+        0.0, v, 0.0, 0.0, t, // G
+        0.0, 0.0, v, 0.0, t, // B
+        0.0, 0.0, 0.0, 1.0, 0.0, // A
+    ]
+}
+
+/// Saturation matrix: desaturates toward luminance.
+fn saturation_matrix(v: f32) -> [f32; 20] {
+    let lr = 0.2126;
+    let lg = 0.7152;
+    let lb = 0.0722;
+    let iv = 1.0 - v;
+    [
+        lr * iv + v, lg * iv, lb * iv, 0.0, 0.0, // R
+        lr * iv, lg * iv + v, lb * iv, 0.0, 0.0, // G
+        lr * iv, lg * iv, lb * iv + v, 0.0, 0.0, // B
+        0.0, 0.0, 0.0, 1.0, 0.0, // A
+    ]
+}
+
+/// Hue rotation matrix (degrees).
+fn hue_rotate_matrix(degrees: f32) -> [f32; 20] {
+    let cos_h = degrees.to_radians().cos();
+    let sin_h = degrees.to_radians().sin();
+    let lr = 0.2126;
+    let lg = 0.7152;
+    let lb = 0.0722;
+
+    // Standard CSS hue-rotate matrix
+    [
+        lr + cos_h * (1.0 - lr) + sin_h * (-lr),
+        lg + cos_h * (-lg) + sin_h * (-lg),
+        lb + cos_h * (-lb) + sin_h * (1.0 - lb),
+        0.0,
+        0.0,
+        lr + cos_h * (-lr) + sin_h * 0.143,
+        lg + cos_h * (1.0 - lg) + sin_h * 0.140,
+        lb + cos_h * (-lb) + sin_h * (-0.283),
+        0.0,
+        0.0,
+        lr + cos_h * (-lr) + sin_h * (-(1.0 - lr)),
+        lg + cos_h * (-lg) + sin_h * lg,
+        lb + cos_h * (1.0 - lb) + sin_h * lb,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+    ]
+}
+
+/// Multiplies two 4x5 color matrices (A * B).
+fn multiply_color_matrices(a: &[f32; 20], b: &[f32; 20]) -> [f32; 20] {
+    let mut r = [0.0f32; 20];
+    for i in 0..4 {
+        for j in 0..4 {
+            let mut sum = 0.0f32;
+            for k in 0..4 {
+                sum += a[i * 5 + k] * b[k * 5 + j];
+            }
+            r[i * 5 + j] = sum;
+        }
+        // Translation column (column 4)
+        let mut sum = a[i * 5 + 4];
+        for k in 0..4 {
+            sum += a[i * 5 + k] * b[k * 5 + 4];
+        }
+        r[i * 5 + 4] = sum;
+    }
+    r
+}
+
+/// The type of gradient to render.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub enum GradientType {
+    /// Linear gradient from start point to end point.
+    Linear,
+    /// Radial gradient emanating from a center point.
+    Radial,
+    /// Conic (sweep) gradient rotating around a center point.
+    Conic,
+}
+
+impl Default for GradientType {
+    fn default() -> Self {
+        Self::Linear
+    }
+}
+
+/// Configuration for a gradient fill (linear, radial, or conic).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct GradientConfig {
     /// List of colors in the gradient.
@@ -360,6 +558,18 @@ pub struct GradientConfig {
     pub start: (f32, f32),
     /// End point of the gradient (Relative coordinates 0.0 to 1.0).
     pub end: (f32, f32),
+    /// Gradient type (linear, radial, conic).
+    #[serde(default)]
+    pub gradient_type: GradientType,
+    /// Center point for radial/conic gradients (Relative coordinates 0.0 to 1.0).
+    #[serde(default)]
+    pub center: (f32, f32),
+    /// Radius for radial gradients (relative to the shorter dimension, 0.0 to 1.0+).
+    #[serde(default)]
+    pub radius: f32,
+    /// Angle for conic gradients in degrees.
+    #[serde(default)]
+    pub angle: f32,
 }
 
 impl Default for GradientConfig {
@@ -369,6 +579,10 @@ impl Default for GradientConfig {
             positions: None,
             start: (0.0, 0.0),
             end: (0.0, 1.0), // Default Top-to-Bottom
+            gradient_type: GradientType::Linear,
+            center: (0.5, 0.5),
+            radius: 0.5,
+            angle: 0.0,
         }
     }
 }

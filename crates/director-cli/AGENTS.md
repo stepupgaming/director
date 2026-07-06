@@ -6,6 +6,7 @@
 
 - `src/main.rs` owns the `director-engine` render CLI.
 - `src/bin/review_visuals.rs` owns the visual review helper binary.
+- `src/bin/preview_frame.rs` owns the single-frame preview binary.
 - `README.md` owns CLI usage and exit-code documentation.
 
 ## Local Contracts

@@ -3,7 +3,7 @@ use crate::animation::Animated;
 use crate::element::Element;
 use crate::errors::RenderError;
 use crate::node::{build_effect_filter, parse_easing, EffectType};
-use crate::types::{Color, GradientConfig};
+use crate::types::{Color, GradientConfig, GradientType};
 use skia_safe::{Canvas, ClipOp, Paint, PaintStyle, Point, RRect, Rect, TileMode};
 use std::any::Any;
 use taffy::style::{AlignItems, FlexDirection, JustifyContent, Style};
@@ -11,7 +11,8 @@ use taffy::style::{AlignItems, FlexDirection, JustifyContent, Style};
 // --- Box Node ---
 /// A fundamental layout and styling block (div-like).
 ///
-/// Supports background color, borders, shadows, and rounded corners.
+/// Supports background color, borders, shadows, rounded corners, gradients,
+/// backdrop blur (glassmorphism), and multiple stacked shadows.
 #[derive(Debug, Clone)]
 pub struct BoxNode {
     pub style: Style,
@@ -28,6 +29,22 @@ pub struct BoxNode {
     pub border_color: Option<Animated<Color>>,
     pub bg_gradient: Option<GradientConfig>,
     pub overflow: String,
+    /// Backdrop blur radius for glassmorphism effect (blurs content behind this box).
+    pub backdrop_blur: Animated<f32>,
+    /// Additional stacked shadows for layered depth effects.
+    pub extra_shadows: Vec<BoxShadow>,
+    /// Optional clip-path polygon points (normalized 0..1) for non-rectangular clipping.
+    /// e.g. [[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]] creates a triangle clip.
+    pub clip_path: Option<Vec<(f32, f32)>>,
+}
+
+/// A single box shadow definition for stacked/multiple shadows.
+#[derive(Debug, Clone)]
+pub struct BoxShadow {
+    pub color: Animated<Color>,
+    pub blur: Animated<f32>,
+    pub offset_x: Animated<f32>,
+    pub offset_y: Animated<f32>,
 }
 
 impl BoxNode {
@@ -52,6 +69,9 @@ impl BoxNode {
             border_color: None,
             bg_gradient: None,
             overflow: "visible".to_string(),
+            backdrop_blur: Animated::new(0.0),
+            extra_shadows: Vec::new(),
+            clip_path: None,
         }
     }
 }
@@ -89,6 +109,13 @@ impl Element for BoxNode {
         self.shadow_offset_y.update(time);
         self.border_radius.update(time);
         self.border_width.update(time);
+        self.backdrop_blur.update(time);
+        for shadow in &mut self.extra_shadows {
+            shadow.color.update(time);
+            shadow.blur.update(time);
+            shadow.offset_x.update(time);
+            shadow.offset_y.update(time);
+        }
         changed
     }
 
@@ -109,6 +136,49 @@ impl Element for BoxNode {
             canvas.clip_rrect(rrect, ClipOp::Intersect, true);
         }
 
+        // Clip-path polygon: clip to a custom shape defined by normalized points
+        if let Some(points) = &self.clip_path {
+            if points.len() >= 3 {
+                let mut path = skia_safe::Path::new();
+                let first = points[0];
+                path.move_to(skia_safe::Point::new(
+                    rect.left + first.0 * rect.width(),
+                    rect.top + first.1 * rect.height(),
+                ));
+                for pt in points.iter().skip(1) {
+                    path.line_to(skia_safe::Point::new(
+                        rect.left + pt.0 * rect.width(),
+                        rect.top + pt.1 * rect.height(),
+                    ));
+                }
+                path.close();
+                canvas.clip_path(&path, ClipOp::Intersect, true);
+            }
+        }
+
+        // Backdrop blur (glassmorphism): blur the content behind this box.
+        // Uses a save layer with a backdrop image filter.
+        // Track whether we actually created the layer so restore() stays balanced.
+        let mut backdrop_layer_saved = false;
+        if self.backdrop_blur.current_value > 0.0 {
+            if let Some(backdrop_filter) = skia_safe::image_filters::blur(
+                (
+                    self.backdrop_blur.current_value,
+                    self.backdrop_blur.current_value,
+                ),
+                TileMode::Decal,
+                None,
+                None,
+            ) {
+                canvas.save_layer(
+                    &skia_safe::canvas::SaveLayerRec::default()
+                        .bounds(&rect)
+                        .backdrop(&backdrop_filter),
+                );
+                backdrop_layer_saved = true;
+            }
+        }
+
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
 
@@ -124,6 +194,15 @@ impl Element for BoxNode {
                 color: sc.clone(),
             });
         }
+        // Add extra stacked shadows
+        for shadow in &self.extra_shadows {
+            effects.push(EffectType::DropShadow {
+                blur: shadow.blur.clone(),
+                offset_x: shadow.offset_x.clone(),
+                offset_y: shadow.offset_y.clone(),
+                color: shadow.color.clone(),
+            });
+        }
 
         // BoxNode effects don't use RuntimeShader for now, so we pass dummy resolution/time
         // Or we could pass proper ones if we wanted to support shaders on BoxNode later.
@@ -136,22 +215,62 @@ impl Element for BoxNode {
         if let Some(gradient) = &self.bg_gradient {
             let skia_colors: Vec<skia_safe::Color> =
                 gradient.colors.iter().map(|c| c.to_skia()).collect();
-            let start = Point::new(
-                rect.left + gradient.start.0 * rect.width(),
-                rect.top + gradient.start.1 * rect.height(),
-            );
-            let end = Point::new(
-                rect.left + gradient.end.0 * rect.width(),
-                rect.top + gradient.end.1 * rect.height(),
-            );
-            if let Some(shader) = skia_safe::gradient_shader::linear(
-                (start, end),
-                skia_colors.as_slice(),
-                gradient.positions.as_deref(),
-                TileMode::Clamp,
-                None,
-                None,
-            ) {
+
+            let shader_opt = match gradient.gradient_type {
+                GradientType::Linear => {
+                    let start = Point::new(
+                        rect.left + gradient.start.0 * rect.width(),
+                        rect.top + gradient.start.1 * rect.height(),
+                    );
+                    let end = Point::new(
+                        rect.left + gradient.end.0 * rect.width(),
+                        rect.top + gradient.end.1 * rect.height(),
+                    );
+                    skia_safe::gradient_shader::linear(
+                        (start, end),
+                        skia_colors.as_slice(),
+                        gradient.positions.as_deref(),
+                        TileMode::Clamp,
+                        None,
+                        None,
+                    )
+                }
+                GradientType::Radial => {
+                    let center = Point::new(
+                        rect.left + gradient.center.0 * rect.width(),
+                        rect.top + gradient.center.1 * rect.height(),
+                    );
+                    // Radius relative to the shorter dimension
+                    let min_dim = rect.width().min(rect.height());
+                    let radius = gradient.radius * min_dim;
+                    skia_safe::gradient_shader::radial(
+                        center,
+                        radius.max(1.0),
+                        skia_colors.as_slice(),
+                        gradient.positions.as_deref(),
+                        TileMode::Clamp,
+                        None,
+                        None,
+                    )
+                }
+                GradientType::Conic => {
+                    let center = Point::new(
+                        rect.left + gradient.center.0 * rect.width(),
+                        rect.top + gradient.center.1 * rect.height(),
+                    );
+                    skia_safe::gradient_shader::sweep(
+                        center,
+                        skia_colors.as_slice(),
+                        gradient.positions.as_deref(),
+                        TileMode::Clamp,
+                        Some((gradient.angle, gradient.angle + 360.0)),
+                        None,
+                        None,
+                    )
+                }
+            };
+
+            if let Some(shader) = shader_opt {
                 let mut gradient_paint = Paint::default();
                 gradient_paint.set_anti_alias(true);
                 gradient_paint.set_shader(shader);
@@ -167,6 +286,11 @@ impl Element for BoxNode {
 
         // Draw children (clipped if overflow: hidden)
         draw_children(canvas);
+
+        // Restore backdrop blur save layer only if we actually created one
+        if backdrop_layer_saved {
+            canvas.restore();
+        }
 
         canvas.restore(); // Restore clip and transform (except we didn't transform here, but clip)
 
@@ -224,6 +348,9 @@ impl Element for BoxNode {
             "border_width" => self
                 .border_width
                 .add_segment(start, target, duration, ease_fn),
+            "backdrop_blur" => self
+                .backdrop_blur
+                .add_segment(start, target, duration, ease_fn),
             _ => {}
         }
     }
@@ -251,6 +378,7 @@ impl Element for BoxNode {
             "shadow_y" => apply(&mut self.shadow_offset_y),
             "border_radius" => apply(&mut self.border_radius),
             "border_width" => apply(&mut self.border_width),
+            "backdrop_blur" => apply(&mut self.backdrop_blur),
             _ => {}
         }
     }

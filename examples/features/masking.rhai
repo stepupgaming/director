@@ -28,7 +28,9 @@ let mask_container = root.add_box(#{
 let content = mask_container.add_box(#{
     width: 250.0,
     height: 250.0,
-    bg_color: "#ff6b6b"
+    bg_color: "#ff6b6b",
+    justify_content: "center",
+    align_items: "center"
 });
 
 // Circular mask

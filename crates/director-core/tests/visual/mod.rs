@@ -118,8 +118,11 @@ pub fn setup_test_director(width: u32, height: u32) -> Arc<Mutex<Director>> {
         Ok(bytes) => {
             let data = Data::new_copy(&bytes);
             if let Some(tf) = FontMgr::new().new_from_data(&data, 0) {
-                // Register as "Roboto" and also as default/fallback alias if desired
-                font_provider.register_typeface(tf, Some("Roboto"));
+                // Register under all fallback aliases for consistent behavior
+                // with the CLI path (Director::new() with None context).
+                font_provider.register_typeface(tf.clone(), Some("Roboto"));
+                font_provider.register_typeface(tf.clone(), Some("Sans Serif"));
+                font_provider.register_typeface(tf, Some("Arial"));
                 println!("Loaded bundled font: Roboto");
             } else {
                 eprintln!("Failed to create Typeface from bundled font data");
@@ -363,23 +366,10 @@ pub fn run_rhai_visual_fixture(script_path: &str, test_suite: &str) -> Result<()
         .eval::<director_core::scripting::MovieHandle>(&script)
         .map_err(|e| format!("Fixture {} failed to evaluate: {}", fixture_path.display(), e))?;
 
-    // Post-load bundled Roboto font so template snapshots use the same
-    // typeface as the Rust-driven visual tests.
-    {
-        let mut d = movie.director.lock().unwrap();
-        if let Ok(bytes) = loader.load_bytes("fonts/Roboto-Regular.ttf") {
-            let data = skia_safe::Data::new_copy(&bytes);
-            if let Some(tf) = skia_safe::FontMgr::new().new_from_data(&data, 0) {
-                let mut provider = skia_safe::textlayout::TypefaceFontProvider::new();
-                provider.register_typeface(tf, Some("Roboto"));
-                d.assets
-                    .font_collection
-                    .lock()
-                    .unwrap()
-                    .set_asset_font_manager(Some(provider.into()));
-            }
-        }
-    }
+    // Director::new() already loads the bundled Roboto font under "Roboto",
+    // "Sans Serif", and "Arial" aliases. No post-eval font replacement is
+    // needed here, and replacing would discard any aliases or fallback fonts
+    // registered during Director construction.
 
     let mut director = movie.director.lock().unwrap();
 

@@ -74,3 +74,8 @@ mod masking {
 mod shapes {
     include!("visual/shapes.rs");
 }
+
+#[cfg(test)]
+mod captions {
+    include!("visual/captions.rs");
+}

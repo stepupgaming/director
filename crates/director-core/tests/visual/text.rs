@@ -913,6 +913,7 @@ fn text_gradient() {
                 positions: None,
                 start: (0.0, 0.0),
                 end: (0.0, 1.0),
+                ..Default::default()
             }),
             ..Default::default()
         }];

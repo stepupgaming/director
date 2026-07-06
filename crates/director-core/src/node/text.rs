@@ -31,6 +31,47 @@ pub struct GlyphInfo {
     pub direction: TextDirection,
 }
 
+/// Configuration for a number counter that interpolates its text each frame.
+#[derive(Clone, Debug)]
+pub struct CounterConfig {
+    pub decimals: usize,
+    pub prefix: String,
+    pub suffix: String,
+    pub thousands_sep: bool,
+}
+
+impl CounterConfig {
+    /// Format a numeric value according to the counter configuration.
+    pub fn format_value(&self, value: f32) -> String {
+        let s = format!("{:.*}", self.decimals, value);
+        if self.thousands_sep {
+            let parts: Vec<&str> = s.split('.').collect();
+            let int_part = parts[0];
+            let neg = int_part.starts_with('-');
+            let digits = if neg { &int_part[1..] } else { int_part };
+            let mut grouped = String::new();
+            for (i, ch) in digits.chars().rev().enumerate() {
+                if i > 0 && i % 3 == 0 {
+                    grouped.insert(0, ',');
+                }
+                grouped.insert(0, ch);
+            }
+            let result = if neg {
+                format!("-{}", grouped)
+            } else {
+                grouped
+            };
+            if parts.len() > 1 {
+                format!("{}{}.{}{}", self.prefix, result, parts[1], self.suffix)
+            } else {
+                format!("{}{}{}", self.prefix, result, self.suffix)
+            }
+        } else {
+            format!("{}{}{}", self.prefix, s, self.suffix)
+        }
+    }
+}
+
 /// A node for rendering rich text using Skia's native text layout engine (SkParagraph).
 pub struct TextNode {
     pub spans: Vec<TextSpan>,
@@ -59,6 +100,12 @@ pub struct TextNode {
     pub animators: Vec<TextAnimator>,
     /// Current animation time (set by update(), used by render())
     pub current_time: f64,
+
+    // Counter / Number Ticker
+    /// If set, the first span's text is re-formatted each frame from counter_value.
+    pub counter: Option<CounterConfig>,
+    /// Interpolated numeric value for the counter.
+    pub counter_value: Animated<f32>,
 }
 
 impl Clone for TextNode {
@@ -80,6 +127,8 @@ impl Clone for TextNode {
             text_align: self.text_align,
             animators: self.animators.clone(),
             current_time: self.current_time,
+            counter: self.counter.clone(),
+            counter_value: self.counter_value.clone(),
         }
     }
 }
@@ -112,6 +161,8 @@ impl TextNode {
             text_align: TextAlign::Left,
             animators: Vec::new(),
             current_time: 0.0,
+            counter: None,
+            counter_value: Animated::new(0.0),
         };
         node.init_paragraph();
         node
@@ -129,7 +180,7 @@ impl TextNode {
 
         // 2. Configure StrutStyle to enforce consistent line heights
         let mut strut_style = StrutStyle::new();
-        let default_font_families = vec!["Sans Serif"]; // Fallback
+        let default_font_families = vec!["Roboto"]; // Bundled fallback, avoids broken system font resolution
 
         // We use the default font size for the strut, or a fallback of 20.0 if not set.
         let font_size = self.default_font_size.current_value;
@@ -175,6 +226,7 @@ impl TextNode {
             if let Some(f) = &span.font_family {
                 families.push(f.as_str());
             } else {
+                families.push("Roboto");
                 families.push("Sans Serif");
                 families.push("Arial");
             }
@@ -220,6 +272,17 @@ impl TextNode {
                     skia_safe::font_style::Width::NORMAL,
                     slant,
                 ));
+            }
+
+            // 5b. Letter Spacing
+            if let Some(ls) = span.letter_spacing {
+                text_style.set_letter_spacing(ls);
+            }
+
+            // 5c. Line Height (per-span override; StrutStyle provides the global default)
+            if let Some(lh) = span.line_height {
+                text_style.set_height(lh);
+                text_style.set_height_override(true);
             }
 
             // 6. Stroke (Rich Text)
@@ -592,6 +655,20 @@ impl Element for TextNode {
         // If we have animators, always mark as changed during animation
         if !self.animators.is_empty() {
             changed = true;
+        }
+
+        // Counter interpolation: update numeric value and re-format text each frame
+        if self.counter.is_some() {
+            self.counter_value.update(time);
+            let formatted = self
+                .counter
+                .as_ref()
+                .unwrap()
+                .format_value(self.counter_value.current_value);
+            if !self.spans.is_empty() && self.spans[0].text != formatted {
+                self.spans[0].text = formatted;
+                changed = true;
+            }
         }
 
         if changed {

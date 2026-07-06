@@ -449,6 +449,109 @@ pub fn register(engine: &mut Engine) {
                     let segments = map.get("segments").and_then(|v| v.as_float().ok()).unwrap_or(6.0) as f32;
                     Some(EffectType::Kaleidoscope(Animated::new(segments)))
                 }
+                // Thermal: heat map color spectrum
+                "thermal" | "heatmap" => {
+                    Some(EffectType::Thermal)
+                }
+                // Liquid: bidirectional sine/cosine coordinate warp
+                "liquid" => {
+                    let frequency = map.get("frequency").and_then(|v| v.as_float().ok()).unwrap_or(12.0) as f32;
+                    let amplitude = map.get("amplitude").and_then(|v| v.as_float().ok()).unwrap_or(0.015) as f32;
+                    Some(EffectType::Liquid {
+                        frequency: Animated::new(frequency),
+                        amplitude: Animated::new(amplitude),
+                    })
+                }
+                // Acid: fluorescent acid melt
+                "acid" => {
+                    let color = map
+                        .get("color")
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(0.063, 0.725, 0.506, 1.0));
+                    let speed = map.get("speed").and_then(|v| v.as_float().ok()).unwrap_or(1.8) as f32;
+                    Some(EffectType::Acid {
+                        color,
+                        speed: Animated::new(speed),
+                    })
+                }
+                // Halftone: pop-art dot grid
+                "halftone" => {
+                    let dot_size = map.get("dot_size").and_then(|v| v.as_float().ok()).unwrap_or(55.0) as f32;
+                    Some(EffectType::Halftone(Animated::new(dot_size)))
+                }
+                // Ascii: terminal ASCII art
+                "ascii" => {
+                    let scale = map.get("scale").and_then(|v| v.as_float().ok()).unwrap_or(90.0) as f32;
+                    let color = map
+                        .get("color")
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(0.0, 1.0, 0.255, 1.0));
+                    Some(EffectType::Ascii {
+                        scale: Animated::new(scale),
+                        color,
+                    })
+                }
+                // Sketch: charcoal pencil sketch
+                "sketch" | "pencil" => {
+                    let contrast = map.get("contrast").and_then(|v| v.as_float().ok()).unwrap_or(1.2) as f32;
+                    Some(EffectType::Sketch(Animated::new(contrast)))
+                }
+                // Mirror: quad-mirror symmetry
+                "mirror" | "quad_mirror" => {
+                    Some(EffectType::Mirror)
+                }
+                // TriTone: three-color luminance grade with midpoint
+                "tritone" | "tri_tone" => {
+                    let shadow = map
+                        .get("shadow")
+                        .or_else(|| map.get("low"))
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(0.031, 0.031, 0.039, 1.0));
+                    let mid = map
+                        .get("mid")
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(0.231, 0.510, 0.965, 1.0));
+                    let highlight = map
+                        .get("highlight")
+                        .or_else(|| map.get("high"))
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(0.376, 0.647, 0.980, 1.0));
+                    let midpoint = map.get("midpoint").and_then(|v| v.as_float().ok()).unwrap_or(0.45) as f32;
+                    Some(EffectType::TriTone {
+                        shadow,
+                        mid,
+                        highlight,
+                        midpoint: Animated::new(midpoint),
+                    })
+                }
+                // VHS: combined CRT glitch (jitter + scanlines + noise + RGB shift)
+                "vhs" | "crt_glitch" => {
+                    let distortion = map.get("distortion").and_then(|v| v.as_float().ok()).unwrap_or(0.35) as f32;
+                    let scanline = map.get("scanline").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    Some(EffectType::Vhs {
+                        distortion: Animated::new(distortion),
+                        scanline: Animated::new(scanline),
+                    })
+                }
+                // NeonEdge: edge detect with glow color and darkened background
+                "neon_edge" | "neon_edge_detect" => {
+                    let glow_color = map
+                        .get("glow_color")
+                        .or_else(|| map.get("color"))
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(0.0, 1.0, 0.8, 1.0));
+                    let threshold = map.get("threshold").and_then(|v| v.as_float().ok()).unwrap_or(0.12) as f32;
+                    Some(EffectType::NeonEdge {
+                        glow_color,
+                        threshold: Animated::new(threshold),
+                    })
+                }
                 _ => None,
             };
 

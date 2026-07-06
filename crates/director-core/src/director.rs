@@ -97,39 +97,42 @@ pub struct Director {
 unsafe impl Send for Director {}
 
 impl Director {
+    /// Computes the effective analysis time for an audio track at a given global time.
+    /// Returns `None` if the track hasn't started, has ended, or has no samples.
+    fn audio_analysis_time(track: &AudioTrack, global_time: f64, sample_rate: u32) -> Option<f64> {
+        let relative_time = global_time - track.start_time;
+        if relative_time < 0.0 {
+            return None;
+        }
+        if let Some(max_duration) = track.duration {
+            if relative_time >= max_duration {
+                return None;
+            }
+        }
+        let frame_count = track.samples.len() / 2;
+        if frame_count == 0 {
+            return None;
+        }
+        let source_duration = frame_count as f64 / sample_rate as f64;
+        if source_duration <= 0.0 {
+            return None;
+        }
+        Some(if track.loop_audio {
+            relative_time % source_duration
+        } else {
+            relative_time
+        })
+    }
+
     fn audio_binding_energy(
         analyzer: &AudioAnalyzer,
         track: &AudioTrack,
         global_time: f64,
         band: &str,
     ) -> f32 {
-        let relative_time = global_time - track.start_time;
-        if relative_time < 0.0 {
+        let Some(analysis_time) = Self::audio_analysis_time(track, global_time, analyzer.sample_rate) else {
             return 0.0;
-        }
-
-        if let Some(max_duration) = track.duration {
-            if relative_time >= max_duration {
-                return 0.0;
-            }
-        }
-
-        let frame_count = track.samples.len() / 2;
-        if frame_count == 0 {
-            return 0.0;
-        }
-
-        let source_duration = frame_count as f64 / analyzer.sample_rate as f64;
-        if source_duration <= 0.0 {
-            return 0.0;
-        }
-
-        let analysis_time = if track.loop_audio {
-            relative_time % source_duration
-        } else {
-            relative_time
         };
-
         analyzer.get_energy(&track.samples, analysis_time, band)
     }
 
@@ -159,11 +162,26 @@ impl Director {
             // Load system fonts fallback
             font_collection.set_default_font_manager(FontMgr::default(), None);
 
+            // Load bundled Roboto font as a primary fallback for systems where
+            // FontMgr::default() cannot resolve system fonts (common on Windows
+            // with certain Skia builds).
+            if let Ok(bytes) = asset_loader.load_bytes("fonts/Roboto-Regular.ttf") {
+                let data = Data::new_copy(&bytes);
+                if let Some(typeface) = FontMgr::new().new_from_data(&data, 0) {
+                    font_provider.register_typeface(typeface.clone(), Some("Roboto"));
+                    font_provider.register_typeface(typeface.clone(), Some("Sans Serif"));
+                    font_provider.register_typeface(typeface, Some("Arial"));
+                }
+            } else {
+                tracing::warn!(
+                    "Bundled Roboto font not found at assets/fonts/Roboto-Regular.ttf; \
+                     text may not render on systems without working system fonts"
+                );
+            }
+
             // Load fallback font (e.g. Emoji) if available
             if let Some(bytes) = asset_loader.load_font_fallback() {
                 let data = Data::new_copy(&bytes);
-                // We need to register the typeface with an alias if possible,
-                // or just register it. TypefaceFontProvider::register_typeface returns usize.
                 if let Some(typeface) = FontMgr::new().new_from_data(&data, 0) {
                     font_provider.register_typeface(typeface, Some("Fallback"));
                 }
@@ -446,6 +464,41 @@ impl Director {
                             "rotation" => node.transform.rotation.current_value = smoothed,
                             "opacity" => node.element.set_opacity(smoothed),
                             _ => {}
+                        }
+                    }
+
+                    // Spectrum visualizer: compute FFT and update bar heights
+                    if let Some(sv) = node.element.as_any_mut().downcast_mut::<crate::node::SpectrumVisualizerNode>() {
+                        match self.audio_mixer.tracks.get(sv.track_id) {
+                            Some(Some(track)) => {
+                                if let Some(analysis_time) = Self::audio_analysis_time(track, global_time, analyzer.sample_rate) {
+                                    let spectrum = analyzer.compute_spectrum(&track.samples, analysis_time);
+                                    if !spectrum.is_empty() && sv.bar_count > 0 {
+                                        let bins_per_bar = (spectrum.len() / sv.bar_count).max(1);
+                                        let effective_bars = sv.bar_count.min(spectrum.len());
+                                        for i in 0..effective_bars {
+                                            let bin_start = i * bins_per_bar;
+                                            let bin_end = ((i + 1) * bins_per_bar).min(spectrum.len());
+                                            let avg = if bin_end > bin_start {
+                                                spectrum[bin_start..bin_end].iter().sum::<f32>() / (bin_end - bin_start) as f32
+                                            } else {
+                                                0.0
+                                            };
+                                            // Boost for visibility; typical music peaks around 0.3-0.5
+                                            let target = (avg * 4.0).min(1.0);
+                                            sv.smoothed_heights[i] = sv.smoothed_heights[i] * sv.smoothing
+                                                + target * (1.0 - sv.smoothing);
+                                            sv.bar_heights[i] = sv.smoothed_heights[i];
+                                        }
+                                    }
+                                }
+                            }
+                            Some(None) | None => {
+                                tracing::debug!(
+                                    "SpectrumVisualizerNode references missing or empty audio track {}",
+                                    sv.track_id
+                                );
+                            }
                         }
                     }
                 }

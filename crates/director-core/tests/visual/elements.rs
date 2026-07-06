@@ -146,6 +146,7 @@ fn box_gradient_diagonal() {
             positions: None,
             start: (0.0, 0.0),
             end: (1.0, 1.0),
+            ..Default::default()
         });
         let box_id = d.scene.add_node(Box::new(box_node));
         d.scene.add_child(root_id, box_id);

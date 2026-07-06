@@ -13,34 +13,16 @@ use crate::animation::{EasingType, SpringConfig};
 use crate::director::Director;
 use crate::element::{TextShadow, TextSpan};
 use crate::node::{BoxNode, CompositionNode, EffectNode, EffectType};
-use crate::types::{Color, GradientConfig, NodeId, ObjectFit};
+use crate::types::{Color, GradientConfig, GradientType, NodeId, ObjectFit};
 use rhai::Map;
 use taffy::prelude::*;
 use taffy::style::{GridPlacement, GridTemplateComponent, Style};
 
 /// Extract outer style properties for effect wrapper nodes.
+/// Copies all container/layout properties so the wrapper preserves flex/grid
+/// behaviour; the inner node gets reset to fill the wrapper (100% w/h).
 pub fn extract_outer_style(source: &Style) -> Style {
-    Style {
-        display: source.display,
-        position: source.position,
-        inset: source.inset,
-        size: source.size,
-        min_size: source.min_size,
-        max_size: source.max_size,
-        aspect_ratio: source.aspect_ratio,
-        margin: source.margin,
-        flex_grow: source.flex_grow,
-        flex_shrink: source.flex_shrink,
-        flex_basis: source.flex_basis,
-        align_self: source.align_self,
-        justify_self: source.justify_self,
-        grid_row: source.grid_row.clone(),
-        grid_column: source.grid_column.clone(),
-        padding: taffy::geometry::Rect::zero(),
-        border: taffy::geometry::Rect::zero(),
-        gap: taffy::geometry::Size::zero(),
-        ..Default::default()
-    }
+    source.clone()
 }
 
 /// Apply an effect to a node by wrapping it in an EffectNode.
@@ -191,6 +173,31 @@ pub fn parse_gradient_config(g: &rhai::Dynamic) -> Option<GradientConfig> {
             }
         }
         if !config.colors.is_empty() {
+            // Parse gradient type
+            if let Some(gt) = gmap.get("type").and_then(|v| v.clone().into_string().ok()) {
+                config.gradient_type = match gt.as_str() {
+                    "radial" => GradientType::Radial,
+                    "conic" | "sweep" => GradientType::Conic,
+                    _ => GradientType::Linear,
+                };
+            }
+            // Parse center for radial/conic
+            if let Some(arr) = gmap.get("center").and_then(|v| v.clone().into_array().ok()) {
+                if arr.len() >= 2 {
+                    config.center = (
+                        arr[0].as_float().unwrap_or(0.5) as f32,
+                        arr[1].as_float().unwrap_or(0.5) as f32,
+                    );
+                }
+            }
+            // Parse radius for radial
+            if let Some(r) = gmap.get("radius").and_then(|v| v.as_float().ok()) {
+                config.radius = r as f32;
+            }
+            // Parse angle for conic (degrees)
+            if let Some(a) = gmap.get("angle").and_then(|v| v.as_float().ok()) {
+                config.angle = a as f32;
+            }
             return Some(config);
         }
     }
@@ -202,10 +209,12 @@ pub fn parse_text_style(map: &rhai::Map, span: &mut TextSpan) {
     if let Some(c) = map.get("color").and_then(|v| v.clone().into_string().ok()) {
         span.color = parse_hex_color(&c);
     }
-    if let Some(w) = map.get("weight") {
+    if let Some(w) = map.get("weight").or_else(|| map.get("font_weight")) {
         span.font_weight = parse_font_weight(w);
     }
-    if let Some(s) = map.get("size").and_then(|v| v.as_float().ok()) {
+    if let Some(s) = map.get("size").and_then(|v| v.as_float().ok())
+        .or_else(|| map.get("font_size").and_then(|v| v.as_float().ok()))
+    {
         span.font_size = Some(s as f32);
     }
     if let Some(f) = map.get("font_family").and_then(|v| v.clone().into_string().ok()) {
@@ -240,6 +249,14 @@ pub fn parse_text_style(map: &rhai::Map, span: &mut TextSpan) {
     }
     if let Some(g) = map.get("fill_gradient") {
         span.fill_gradient = parse_gradient_config(g);
+    }
+    // Letter spacing
+    if let Some(ls) = map.get("letter_spacing").and_then(|v| v.as_float().ok()) {
+        span.letter_spacing = Some(ls as f32);
+    }
+    // Line height
+    if let Some(lh) = map.get("line_height").and_then(|v| v.as_float().ok()) {
+        span.line_height = Some(lh as f32);
     }
 }
 
@@ -562,6 +579,26 @@ pub fn parse_layout_style(props: &rhai::Map, style: &mut Style) {
         style.grid_column = parse_line(&s);
     }
 
+    // Aspect Ratio (e.g. "16:9", 1.5, or "1.5")
+    if let Some(v) = props.get("aspect_ratio") {
+        if let Ok(f) = v.as_float() {
+            style.aspect_ratio = Some(f as f32);
+        } else if let Ok(s) = v.clone().into_string() {
+            if s.contains(':') {
+                let parts: Vec<&str> = s.split(':').collect();
+                if parts.len() == 2 {
+                    if let (Ok(w), Ok(h)) = (parts[0].parse::<f32>(), parts[1].parse::<f32>()) {
+                        if h > 0.0 {
+                            style.aspect_ratio = Some(w / h);
+                        }
+                    }
+                }
+            } else if let Ok(val) = s.parse::<f32>() {
+                style.aspect_ratio = Some(val);
+            }
+        }
+    }
+
     // Position (Relative/Absolute)
     if let Some(s) = props
         .get("position")
@@ -617,6 +654,8 @@ pub fn parse_spans_from_dynamic(content: rhai::Dynamic) -> Vec<TextSpan> {
                     stroke_width: None,
                     stroke_color: None,
                     fill_gradient: None,
+                    letter_spacing: None,
+                    line_height: None,
                 };
                 parse_text_style(&map, &mut span);
                 spans.push(span);
@@ -633,6 +672,8 @@ pub fn parse_spans_from_dynamic(content: rhai::Dynamic) -> Vec<TextSpan> {
                     stroke_width: None,
                     stroke_color: None,
                     fill_gradient: None,
+                    letter_spacing: None,
+                    line_height: None,
                 });
             }
         }
@@ -649,6 +690,8 @@ pub fn parse_spans_from_dynamic(content: rhai::Dynamic) -> Vec<TextSpan> {
             stroke_width: None,
             stroke_color: None,
             fill_gradient: None,
+            letter_spacing: None,
+            line_height: None,
         });
     }
     spans

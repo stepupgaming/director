@@ -19,9 +19,33 @@ use crate::systems::renderer::{render_at_time, GpuContext};
 use crate::video_wrapper::{Encoder, EncoderSettings};
 use anyhow::Result;
 
-use skia_safe::{AlphaType, ColorSpace, ColorType};
+use skia_safe::{AlphaType, ColorSpace, ColorType, ImageInfo, Surface};
 use std::path::PathBuf;
 use tracing::instrument;
+
+/// Creates a render surface, preferring GPU hardware acceleration when available.
+#[allow(unused_variables)]
+fn create_render_surface(
+    gpu_context: &mut Option<&mut GpuContext>,
+    info: &ImageInfo,
+) -> Option<Surface> {
+    #[cfg(feature = "vulkan")]
+    if let Some(ctx) = gpu_context.as_deref_mut() {
+        if let Some(surface) = skia_safe::gpu::surfaces::render_target(
+            ctx,
+            skia_safe::gpu::Budgeted::No,
+            info,
+            0,
+            None,
+            None,
+            false,
+            false,
+        ) {
+            return Some(surface);
+        }
+    }
+    skia_safe::surfaces::raster(info, None, None)
+}
 
 /// Renders the entire movie to a video file (MP4 or WebM with alpha).
 ///
@@ -40,13 +64,12 @@ use tracing::instrument;
 /// * `gpu_context` - Optional GPU context for hardware acceleration.
 /// * `audio_track_path` - Optional path to a background audio track (deprecated; use `director.add_global_audio`).
 /// * `alpha` - Enable alpha-channel output (uses VP9/WebM instead of H.264/MP4).
-#[allow(unused_variables)]
 #[allow(unused_mut)]
 #[instrument(level = "info", skip(director, gpu_context), fields(width = director.width, height = director.height, fps = director.fps))]
 pub fn render_export(
     director: &mut Director,
     out_path: PathBuf,
-    gpu_context: Option<&mut GpuContext>,
+    mut gpu_context: Option<&mut GpuContext>,
     audio_track_path: Option<PathBuf>,
     alpha: bool,
 ) -> Result<()> {
@@ -87,15 +110,14 @@ pub fn render_export(
         Some(ColorSpace::new_srgb()),
     );
 
-    // Always render to a CPU raster surface. A GPU (Vulkan) render-target
-    // surface complicates pixel readback (`read_pixels_with_context`); a CPU
-    // raster surface lets us read pixels directly via `peek_pixels`, which
-    // guarantees valid output with or without `--gpu`. The `gpu_context` is
-    // still accepted so the `--gpu` flag remains honored (Vulkan is initialized
-    // in the CLI) and is available for future shader/acceleration work; it is
-    // intentionally unused for the render target here.
-    let mut surface = skia_safe::surfaces::raster(&info, None, None)
+    // Prefer GPU-accelerated surface when Vulkan context is available.
+    // Falls back to CPU raster.
+    let mut surface = create_render_surface(&mut gpu_context, &info)
         .ok_or(RenderError::SurfaceFailure)?;
+
+    // Pre-create a raster readback surface for GPU -> CPU pixel transfer.
+    // Reusing it avoids per-frame allocation.
+    let mut readback_surface = skia_safe::surfaces::raster(&info, None, None);
 
     let mut accumulation_surface = if director.samples_per_frame > 1 {
         Some(
@@ -118,10 +140,10 @@ pub fn render_export(
 
     // Pre-allocate transition surfaces to avoid per-frame allocation churn
     let mut transition_surfaces = if !director.transitions.is_empty() {
-        let surf_a =
-            skia_safe::surfaces::raster(&info, None, None).ok_or(RenderError::SurfaceFailure)?;
-        let surf_b =
-            skia_safe::surfaces::raster(&info, None, None).ok_or(RenderError::SurfaceFailure)?;
+        let surf_a = create_render_surface(&mut gpu_context, &info)
+            .ok_or(RenderError::SurfaceFailure)?;
+        let surf_b = create_render_surface(&mut gpu_context, &info)
+            .ok_or(RenderError::SurfaceFailure)?;
         Some((surf_a, surf_b))
     } else {
         None
@@ -170,16 +192,30 @@ pub fn render_export(
             }
         }
 
-        // Read pixels directly from the CPU raster surface. `peek_pixels` is
-        // always available on a raster surface, so this works with or without
-        // the `--gpu` flag (which only controls Vulkan context initialization).
-        if let Some(pixmap) = surface.peek_pixels() {
-            if let Some(raw) = pixmap.bytes() {
-                if raw.len() == width as usize * height as usize * 4 {
-                    encoder.encode(raw, i as f64 / fps as f64)?;
-                }
-            }
-        }
+        let row_bytes = width as usize * 4;
+        let pixels = if surface.recording_context().is_some() {
+            // GPU-backed surface: snapshot to the reusable raster readback surface.
+            let snapshot = surface.image_snapshot();
+            let readback = readback_surface.as_mut()
+                .ok_or_else(|| anyhow::anyhow!("Readback surface not available"))?;
+            readback.canvas().clear(skia_safe::Color::TRANSPARENT);
+            readback.canvas().draw_image(&snapshot, (0, 0), None);
+            let mut pixels = vec![0u8; height as usize * row_bytes];
+            anyhow::ensure!(
+                readback.read_pixels(&info, &mut pixels, row_bytes, (0, 0)),
+                "Failed to read pixels from readback surface"
+            );
+            pixels
+        } else {
+            // CPU raster surface: read pixels directly.
+            let mut pixels = vec![0u8; height as usize * row_bytes];
+            anyhow::ensure!(
+                surface.read_pixels(&info, &mut pixels, row_bytes, (0, 0)),
+                "Failed to read pixels from render surface"
+            );
+            pixels
+        };
+        encoder.encode(&pixels, i as f64 / fps as f64)?;
 
         let audio_samples = director.mix_audio(samples_per_frame, frame_start_time);
         encoder.encode_audio(&audio_samples, frame_start_time)?;

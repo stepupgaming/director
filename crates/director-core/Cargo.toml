@@ -33,6 +33,7 @@ wgpu = { version = "23", optional = true }
 bytemuck = { version = "1", optional = true, features = ["derive"] }
 pollster = { version = "0.4", optional = true }
 
+reqwest = { version = "0.12", features = ["blocking", "json"] }
 ndarray = "0.16"
 rayon = "1.10"
 tempfile = "3.23.0"

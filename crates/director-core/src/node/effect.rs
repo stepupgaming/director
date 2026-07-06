@@ -135,6 +135,46 @@ pub enum EffectType {
     ZoomBlur(Animated<f32>),
     /// Kaleidoscope: mirror symmetry segments.
     Kaleidoscope(Animated<f32>),
+    /// Thermal: heat map color spectrum (luminance → blue→cyan→yellow→red→white).
+    Thermal,
+    /// Liquid: bidirectional sine/cosine coordinate warp.
+    Liquid {
+        frequency: Animated<f32>,
+        amplitude: Animated<f32>,
+    },
+    /// Acid: fluorescent acid melt (wave distortion + color morph).
+    Acid {
+        color: Color,
+        speed: Animated<f32>,
+    },
+    /// Halftone: pop-art dot grid (luminance → dot size mapping).
+    Halftone(Animated<f32>),
+    /// Ascii: terminal ASCII art effect.
+    Ascii {
+        scale: Animated<f32>,
+        color: Color,
+    },
+    /// Sketch: charcoal pencil sketch (edge detection + hatching + paper texture).
+    Sketch(Animated<f32>),
+    /// Mirror: quad-mirror symmetry (4-way reflection).
+    Mirror,
+    /// TriTone: three-color luminance grade with adjustable midpoint.
+    TriTone {
+        shadow: Color,
+        mid: Color,
+        highlight: Color,
+        midpoint: Animated<f32>,
+    },
+    /// VHS: combined CRT glitch (jitter + scanlines + noise + RGB shift).
+    Vhs {
+        distortion: Animated<f32>,
+        scanline: Animated<f32>,
+    },
+    /// NeonEdge: edge detect with configurable glow color and darkened background.
+    NeonEdge {
+        glow_color: Color,
+        threshold: Animated<f32>,
+    },
 }
 
 impl EffectType {
@@ -230,6 +270,30 @@ impl EffectType {
             EffectType::EdgeDetect(a) => a.update(time),
             EffectType::ZoomBlur(a) => a.update(time),
             EffectType::Kaleidoscope(a) => a.update(time),
+            EffectType::Thermal => {}
+            EffectType::Liquid { frequency, amplitude } => {
+                frequency.update(time);
+                amplitude.update(time);
+            }
+            EffectType::Acid { speed, .. } => {
+                speed.update(time);
+            }
+            EffectType::Halftone(a) => a.update(time),
+            EffectType::Ascii { scale, .. } => {
+                scale.update(time);
+            }
+            EffectType::Sketch(a) => a.update(time),
+            EffectType::Mirror => {}
+            EffectType::TriTone { midpoint, .. } => {
+                midpoint.update(time);
+            }
+            EffectType::Vhs { distortion, scanline } => {
+                distortion.update(time);
+                scanline.update(time);
+            }
+            EffectType::NeonEdge { threshold, .. } => {
+                threshold.update(time);
+            }
         }
     }
 }
@@ -576,11 +640,11 @@ half4 main(float2 pos) {
     half4 color = image.eval(pos);
     float lum = dot(color.rgb, half3(0.2126, 0.7152, 0.0722));
     half4 blur = half4(0);
-    float radius = 4.0;
+    int radius = 4;
     int count = 0;
-    for (float x = -radius; x <= radius; x += 2.0) {
-        for (float y = -radius; y <= radius; y += 2.0) {
-            blur += image.eval(pos + float2(x, y));
+    for (int x = -radius; x <= radius; x += 2) {
+        for (int y = -radius; y <= radius; y += 2) {
+            blur += image.eval(pos + float2(float(x), float(y)));
             count++;
         }
     }
@@ -744,6 +808,64 @@ half4 main(float2 pos) {
                     time,
                     current_filter,
                     segments.current_value,
+                );
+            }
+            EffectType::Thermal => {
+                current_filter = super::effect_shaders::build_thermal(
+                    shader_cache, resolution, time, current_filter,
+                );
+            }
+            EffectType::Liquid { frequency, amplitude } => {
+                current_filter = super::effect_shaders::build_liquid(
+                    shader_cache, resolution, time, current_filter,
+                    frequency.current_value, amplitude.current_value,
+                );
+            }
+            EffectType::Acid { color, speed } => {
+                current_filter = super::effect_shaders::build_acid(
+                    shader_cache, resolution, time, current_filter,
+                    *color, speed.current_value,
+                );
+            }
+            EffectType::Halftone(dot_size) => {
+                current_filter = super::effect_shaders::build_halftone(
+                    shader_cache, resolution, time, current_filter,
+                    dot_size.current_value,
+                );
+            }
+            EffectType::Ascii { scale, color } => {
+                current_filter = super::effect_shaders::build_ascii(
+                    shader_cache, resolution, time, current_filter,
+                    scale.current_value, *color,
+                );
+            }
+            EffectType::Sketch(contrast) => {
+                current_filter = super::effect_shaders::build_sketch(
+                    shader_cache, resolution, time, current_filter,
+                    contrast.current_value,
+                );
+            }
+            EffectType::Mirror => {
+                current_filter = super::effect_shaders::build_mirror(
+                    shader_cache, resolution, time, current_filter,
+                );
+            }
+            EffectType::TriTone { shadow, mid, highlight, midpoint } => {
+                current_filter = super::effect_shaders::build_tritone(
+                    shader_cache, resolution, time, current_filter,
+                    *shadow, *mid, *highlight, midpoint.current_value,
+                );
+            }
+            EffectType::Vhs { distortion, scanline } => {
+                current_filter = super::effect_shaders::build_vhs(
+                    shader_cache, resolution, time, current_filter,
+                    distortion.current_value, scanline.current_value,
+                );
+            }
+            EffectType::NeonEdge { glow_color, threshold } => {
+                current_filter = super::effect_shaders::build_neon_edge(
+                    shader_cache, resolution, time, current_filter,
+                    *glow_color, threshold.current_value,
                 );
             }
         }
@@ -935,6 +1057,55 @@ mod shader_compile_tests {
             assert!(
                 filter.is_some(),
                 "effect #{i} ({:?}) did not produce an ImageFilter (SkSL compile failed)",
+                eff
+            );
+        }
+    }
+
+    /// Every new shader-color-panels effect must compile and build an ImageFilter.
+    #[test]
+    fn new_shader_panels_effects_compile() {
+        let cache = cache();
+        let sc = Some(&cache);
+        let res = (64.0_f32, 64.0_f32);
+        let t = 0.0_f32;
+        let cases: Vec<EffectType> = vec![
+            EffectType::Thermal,
+            EffectType::Liquid {
+                frequency: Animated::new(12.0),
+                amplitude: Animated::new(0.015),
+            },
+            EffectType::Acid {
+                color: Color::new(0.063, 0.725, 0.506, 1.0),
+                speed: Animated::new(1.8),
+            },
+            EffectType::Halftone(Animated::new(55.0)),
+            EffectType::Ascii {
+                scale: Animated::new(90.0),
+                color: Color::new(0.0, 1.0, 0.255, 1.0),
+            },
+            EffectType::Sketch(Animated::new(1.2)),
+            EffectType::Mirror,
+            EffectType::TriTone {
+                shadow: Color::new(0.031, 0.031, 0.039, 1.0),
+                mid: Color::new(0.231, 0.510, 0.965, 1.0),
+                highlight: Color::new(0.376, 0.647, 0.980, 1.0),
+                midpoint: Animated::new(0.45),
+            },
+            EffectType::Vhs {
+                distortion: Animated::new(0.35),
+                scanline: Animated::new(0.5),
+            },
+            EffectType::NeonEdge {
+                glow_color: Color::new(0.0, 1.0, 0.8, 1.0),
+                threshold: Animated::new(0.12),
+            },
+        ];
+        for (i, eff) in cases.iter().enumerate() {
+            let filter = build_effect_filter(std::slice::from_ref(eff), sc, res, t);
+            assert!(
+                filter.is_some(),
+                "new shader #{i} ({:?}) did not produce an ImageFilter (SkSL compile failed)",
                 eff
             );
         }

@@ -194,7 +194,45 @@ fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
     let instance = unsafe { entry.create_instance(&create_info, None) }.ok()?;
 
     let physical_devices = unsafe { instance.enumerate_physical_devices() }.ok()?;
-    let physical_device = physical_devices.into_iter().next()?;
+
+    // Prefer discrete GPU (NVIDIA/AMD) over integrated (Intel iGPU)
+    let mut selected_device = None;
+    let mut selected_type = ash::vk::PhysicalDeviceType::OTHER;
+    for pd in &physical_devices {
+        let props = unsafe { instance.get_physical_device_properties(*pd) };
+        let pd_type = props.device_type;
+        let pd_name = unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }
+            .to_string_lossy();
+        match pd_type {
+            ash::vk::PhysicalDeviceType::DISCRETE_GPU => {
+                info!("Found discrete GPU: {}", pd_name);
+                selected_device = Some(*pd);
+                selected_type = pd_type;
+                break;
+            }
+            ash::vk::PhysicalDeviceType::INTEGRATED_GPU => {
+                info!("Found integrated GPU: {}", pd_name);
+                if selected_device.is_none() {
+                    selected_device = Some(*pd);
+                    selected_type = pd_type;
+                }
+            }
+            _ => {
+                info!("Found other GPU type ({:?}): {}", pd_type, pd_name);
+                if selected_device.is_none() {
+                    selected_device = Some(*pd);
+                    selected_type = pd_type;
+                }
+            }
+        }
+    }
+    let physical_device = selected_device?;
+    let gpu_type_name = match selected_type {
+        ash::vk::PhysicalDeviceType::DISCRETE_GPU => "discrete GPU",
+        ash::vk::PhysicalDeviceType::INTEGRATED_GPU => "integrated GPU",
+        _ => "other",
+    };
+    info!("Using {} for rendering", gpu_type_name);
 
     let queue_families = unsafe {
         instance.get_physical_device_queue_family_properties(physical_device)
@@ -202,6 +240,27 @@ fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
     let queue_family_index = queue_families
         .iter()
         .position(|qf| qf.queue_flags.contains(ash::vk::QueueFlags::GRAPHICS))? as u32;
+
+    // Enable all physical device features the GPU advertises.
+    // Passing null (all false) crashes Skia shaders that need features
+    // like fragmentStoresAndAtomics, vertexPipelineStoresAndAtomics, etc.
+    let physical_device_features = unsafe {
+        instance.get_physical_device_features(physical_device)
+    };
+
+    // Skia expects VK_KHR_swapchain on the device even for offscreen rendering.
+    let available_extensions = unsafe {
+        instance.enumerate_device_extension_properties(physical_device).ok()?
+    };
+    let swapchain_ext = CStr::from_bytes_with_nul(b"VK_KHR_swapchain\0").ok()?;
+    let has_swapchain = available_extensions
+        .iter()
+        .any(|ext| unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) == swapchain_ext });
+    let enabled_extensions: &[*const i8] = if has_swapchain {
+        &[swapchain_ext.as_ptr()]
+    } else {
+        &[]
+    };
 
     let queue_priorities = [1.0f32];
     let queue_create_info = ash::vk::DeviceQueueCreateInfo {
@@ -222,9 +281,9 @@ fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
         p_queue_create_infos: &queue_create_info,
         enabled_layer_count: 0,
         pp_enabled_layer_names: std::ptr::null(),
-        enabled_extension_count: 0,
-        pp_enabled_extension_names: std::ptr::null(),
-        p_enabled_features: std::ptr::null(),
+        enabled_extension_count: enabled_extensions.len() as u32,
+        pp_enabled_extension_names: enabled_extensions.as_ptr(),
+        p_enabled_features: &physical_device_features,
         ..Default::default()
     };
 
@@ -234,7 +293,10 @@ fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
     let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
     let instance_handle = instance.handle().as_raw();
-    let get_proc = move |get_proc_of: GetProcOf| -> *const std::ffi::c_void {
+    // Leak the concrete closure to 'static — the thread-local resolver in
+    // skia-safe holds a raw trait-object pointer (TraitObject) to this
+    // closure's heap allocation, so it must live forever.
+    let get_proc_impl = move |get_proc_of: GetProcOf| -> *const std::ffi::c_void {
         match get_proc_of {
             GetProcOf::Instance(vk_instance, name) => unsafe {
                 let ash_instance =
@@ -250,14 +312,18 @@ fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
             },
         }
     };
+    // Leak the closure to a &'static mut reference. The concrete type
+    // is Sized so it satisfies BackendContext::new's implicit Sized bound.
+    let get_proc = Box::leak(Box::new(get_proc_impl));
 
+    // Use &*get_proc to reborrow the leaked &mut as & for BackendContext.
     let backend_context = unsafe {
         BackendContext::new(
             instance.handle().as_raw() as sk_vk::Instance,
             physical_device.as_raw() as sk_vk::PhysicalDevice,
             device.handle().as_raw() as sk_vk::Device,
             (queue.as_raw() as sk_vk::Queue, 0),
-            &get_proc,
+            &*get_proc,
         )
     };
 

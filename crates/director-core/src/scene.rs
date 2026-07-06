@@ -14,7 +14,7 @@
 //! - `NodeId`: A `usize` index into the arena (defined in `types.rs`).
 
 use crate::element::Element;
-use crate::types::{NodeId, PathAnimationState, PathMorphState, Transform};
+use crate::types::{FilterConfig, NodeId, PathAnimationState, PathMorphState, Transform};
 
 /// Runtime binding of an audio analysis value to a node property.
 ///
@@ -75,6 +75,9 @@ pub struct SceneNode {
 
     /// Audio-reactive bindings for this node
     pub audio_bindings: Vec<AudioBinding>,
+
+    /// CSS-like image filters applied to this node and its children.
+    pub filter: FilterConfig,
 }
 
 /// SAFETY: SceneNode is Send-safe because all current Element implementations
@@ -102,6 +105,7 @@ impl SceneNode {
             z_index: 0,
             dirty_style: true,
             audio_bindings: Vec::new(),
+            filter: FilterConfig::default(),
         }
     }
 }

@@ -188,6 +188,7 @@ fn shape_ellipse_gradient() {
             positions: None,
             start: (0.0, 0.0),
             end: (1.0, 1.0),
+            ..Default::default()
         });
         let shape_id = d.scene.add_node(Box::new(shape));
         d.scene.add_child(root_id, shape_id);

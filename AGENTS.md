@@ -95,6 +95,9 @@ When the user requests a durable behavior change, record it here or in the relev
 - Product direction: Director should become an autonomous high-quality video production framework for short-form and long-form content, especially YouTube Shorts, Instagram Reels, TikTok, and YouTube long-form. Avoid optimizing for low-quality generated output.
 - Director loops should support web research as a first-class input path instead of relying only on the user prompt or the language model's prior knowledge.
 
+- `vendor/` contains patched copies of third-party crates that cannot be fixed via `[patch.crates-io]` to upstream. Do not modify vendor sources without updating the corresponding `AGENTS.md`.
+- `vendor/skia-safe/` is skia-safe 0.90.0 with two patches keeping the Vulkan `get_proc` thread-local resolver alive for lazy resolution (readback/flush). If the dependency is ever bumped, reapply the patches from the diff in `vendor/AGENTS.md`.
+
 ## Verification
 
 - Rust workspace: `cargo check --workspace --all-targets`
@@ -112,3 +115,4 @@ When the user requests a durable behavior change, record it here or in the relev
 - `docs/AGENTS.md` - Architecture, contributing, and specification documentation.
 - `examples/AGENTS.md` - Rhai example scripts, rendered media references, and script validation helpers.
 - `specs/AGENTS.md` - RON feature specs consumed by the developer harness.
+- `vendor/AGENTS.md` - Vendored third-party crates with durable patches.

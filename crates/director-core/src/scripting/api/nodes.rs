@@ -16,10 +16,8 @@
 
 use crate::animation::Animated;
 use crate::element::TextFit;
-use crate::node::{
-    BoxNode, CompositionNode, EffectNode, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType,
-    TextNode, VectorNode, VideoNode, VideoSource,
-};
+use crate::node::{BoxNode, BoxShadow, CaptionLine, CaptionNode, CaptionPosition, CaptionWord, CompositionNode, EffectNode, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType, TextNode, VectorNode, VideoNode, VideoSource};
+use crate::types::FilterConfig;
 use crate::AssetLoader;
 use rhai::{Engine, Map};
 use std::collections::HashMap;
@@ -48,6 +46,30 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         },
     );
 
+    engine.register_fn(
+        "set_filter",
+        |node: &mut NodeHandle,
+         blur: f64,
+         brightness: f64,
+         contrast: f64,
+         saturation: f64,
+         hue_rotate: f64|
+         -> Result<(), Box<rhai::EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            node.ensure_alive(&d)?;
+            if let Some(n) = d.scene.get_node_mut(node.id) {
+                n.filter = FilterConfig {
+                    blur: blur as f32,
+                    brightness: brightness as f32,
+                    contrast: contrast as f32,
+                    saturation: saturation as f32,
+                    hue_rotate: hue_rotate as f32,
+                };
+            }
+            Ok(())
+        },
+    );
+
     // ========== ADD_BOX ==========
     engine.register_fn(
         "add_box",
@@ -61,6 +83,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut box_node.style);
 
             let id = d.scene.add_node(Box::new(box_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -89,6 +114,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut box_node.style);
 
             let id = d.scene.add_node(Box::new(box_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -184,6 +212,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             }
 
             let id = d.scene.add_node(Box::new(img_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -230,6 +261,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             }
 
             let id = d.scene.add_node(Box::new(img_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -259,6 +293,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             match LottieNode::new(&blob, HashMap::new(), &d.assets) {
                 Ok(lottie_node) => {
                     let id = d.scene.add_node(Box::new(lottie_node));
+                    if let Some(n) = d.scene.get_node_mut(id) {
+                        n.filter = FilterConfig::default();
+                    }
                     if !d.scene.try_add_child(parent.id, id) {
                         d.scene.destroy_node(id);
                         return Err(format!(
@@ -312,6 +349,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     }
 
                     let id = d.scene.add_node(Box::new(lottie_node));
+                    if let Some(n) = d.scene.get_node_mut(id) {
+                        n.filter = parse_filter_config(&props);
+                    }
                     if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                         if let Some(n) = d.scene.get_node_mut(id) {
                             n.z_index = z as i32;
@@ -369,6 +409,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     }
 
                     let id = d.scene.add_node(Box::new(lottie_node));
+                    if let Some(n) = d.scene.get_node_mut(id) {
+                        n.filter = parse_filter_config(&props);
+                    }
                     if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                         if let Some(n) = d.scene.get_node_mut(id) {
                             n.z_index = z as i32;
@@ -401,6 +444,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
 
             let vec_node = VectorNode::new(&blob);
             let id = d.scene.add_node(Box::new(vec_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = FilterConfig::default();
+            }
             if !d.scene.try_add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
@@ -429,6 +475,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut vec_node.style);
 
             let id = d.scene.add_node(Box::new(vec_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -458,6 +507,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
 
             let vec_node = VectorNode::new(&blob);
             let id = d.scene.add_node(Box::new(vec_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = FilterConfig::default();
+            }
             if !d.scene.try_add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
@@ -485,6 +537,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut vec_node.style);
 
             let id = d.scene.add_node(Box::new(vec_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -521,6 +576,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
 
             let vid_node = VideoNode::new(source, mode);
             let id = d.scene.add_node(Box::new(vid_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = FilterConfig::default();
+            }
             if !d.scene.try_add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
@@ -568,6 +626,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             }
 
             let id = d.scene.add_node(Box::new(vid_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -602,6 +663,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
 
             let vid_node = VideoNode::new(source, mode);
             let id = d.scene.add_node(Box::new(vid_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = FilterConfig::default();
+            }
             if !d.scene.try_add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
@@ -650,6 +714,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             }
 
             let id = d.scene.add_node(Box::new(vid_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -693,6 +760,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             text_node.init_paragraph();
 
             let id = d.scene.add_node(Box::new(text_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -733,6 +803,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             text_node.init_paragraph();
 
             let id = d.scene.add_node(Box::new(text_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -753,6 +826,85 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             })
         },
     );
+
+    // ========== ADD_CAPTION ==========
+    engine.register_fn(
+        "add_caption",
+        |parent: &mut NodeHandle,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = parent.lock_director()?;
+            parent.ensure_alive(&d)?;
+            let font_collection = d.assets.font_collection.clone();
+            let lines = parse_caption_lines(&d, &props);
+            let mut caption_node = CaptionNode::new(lines, font_collection);
+            parse_layout_style(&props, &mut caption_node.style_cache);
+            apply_caption_props(&mut caption_node, &props);
+
+            let id = d.scene.add_node(Box::new(caption_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
+            if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
+                if let Some(n) = d.scene.get_node_mut(id) {
+                    n.z_index = z as i32;
+                }
+            }
+            if !d.scene.try_add_child(parent.id, id) {
+                d.scene.destroy_node(id);
+                return Err(
+                    format!("Failed to attach caption node {} to parent {}", id, parent.id).into(),
+                );
+            }
+
+            Ok(NodeHandle {
+                director: parent.director.clone(),
+                id,
+            })
+        },
+    );
+
+    engine.register_fn(
+        "add_caption",
+        |scene: &mut SceneHandle,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = scene.lock_director()?;
+            let font_collection = d.assets.font_collection.clone();
+            let lines = parse_caption_lines(&d, &props);
+            let mut caption_node = CaptionNode::new(lines, font_collection);
+            parse_layout_style(&props, &mut caption_node.style_cache);
+            apply_caption_props(&mut caption_node, &props);
+
+            let id = d.scene.add_node(Box::new(caption_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
+            if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
+                if let Some(n) = d.scene.get_node_mut(id) {
+                    n.z_index = z as i32;
+                }
+            }
+            if !d.scene.try_add_child(scene.root_id, id) {
+                d.scene.destroy_node(id);
+                return Err(format!(
+                    "Failed to attach caption node {} to scene root {}",
+                    id, scene.root_id
+                )
+                .into());
+            }
+
+            Ok(NodeHandle {
+                director: scene.director.clone(),
+                id,
+            })
+        },
+    );
+
+    // Standalone SRT parsing for use in Rhai scripts
+    engine.register_fn("parse_srt", |content: &str| -> Vec<CaptionLine> {
+        crate::node::caption::parse_srt(content)
+    });
 
     // ========== ADD_COMPOSITION ==========
     engine.register_fn(
@@ -778,6 +930,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
 
             let mut d = scene.lock_director()?;
             let id = d.scene.add_node(Box::new(comp_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = FilterConfig::default();
+            }
             if !d.scene.try_add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
@@ -819,6 +974,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
 
             let mut d = scene.lock_director()?;
             let id = d.scene.add_node(Box::new(comp_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if !d.scene.try_add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
@@ -849,6 +1007,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 current_time: 0.0,
             };
             let id = d.scene.add_node(Box::new(effect_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = FilterConfig::default();
+            }
             if !d.scene.try_add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
@@ -877,6 +1038,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             };
             parse_layout_style(&props, &mut effect_node.style);
             let id = d.scene.add_node(Box::new(effect_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -907,6 +1071,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 current_time: 0.0,
             };
             let id = d.scene.add_node(Box::new(effect_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = FilterConfig::default();
+            }
             if !d.scene.try_add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
@@ -936,6 +1103,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             };
             parse_layout_style(&props, &mut effect_node.style);
             let id = d.scene.add_node(Box::new(effect_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -972,6 +1142,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut shape.style);
 
             let id = d.scene.add_node(Box::new(shape));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -1004,6 +1177,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut shape.style);
 
             let id = d.scene.add_node(Box::new(shape));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -1040,6 +1216,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut shape.style);
 
             let id = d.scene.add_node(Box::new(shape));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -1073,6 +1252,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut shape.style);
 
             let id = d.scene.add_node(Box::new(shape));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -1106,6 +1288,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut shape.style);
 
             let id = d.scene.add_node(Box::new(shape));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -1136,6 +1321,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parse_layout_style(&props, &mut shape.style);
 
             let id = d.scene.add_node(Box::new(shape));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
             if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
                 if let Some(n) = d.scene.get_node_mut(id) {
                     n.z_index = z as i32;
@@ -1204,6 +1392,29 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
     }
 }
 
+/// Parse CSS-like filter properties from a Rhai map.
+fn parse_filter_config(props: &rhai::Map) -> FilterConfig {
+    FilterConfig {
+        blur: props.get("filter_blur").and_then(|v| v.as_float().ok()).unwrap_or(0.0) as f32,
+        brightness: props
+            .get("filter_brightness")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(1.0) as f32,
+        contrast: props
+            .get("filter_contrast")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(1.0) as f32,
+        saturation: props
+            .get("filter_saturation")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(1.0) as f32,
+        hue_rotate: props
+            .get("filter_hue_rotate")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(0.0) as f32,
+    }
+}
+
 /// Apply box-specific properties from a Rhai map
 fn apply_box_props(box_node: &mut BoxNode, props: &rhai::Map) {
     if let Some(c) = props.get("bg_color") {
@@ -1250,6 +1461,51 @@ fn apply_box_props(box_node: &mut BoxNode, props: &rhai::Map) {
         .and_then(|v| v.clone().into_string().ok())
     {
         box_node.overflow = s;
+    }
+    // Backdrop blur (glassmorphism)
+    if let Some(v) = props.get("backdrop_blur").and_then(|v| v.as_float().ok()) {
+        box_node.backdrop_blur = Animated::new(v as f32);
+    }
+    // Clip-path polygon: array of [x, y] normalized points
+    if let Some(arr) = props.get("clip_path").and_then(|v| v.clone().into_array().ok()) {
+        let mut points = Vec::new();
+        for item in arr {
+            if let Some(map) = item.clone().try_cast::<rhai::Map>() {
+                let x = map.get("x").and_then(|v| v.as_float().ok()).unwrap_or(0.0) as f32;
+                let y = map.get("y").and_then(|v| v.as_float().ok()).unwrap_or(0.0) as f32;
+                points.push((x, y));
+            } else if let Ok(pair) = item.clone().into_array() {
+                if pair.len() >= 2 {
+                    let x = pair[0].as_float().unwrap_or(0.0) as f32;
+                    let y = pair[1].as_float().unwrap_or(0.0) as f32;
+                    points.push((x, y));
+                }
+            }
+        }
+        if points.len() >= 3 {
+            box_node.clip_path = Some(points);
+        }
+    }
+    // Extra stacked shadows: array of #{ color, blur, x, y }
+    if let Some(arr) = props.get("box_shadows").and_then(|v| v.clone().into_array().ok()) {
+        for item in arr {
+            if let Some(map) = item.clone().try_cast::<rhai::Map>() {
+                let color = map
+                    .get("color")
+                    .and_then(|v| v.clone().into_string().ok())
+                    .and_then(|s| parse_hex_color(&s))
+                    .unwrap_or(crate::types::Color::BLACK);
+                let blur = map.get("blur").and_then(|v| v.as_float().ok()).unwrap_or(10.0) as f32;
+                let x = map.get("x").and_then(|v| v.as_float().ok()).unwrap_or(0.0) as f32;
+                let y = map.get("y").and_then(|v| v.as_float().ok()).unwrap_or(0.0) as f32;
+                box_node.extra_shadows.push(BoxShadow {
+                    color: Animated::new(color),
+                    blur: Animated::new(blur),
+                    offset_x: Animated::new(x),
+                    offset_y: Animated::new(y),
+                });
+            }
+        }
     }
 }
 
@@ -1335,6 +1591,122 @@ fn parse_path_commands(props: &rhai::Map) -> Vec<PathCommand> {
 }
 
 /// Apply text-specific properties from a Rhai map
+/// Parse caption lines from Rhai props.
+fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Vec<CaptionLine> {
+    // Priority: file path > raw SRT source > inline content array
+    if let Some(file_path) = props.get("file").and_then(|v| v.clone().into_string().ok()) {
+        if let Ok(blob) = d.assets.load_blob(&file_path) {
+            let content = String::from_utf8_lossy(&blob);
+            return crate::node::caption::parse_srt(&content);
+        }
+    }
+
+    if let Some(source) = props.get("source").and_then(|v| v.clone().into_string().ok()) {
+        return crate::node::caption::parse_srt(&source);
+    }
+
+    if let Some(arr) = props.get("content").and_then(|v| v.clone().into_array().ok()) {
+        let mut lines = Vec::new();
+        for item in arr {
+            if let Some(map) = item.clone().try_cast::<rhai::Map>() {
+                let text = map.get("text").map(|v| v.to_string()).unwrap_or_default();
+                let start_sec = map.get("start").and_then(|v| v.as_float().ok()).unwrap_or(0.0);
+                let end_sec = map.get("end").and_then(|v| v.as_float().ok()).unwrap_or(0.0);
+
+                let mut words = Vec::new();
+                if let Some(w) = map.get("words").and_then(|v| v.clone().into_array().ok()) {
+                    for w_item in w {
+                        if let Some(w_map) = w_item.clone().try_cast::<rhai::Map>() {
+                            let word_text = w_map.get("word").map(|v| v.to_string()).unwrap_or_default();
+                            let w_start = w_map.get("start").and_then(|v| v.as_float().ok()).unwrap_or(start_sec);
+                            let w_end = w_map.get("end").and_then(|v| v.as_float().ok()).unwrap_or(end_sec);
+                            words.push(CaptionWord {
+                                text: word_text,
+                                start_sec: w_start,
+                                end_sec: w_end,
+                            });
+                        }
+                    }
+                }
+
+                let mut line = CaptionLine {
+                    text,
+                    words,
+                    start_sec,
+                    end_sec,
+                };
+                crate::node::caption::auto_time_words(&mut line);
+                lines.push(line);
+            }
+        }
+        return lines;
+    }
+
+    Vec::new()
+}
+
+/// Apply caption style properties from a Rhai map.
+fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
+    if let Some(s) = props.get("font_size").and_then(|v| v.as_float().ok()) {
+        node.style.font_size = s as f32;
+    }
+    if let Some(c) = props.get("color").and_then(|v| v.clone().into_string().ok()) {
+        if let Some(col) = parse_hex_color(&c) {
+            node.style.color = col;
+        }
+    }
+    if let Some(c) = props.get("highlight_color").and_then(|v| v.clone().into_string().ok()) {
+        if let Some(col) = parse_hex_color(&c) {
+            node.style.highlight_color = col;
+        }
+    }
+    if let Some(c) = props.get("spoken_color").and_then(|v| v.clone().into_string().ok()) {
+        if let Some(col) = parse_hex_color(&c) {
+            node.style.spoken_color = col;
+        }
+    }
+    if let Some(c) = props.get("background_color").and_then(|v| v.clone().into_string().ok()) {
+        if let Some(col) = parse_hex_color(&c) {
+            node.style.background_color = col;
+        }
+    }
+    if let Some(p) = props.get("background_padding").and_then(|v| v.as_float().ok()) {
+        node.style.background_padding = p as f32;
+    }
+    if let Some(p) = props.get("caption_position").and_then(|v| v.clone().into_string().ok()) {
+        node.style.position = CaptionPosition::from_str(&p);
+    }
+    if let Some(a) = props.get("align").and_then(|v| v.clone().into_string().ok()) {
+        node.style.text_align = match a.as_str() {
+            "center" => skia_safe::textlayout::TextAlign::Center,
+            "right" => skia_safe::textlayout::TextAlign::Right,
+            "left" => skia_safe::textlayout::TextAlign::Left,
+            _ => skia_safe::textlayout::TextAlign::Center,
+        };
+    }
+    if let Some(m) = props.get("bottom_margin").and_then(|v| v.as_float().ok()) {
+        node.style.bottom_margin = m as f32;
+    }
+    if let Some(m) = props.get("top_margin").and_then(|v| v.as_float().ok()) {
+        node.style.top_margin = m as f32;
+    }
+    if let Some(f) = props.get("font_family").and_then(|v| v.clone().into_string().ok()) {
+        node.style.font_family = f;
+    }
+    if let Some(s) = props.get("line_spacing").and_then(|v| v.as_float().ok()) {
+        node.style.line_spacing = s as f32;
+    }
+    if let Some(d) = props.get("word_transition_duration").and_then(|v| v.as_float().ok()) {
+        node.style.word_transition_duration = d;
+    }
+    if let Some(d) = props.get("fade_in_duration").and_then(|v| v.as_float().ok()) {
+        node.style.fade_in_duration = d;
+    }
+    if let Some(d) = props.get("fade_out_duration").and_then(|v| v.as_float().ok()) {
+        node.style.fade_out_duration = d;
+    }
+}
+
 fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
     if let Some(s) = props.get("size").and_then(|v| v.as_float().ok()) {
         text_node.default_font_size = Animated::new(s as f32);

@@ -17,7 +17,7 @@ pub mod lottie;
 pub use lottie::LottieNode;
 
 pub mod box_node;
-pub use box_node::BoxNode;
+pub use box_node::{BoxNode, BoxShadow};
 
 pub mod shape_node;
 pub use shape_node::{PathCommand, ShapeNode, ShapeType};
@@ -30,6 +30,12 @@ pub use video_node::{VideoNode, VideoSource};
 
 pub mod composition;
 pub use composition::CompositionNode;
+
+pub mod spectrum_visualizer;
+pub use spectrum_visualizer::SpectrumVisualizerNode;
+
+pub mod caption;
+pub use caption::{auto_time_words, parse_srt, parse_vtt, CaptionLine, CaptionNode, CaptionPosition, CaptionStyle, CaptionWord};
 
 pub mod effect;
 pub mod effect_shaders;

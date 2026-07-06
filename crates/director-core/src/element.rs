@@ -35,6 +35,10 @@ pub struct TextSpan {
     pub stroke_width: Option<f32>,
     pub stroke_color: Option<Color>,
     pub fill_gradient: Option<GradientConfig>,
+    /// Letter spacing in pixels (positive = wider, negative = tighter).
+    pub letter_spacing: Option<f32>,
+    /// Line height multiplier (1.0 = single, 1.5 = 1.5x, etc.).
+    pub line_height: Option<f32>,
 }
 
 /// Strategies for fitting text within a constrained container.

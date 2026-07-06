@@ -54,6 +54,14 @@ pub enum TransitionType {
     Wind,
     /// Burn: heat-edge burn effect expanding from center.
     Burn,
+    /// Dissolve: crossfade with slight blur for a dreamy dissolve.
+    Dissolve,
+    /// Flip: 3D card flip (scale_x perspective trick).
+    Flip,
+    /// ClockWipe: radial sweep from 12 o'clock position.
+    ClockWipe,
+    /// Cube: 3D cube rotation between scenes.
+    Cube,
 }
 
 /// A definition of a transition between two scenes.
@@ -356,6 +364,106 @@ pub fn get_transition_shader(kind: &TransitionType) -> &'static str {
                 colorA.rgb = min(colorA.rgb, 1.0);
                 float reveal = smoothstep(-5.0, 5.0, edge);
                 return mix(colorA, colorB, reveal);
+            }
+        "#
+        }
+        TransitionType::Dissolve => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float2 center = resolution / 2.0;
+                float blur_amount = 20.0 * sin(progress * 3.14159);
+                // Simple box blur approximation for dissolve effect
+                half4 colorA = half4(0);
+                half4 colorB = half4(0);
+                for (int dx = -2; dx <= 2; dx++) {
+                    for (int dy = -2; dy <= 2; dy++) {
+                        float2 offset = float2(float(dx), float(dy)) * blur_amount * 0.2;
+                        colorA += imageA.eval(p + offset);
+                        colorB += imageB.eval(p + offset);
+                    }
+                }
+                colorA /= 25.0;
+                colorB /= 25.0;
+                return mix(colorA, colorB, smoothstep(0.0, 1.0, progress));
+            }
+        "#
+        }
+        TransitionType::Flip => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float2 center = resolution / 2.0;
+                float angle = progress * 3.14159;
+                float cos_a = cos(angle);
+                // Simulate 3D flip: scale_x goes from 1 → 0 → -1 → 0 → 1
+                float scale_x = abs(cos_a);
+                // Determine which side we're showing
+                float showing_a = step(0.0, cos_a);
+                float2 flipped_p = float2(center.x + (p.x - center.x) / max(scale_x, 0.001), p.y);
+                flipped_p.x = clamp(flipped_p.x, 0.0, resolution.x);
+                half4 colorA = imageA.eval(flipped_p);
+                half4 colorB = imageB.eval(flipped_p);
+                // Add shadow effect at flip edges
+                float shadow = 1.0 - scale_x;
+                colorA.rgb *= (1.0 - shadow * 0.3);
+                colorB.rgb *= (1.0 - shadow * 0.3);
+                return mix(colorB, colorA, showing_a);
+            }
+        "#
+        }
+        TransitionType::ClockWipe => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float2 center = resolution / 2.0;
+                float2 uv = p - center;
+                // Angle from 12 o'clock (top), clockwise
+                float angle = atan(uv.x, -uv.y);
+                if (angle < 0.0) angle += 6.28318;
+                float t = angle / 6.28318;
+                float mask = smoothstep(progress - 0.008, progress + 0.008, t);
+                half4 colorA = imageA.eval(p);
+                half4 colorB = imageB.eval(p);
+                return mix(colorB, colorA, mask);
+            }
+        "#
+        }
+        TransitionType::Cube => {
+            r#"
+            uniform shader imageA;
+            uniform shader imageB;
+            uniform float progress;
+            uniform float2 resolution;
+            half4 main(float2 p) {
+                float2 center = resolution / 2.0;
+                float angle = progress * 3.14159;
+                float cos_a = cos(angle);
+                float sin_a = sin(angle);
+                // Determine which face is visible (front or back)
+                float showing_a = step(0.0, cos_a);
+                // Apply perspective distortion: shift x based on y position and rotation
+                float perspective = sin_a * 0.3;
+                float x_shift = (p.y - center.y) / resolution.y * perspective * resolution.x;
+                float scale = abs(cos_a);
+                float2 distorted_p = float2(center.x + (p.x - center.x - x_shift) / max(scale, 0.001), p.y);
+                distorted_p.x = clamp(distorted_p.x, 0.0, resolution.x);
+                half4 colorA = imageA.eval(distorted_p);
+                half4 colorB = imageB.eval(distorted_p);
+                // Darken at edges for depth illusion
+                float darken = 1.0 - (1.0 - abs(cos_a)) * 0.4;
+                colorA.rgb *= darken;
+                colorB.rgb *= darken;
+                return mix(colorB, colorA, showing_a);
             }
         "#
         }
