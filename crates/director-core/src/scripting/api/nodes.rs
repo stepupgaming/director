@@ -1699,11 +1699,53 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     if let Some(d) = props.get("word_transition_duration").and_then(|v| v.as_float().ok()) {
         node.style.word_transition_duration = d;
     }
+    if let Some(d) = props.get("scale_transition_duration").and_then(|v| v.as_float().ok()) {
+        node.style.scale_transition_duration = d;
+    }
     if let Some(d) = props.get("fade_in_duration").and_then(|v| v.as_float().ok()) {
         node.style.fade_in_duration = d;
     }
     if let Some(d) = props.get("fade_out_duration").and_then(|v| v.as_float().ok()) {
         node.style.fade_out_duration = d;
+    }
+    if let Some(s) = props.get("active_scale").and_then(|v| v.as_float().ok()) {
+        node.style.active_scale = s as f32;
+    }
+    if let Some(o) = props.get("future_opacity").and_then(|v| v.as_float().ok()) {
+        node.style.future_opacity = o as f32;
+    }
+    if let Some(o) = props.get("spoken_opacity").and_then(|v| v.as_float().ok()) {
+        node.style.spoken_opacity = o as f32;
+    }
+    if let Some(o) = props.get("active_opacity").and_then(|v| v.as_float().ok()) {
+        node.style.active_opacity = o as f32;
+    }
+    // Shadow / outline
+    if let Some(v) = props.get("text_shadow_enabled").and_then(|v| v.as_bool().ok()) {
+        node.style.text_shadow_enabled = v;
+    }
+    if let Some(c) = props.get("text_shadow_color").and_then(|v| v.clone().into_string().ok()) {
+        if let Some(col) = parse_hex_color(&c) {
+            node.style.text_shadow_color = col;
+        }
+    }
+    if let Some(v) = props.get("text_shadow_blur").and_then(|v| v.as_float().ok()) {
+        node.style.text_shadow_blur = v as f32;
+    }
+    if let Some(v) = props.get("text_shadow_offset_x").and_then(|v| v.as_float().ok()) {
+        node.style.text_shadow_offset_x = v as f32;
+    }
+    if let Some(v) = props.get("text_shadow_offset_y").and_then(|v| v.as_float().ok()) {
+        node.style.text_shadow_offset_y = v as f32;
+    }
+    if let Some(v) = props.get("outline_enabled").and_then(|v| v.as_bool().ok()) {
+        node.style.outline_enabled = v;
+    }
+    if let Some(v) = props.get("outline_thickness").and_then(|v| v.as_float().ok()) {
+        node.style.outline_thickness = v as f32;
+    }
+    if let Some(v) = props.get("auto_adapt_shadow").and_then(|v| v.as_bool().ok()) {
+        node.style.auto_adapt_shadow = v;
     }
 }
 
