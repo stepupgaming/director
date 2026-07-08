@@ -168,14 +168,17 @@ impl CapabilityRegistry {
     }
 
     fn register_builtin_effects(&mut self) {
+        // Effect names match the strings accepted by `apply_effect(name, ...)`
+        // so the registry is directly queryable by agents using the same
+        // names they'd pass to the engine.
         let effects = [
             EffectInfo {
-                name: "Blur",
+                name: "blur",
                 description: "Gaussian blur",
                 params: vec![("sigma", "f32")],
             },
             EffectInfo {
-                name: "DropShadow",
+                name: "drop_shadow",
                 description: "Drop shadow with offset and color",
                 params: vec![
                     ("blur", "f32"),
@@ -185,147 +188,147 @@ impl CapabilityRegistry {
                 ],
             },
             EffectInfo {
-                name: "ColorMatrix",
+                name: "color_matrix",
                 description: "4x5 color transformation matrix",
                 params: vec![("matrix", "[f32; 20]")],
             },
             EffectInfo {
-                name: "Grayscale",
+                name: "grayscale",
                 description: "Desaturate to grayscale",
                 params: vec![],
             },
             EffectInfo {
-                name: "Sepia",
+                name: "sepia",
                 description: "Sepia tone preset",
                 params: vec![],
             },
             EffectInfo {
-                name: "DirectionalBlur",
+                name: "directional_blur",
                 description: "Motion blur in a direction",
                 params: vec![("strength", "f32"), ("angle", "f32"), ("samples", "u32")],
             },
             EffectInfo {
-                name: "FilmGrain",
+                name: "grain",
                 description: "Film grain overlay",
                 params: vec![("intensity", "f32"), ("size", "f32")],
             },
             EffectInfo {
-                name: "Temperature",
+                name: "temperature",
                 description: "Cool/warm color shift",
                 params: vec![("warmth", "f32")],
             },
             EffectInfo {
-                name: "Duotone",
+                name: "duotone",
                 description: "Two-color luminance grade",
                 params: vec![("shadow", "Color"), ("highlight", "Color")],
             },
             EffectInfo {
-                name: "Posterize",
+                name: "posterize",
                 description: "Reduce color levels",
                 params: vec![("levels", "f32")],
             },
             EffectInfo {
-                name: "Threshold",
+                name: "threshold",
                 description: "Black/white luminance cutoff",
                 params: vec![("level", "f32")],
             },
             EffectInfo {
-                name: "Warp",
+                name: "warp",
                 description: "Sine-wave displacement distortion",
                 params: vec![("amplitude", "f32"), ("frequency", "f32"), ("direction", "f32"), ("speed", "f32")],
             },
             EffectInfo {
-                name: "Swirl",
+                name: "swirl",
                 description: "Rotational twist around center",
                 params: vec![("radius", "f32"), ("angle", "f32")],
             },
             EffectInfo {
-                name: "Ripple",
+                name: "ripple",
                 description: "Concentric waves from center",
                 params: vec![("amplitude", "f32"), ("frequency", "f32"), ("speed", "f32")],
             },
             EffectInfo {
-                name: "Glass",
+                name: "glass",
                 description: "Frosted-glass refraction",
                 params: vec![("scale", "f32"), ("intensity", "f32")],
             },
             EffectInfo {
-                name: "Shake",
+                name: "shake",
                 description: "Block-based jitter displacement",
                 params: vec![("intensity", "f32"), ("speed", "f32")],
             },
             EffectInfo {
-                name: "Scanlines",
+                name: "scanlines",
                 description: "CRT scanline overlay",
                 params: vec![("intensity", "f32"), ("count", "f32")],
             },
             EffectInfo {
-                name: "Glitch",
+                name: "glitch",
                 description: "RGB split + block displacement",
                 params: vec![("intensity", "f32"), ("speed", "f32")],
             },
             EffectInfo {
-                name: "EdgeDetect",
+                name: "edge_detect",
                 description: "Sobel edge outline",
                 params: vec![("intensity", "f32")],
             },
             EffectInfo {
-                name: "ZoomBlur",
+                name: "zoom_blur",
                 description: "Radial motion blur from center",
                 params: vec![("strength", "f32")],
             },
             EffectInfo {
-                name: "Kaleidoscope",
+                name: "kaleidoscope",
                 description: "Mirror symmetry segments",
                 params: vec![("segments", "f32")],
             },
             EffectInfo {
-                name: "Thermal",
+                name: "thermal",
                 description: "Heat map color spectrum (luminance to blue/cyan/yellow/red/white)",
                 params: vec![],
             },
             EffectInfo {
-                name: "Liquid",
+                name: "liquid",
                 description: "Bidirectional sine/cosine coordinate warp",
                 params: vec![("frequency", "f32"), ("amplitude", "f32")],
             },
             EffectInfo {
-                name: "Acid",
+                name: "acid",
                 description: "Fluorescent acid melt (wave distortion + color morph)",
                 params: vec![("color", "Color"), ("speed", "f32")],
             },
             EffectInfo {
-                name: "Halftone",
+                name: "halftone",
                 description: "Pop-art dot grid (luminance to dot size mapping)",
                 params: vec![("dot_size", "f32")],
             },
             EffectInfo {
-                name: "Ascii",
+                name: "ascii",
                 description: "Terminal ASCII art effect",
                 params: vec![("scale", "f32"), ("color", "Color")],
             },
             EffectInfo {
-                name: "Sketch",
+                name: "sketch",
                 description: "Charcoal pencil sketch (edge detection + hatching + paper texture)",
                 params: vec![("contrast", "f32")],
             },
             EffectInfo {
-                name: "Mirror",
+                name: "mirror",
                 description: "Quad-mirror symmetry (4-way reflection)",
                 params: vec![],
             },
             EffectInfo {
-                name: "TriTone",
+                name: "tritone",
                 description: "Three-color luminance grade with adjustable midpoint",
                 params: vec![("shadow", "Color"), ("mid", "Color"), ("highlight", "Color"), ("midpoint", "f32")],
             },
             EffectInfo {
-                name: "VHS",
+                name: "vhs",
                 description: "Combined CRT glitch (jitter + scanlines + noise + RGB shift)",
                 params: vec![("distortion", "f32"), ("scanline", "f32")],
             },
             EffectInfo {
-                name: "NeonEdge",
+                name: "neon_edge",
                 description: "Edge detect with configurable glow color and darkened background",
                 params: vec![("glow_color", "Color"), ("threshold", "f32")],
             },
