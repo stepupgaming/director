@@ -7,6 +7,7 @@
 - `src/main.rs` owns the `director-engine` render CLI.
 - `src/bin/review_visuals.rs` owns the visual review helper binary.
 - `src/bin/preview_frame.rs` owns the single-frame preview binary.
+- `src/bin/director_manifest.rs` owns agent-facing JSON manifest export (`api`, `schema`, `from-json`, `from-script`).
 - `README.md` owns CLI usage and exit-code documentation.
 
 ## Local Contracts
@@ -25,6 +26,7 @@
 
 - `cargo test -p director-cli`
 - `cargo run -p director-cli --bin director-engine -- --help`
+- `cargo run -p director-cli --bin director-manifest -- from-script examples/foo.rhai`
 
 ## Child DOX Index
 

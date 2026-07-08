@@ -180,9 +180,10 @@ pub fn render_export(
                     &mut transition_surfaces,
                 )?;
 
-                let weight = 1.0 / (s as f32 + 1.0);
+                let weight = 1.0 / samples as f32;
                 let mut paint = skia_safe::Paint::default();
                 paint.set_alpha_f(weight);
+                paint.set_blend_mode(skia_safe::BlendMode::Plus);
                 let image = scratch_surface.image_snapshot();
 
                 if s == 0 {

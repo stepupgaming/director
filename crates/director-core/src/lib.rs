@@ -73,6 +73,9 @@ pub mod tokens;
 /// Shared data structures used across the engine.
 pub mod types;
 
+/// Text direction detection and resolution for SkParagraph layout.
+pub mod text_direction;
+
 pub mod errors;
 /// Core systems (Asset Management, etc.).
 pub mod systems;
@@ -80,13 +83,22 @@ pub mod systems;
 /// Video export pipeline (encoding to MP4).
 pub mod export;
 
+/// Canonical API catalog (effects, transitions, nodes) shared with schema generation.
+pub mod api_catalog;
+
 /// Capability registry for live reflection of nodes, effects, and transitions.
 pub mod registry;
 
 /// Versioned project (de)serialization (save/load a Director to JSON).
 pub mod project;
 
+/// Layout-time render manifest for agent introspection.
+pub mod render_manifest;
+
 pub use director::Director;
+pub use render_manifest::{
+    build_render_manifest, render_manifest_json, RenderManifest, RENDER_MANIFEST_VERSION,
+};
 pub use element::Element;
 pub use errors::RenderError;
 

@@ -46,6 +46,8 @@ fn test_load_movie_error_propagation() {
                 children: vec![],
             },
             transition: None,
+            loop_count: None,
+            post_hold: None,
         }],
         audio_tracks: vec![],
     };
@@ -90,6 +92,8 @@ fn test_load_movie_rejects_missing_audio_binding_track() {
                 children: vec![],
             },
             transition: None,
+            loop_count: None,
+            post_hold: None,
         }],
         audio_tracks: vec![],
     };

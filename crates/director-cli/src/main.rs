@@ -40,6 +40,14 @@ struct Cli {
     /// Log format
     #[arg(long, value_enum, default_value_t = LogFormat::Pretty)]
     log_format: LogFormat,
+
+    /// Write layout-time render manifest JSON alongside the video
+    #[arg(long, value_name = "PATH")]
+    manifest: Option<PathBuf>,
+
+    /// Timeline instant (seconds) for manifest bounds sampling
+    #[arg(long, default_value_t = 0.0)]
+    manifest_time: f64,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -144,6 +152,16 @@ fn main() {
         Ok(movie) => {
             info!("Script evaluated successfully. Starting render...");
             let mut director = movie.director.lock().unwrap();
+
+            if let Some(manifest_path) = &cli.manifest {
+                let json = director_core::render_manifest_json(&mut director, cli.manifest_time);
+                if let Err(e) = fs::write(manifest_path, json) {
+                    error!("Failed to write manifest: {}", e);
+                    std::process::exit(1);
+                }
+                info!("Wrote render manifest to {:?}", manifest_path);
+            }
+
             match render_export(&mut director, output_path, gpu_context.as_mut(), None, cli.alpha) {
                 Ok(_) => info!("Render complete."),
                 Err(e) => {

@@ -74,6 +74,8 @@ fn test_pipeline_parity() {
                 children: vec![],
             },
             transition: None,
+            loop_count: None,
+            post_hold: None,
         }],
         audio_tracks: vec![AudioTrack {
             id: "track1".to_string(),

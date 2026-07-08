@@ -4,8 +4,8 @@ use director_core::audio::load_audio_bytes;
 use director_core::element::TextSpan; // Added indirectly if needed, but keeping existing imports clean
 use director_core::node::video_node::VideoSource;
 use director_core::node::{
-    BoxNode, CompositionNode, EffectNode, EffectType, ImageNode, LottieNode, TextNode, VectorNode,
-    VideoNode,
+    effect::ShaderUniform, parse_srt, BoxNode, CaptionNode, CompositionNode, EffectNode,
+    EffectType, ImageNode, LottieNode, TextNode, VectorNode, VideoNode,
 };
 use director_core::scene::AudioBinding;
 use director_core::systems::transitions::{Transition, TransitionType as CoreTransitionType};
@@ -80,10 +80,21 @@ pub fn load_movie(request: MovieRequest, loader: Arc<dyn AssetLoader>) -> Result
 
         // Calculate start time based on previous scenes
         let start_time = cumulative_time;
-        cumulative_time += scene_data.duration_secs;
-        scene_end_times.push(start_time + scene_data.duration_secs);
+        let plays = scene_data.loop_count.unwrap_or(1).max(1) as usize;
+        let hold_extra = scene_data
+            .post_hold
+            .as_ref()
+            .map(|h| h.duration)
+            .unwrap_or(0.0);
+        let loop_span = if plays > 1 {
+            scene_data.duration_secs + (plays as f64) * scene_data.duration_secs
+        } else {
+            scene_data.duration_secs
+        };
+        cumulative_time += loop_span + hold_extra;
+        scene_end_times.push(start_time + loop_span + hold_extra);
 
-        // Add to timeline
+        // Primary timeline item
         director
             .timeline
             .push(director_core::director::TimelineItem {
@@ -94,6 +105,40 @@ pub fn load_movie(request: MovieRequest, loader: Arc<dyn AssetLoader>) -> Result
                 z_index: scene_data.z_index,
                 audio_tracks: vec![],
             });
+
+        // Rhai `add_loop` — duplicate plays on the timeline (same spacing as lifecycle.rs)
+        if plays > 1 {
+            let scene_duration = scene_data.duration_secs;
+            let repeat_start = start_time + scene_duration;
+            for i in 1..plays {
+                director
+                    .timeline
+                    .push(director_core::director::TimelineItem {
+                        scene_root: root_id,
+                        name: Some(format!("loop_{i}")),
+                        start_time: repeat_start + i as f64 * scene_duration,
+                        duration: scene_duration,
+                        z_index: scene_data.z_index,
+                        audio_tracks: vec![],
+                    });
+            }
+        }
+
+        // Rhai `add_freeze` — hold frame after scene ends
+        if let Some(hold) = &scene_data.post_hold {
+            let freeze_start = start_time + loop_span;
+            director
+                .timeline
+                .push(director_core::director::TimelineItem {
+                    scene_root: root_id,
+                    name: Some("freeze".to_string()),
+                    start_time: freeze_start,
+                    duration: hold.duration,
+                    z_index: scene_data.z_index,
+                    audio_tracks: vec![],
+                });
+            let _ = hold.freeze_at;
+        }
     }
 
     // Wire up transitions between scenes
@@ -125,6 +170,36 @@ fn convert_transition_type(kind: &TransitionType) -> CoreTransitionType {
         TransitionType::WipeLeft => CoreTransitionType::WipeLeft,
         TransitionType::WipeRight => CoreTransitionType::WipeRight,
         TransitionType::CircleOpen => CoreTransitionType::CircleOpen,
+        TransitionType::Wave {
+            amplitude,
+            frequency,
+        } => CoreTransitionType::Wave {
+            amplitude: *amplitude,
+            frequency: *frequency,
+        },
+        TransitionType::Glitch { intensity } => CoreTransitionType::Glitch {
+            intensity: *intensity,
+        },
+        TransitionType::Iris {
+            start_radius,
+            end_radius,
+        } => CoreTransitionType::Iris {
+            start_radius: *start_radius,
+            end_radius: *end_radius,
+        },
+        TransitionType::Spiral { rotations } => CoreTransitionType::Spiral {
+            rotations: *rotations,
+        },
+        TransitionType::ZoomIn => CoreTransitionType::ZoomIn,
+        TransitionType::RadialWipe => CoreTransitionType::RadialWipe,
+        TransitionType::PixelateDissolve => CoreTransitionType::PixelateDissolve,
+        TransitionType::CrossZoom => CoreTransitionType::CrossZoom,
+        TransitionType::Wind => CoreTransitionType::Wind,
+        TransitionType::Burn => CoreTransitionType::Burn,
+        TransitionType::Dissolve => CoreTransitionType::Dissolve,
+        TransitionType::Flip => CoreTransitionType::Flip,
+        TransitionType::ClockWipe => CoreTransitionType::ClockWipe,
+        TransitionType::Cube => CoreTransitionType::Cube,
     }
 }
 
@@ -257,6 +332,75 @@ fn build_node_recursive(
                 EffectConfig::ColorMatrix { matrix } => EffectType::ColorMatrix(matrix.clone()),
                 EffectConfig::Grayscale => EffectType::ColorMatrix(GRAYSCALE_MATRIX.to_vec()),
                 EffectConfig::Sepia => EffectType::ColorMatrix(SEPIA_MATRIX.to_vec()),
+                EffectConfig::Invert => EffectType::ColorMatrix(vec![
+                    -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 1.0,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ]),
+                EffectConfig::Contrast { value } => {
+                    let t = (1.0 - value) / 2.0;
+                    EffectType::ColorMatrix(vec![
+                        *value, 0.0, 0.0, 0.0, t, 0.0, *value, 0.0, 0.0, t, 0.0, 0.0, *value, 0.0,
+                        t, 0.0, 0.0, 0.0, 1.0, 0.0,
+                    ])
+                }
+                EffectConfig::Brightness { value } => EffectType::ColorMatrix(vec![
+                    1.0, 0.0, 0.0, 0.0, *value, 0.0, 1.0, 0.0, 0.0, *value, 0.0, 0.0, 1.0, 0.0,
+                    *value, 0.0, 0.0, 0.0, 1.0, 0.0,
+                ]),
+                EffectConfig::Saturation { value } => {
+                    let s = *value;
+                    EffectType::ColorMatrix(vec![
+                        0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s, 0.0, 0.0,
+                        0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s, 0.0, 0.0,
+                        0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s, 0.0, 0.0,
+                        0.0, 0.0, 0.0, 1.0, 0.0,
+                    ])
+                }
+                EffectConfig::Exposure { value } => {
+                    let m = (2.0_f32).powf(*value);
+                    EffectType::ColorMatrix(vec![
+                        m, 0.0, 0.0, 0.0, 0.0, 0.0, m, 0.0, 0.0, 0.0, 0.0, 0.0, m, 0.0, 0.0,
+                        0.0, 0.0, 0.0, 1.0, 0.0,
+                    ])
+                }
+                EffectConfig::HueRotate { angle } => {
+                    let angle_rad = angle.to_radians();
+                    let cos_a = angle_rad.cos();
+                    let sin_a = angle_rad.sin();
+                    let inv_cos = 1.0 - cos_a;
+                    let isqrt3 = 0.577350269;
+                    EffectType::ColorMatrix(vec![
+                        cos_a + inv_cos / 3.0,
+                        inv_cos / 3.0 - sin_a * isqrt3,
+                        inv_cos / 3.0 + sin_a * isqrt3,
+                        0.0,
+                        0.0,
+                        inv_cos / 3.0 + sin_a * isqrt3,
+                        cos_a + inv_cos / 3.0,
+                        inv_cos / 3.0 - sin_a * isqrt3,
+                        0.0,
+                        0.0,
+                        inv_cos / 3.0 - sin_a * isqrt3,
+                        inv_cos / 3.0 + sin_a * isqrt3,
+                        cos_a + inv_cos / 3.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0,
+                    ])
+                }
+                EffectConfig::Tint { color, amount } => {
+                    let c = color.unwrap_or(Color::WHITE);
+                    let a = amount.clamp(0.0, 1.0);
+                    EffectType::ColorMatrix(vec![
+                        1.0 - a + a * c.r, a * c.g, a * c.b, 0.0, 0.0, a * c.r, 1.0 - a + a * c.g,
+                        a * c.b, 0.0, 0.0, a * c.r, a * c.g, 1.0 - a + a * c.b, 0.0, 0.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0,
+                    ])
+                }
                 EffectConfig::DirectionalBlur {
                     strength,
                     angle,
@@ -266,9 +410,32 @@ fn build_node_recursive(
                     angle: Animated::new(*angle),
                     samples: *samples,
                 },
-                EffectConfig::FilmGrain { intensity, size } => EffectType::FilmGrain {
+                EffectConfig::Grain { intensity, size } => EffectType::FilmGrain {
                     intensity: Animated::new(*intensity),
                     size: Animated::new(*size),
+                },
+                EffectConfig::Vignette {
+                    intensity,
+                    radius,
+                    feather,
+                } => EffectType::Vignette {
+                    intensity: Animated::new(*intensity),
+                    radius: Animated::new(*radius),
+                    feather: Animated::new(*feather),
+                },
+                EffectConfig::ChromaticAberration { strength } => {
+                    EffectType::ChromaticAberration(Animated::new(*strength))
+                }
+                EffectConfig::Pixelate { block_size } => {
+                    EffectType::Pixelate(Animated::new(*block_size))
+                }
+                EffectConfig::Sharpen { strength } => EffectType::Sharpen(Animated::new(*strength)),
+                EffectConfig::Glow {
+                    intensity,
+                    threshold,
+                } => EffectType::Glow {
+                    intensity: Animated::new(*intensity),
+                    threshold: Animated::new(*threshold),
                 },
                 EffectConfig::Warp {
                     amplitude,
@@ -336,6 +503,67 @@ fn build_node_recursive(
                 EffectConfig::Kaleidoscope { segments } => {
                     EffectType::Kaleidoscope(Animated::new(*segments))
                 }
+                EffectConfig::Thermal => EffectType::Thermal,
+                EffectConfig::Liquid {
+                    frequency,
+                    amplitude,
+                } => EffectType::Liquid {
+                    frequency: Animated::new(*frequency),
+                    amplitude: Animated::new(*amplitude),
+                },
+                EffectConfig::Acid { color, speed } => EffectType::Acid {
+                    color: color.unwrap_or(Color::new(0.0, 1.0, 0.5, 1.0)),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::Halftone { dot_size } => {
+                    EffectType::Halftone(Animated::new(*dot_size))
+                }
+                EffectConfig::Ascii { scale, color } => EffectType::Ascii {
+                    scale: Animated::new(*scale),
+                    color: color.unwrap_or(Color::WHITE),
+                },
+                EffectConfig::Sketch { contrast } => {
+                    EffectType::Sketch(Animated::new(*contrast))
+                }
+                EffectConfig::Mirror => EffectType::Mirror,
+                EffectConfig::TriTone {
+                    shadow,
+                    mid,
+                    highlight,
+                    midpoint,
+                } => EffectType::TriTone {
+                    shadow: shadow.unwrap_or(Color::new(0.05, 0.05, 0.2, 1.0)),
+                    mid: mid.unwrap_or(Color::new(0.5, 0.5, 0.5, 1.0)),
+                    highlight: highlight.unwrap_or(Color::new(1.0, 0.8, 0.4, 1.0)),
+                    midpoint: Animated::new(*midpoint),
+                },
+                EffectConfig::Vhs {
+                    distortion,
+                    scanline,
+                } => EffectType::Vhs {
+                    distortion: Animated::new(*distortion),
+                    scanline: Animated::new(*scanline),
+                },
+                EffectConfig::NeonEdge {
+                    glow_color,
+                    threshold,
+                } => EffectType::NeonEdge {
+                    glow_color: glow_color.unwrap_or(Color::new(0.0, 1.0, 1.0, 1.0)),
+                    threshold: Animated::new(*threshold),
+                },
+                EffectConfig::SkslShader { code, uniforms } => {
+                    let mut uniform_map = HashMap::new();
+                    for (k, v) in uniforms {
+                        uniform_map.insert(
+                            k.clone(),
+                            ShaderUniform::Float(Animated::new(*v)),
+                        );
+                    }
+                    EffectType::RuntimeShader {
+                        sksl: code.clone(),
+                        uniforms: uniform_map,
+                    }
+                }
             };
             Box::new(EffectNode {
                 effects: vec![effect],
@@ -343,6 +571,23 @@ fn build_node_recursive(
                 shader_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
                 current_time: 0.0,
             })
+        }
+        NodeKind::Caption { source, font_size } => {
+            let srt_body = if source.contains("-->") {
+                source.clone()
+            } else {
+                let bytes = director
+                    .assets
+                    .loader
+                    .load_bytes(source)
+                    .with_context(|| format!("Failed to load caption source: {}", source))?;
+                String::from_utf8_lossy(&bytes).into_owned()
+            };
+            let lines = parse_srt(&srt_body);
+            let fc = director.assets.font_collection.clone();
+            let mut cap = CaptionNode::new(lines, fc);
+            cap.style.font_size = *font_size;
+            Box::new(cap)
         }
         NodeKind::Composition {
             width,

@@ -1,4 +1,4 @@
-# Caption system — Discord-style kinetic captions for short-form video
+# Caption system — god-tier kinetic captions for short-form video
 
 Each caption cue is a pre-laid-out, structurally stable text block.
 Highlighting the active word never moves any other word; no per-line
@@ -13,16 +13,28 @@ reflows when a second line enters; exactly one global active word.
   paragraphs.
 * `CaptionWord { text, start_sec, end_sec, display_line_idx }` — one
   word. Per-cue word timing implicit (auto-timed) or explicit.
-* `CaptionStyle` — visible defaults and motion configuration.
+* `CaptionStyle` — visible defaults and motion configuration. Defaults:
+  bold Poppins (700), black stroke outline, per-line pill background,
+  drop shadow + active-word glow, auto phrase break (4 words/line),
+  resolution scaling from 1920 px reference height.
+* `CaptionStyle::resolved_for_canvas(h)` — applies `scale_with_canvas`,
+  platform `safe_area_preset`, and dimensional scaling before layout.
 * `compute_slot_assignments()` — pre-laid Y-slot allocation per cue.
   Permanent for the lifetime of the cue. Adding/removing cues never
   moves an existing cue.
+* `CaptionNode::measure` — height from `build_block_layout` SkParagraph
+  metrics at `layout_width_fraction * available_width` (no char-width
+  estimate). Cached `block_layout` is reused when width + canvas height
+  match.
 * Per-display-line `Paragraph` — each line is its own Skia Paragraph,
   laid out with **uniform `font_size`**. Every TextStyle run on a single
   paragraph shares the same font size, so glyph metrics never vary
   across active / future / spoken states.
-* `find_global_active()` — exactly one `(cue_idx, word_idx)` pair
-  at any time, picking the latest `start_sec`.
+* Per-display-line **pill** — rounded `RRect` drawn behind text (before
+  glyphs). `pill_adaptive` inverts fill on light/dark backgrounds.
+* `find_global_active()` — exactly one `(line_idx, word_idx)` pair
+  at any time, picking the latest `start_sec`. Uses original `lines`
+  indices, not visible-cue subset indices.
 
 ## Per-word visual state
 
@@ -67,11 +79,12 @@ transition frames would create an additional yellow region when the
 next word starts a future→active entry, breaking the "exactly one
 active word" invariant. Test: `test_no_dual_yellow_at_word_boundary`.
 
-## Two-line reserve
+## Two-line reserve + phrase auto-break
 
 Cues can contain `\n` (multi-line SRT text) or wrap their words into
-two display lines via the layout. Each cue's display lines render as
-separate paragraphs stacked at the cue's pre-laid slot.
+display lines via `auto_phrase_break` + `max_words_per_line` (default 4).
+Each cue's display lines render as separate paragraphs stacked at the
+cue's pre-laid slot.
 
 * **Line 0**: visible from `cue.start_sec` (instant reveal, 0.10 s ramp).
 * **Line 1+**: visible from `cue.start_sec + offset_frac * cue_duration`
@@ -82,19 +95,35 @@ When a cue enters or exits, the existing cue's lines never move.
 Slot Y is computed once from the cue's pre-laid layout dimensions.
 Consistent rendering across the entire cue lifetime.
 
-## Drop shadow + auto-adapt
+## Drop shadow + auto-adapt + pills
 
 * All words carry a light drop shadow (offset `text_shadow_offset_x/y`,
   default `(0, 2)`) for any-background legibility.
 * `auto_adapt_shadow` (default true) calls `Canvas::peek_pixels()` to
   sample bg luminance under the caption rect (`lum > 0.55` → black
   shadow; `lum < 0.40` → white shadow; mid → config-defaulted).
+* `pill_enabled` (default true) draws a rounded rect behind each
+  display line. `pill_adaptive` picks dark/light fill from bg luma.
+
+## Platform safe areas
+
+`safe_area` / `safe_area_preset` applies scaled margins from
+`DesignSystem.safe_areas` (`tiktok`, `youtube_shorts`, `instagram_reel`,
+etc.). Values scale from 1920 px reference height via
+`scaled_safe_zone()`.
 
 ## Rhai props
 
 * `font_size`, `color`, `highlight_color`, `spoken_color`
 * `bottom_margin`, `top_margin`, `caption_position`, `align`
-* `line_spacing`, `font_family`
+* `text_direction` — `"auto"` (default, first-strong detect), `"ltr"`, or `"rtl"`
+* `line_spacing`, `font_family`, `font_weight` / `weight` (default 700)
+* `stroke_enabled`, `stroke_width`, `stroke_color` (default on, 2 px black)
+* `pill_enabled`, `pill_color`, `pill_adaptive`, `pill_padding_h`,
+  `pill_padding_v`, `pill_radius`
+* `auto_phrase_break`, `max_words_per_line`
+* `safe_area` / `safe_area_preset`, `scale_with_canvas`,
+  `reference_canvas_height`, `uppercase`
 * `color_transition_duration` (default 0.10 s — entry ramp only)
 * `future_opacity` (0.92), `spoken_opacity` (mapped to
   `spoken_color_opacity`, default 0.55), `active_opacity` (1.0)
@@ -112,14 +141,23 @@ Consistent rendering across the entire cue lifetime.
 * SRT / VTT parsing — `test_parse_srt_*`, `test_parse_vtt_*`
 * Word auto-timing across `\n`-separated lines —
   `test_word_display_assigns_line_idx`
+* Phrase auto-break — `test_phrase_auto_break_splits_long_cue`
+* Phrase-break word retiming — `test_phrase_break_retimes_per_display_line`
+* Safe-area scaling — `test_safe_area_preset_scales_bottom_margin`
+* Legibility score — `test_legibility_score_high_contrast`
 * `max_overlapping_lines` — `test_max_overlapping_lines*`
+* RTL / bidi — `test_caption_rtl_word_order`; typography `text_auto_detects_arabic_rtl`
+* Visible-cue layout index — `test_visible_cue_uses_original_line_index`
+* Measure height from Paragraph metrics — `test_measure_height_matches_block_layout`
 * Slot stability — `test_slot_assignments_stable`
 * Single global active word — `test_single_global_active_word`,
   `test_no_dual_yellow_at_word_boundary`
 * Uniform font size across states — `test_word_font_size_uniform`,
   `test_no_ease_out_back_no_wobble_in_style`
 * Line reveal schedule — `test_line_reveal_factor_step`
-* Visual fixtures — `tests/visual/fixtures/captions/caption_word_highlight.rhai`
+* Visual fixtures —
+  `caption_word_highlight.rhai`, `caption_god_tier.rhai`,
+  `caption_overlap_stress.rhai`
 * Integration: `caption_basic`, `caption_renders_visible_pixels`
 
 ## Acceptance criteria
@@ -139,6 +177,8 @@ Every invariant the user list demands is enforced here:
 * No continuous motion: no wobble, no pulse, no kinetic lift, no
   ease_out_back overshoot.
 * Line reveal keeps geometry stable: only visual opacity ramps.
+* Pills are visual-only; they never affect token layout positions.
+
 ## Bundled Fonts (deterministic text)
 
 Text rendering must be reproducible across machines, so fonts are bundled

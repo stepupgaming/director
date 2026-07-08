@@ -80,6 +80,10 @@ pub fn register(engine: &mut Engine) {
         serde_json::to_string(&registry::list_easings()).unwrap_or_default()
     });
 
+    engine.register_fn("list_api_manifest", || -> String {
+        registry::api_manifest_json()
+    });
+
     engine.register_fn("get_effect_meta", |name: &str| -> String {
         match registry::get_effect(name) {
             Some(info) => serde_json::to_string(&info).unwrap_or_default(),

@@ -1,5 +1,6 @@
 use crate::animation::Animated;
 use crate::element::{Element, TextFit, TextShadow, TextSpan};
+use crate::text_direction::{resolve_text_direction, TextDirectionMode};
 use crate::node::text_animator::{
     parse_text_anim_property, GlyphAnimState, TextAnimProperty, TextAnimator,
 };
@@ -94,6 +95,8 @@ pub struct TextNode {
 
     // Text Alignment
     pub text_align: TextAlign,
+    /// Paragraph direction: auto-detect from content, or force LTR/RTL.
+    pub text_direction: TextDirectionMode,
 
     // Kinetic Typography
     /// Active per-glyph animators
@@ -125,6 +128,7 @@ impl Clone for TextNode {
             last_layout_rect: Rect::default(),
             style: self.style.clone(),
             text_align: self.text_align,
+            text_direction: self.text_direction,
             animators: self.animators.clone(),
             current_time: self.current_time,
             counter: self.counter.clone(),
@@ -159,6 +163,7 @@ impl TextNode {
             last_layout_rect: Rect::default(),
             style: Style::default(),
             text_align: TextAlign::Left,
+            text_direction: TextDirectionMode::Auto,
             animators: Vec::new(),
             current_time: 0.0,
             counter: None,
@@ -172,7 +177,11 @@ impl TextNode {
     fn build_paragraph(&self) -> Paragraph {
         let mut paragraph_style = ParagraphStyle::new();
         paragraph_style.set_text_align(self.text_align);
-        paragraph_style.set_text_direction(TextDirection::LTR);
+        let content: String = self.spans.iter().map(|s| s.text.as_str()).collect();
+        paragraph_style.set_text_direction(resolve_text_direction(
+            self.text_direction,
+            &content,
+        ));
 
         // --- Fix for Vertical Centering ---
         // 1. Disable "first ascent" which adds extra padding at the top
@@ -318,6 +327,14 @@ impl TextNode {
 
     pub fn set_text_align(&mut self, align: TextAlign) {
         self.text_align = align;
+        if let Ok(mut p) = self.paragraph.lock() {
+            *p = Some(self.build_paragraph());
+        }
+        self.dirty_layout = true;
+    }
+
+    pub fn set_text_direction(&mut self, direction: TextDirectionMode) {
+        self.text_direction = direction;
         if let Ok(mut p) = self.paragraph.lock() {
             *p = Some(self.build_paragraph());
         }

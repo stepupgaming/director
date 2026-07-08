@@ -5,9 +5,11 @@
 use director_core::{
     element::{TextFit, TextSpan},
     node::TextNode,
+    text_direction::TextDirectionMode,
     video_wrapper::RenderMode,
     DefaultAssetLoader, Director,
 };
+use skia_safe::textlayout::TextDirection;
 use std::sync::Arc;
 
 /// Test TextFit::Shrink behavior.
@@ -108,6 +110,51 @@ fn text_span_rich_styling() {
     // Should not panic during render
     let mut surface = skia_safe::surfaces::raster_n32_premul((800, 600)).unwrap();
     director_core::systems::renderer::render_frame(&mut director, 0.0, surface.canvas()).unwrap();
+}
+
+/// Explicit LTR keeps English glyphs in left-to-right visual order.
+#[test]
+fn text_explicit_ltr_english() {
+    let loader = Arc::new(DefaultAssetLoader);
+    let director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+
+    let spans = vec![TextSpan {
+        text: "ABC".to_string(),
+        font_size: Some(48.0),
+        ..Default::default()
+    }];
+
+    let font_collection = director.assets.font_collection.clone();
+    let mut text_node = TextNode::new(spans, font_collection);
+    text_node.set_text_direction(TextDirectionMode::Ltr);
+
+    let glyphs = text_node.get_glyph_rects(400.0);
+    assert_eq!(glyphs.len(), 3);
+    assert!(
+        glyphs[0].rect.left() < glyphs[2].rect.left(),
+        "LTR English: first glyph ({}) should be left of last ({})",
+        glyphs[0].rect.left(),
+        glyphs[2].rect.left()
+    );
+}
+
+/// Auto-detect sets RTL for Arabic content.
+#[test]
+fn text_auto_detects_arabic_rtl() {
+    let loader = Arc::new(DefaultAssetLoader);
+    let director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+
+    let spans = vec![TextSpan {
+        text: "مرحبا".to_string(),
+        font_size: Some(48.0),
+        ..Default::default()
+    }];
+
+    let font_collection = director.assets.font_collection.clone();
+    let text_node = TextNode::new(spans, font_collection);
+    let glyphs = text_node.get_glyph_rects(400.0);
+    assert!(!glyphs.is_empty());
+    assert_eq!(glyphs[0].direction, TextDirection::RTL);
 }
 
 /// Test text shadow rendering.

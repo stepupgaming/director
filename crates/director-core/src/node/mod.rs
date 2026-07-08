@@ -35,7 +35,11 @@ pub mod spectrum_visualizer;
 pub use spectrum_visualizer::SpectrumVisualizerNode;
 
 pub mod caption;
-pub use caption::{auto_time_words, parse_srt, parse_vtt, CaptionLine, CaptionNode, CaptionPosition, CaptionStyle, CaptionWord};
+pub use caption::{
+    apply_phrase_break, auto_time_words, estimate_legibility, format_caption_word,
+    parse_srt, parse_vtt, refresh_caption_lines, scaled_safe_zone, CaptionLine, CaptionNode,
+    CaptionPosition, CaptionStyle, CaptionWord, REFERENCE_SHORT_FORM_HEIGHT,
+};
 
 pub mod effect;
 pub mod effect_shaders;

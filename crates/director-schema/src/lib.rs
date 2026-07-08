@@ -1,7 +1,25 @@
 use director_core::animation::{EasingType, SpringConfig};
+
 use director_core::types::{Color, GradientConfig};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+pub mod manifest;
+pub mod project_manifest;
+pub use manifest::{
+    api_manifest, api_manifest_json, export_full_schema_bundle, export_movie_request_schema,
+    ApiManifest,
+};
+pub use project_manifest::{
+    build_project_manifest, export_project_manifest_json, AssetRef, AudioTrackRef,
+    NodeManifestEntry, ProjectManifest, SceneManifestEntry, PROJECT_MANIFEST_VERSION,
+};
+
+// Generated from director-core::api_catalog (see build.rs).
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated_schema_enums.rs"));
+}
+pub use generated::{EffectConfig, TransitionConfig, TransitionType};
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct MovieRequest {
@@ -20,36 +38,6 @@ pub struct MovieRequest {
     pub audio_tracks: Vec<AudioTrack>,
 }
 
-/// Visual transition type between scenes.
-#[derive(Serialize, Deserialize, Debug, Clone, Default, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TransitionType {
-    #[default]
-    Fade,
-    SlideLeft,
-    SlideRight,
-    WipeLeft,
-    WipeRight,
-    CircleOpen,
-}
-
-/// Configuration for a scene-to-scene transition.
-#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-pub struct TransitionConfig {
-    /// Transition type
-    #[serde(rename = "type")]
-    pub kind: TransitionType,
-    /// Duration in seconds
-    pub duration: f64,
-    /// Easing function (default: Linear)
-    #[serde(default = "default_easing")]
-    pub easing: EasingType,
-}
-
-fn default_easing() -> EasingType {
-    EasingType::Linear
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
 pub struct Scene {
     pub id: String,
@@ -65,6 +53,22 @@ pub struct Scene {
     /// Transition to the next scene (optional)
     #[serde(default)]
     pub transition: Option<TransitionConfig>,
+    /// Total timeline plays for this scene (1 = single play; mirrors Rhai `add_loop`).
+    #[serde(default)]
+    pub loop_count: Option<u32>,
+    /// Hold a frame after the scene ends (mirrors Rhai `add_freeze`).
+    #[serde(default)]
+    pub post_hold: Option<ScenePostHold>,
+}
+
+/// Post-scene frame hold (Rhai `add_freeze` equivalent).
+#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+pub struct ScenePostHold {
+    /// Time within the scene (seconds) to freeze; defaults to scene end when omitted.
+    #[serde(default)]
+    pub freeze_at: Option<f64>,
+    /// How long to hold the frozen frame on the timeline.
+    pub duration: f64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
@@ -139,6 +143,13 @@ pub enum NodeKind {
     },
     /// A visual effect wrapper (blur, shadows, etc.)
     Effect { effect_type: EffectConfig },
+    /// Timed kinetic captions (SRT/VTT).
+    Caption {
+        /// Inline SRT/VTT source or path resolved by the pipeline loader
+        source: String,
+        #[serde(default = "default_caption_font_size")]
+        font_size: f32,
+    },
     /// A nested composition with its own timeline (pre-comp).
     Composition {
         /// Width of the composition canvas
@@ -164,169 +175,8 @@ fn default_comp_fps() -> u32 {
     30
 }
 
-/// Configuration for visual effects applied to nodes.
-#[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
-#[serde(tag = "effect", rename_all = "snake_case")]
-pub enum EffectConfig {
-    /// Gaussian blur effect.
-    Blur {
-        /// Blur radius (sigma). Default: 10.0
-        #[serde(default = "default_blur")]
-        sigma: f32,
-    },
-    /// Drop shadow effect.
-    DropShadow {
-        /// Shadow blur radius. Default: 10.0
-        #[serde(default = "default_blur")]
-        blur: f32,
-        /// Horizontal offset
-        #[serde(default)]
-        offset_x: f32,
-        /// Vertical offset
-        #[serde(default)]
-        offset_y: f32,
-        /// Shadow color
-        #[serde(default)]
-        color: Option<Color>,
-    },
-    /// Custom 4x5 color matrix transform (20 floats).
-    ColorMatrix {
-        /// The 20-element color matrix [R, G, B, A, Offset] x 4 rows
-        matrix: Vec<f32>,
-    },
-    /// Grayscale preset (convenience wrapper for ColorMatrix).
-    Grayscale,
-    /// Sepia tone preset (convenience wrapper for ColorMatrix).
-    Sepia,
-    /// Directional blur (motion blur) along an angle.
-    DirectionalBlur {
-        /// Blur strength (pixel distance). Default: 10.0
-        #[serde(default = "default_blur")]
-        strength: f32,
-        /// Direction angle in degrees (0 = right, 90 = down). Default: 0.0
-        #[serde(default)]
-        angle: f32,
-        /// Number of samples (quality vs performance, 4-64). Default: 16
-        #[serde(default = "default_samples")]
-        samples: u32,
-    },
-    /// Film grain / noise overlay for cinematic look.
-    FilmGrain {
-        /// Grain intensity (0.0 - 1.0). Default: 0.1
-        #[serde(default = "default_grain_intensity")]
-        intensity: f32,
-        /// Grain size/scale in pixels. Default: 1.0
-        #[serde(default = "default_grain_size")]
-        size: f32,
-    },
-    /// Sine-wave displacement distortion.
-    Warp {
-        #[serde(default)]
-        amplitude: f32,
-        #[serde(default)]
-        frequency: f32,
-        #[serde(default)]
-        direction: f32,
-        #[serde(default)]
-        speed: f32,
-    },
-    /// Rotational swirl/twist around the center.
-    Swirl {
-        #[serde(default)]
-        radius: f32,
-        #[serde(default)]
-        angle: f32,
-    },
-    /// Concentric ripple waves from the center.
-    Ripple {
-        #[serde(default)]
-        amplitude: f32,
-        #[serde(default)]
-        frequency: f32,
-        #[serde(default)]
-        speed: f32,
-    },
-    /// Frosted-glass refraction and blur.
-    Glass {
-        #[serde(default)]
-        scale: f32,
-        #[serde(default)]
-        intensity: f32,
-    },
-    /// Block-based jitter displacement.
-    Shake {
-        #[serde(default)]
-        intensity: f32,
-        #[serde(default)]
-        speed: f32,
-    },
-    /// Two-color luminance grade.
-    Duotone {
-        #[serde(default)]
-        shadow: Option<Color>,
-        #[serde(default)]
-        highlight: Option<Color>,
-    },
-    /// Reduce color levels.
-    Posterize {
-        #[serde(default)]
-        levels: f32,
-    },
-    /// Black/white luminance cutoff.
-    Threshold {
-        #[serde(default)]
-        level: f32,
-    },
-    /// Cool/warm color shift (warmth: -1 cool .. +1 warm).
-    Temperature {
-        #[serde(default)]
-        warmth: f32,
-    },
-    /// CRT-style scanline overlay.
-    Scanlines {
-        #[serde(default)]
-        intensity: f32,
-        #[serde(default)]
-        count: f32,
-    },
-    /// RGB split with block displacement.
-    Glitch {
-        #[serde(default)]
-        intensity: f32,
-        #[serde(default)]
-        speed: f32,
-    },
-    /// Sobel edge outline.
-    EdgeDetect {
-        #[serde(default)]
-        intensity: f32,
-    },
-    /// Radial motion blur from the center.
-    ZoomBlur {
-        #[serde(default)]
-        strength: f32,
-    },
-    /// Mirror symmetry segments.
-    Kaleidoscope {
-        #[serde(default)]
-        segments: f32,
-    },
-}
-
-fn default_blur() -> f32 {
-    10.0
-}
-
-fn default_samples() -> u32 {
-    16
-}
-
-fn default_grain_intensity() -> f32 {
-    0.1
-}
-
-fn default_grain_size() -> f32 {
-    1.0
+fn default_caption_font_size() -> f32 {
+    42.0
 }
 
 // Simplified Style Map for JSON (maps to Taffy later)
@@ -625,6 +475,8 @@ mod tests {
                     }],
                 },
                 transition: None,
+                loop_count: None,
+                post_hold: None,
             }],
             audio_tracks: vec![],
         };
@@ -657,9 +509,14 @@ mod tests {
                 angle: 45.0,
                 samples: 32,
             },
-            EffectConfig::FilmGrain {
+            EffectConfig::Grain {
                 intensity: 0.15,
                 size: 2.0,
+            },
+            EffectConfig::Thermal,
+            EffectConfig::SkslShader {
+                code: "half4 main(float2 xy) { return half4(1); }".into(),
+                uniforms: Default::default(),
             },
         ];
 
@@ -705,6 +562,19 @@ mod tests {
                 duration: 2.0,
                 easing: EasingType::EaseOut,
             },
+            TransitionConfig {
+                kind: TransitionType::Wave {
+                    amplitude: 0.2,
+                    frequency: 4.0,
+                },
+                duration: 1.0,
+                easing: EasingType::Linear,
+            },
+            TransitionConfig {
+                kind: TransitionType::Cube,
+                duration: 1.5,
+                easing: EasingType::EaseInOut,
+            },
         ];
 
         for trans in transitions {
@@ -742,6 +612,8 @@ mod tests {
                         children: vec![],
                     },
                     transition: None,
+                    loop_count: None,
+                    post_hold: None,
                 }],
                 start_offset: 0.5,
             },
@@ -776,5 +648,129 @@ mod tests {
             }
             _ => panic!("Expected Composition NodeKind"),
         }
+    }
+
+    #[test]
+    fn test_catalog_node_sync() {
+        use director_core::api_catalog::catalog_node_schema_tags;
+
+        for tag in catalog_node_schema_tags() {
+            let sample = minimal_node_json(tag);
+            let node: Node = serde_json::from_value(sample.clone()).unwrap_or_else(|e| {
+                panic!("NodeKind missing catalog tag {tag}: {e}, sample={sample}")
+            });
+            let _ = node;
+        }
+    }
+
+    fn minimal_node_json(tag: &str) -> serde_json::Value {
+        let mut base = serde_json::json!({
+            "id": "n1",
+            "type": tag,
+        });
+        let obj = base.as_object_mut().unwrap();
+        match tag {
+            "text" => {
+                obj.insert("content".into(), "hi".into());
+                obj.insert("font_size".into(), 24.0.into());
+            }
+            "image" | "video" | "vector" | "lottie" => {
+                obj.insert("src".into(), "asset.png".into());
+            }
+            "caption" => {
+                obj.insert("source".into(), "1\n00:00:00,000 --> 00:00:01,000\nHi".into());
+            }
+            "effect" => {
+                obj.insert("effect_type".into(), serde_json::json!({ "effect": "blur" }));
+            }
+            "composition" => {
+                obj.insert("width".into(), 640.into());
+                obj.insert("height".into(), 360.into());
+                obj.insert("scenes".into(), serde_json::json!([]));
+            }
+            _ => {}
+        }
+        base
+    }
+
+    #[test]
+    fn test_catalog_schema_sync() {
+        use director_core::api_catalog::{catalog_effect_schema_tags, catalog_transition_names};
+
+        let transition_tags: Vec<String> = catalog_transition_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        for tag in &transition_tags {
+            let sample = serde_json::json!({
+                "type": tag,
+                "duration": 1.0,
+                "easing": "linear"
+            });
+            let cfg: TransitionConfig =
+                serde_json::from_value(sample.clone()).unwrap_or_else(|e| {
+                    panic!("TransitionType missing catalog entry {tag}: {e}, sample={sample}")
+                });
+            let _ = cfg;
+        }
+
+        let effect_tags = catalog_effect_schema_tags();
+        for tag in effect_tags {
+            let sample = if tag == "sksl_shader" {
+                serde_json::json!({ "effect": tag, "code": "half4 main(float2 xy) { return half4(1); }" })
+            } else if tag == "color_matrix" {
+                serde_json::json!({ "effect": tag, "matrix": vec![1.0f32; 20] })
+            } else {
+                serde_json::json!({ "effect": tag })
+            };
+            let cfg: EffectConfig = serde_json::from_value(sample.clone()).unwrap_or_else(|e| {
+                panic!("EffectConfig missing catalog tag {tag}: {e}, sample={sample}")
+            });
+            let _ = cfg;
+        }
+    }
+
+    #[test]
+    fn test_scene_loop_and_hold_serialization() {
+        let scene = Scene {
+            id: "s1".into(),
+            name: None,
+            duration_secs: 2.0,
+            z_index: 0,
+            background: None,
+            root: Node {
+                id: "root".into(),
+                kind: NodeKind::Box { border_radius: 0.0 },
+                style: StyleMap::default(),
+                transform: TransformMap::default(),
+                animations: vec![],
+                spring_animations: vec![],
+                audio_bindings: vec![],
+                children: vec![],
+            },
+            transition: None,
+            loop_count: Some(3),
+            post_hold: Some(ScenePostHold {
+                freeze_at: Some(1.5),
+                duration: 0.5,
+            }),
+        };
+        let json = serde_json::to_string(&scene).unwrap();
+        let loaded: Scene = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.loop_count, Some(3));
+        assert_eq!(loaded.post_hold.as_ref().unwrap().duration, 0.5);
+    }
+
+    #[test]
+    fn test_api_manifest_export() {
+        let json = crate::manifest::api_manifest_json();
+        assert!(json.contains("\"grain\""));
+        assert!(json.contains("\"add_loop\""));
+        let schema = crate::manifest::export_movie_request_schema();
+        assert!(schema.contains("MovieRequest"));
+        assert!(schema.contains("loop_count"));
+        assert!(schema.contains("post_hold"));
+        let bundle = crate::manifest::export_full_schema_bundle();
+        assert!(bundle.contains("ProjectManifest"));
     }
 }

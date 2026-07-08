@@ -14,6 +14,7 @@
 
 - Keep crate responsibilities separated; cross-crate changes should respect the dependency direction in `Cargo.toml`.
 - Public API changes must be reflected in README, examples, specs, generated truth, or skill references when those materials describe the changed behavior.
+- `director-core::api_catalog` is the single source of truth for effects, transitions, nodes, and Rhai lifecycle helpers; `registry` and `director-schema` must stay synced with it.
 - Tests and fixtures live with the crate that owns the behavior.
 
 ## Work Guidance

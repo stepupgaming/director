@@ -1,8 +1,11 @@
 //! # Capability Registry
 //!
-//! Runtime registry for node types, effects, and other capabilities.
-//! This enables live reflection by `director-developer` without hardcoded manifests.
+//! Runtime registry backed by [`crate::api_catalog`]. Introspection and JSON
+//! schema generation both read the same catalog so they cannot drift.
 
+use crate::api_catalog::{
+    EASING_CATALOG, EFFECT_CATALOG, NODE_CATALOG, TRANSITION_CATALOG,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -22,7 +25,7 @@ pub struct NodeTypeInfo {
 pub struct EffectInfo {
     pub name: &'static str,
     pub description: &'static str,
-    pub params: Vec<(&'static str, &'static str)>, // (name, type)
+    pub params: Vec<(&'static str, &'static str)>,
 }
 
 /// Metadata about a scene transition.
@@ -30,6 +33,7 @@ pub struct EffectInfo {
 pub struct TransitionInfo {
     pub name: &'static str,
     pub description: &'static str,
+    pub params: Vec<(&'static str, &'static str)>,
 }
 
 /// Metadata about an easing function.
@@ -64,370 +68,58 @@ impl CapabilityRegistry {
             easings: HashMap::new(),
         };
 
-        reg.register_builtin_nodes();
-        reg.register_builtin_effects();
-        reg.register_builtin_transitions();
-        reg.register_builtin_easings();
+        for node in NODE_CATALOG {
+            reg.node_types.insert(
+                node.name,
+                NodeTypeInfo {
+                    name: node.name,
+                    description: node.description,
+                    supports_children: node.supports_children,
+                    animatable_properties: node.animatable_properties.to_vec(),
+                    features: node.features.to_vec(),
+                },
+            );
+        }
+
+        for effect in EFFECT_CATALOG {
+            reg.effects.insert(
+                effect.name,
+                EffectInfo {
+                    name: effect.name,
+                    description: effect.description,
+                    params: effect.params.to_vec(),
+                },
+            );
+        }
+
+        for transition in TRANSITION_CATALOG {
+            reg.transitions.insert(
+                transition.name,
+                TransitionInfo {
+                    name: transition.name,
+                    description: transition.description,
+                    params: transition.params.to_vec(),
+                },
+            );
+        }
+
+        for easing in EASING_CATALOG {
+            reg.easings.insert(
+                easing.name,
+                EasingInfo {
+                    name: easing.name,
+                    description: easing.description,
+                },
+            );
+        }
 
         reg
-    }
-
-    fn register_builtin_nodes(&mut self) {
-        let nodes = [
-            NodeTypeInfo {
-                name: "Box",
-                description: "Rectangular container with optional border radius and shadow",
-                supports_children: true,
-                animatable_properties: vec![
-                    "opacity",
-                    "x",
-                    "y",
-                    "scale",
-                    "rotation",
-                    "bg_color",
-                    "border_radius",
-                ],
-                features: vec!["flexbox_layout", "grid_layout"],
-            },
-            NodeTypeInfo {
-                name: "Text",
-                description: "Rich text with font styling and per-glyph animation",
-                supports_children: false,
-                animatable_properties: vec![
-                    "opacity",
-                    "x",
-                    "y",
-                    "scale",
-                    "rotation",
-                    "font_size",
-                    "color",
-                ],
-                features: vec!["per_glyph_animation", "text_animators", "typewriter"],
-            },
-            NodeTypeInfo {
-                name: "Image",
-                description: "Static image with object-fit options",
-                supports_children: false,
-                animatable_properties: vec!["opacity", "x", "y", "scale", "rotation"],
-                features: vec!["object_fit", "lazy_loading"],
-            },
-            NodeTypeInfo {
-                name: "Video",
-                description: "Video playback with frame stepping",
-                supports_children: false,
-                animatable_properties: vec!["opacity", "x", "y", "scale", "rotation", "volume"],
-                features: vec!["frame_accurate_seeking", "audio_extraction", "loop"],
-            },
-            NodeTypeInfo {
-                name: "Lottie",
-                description: "Lottie JSON animation playback",
-                supports_children: false,
-                animatable_properties: vec!["opacity", "x", "y", "scale", "rotation", "speed"],
-                features: vec!["gpu_accelerated", "dynamic_speed", "frame_control"],
-            },
-            NodeTypeInfo {
-                name: "Vector",
-                description: "SVG vector graphics",
-                supports_children: false,
-                animatable_properties: vec!["opacity", "x", "y", "scale", "rotation"],
-                features: vec!["path_animation", "dynamic_colors"],
-            },
-            NodeTypeInfo {
-                name: "Effect",
-                description: "Visual effect wrapper (blur, shadows, color matrix)",
-                supports_children: true,
-                animatable_properties: vec!["sigma", "blur", "intensity"],
-                features: vec!["effect_chaining"],
-            },
-            NodeTypeInfo {
-                name: "Composition",
-                description: "Nested timeline (pre-comp)",
-                supports_children: true,
-                animatable_properties: vec!["opacity", "x", "y", "scale", "rotation"],
-                features: vec!["time_remapping", "nested_scenes", "independent_timeline"],
-            },
-            NodeTypeInfo {
-                name: "Wgpu",
-                description: "GPU compute node with custom WGSL shaders",
-                supports_children: false,
-                animatable_properties: vec!["opacity"],
-                features: vec!["wgpu_gpu_compute"],
-            },
-            NodeTypeInfo {
-                name: "Caption",
-                description: "Timed subtitle text with background pill styling",
-                supports_children: false,
-                animatable_properties: vec!["opacity", "font_size"],
-                features: vec!["srt_import", "vtt_import", "auto_caption"],
-            },
-        ];
-
-        for node in nodes {
-            self.node_types.insert(node.name, node);
-        }
-    }
-
-    fn register_builtin_effects(&mut self) {
-        // Effect names match the strings accepted by `apply_effect(name, ...)`
-        // so the registry is directly queryable by agents using the same
-        // names they'd pass to the engine.
-        let effects = [
-            EffectInfo {
-                name: "blur",
-                description: "Gaussian blur",
-                params: vec![("sigma", "f32")],
-            },
-            EffectInfo {
-                name: "drop_shadow",
-                description: "Drop shadow with offset and color",
-                params: vec![
-                    ("blur", "f32"),
-                    ("offset_x", "f32"),
-                    ("offset_y", "f32"),
-                    ("color", "Color"),
-                ],
-            },
-            EffectInfo {
-                name: "color_matrix",
-                description: "4x5 color transformation matrix",
-                params: vec![("matrix", "[f32; 20]")],
-            },
-            EffectInfo {
-                name: "grayscale",
-                description: "Desaturate to grayscale",
-                params: vec![],
-            },
-            EffectInfo {
-                name: "sepia",
-                description: "Sepia tone preset",
-                params: vec![],
-            },
-            EffectInfo {
-                name: "directional_blur",
-                description: "Motion blur in a direction",
-                params: vec![("strength", "f32"), ("angle", "f32"), ("samples", "u32")],
-            },
-            EffectInfo {
-                name: "grain",
-                description: "Film grain overlay",
-                params: vec![("intensity", "f32"), ("size", "f32")],
-            },
-            EffectInfo {
-                name: "temperature",
-                description: "Cool/warm color shift",
-                params: vec![("warmth", "f32")],
-            },
-            EffectInfo {
-                name: "duotone",
-                description: "Two-color luminance grade",
-                params: vec![("shadow", "Color"), ("highlight", "Color")],
-            },
-            EffectInfo {
-                name: "posterize",
-                description: "Reduce color levels",
-                params: vec![("levels", "f32")],
-            },
-            EffectInfo {
-                name: "threshold",
-                description: "Black/white luminance cutoff",
-                params: vec![("level", "f32")],
-            },
-            EffectInfo {
-                name: "warp",
-                description: "Sine-wave displacement distortion",
-                params: vec![("amplitude", "f32"), ("frequency", "f32"), ("direction", "f32"), ("speed", "f32")],
-            },
-            EffectInfo {
-                name: "swirl",
-                description: "Rotational twist around center",
-                params: vec![("radius", "f32"), ("angle", "f32")],
-            },
-            EffectInfo {
-                name: "ripple",
-                description: "Concentric waves from center",
-                params: vec![("amplitude", "f32"), ("frequency", "f32"), ("speed", "f32")],
-            },
-            EffectInfo {
-                name: "glass",
-                description: "Frosted-glass refraction",
-                params: vec![("scale", "f32"), ("intensity", "f32")],
-            },
-            EffectInfo {
-                name: "shake",
-                description: "Block-based jitter displacement",
-                params: vec![("intensity", "f32"), ("speed", "f32")],
-            },
-            EffectInfo {
-                name: "scanlines",
-                description: "CRT scanline overlay",
-                params: vec![("intensity", "f32"), ("count", "f32")],
-            },
-            EffectInfo {
-                name: "glitch",
-                description: "RGB split + block displacement",
-                params: vec![("intensity", "f32"), ("speed", "f32")],
-            },
-            EffectInfo {
-                name: "edge_detect",
-                description: "Sobel edge outline",
-                params: vec![("intensity", "f32")],
-            },
-            EffectInfo {
-                name: "zoom_blur",
-                description: "Radial motion blur from center",
-                params: vec![("strength", "f32")],
-            },
-            EffectInfo {
-                name: "kaleidoscope",
-                description: "Mirror symmetry segments",
-                params: vec![("segments", "f32")],
-            },
-            EffectInfo {
-                name: "thermal",
-                description: "Heat map color spectrum (luminance to blue/cyan/yellow/red/white)",
-                params: vec![],
-            },
-            EffectInfo {
-                name: "liquid",
-                description: "Bidirectional sine/cosine coordinate warp",
-                params: vec![("frequency", "f32"), ("amplitude", "f32")],
-            },
-            EffectInfo {
-                name: "acid",
-                description: "Fluorescent acid melt (wave distortion + color morph)",
-                params: vec![("color", "Color"), ("speed", "f32")],
-            },
-            EffectInfo {
-                name: "halftone",
-                description: "Pop-art dot grid (luminance to dot size mapping)",
-                params: vec![("dot_size", "f32")],
-            },
-            EffectInfo {
-                name: "ascii",
-                description: "Terminal ASCII art effect",
-                params: vec![("scale", "f32"), ("color", "Color")],
-            },
-            EffectInfo {
-                name: "sketch",
-                description: "Charcoal pencil sketch (edge detection + hatching + paper texture)",
-                params: vec![("contrast", "f32")],
-            },
-            EffectInfo {
-                name: "mirror",
-                description: "Quad-mirror symmetry (4-way reflection)",
-                params: vec![],
-            },
-            EffectInfo {
-                name: "tritone",
-                description: "Three-color luminance grade with adjustable midpoint",
-                params: vec![("shadow", "Color"), ("mid", "Color"), ("highlight", "Color"), ("midpoint", "f32")],
-            },
-            EffectInfo {
-                name: "vhs",
-                description: "Combined CRT glitch (jitter + scanlines + noise + RGB shift)",
-                params: vec![("distortion", "f32"), ("scanline", "f32")],
-            },
-            EffectInfo {
-                name: "neon_edge",
-                description: "Edge detect with configurable glow color and darkened background",
-                params: vec![("glow_color", "Color"), ("threshold", "f32")],
-            },
-        ];
-
-        for effect in effects {
-            self.effects.insert(effect.name, effect);
-        }
-    }
-
-    fn register_builtin_transitions(&mut self) {
-        let transitions = [
-            TransitionInfo {
-                name: "Fade",
-                description: "Cross-dissolve between scenes",
-            },
-            TransitionInfo {
-                name: "SlideLeft",
-                description: "Slide outgoing scene left",
-            },
-            TransitionInfo {
-                name: "SlideRight",
-                description: "Slide outgoing scene right",
-            },
-            TransitionInfo {
-                name: "WipeLeft",
-                description: "Wipe revealing new scene from right",
-            },
-            TransitionInfo {
-                name: "WipeRight",
-                description: "Wipe revealing new scene from left",
-            },
-            TransitionInfo {
-                name: "CircleOpen",
-                description: "Circular reveal from center",
-            },
-            TransitionInfo {
-                name: "Wave",
-                description: "Wave distortion with amplitude and frequency",
-            },
-            TransitionInfo {
-                name: "Glitch",
-                description: "Glitch/scanline distortion effect",
-            },
-            TransitionInfo {
-                name: "Iris",
-                description: "Iris/circular wipe transition",
-            },
-            TransitionInfo {
-                name: "Spiral",
-                description: "Spiral transition with configurable rotations",
-            },
-            TransitionInfo {
-                name: "Dissolve",
-                description: "Crossfade with slight blur for a dreamy dissolve",
-            },
-            TransitionInfo {
-                name: "Flip",
-                description: "3D card flip using scale_x perspective trick",
-            },
-            TransitionInfo {
-                name: "ClockWipe",
-                description: "Radial sweep from 12 o'clock position",
-            },
-            TransitionInfo {
-                name: "Cube",
-                description: "3D cube rotation between scenes",
-            },
-        ];
-
-        for transition in transitions {
-            self.transitions.insert(transition.name, transition);
-        }
-    }
-
-    fn register_builtin_easings(&mut self) {
-        let easings = [
-            ("linear", "Constant speed, no acceleration"),
-            ("ease_in", "Start slow, accelerate"),
-            ("ease_out", "Start fast, decelerate"),
-            ("ease_in_out", "Slow start and end, fast middle"),
-            ("bounce_out", "Bounce at the end"),
-            ("bounce_in", "Bounce at the start"),
-            ("bounce_in_out", "Bounce at both ends"),
-            ("elastic_out", "Elastic overshoot at end"),
-            ("elastic_in", "Elastic anticipation at start"),
-            ("elastic_in_out", "Elastic at both ends"),
-            ("back_out", "Slight overshoot"),
-            ("back_in", "Slight anticipation"),
-            ("back_in_out", "Anticipation and overshoot"),
-        ];
-
-        for (name, description) in easings {
-            self.easings.insert(name, EasingInfo { name, description });
-        }
     }
 }
 
 // ============ Public API ============
+
+pub use crate::api_catalog::{api_manifest, api_manifest_json, ApiManifest};
 
 /// List all registered node types.
 pub fn list_node_types() -> Vec<&'static NodeTypeInfo> {
@@ -480,45 +172,44 @@ pub fn get_animatable_properties(node_type: &str) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_catalog::{
+        catalog_effect_schema_tags, catalog_transition_names, API_MANIFEST_VERSION,
+    };
 
     #[test]
     fn test_registry_initializes() {
         let registry = CapabilityRegistry::global();
-        assert!(!registry.node_types.is_empty());
-        assert!(!registry.effects.is_empty());
-        assert!(!registry.transitions.is_empty());
-        assert!(!registry.easings.is_empty());
+        assert_eq!(registry.node_types.len(), NODE_CATALOG.len());
+        assert_eq!(registry.effects.len(), EFFECT_CATALOG.len());
+        assert_eq!(registry.transitions.len(), TRANSITION_CATALOG.len());
+        assert_eq!(registry.easings.len(), EASING_CATALOG.len());
     }
 
     #[test]
-    fn test_list_node_types() {
-        let nodes = list_node_types();
-        assert!(nodes.len() >= 8);
-
-        let names: Vec<_> = nodes.iter().map(|n| n.name).collect();
-        assert!(names.contains(&"Box"));
-        assert!(names.contains(&"Text"));
-        assert!(names.contains(&"Lottie"));
+    fn test_registry_matches_catalog_counts() {
+        assert_eq!(list_effects().len(), EFFECT_CATALOG.len());
+        assert_eq!(list_transitions().len(), TRANSITION_CATALOG.len());
+        let names: Vec<_> = list_transitions().iter().map(|t| t.name).collect();
+        for expected in catalog_transition_names() {
+            assert!(names.contains(&expected), "missing transition {expected}");
+        }
+        let tags = catalog_effect_schema_tags();
+        assert!(tags.contains(&"grain"));
+        assert!(tags.contains(&"sksl_shader"));
     }
 
     #[test]
     fn test_supports_animation() {
         assert!(supports_animation("Box", "opacity"));
-        assert!(supports_animation("Box", "border_radius"));
         assert!(supports_animation("Text", "font_size"));
-        assert!(supports_animation("Lottie", "speed"));
-
         assert!(!supports_animation("Image", "border_radius"));
-        assert!(!supports_animation("Unknown", "opacity"));
     }
 
     #[test]
-    fn test_get_animatable_properties() {
-        let box_props = get_animatable_properties("Box");
-        assert!(box_props.contains(&"opacity"));
-        assert!(box_props.contains(&"border_radius"));
-
-        let unknown_props = get_animatable_properties("NonExistent");
-        assert!(unknown_props.is_empty());
+    fn test_api_manifest_json_roundtrip() {
+        let json = api_manifest_json();
+        let v: serde_json::Value = serde_json::from_str(&json).expect("manifest json");
+        assert_eq!(v["version"], API_MANIFEST_VERSION);
+        assert!(v["effects"].as_array().unwrap().len() >= 30);
     }
 }

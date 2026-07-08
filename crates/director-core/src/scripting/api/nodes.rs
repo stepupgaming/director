@@ -1677,6 +1677,12 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
             _ => skia_safe::textlayout::TextAlign::Center,
         };
     }
+    if let Some(d) = props
+        .get("text_direction")
+        .and_then(|v| v.clone().into_string().ok())
+    {
+        node.style.text_direction = crate::text_direction::parse_text_direction_mode(&d);
+    }
     if let Some(m) = props.get("bottom_margin").and_then(|v| v.as_float().ok()) {
         node.style.bottom_margin = m as f32;
     }
@@ -1685,6 +1691,30 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     }
     if let Some(f) = props.get("font_family").and_then(|v| v.clone().into_string().ok()) {
         node.style.font_family = f;
+    }
+    if let Some(w) = props
+        .get("font_weight")
+        .or_else(|| props.get("weight"))
+        .and_then(super::super::utils::parse_font_weight)
+    {
+        node.style.font_weight = w;
+    }
+    if let Some(v) = props.get("stroke_enabled").and_then(|v| v.as_bool().ok()) {
+        node.style.stroke_enabled = v;
+    }
+    if let Some(v) = props.get("stroke_width").and_then(|v| v.as_float().ok()) {
+        node.style.stroke_width = v as f32;
+    }
+    if let Some(c) = props.get("stroke_color").and_then(|v| v.clone().into_string().ok()) {
+        if let Some(col) = parse_hex_color(&c) {
+            node.style.stroke_color = col;
+        }
+    }
+    if let Some(v) = props.get("glow_enabled").and_then(|v| v.as_bool().ok()) {
+        node.style.glow_enabled = v;
+    }
+    if let Some(v) = props.get("glow_blur").and_then(|v| v.as_float().ok()) {
+        node.style.glow_blur = v as f32;
     }
     if let Some(s) = props.get("line_spacing").and_then(|v| v.as_float().ok()) {
         node.style.line_spacing = s as f32;
@@ -1700,12 +1730,6 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     }
     if let Some(o) = props.get("active_opacity").and_then(|v| v.as_float().ok()) {
         node.style.active_opacity = o as f32;
-    }
-    if let Some(v) = props.get("glow_enabled").and_then(|v| v.as_bool().ok()) {
-        node.style.glow_enabled = v;
-    }
-    if let Some(v) = props.get("glow_blur").and_then(|v| v.as_float().ok()) {
-        node.style.glow_blur_radius = v as f32;
     }
     if let Some(v) = props.get("text_shadow_enabled").and_then(|v| v.as_bool().ok()) {
         node.style.text_shadow_enabled = v;
@@ -1745,6 +1769,49 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     if let Some(v) = props.get("auto_adapt_shadow").and_then(|v| v.as_bool().ok()) {
         node.style.auto_adapt_shadow = v;
     }
+    if let Some(v) = props.get("pill_enabled").and_then(|v| v.as_bool().ok()) {
+        node.style.pill_enabled = v;
+    }
+    if let Some(c) = props.get("pill_color").and_then(|v| v.clone().into_string().ok()) {
+        if let Some(col) = parse_hex_color(&c) {
+            node.style.pill_color = col;
+        }
+    }
+    if let Some(v) = props.get("pill_adaptive").and_then(|v| v.as_bool().ok()) {
+        node.style.pill_adaptive = v;
+    }
+    if let Some(v) = props.get("pill_padding_h").and_then(|v| v.as_float().ok()) {
+        node.style.pill_padding_h = v as f32;
+    }
+    if let Some(v) = props.get("pill_padding_v").and_then(|v| v.as_float().ok()) {
+        node.style.pill_padding_v = v as f32;
+    }
+    if let Some(v) = props.get("pill_radius").and_then(|v| v.as_float().ok()) {
+        node.style.pill_radius = v as f32;
+    }
+    if let Some(v) = props.get("auto_phrase_break").and_then(|v| v.as_bool().ok()) {
+        node.style.auto_phrase_break = v;
+    }
+    if let Some(v) = props.get("max_words_per_line").and_then(|v| v.as_int().ok()) {
+        node.style.max_words_per_line = (v as usize).max(1);
+    }
+    if let Some(p) = props
+        .get("safe_area")
+        .or_else(|| props.get("safe_area_preset"))
+        .and_then(|v| v.clone().into_string().ok())
+    {
+        node.style.safe_area_preset = Some(p);
+    }
+    if let Some(v) = props.get("scale_with_canvas").and_then(|v| v.as_bool().ok()) {
+        node.style.scale_with_canvas = v;
+    }
+    if let Some(v) = props.get("reference_canvas_height").and_then(|v| v.as_float().ok()) {
+        node.style.reference_canvas_height = v as f32;
+    }
+    if let Some(v) = props.get("uppercase").and_then(|v| v.as_bool().ok()) {
+        node.style.uppercase = v;
+    }
+    node.after_style_changed();
 }
 
 fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
@@ -1831,5 +1898,11 @@ fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
             "justify" => skia_safe::textlayout::TextAlign::Justify,
             _ => skia_safe::textlayout::TextAlign::Left,
         };
+    }
+    if let Some(d) = props
+        .get("text_direction")
+        .and_then(|v| v.clone().into_string().ok())
+    {
+        text_node.set_text_direction(crate::text_direction::parse_text_direction_mode(&d));
     }
 }
