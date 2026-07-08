@@ -38,7 +38,7 @@ pub mod caption;
 pub use caption::{
     apply_phrase_break, auto_time_words, estimate_legibility, format_caption_word,
     parse_srt, parse_vtt, refresh_caption_lines, scaled_safe_zone, CaptionLine, CaptionNode,
-    CaptionPosition, CaptionStyle, CaptionWord, REFERENCE_SHORT_FORM_HEIGHT,
+    CaptionPosition, CaptionStyle, CaptionWord, PhraseLineMode, REFERENCE_SHORT_FORM_HEIGHT,
 };
 
 pub mod effect;

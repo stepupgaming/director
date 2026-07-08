@@ -1,5 +1,5 @@
 // @snapshot: 2.6, 5.2
-// Stress: two cues overlap in time — each must land in its own slot with correct text.
+// Stress: overlapping SRT windows — newest cue replaces older in the same position.
 let movie = new_director(1080, 1920, 30);
 let scene = movie.add_scene(8.0);
 
@@ -10,7 +10,7 @@ let root = scene.add_box(#{
 });
 
 root.add_caption(#{
-    source: "1\n00:00:00,500 --> 00:00:04,000\nfirst cue stays readable\n\n2\n00:00:02,500 --> 00:00:06,500\nsecond cue overlaps cleanly\n\n3\n00:00:05,000 --> 00:00:07,500\nthird stacks in slot zero",
+    source: "1\n00:00:00,500 --> 00:00:04,000\nfirst cue stays readable\n\n2\n00:00:02,500 --> 00:00:06,500\nsecond cue replaces first\n\n3\n00:00:05,000 --> 00:00:07,500\nthird replaces second",
     font_size: 48,
     font_family: "Poppins",
     font_weight: 700,

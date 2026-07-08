@@ -65,6 +65,15 @@ impl Default for CaptionPosition {
     }
 }
 
+/// How phrase-broken display lines appear within one cue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PhraseLineMode {
+    /// One display line at a time in the same position (Opus/TikTok default).
+    Replace,
+    /// All revealed display lines stack vertically (legacy).
+    Stack,
+}
+
 /// Caption styling. Defaults target a clean, TikTok/Reels look:
 /// white text, warm yellow active word, restrained shadow only.
 /// Uniform font_size across all token states → glyph metrics never
@@ -139,6 +148,8 @@ pub struct CaptionStyle {
     // Auto-split single-line cues into phrase chunks (e.g. 4 words per line).
     pub auto_phrase_break: bool,
     pub max_words_per_line: usize,
+    /// Phrase-broken lines: `Replace` shows one line at a time; `Stack` keeps all.
+    pub phrase_line_mode: PhraseLineMode,
 
     // Platform safe-area preset (`tiktok`, `youtube_shorts`, `instagram_reel`, …).
     pub safe_area_preset: Option<String>,
@@ -205,6 +216,7 @@ impl Default for CaptionStyle {
 
             auto_phrase_break: true,
             max_words_per_line: 4,
+            phrase_line_mode: PhraseLineMode::Replace,
 
             safe_area_preset: None,
 
@@ -269,9 +281,9 @@ pub struct BlockLayout {
 /// Architecture: pre-laid-out structurally stable text blocks. Each
 /// token has ONE canonical `(x, baselineY, width, height, centerX,
 /// centerY, lineIndex)`. Active emphasis never re-measures positions;
-/// it scale-transforms around the cached token center and only paints
-/// the active token via its own per-token glyph paragraph during the
-/// optional pop window. Single token = single draw.
+/// it scale-transforms around the cached token center. During the
+/// optional pop window the full line is painted first, then the active
+/// word is painted again inside a clipped scale overlay.
 pub struct CaptionNode {
     pub lines: Vec<CaptionLine>,
     pub style: CaptionStyle,
@@ -306,6 +318,16 @@ impl fmt::Debug for CaptionNode {
 }
 
 impl CaptionNode {
+    /// Output-frame height for dimensional scaling. Content-sized caption
+    /// layout boxes must not shrink fonts to fit their own measured height.
+    pub(crate) fn effective_canvas_height(style: &CaptionStyle, node_rect_h: f32) -> f32 {
+        if style.scale_with_canvas {
+            style.reference_canvas_height
+        } else {
+            node_rect_h
+        }
+    }
+
     pub fn new(mut lines: Vec<CaptionLine>, font_collection: Arc<Mutex<FontCollection>>) -> Self {
         let style = CaptionStyle::default();
         refresh_caption_lines(&mut lines, &style);
@@ -702,26 +724,26 @@ impl CaptionNode {
         let max_overlap = cues.iter().map(|c| c.slot + 1).max().unwrap_or(1);
         let mut slot_heights: Vec<f32> = vec![0.0; max_overlap];
         for c in &cues {
-            let total_dl_height: f32 = c
-                .display_lines
-                .iter()
-                .map(|dl| dl.line_height)
-                .sum::<f32>()
-                + (c.display_lines.len().saturating_sub(1)) as f32
-                    * style.line_spacing;
+            let total_dl_height: f32 = if style.phrase_line_mode == PhraseLineMode::Replace {
+                c.display_lines
+                    .iter()
+                    .map(|dl| dl.line_height)
+                    .fold(0.0f32, f32::max)
+            } else {
+                c.display_lines
+                    .iter()
+                    .map(|dl| dl.line_height)
+                    .sum::<f32>()
+                    + (c.display_lines.len().saturating_sub(1)) as f32 * style.line_spacing
+            };
             if total_dl_height > slot_heights[c.slot] {
                 slot_heights[c.slot] = total_dl_height;
             }
         }
         let max_slot_height = slot_heights.iter().cloned().fold(0.0f32, f32::max);
-        let total_height = slot_heights
-            .iter()
-            .fold(0.0f32, |acc, h| acc + h + style.line_spacing)
-            - if max_slot_height > 0.0 {
-                style.line_spacing
-            } else {
-                0.0
-            };
+        // Single anchor position: reserve height for the tallest cue block, not
+        // a vertical stack of every overlap slot.
+        let total_height = max_slot_height;
 
         BlockLayout {
             width: layout_width,
@@ -932,10 +954,11 @@ impl Element for CaptionNode {
         };
 
         let layout_width = known_dimensions.width.unwrap_or(width);
-        let canvas_h = match available_space.height {
+        let raw_h = match available_space.height {
             AvailableSpace::Definite(h) => h,
             _ => known_dimensions.height.unwrap_or(1080.0),
         };
+        let canvas_h = Self::effective_canvas_height(&self.style, raw_h);
         let layout_style = self.style.resolved_for_canvas(canvas_h);
         let block_width = (layout_width.max(20.0)) * layout_style.layout_width_fraction;
 
@@ -1015,7 +1038,7 @@ impl Element for CaptionNode {
             return Ok(());
         }
 
-        let canvas_h = rect.height();
+        let canvas_h = Self::effective_canvas_height(&self.style, rect.height());
         let layout_style = self.style.resolved_for_canvas(canvas_h);
         let block_width = (rect.width() * layout_style.layout_width_fraction).max(20.0);
 
@@ -1067,13 +1090,23 @@ impl Element for CaptionNode {
             }
         };
 
+        // Standard captions: one block at a time in the same anchor position.
+        // When SRT cues overlap, only the newest (latest start_sec) is shown.
+        let render_cues: Vec<(usize, &CaptionLine)> = visible
+            .iter()
+            .max_by(|a, b| {
+                a.1.start_sec
+                    .partial_cmp(&b.1.start_sec)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|entry| vec![*entry])
+            .unwrap_or_default();
+
         // ── Single canonical global active token ────────────────
-        let global_active = Self::find_global_active(&visible, current_time);
+        let global_active = Self::find_global_active(&render_cues, current_time);
 
         canvas.save();
         canvas.clip_rect(rect, skia_safe::ClipOp::Intersect, true);
-
-        let slot_h = layout.max_slot_height + layout_style.line_spacing;
 
         // The active token's pop scale: > 1.0 only during the ~80ms
         // entry window. Outside this window, scale == 1.0 and the
@@ -1088,8 +1121,8 @@ impl Element for CaptionNode {
         };
         let active_pop_active = pop_scale > 1.001;
 
-        // ── Render each visible cue, each display line. ─────────
-        for &(line_idx, line) in &visible {
+        // ── Render the active cue, each display line. ─────────────
+        for &(line_idx, line) in &render_cues {
             let cue_layout = match layout.cues.get(line_idx) {
                 Some(c) => c,
                 None => continue,
@@ -1110,8 +1143,21 @@ impl Element for CaptionNode {
                 }
             };
 
-            let slot_y = cue_layout.slot as f32 * slot_h;
-            let mut line_y_cursor: f32 = cue_block_top_y + slot_y;
+            let phrase_replace =
+                layout_style.phrase_line_mode == PhraseLineMode::Replace;
+            let current_display_line = if phrase_replace {
+                Some(current_display_line_index(
+                    line,
+                    line_idx,
+                    current_time,
+                    &layout_style,
+                    global_active,
+                ))
+            } else {
+                None
+            };
+
+            let mut line_y_cursor: f32 = cue_block_top_y;
 
             // Active token info, if any, for THIS cue.
             let active_in_this_cue: Option<&TokenLayout> = match global_active {
@@ -1124,6 +1170,10 @@ impl Element for CaptionNode {
             };
 
             for (line_idx_idx, display_line) in cue_layout.display_lines.iter().enumerate() {
+                if phrase_replace && Some(line_idx_idx) != current_display_line {
+                    continue;
+                }
+
                 let reveal = line_reveal_factor(
                     line,
                     line_idx_idx,
@@ -1131,8 +1181,15 @@ impl Element for CaptionNode {
                     &layout_style,
                 );
                 if reveal <= 0.0 {
-                    line_y_cursor += display_line.line_height + self.style.line_spacing;
+                    if !phrase_replace {
+                        line_y_cursor += display_line.line_height + self.style.line_spacing;
+                    }
                     continue;
+                }
+
+                if phrase_replace {
+                    line_y_cursor =
+                        cue_block_top_y + layout.total_height - display_line.line_height;
                 }
 
                 // ── Center each DISPLAY LINE individually using
@@ -1157,7 +1214,10 @@ impl Element for CaptionNode {
                     if active_in_this_cue.is_some() {
                         let target_word_idx =
                             active_in_this_cue.as_ref().unwrap().word_idx;
-                        display_line.tokens.iter().position(|t| t.word_idx == target_word_idx)
+                        display_line
+                            .tokens
+                            .iter()
+                            .position(|t| t.word_idx == target_word_idx)
                     } else {
                         None
                     };
@@ -1190,21 +1250,32 @@ impl Element for CaptionNode {
                     if line_needs_layer { 1.0 } else { line_render_alpha },
                 );
 
-                // ── If pop-active and THIS line contains the active
-                //    token, paint the entire line paragraph INSIDE a
-                //    transformed, clipped canvas such that only the
-                //    active word's bbox is visible, scaled around the
-                //    cached token center. This guarantees ONE draw of
-                //    the line per frame (no second paragraph; no
-                //    separately-measured coordinates for the active
-                //    word). ──────────────────────────────────
+                // Base pass: always paint the full line at scale 1.0 so
+                // non-active words stay visible every frame.
+                self.paint_line_paragraph_at(
+                    &layout_style,
+                    display_line,
+                    line,
+                    current_time,
+                    block_width,
+                    active_local_in_line,
+                    shadow_color,
+                    canvas,
+                    line_left_x,
+                    line_y_cursor,
+                );
+
+                // Pop overlay: during the ~80 ms activation window,
+                // paint the same line paragraph again inside a clipped,
+                // scaled canvas so only the active word grows. Without
+                // the base pass above, the clip hid every other word
+                // and caused a flash on each word change.
                 if active_pop_active && active_local_in_line.is_some() {
                     let local_idx = active_local_in_line.unwrap();
                     let active_token = &display_line.tokens[local_idx];
                     let cx = line_left_x + active_token.center_x;
                     let cy = line_y_cursor + active_token.center_y;
 
-                    // Clipped canvas region = active word's bbox.
                     let clip_bbox = Rect::from_xywh(
                         line_left_x + active_token.x - 2.0,
                         line_y_cursor + active_token.baseline_y - 2.0,
@@ -1217,11 +1288,6 @@ impl Element for CaptionNode {
                     canvas.translate(Point::new(cx, cy));
                     canvas.scale((pop_scale, pop_scale));
                     canvas.translate(Point::new(-cx, -cy));
-
-                    // Paint the SAME line paragraph at the line's
-                    // canonical line_left / line_y origin. The clip
-                    // and scale transform restrict visible output to
-                    // the active word's bbox scaled around its center.
                     self.paint_line_paragraph_at(
                         &layout_style,
                         display_line,
@@ -1235,30 +1301,15 @@ impl Element for CaptionNode {
                         line_y_cursor,
                     );
                     canvas.restore();
-                } else {
-                    // No pop — paint the line paragraph once at its
-                    // canonical origin. The active word (if any) is
-                    // rendered at highlight color via the per-token
-                    // TextStyle foreground paint.
-                    self.paint_line_paragraph_at(
-                        &layout_style,
-                        display_line,
-                        line,
-                        current_time,
-                        block_width,
-                        active_local_in_line,
-                        shadow_color,
-                        canvas,
-                        line_left_x,
-                        line_y_cursor,
-                    );
                 }
 
                 if line_needs_layer {
                     canvas.restore();
                 }
 
-                line_y_cursor += display_line.line_height + layout_style.line_spacing;
+                if !phrase_replace {
+                    line_y_cursor += display_line.line_height + layout_style.line_spacing;
+                }
             }
         }
 
@@ -1422,6 +1473,71 @@ pub fn max_overlapping_lines(lines: &[CaptionLine]) -> usize {
     max_count as usize
 }
 
+/// Display line to show for phrase-break `Replace` mode at `time`.
+pub fn current_display_line_index(
+    line: &CaptionLine,
+    cue_line_idx: usize,
+    time: f64,
+    style: &CaptionStyle,
+    global_active: Option<(usize, usize)>,
+) -> usize {
+    if let Some((ci, wi)) = global_active {
+        if ci == cue_line_idx {
+            return line.words[wi].display_line_idx;
+        }
+    }
+    for w in &line.words {
+        if time >= w.start_sec && time < w.end_sec {
+            return w.display_line_idx;
+        }
+    }
+    let n = display_line_count(line);
+    for dl in (0..n).rev() {
+        if line_reveal_factor(line, dl, time, style) > 0.0 {
+            return dl;
+        }
+    }
+    0
+}
+
+/// Number of stacked display lines in a cue (phrase-break or `\n`).
+pub fn display_line_count(line: &CaptionLine) -> usize {
+    line.words
+        .iter()
+        .map(|w| w.display_line_idx)
+        .max()
+        .map(|m| m + 1)
+        .unwrap_or(1)
+}
+
+/// Fractional `[start, end)` window of cue duration for a display line's
+/// word timing and reveal. Two-line cues use configured offsets; 3+ lines
+/// split the cue evenly so phrase-break karaoke stays aligned.
+pub fn display_line_window_fracs(
+    style: &CaptionStyle,
+    display_line_idx: usize,
+    num_display_lines: usize,
+) -> (f32, f32) {
+    let n = num_display_lines.max(1);
+    if n <= 2 && style.line_reveal_offsets.len() >= 2 {
+        let start = style
+            .line_reveal_offsets
+            .get(display_line_idx)
+            .copied()
+            .unwrap_or(0.0);
+        let end = style
+            .line_reveal_offsets
+            .get(display_line_idx + 1)
+            .copied()
+            .unwrap_or(1.0);
+        (start, end.max(start))
+    } else {
+        let start = display_line_idx as f32 / n as f32;
+        let end = (display_line_idx + 1) as f32 / n as f32;
+        (start, end)
+    }
+}
+
 /// Line-reveal factor: returns 0.0 → 1.0 over `reveal_duration`
 /// seconds starting at `cue.start_sec + offset_frac * cue_duration`.
 pub fn line_reveal_factor(
@@ -1431,11 +1547,9 @@ pub fn line_reveal_factor(
     style: &CaptionStyle,
 ) -> f32 {
     let total_dur = (line.end_sec - line.start_sec).max(0.001);
-    let offset_frac = style
-        .line_reveal_offsets
-        .get(display_line_idx)
-        .copied()
-        .unwrap_or(0.0);
+    let num_lines = display_line_count(line);
+    let (offset_frac, _) =
+        display_line_window_fracs(style, display_line_idx, num_lines);
     let duration = style
         .line_reveal_durations
         .get(display_line_idx)
@@ -1510,20 +1624,13 @@ pub fn retime_words_by_display_line(line: &mut CaptionLine, style: &CaptionStyle
         groups.entry(w.display_line_idx).or_default().push(i);
     }
 
+    let num_lines = max_dl + 1;
     for dl_idx in 0..=max_dl {
         let Some(indices) = groups.get(&dl_idx) else {
             continue;
         };
-        let offset_start = style
-            .line_reveal_offsets
-            .get(dl_idx)
-            .copied()
-            .unwrap_or(0.0);
-        let offset_end = style
-            .line_reveal_offsets
-            .get(dl_idx + 1)
-            .copied()
-            .unwrap_or(1.0);
+        let (offset_start, offset_end) =
+            display_line_window_fracs(style, dl_idx, num_lines);
         let window_start = line.start_sec + duration * offset_start as f64;
         let window_end = line.start_sec + duration * offset_end as f64;
         let window = (window_end - window_start).max(0.001);
@@ -2001,6 +2108,43 @@ mod tests {
     }
 
     #[test]
+    fn test_phrase_break_retimes_three_display_lines() {
+        let mut line = CaptionLine {
+            text: "one two three four five six seven eight nine ten".into(),
+            words: vec![],
+            start_sec: 0.0,
+            end_sec: 9.0,
+        };
+        auto_time_words(&mut line);
+        let style = CaptionStyle::default();
+        apply_phrase_break(&mut line, 4);
+        retime_words_by_display_line(&mut line, &style);
+
+        assert_eq!(display_line_count(&line), 3);
+        // Line 0: [0, 3s), line 1: [3s, 6s), line 2: [6s, 9s)
+        assert!(
+            line.words[3].end_sec <= 3.0 + 0.01,
+            "line 0 last word should end by 1/3 cue, got {:.2}",
+            line.words[3].end_sec
+        );
+        assert!(
+            line.words[4].start_sec >= 3.0 - 0.01,
+            "line 1 first word should start at 1/3 cue, got {:.2}",
+            line.words[4].start_sec
+        );
+        assert!(
+            line.words[8].start_sec >= 6.0 - 0.01,
+            "line 2 first word should start at 2/3 cue, got {:.2}",
+            line.words[8].start_sec
+        );
+        assert!(
+            line.words[8].end_sec <= 9.0 + 0.01,
+            "line 2 last word should finish with cue, got {:.2}",
+            line.words[8].end_sec
+        );
+    }
+
+    #[test]
     fn test_phrase_break_retimes_per_display_line() {
         let mut line = CaptionLine {
             text: "one two three four five six seven eight".into(),
@@ -2060,6 +2204,48 @@ mod tests {
         assert!(style.pill_enabled);
         assert!(style.auto_phrase_break);
         assert_eq!(style.max_words_per_line, 4);
+        assert_eq!(style.phrase_line_mode, PhraseLineMode::Replace);
+    }
+
+    #[test]
+    fn test_effective_canvas_height_uses_reference_for_scaled_captions() {
+        let style = CaptionStyle::default();
+        assert_eq!(
+            CaptionNode::effective_canvas_height(&style, 280.0),
+            REFERENCE_SHORT_FORM_HEIGHT
+        );
+        let mut off = style;
+        off.scale_with_canvas = false;
+        assert_eq!(CaptionNode::effective_canvas_height(&off, 280.0), 280.0);
+    }
+
+    #[test]
+    fn test_phrase_replace_reserves_single_line_height() {
+        let fc = test_font_collection();
+        let mut line = CaptionLine {
+            text: "one two three four five six seven eight nine ten".into(),
+            words: vec![],
+            start_sec: 0.0,
+            end_sec: 9.0,
+        };
+        auto_time_words(&mut line);
+        let mut node = CaptionNode::new(vec![line], fc);
+        node.style.phrase_line_mode = PhraseLineMode::Replace;
+        let layout = node.build_block_layout(688.0, 1920.0, node.style.text_shadow_color);
+        let cue = &layout.cues[0];
+        let max_line_h = cue
+            .display_lines
+            .iter()
+            .map(|dl| dl.line_height)
+            .fold(0.0f32, f32::max);
+        let stacked_h: f32 = cue
+            .display_lines
+            .iter()
+            .map(|dl| dl.line_height)
+            .sum::<f32>()
+            + (cue.display_lines.len().saturating_sub(1)) as f32 * node.style.line_spacing;
+        assert!(stacked_h > max_line_h * 1.5);
+        assert!((layout.total_height - max_line_h).abs() < 2.0);
     }
 
     #[test]
@@ -2081,7 +2267,7 @@ mod tests {
         auto_time_words(&mut line);
         let node = CaptionNode::new(vec![line], fc);
         let canvas_width = 400.0f32;
-        let canvas_h = 600.0f32;
+        let canvas_h = CaptionNode::effective_canvas_height(&node.style, 600.0);
         let layout_style = node.style.resolved_for_canvas(canvas_h);
         let block_width = canvas_width * layout_style.layout_width_fraction;
 

@@ -11,7 +11,7 @@ let root = scene.add_box(#{
 
 root.add_caption(#{
     source: "1\n00:00:00,300 --> 00:00:03,000\nthis is how great captions should look on any background\n\n2\n00:00:02,500 --> 00:00:06,000\nhigh quality kinetic text with pills and safe areas\n\n3\n00:00:05,500 --> 00:00:08,500\nopus clip tier readability without the subscription\n\n4\n00:00:08,200 --> 00:00:09,800\ndirector god tier captions",
-    font_size: 52,
+    font_size: 58,
     font_family: "Poppins",
     font_weight: 700,
     uppercase: true,

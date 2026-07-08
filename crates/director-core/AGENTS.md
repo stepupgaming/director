@@ -19,9 +19,8 @@ reflows when a second line enters; exactly one global active word.
   resolution scaling from 1920 px reference height.
 * `CaptionStyle::resolved_for_canvas(h)` — applies `scale_with_canvas`,
   platform `safe_area_preset`, and dimensional scaling before layout.
-* `compute_slot_assignments()` — pre-laid Y-slot allocation per cue.
-  Permanent for the lifetime of the cue. Adding/removing cues never
-  moves an existing cue.
+* `compute_slot_assignments()` — overlap bookkeeping (legacy slot ids).
+  Render uses a single shared anchor; overlapping cues replace in place.
 * `CaptionNode::measure` — height from `build_block_layout` SkParagraph
   metrics at `layout_width_fraction * available_width` (no char-width
   estimate). Cached `block_layout` is reused when width + canvas height
@@ -58,10 +57,12 @@ glyph.
 
 The active word gets a tiny **1.04 scale pop** at the moment of
 activation. The pop is implemented as a `canvas.scale(1.04, 1.04)`
-transform around the active word's center, applied with second
-Paragraph containing only the active word, painted AFTER the base
-paragraph. The base paragraph is not re-laid; the scale affects only
-the active word's overlay. Scale returns to 1.0 within
+transform around the active word's center, applied with a second
+full-line paragraph paint AFTER the base pass, clipped to the active
+word's bbox. The renderer must always paint the full line first;
+painting only inside the pop clip hides every other word for ~80 ms
+and flashes on each word change. The base paragraph is not re-laid;
+the scale affects only the active word's overlay. Scale returns to
 `active_pop_duration` (0.08 s default) via `ease_out_quad`. Maximum
 `active_pop_scale` is clamped to 1.10 (TikTok/Reels-appropriate).
 
@@ -83,17 +84,35 @@ active word" invariant. Test: `test_no_dual_yellow_at_word_boundary`.
 
 Cues can contain `\n` (multi-line SRT text) or wrap their words into
 display lines via `auto_phrase_break` + `max_words_per_line` (default 4).
-Each cue's display lines render as separate paragraphs stacked at the
-cue's pre-laid slot.
+Phrase-broken display lines default to **`phrase_line_mode: Replace`**
+(Opus/TikTok): one line at a time in the same bottom anchor; the next
+phrase chunk replaces the previous instead of stacking. Set
+`phrase_line_mode: "stack"` to keep all revealed lines visible.
 
 * **Line 0**: visible from `cue.start_sec` (instant reveal, 0.10 s ramp).
 * **Line 1+**: visible from `cue.start_sec + offset_frac * cue_duration`
-  (default 0.45) with `reveal_duration` (default 0.20 s) ease-out
-  ramp, applied via `save_layer` alpha on the line's bbox.
+  (default 0.45 for two-line cues) with `reveal_duration` (default
+  0.20 s) ease-out ramp. Cues with **3+ display lines** use even
+  thirds/fourths via `display_line_window_fracs()`.
 
-When a cue enters or exits, the existing cue's lines never move.
-Slot Y is computed once from the cue's pre-laid layout dimensions.
-Consistent rendering across the entire cue lifetime.
+Dimensional scaling uses `reference_canvas_height` (1920) when
+`scale_with_canvas` is true — not the caption node's tight layout box
+height (which would shrink fonts).
+
+## Overlapping cues
+
+Standard subtitle behavior: **one caption block at a time** in the
+same bottom (or top/center) anchor. When SRT cues overlap in time, only
+the **newest** cue (latest `start_sec`) is rendered; older cues are
+hidden rather than stacked in separate Y slots.
+
+`compute_slot_assignments()` still runs for layout bookkeeping, but
+render uses a single anchor (`slot_y = 0`). Reserved height is the
+tallest single cue block, not the sum of overlap slots.
+
+With `phrase_line_mode: Stack`, display lines within one cue stack
+vertically. With `Replace` (default), only the active phrase line
+shows. Cue display lines never reflow mid-cue.
 
 ## Drop shadow + auto-adapt + pills
 

@@ -1795,6 +1795,15 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     if let Some(v) = props.get("max_words_per_line").and_then(|v| v.as_int().ok()) {
         node.style.max_words_per_line = (v as usize).max(1);
     }
+    if let Some(m) = props
+        .get("phrase_line_mode")
+        .and_then(|v| v.clone().into_string().ok())
+    {
+        node.style.phrase_line_mode = match m.to_ascii_lowercase().as_str() {
+            "stack" => crate::node::caption::PhraseLineMode::Stack,
+            _ => crate::node::caption::PhraseLineMode::Replace,
+        };
+    }
     if let Some(p) = props
         .get("safe_area")
         .or_else(|| props.get("safe_area_preset"))
