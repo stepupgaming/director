@@ -96,6 +96,26 @@ pub struct Director {
 /// This unsafe impl allows us to put it in Arc<Mutex<>>.
 unsafe impl Send for Director {}
 
+/// Bundled fonts registered with the Skia font collection at startup.
+///
+/// Each entry is `(filename, [family aliases], required)`. Registering multiple
+/// weights (Regular/Bold/Italic) under the same family alias lets
+/// `font_weight`/`font_style` resolve deterministically instead of falling back
+/// to host system fonts (which breaks cross-machine reproducibility).
+///
+/// Files live in `crates/director-core/assets/fonts/` (force-committed via
+/// `.gitignore`) so they are present regardless of the working directory.
+/// `Roboto-Regular` is required; the rest are optional and only warn if missing
+/// (CI/dev setup downloads them).
+const BUNDLED_FONTS: &[(&str, &[&str], bool)] = &[
+    ("Roboto-Regular.ttf", &["Roboto", "Sans Serif", "Arial"], true),
+    ("Roboto-Bold.ttf", &["Roboto", "Sans Serif", "Arial"], false),
+    ("Roboto-Italic.ttf", &["Roboto", "Sans Serif", "Arial"], false),
+    ("Inter-Regular.ttf", &["Inter"], false),
+    ("Inter-Bold.ttf", &["Inter"], false),
+    ("Poppins-Bold.ttf", &["Poppins"], false),
+];
+
 impl Director {
     /// Computes the effective analysis time for an audio track at a given global time.
     /// Returns `None` if the track hasn't started, has ended, or has no samples.
@@ -162,21 +182,43 @@ impl Director {
             // Load system fonts fallback
             font_collection.set_default_font_manager(FontMgr::default(), None);
 
-            // Load bundled Roboto font as a primary fallback for systems where
-            // FontMgr::default() cannot resolve system fonts (common on Windows
-            // with certain Skia builds).
-            if let Ok(bytes) = asset_loader.load_bytes("fonts/Roboto-Regular.ttf") {
-                let data = Data::new_copy(&bytes);
-                if let Some(typeface) = FontMgr::new().new_from_data(&data, 0) {
-                    font_provider.register_typeface(typeface.clone(), Some("Roboto"));
-                    font_provider.register_typeface(typeface.clone(), Some("Sans Serif"));
-                    font_provider.register_typeface(typeface, Some("Arial"));
+            // Register every bundled font under its family aliases. Multiple
+            // weights of the same family (Regular/Bold/Italic) let Skia pick the
+            // correct variant for `font_weight`/`font_style` deterministically.
+            for (filename, aliases, required) in BUNDLED_FONTS {
+                match asset_loader.load_bytes(&format!("fonts/{}", filename)) {
+                    Ok(bytes) => {
+                        let data = Data::new_copy(&bytes);
+                        if let Some(typeface) = FontMgr::new().new_from_data(&data, 0) {
+                            for alias in *aliases {
+                                font_provider.register_typeface(typeface.clone(), Some(*alias));
+                            }
+                        } else {
+                            tracing::error!(
+                                "Failed to create typeface from bundled font '{}'",
+                                filename
+                            );
+                        }
+                    }
+                    Err(_) => {
+                        if *required {
+                            tracing::error!(
+                                "Required bundled font '{}' not found at assets/fonts/{}; \
+                                 text will NOT render on systems without working system fonts. \
+                                 Run `setup_assets.sh` or CI to fetch it before exporting.",
+                                filename,
+                                filename
+                            );
+                        } else {
+                            tracing::warn!(
+                                "Optional bundled font '{}' not found at assets/fonts/{}; \
+                                 falling back to system fonts for that family.",
+                                filename,
+                                filename
+                            );
+                        }
+                    }
                 }
-            } else {
-                tracing::warn!(
-                    "Bundled Roboto font not found at assets/fonts/Roboto-Regular.ttf; \
-                     text may not render on systems without working system fonts"
-                );
             }
 
             // Load fallback font (e.g. Emoji) if available

@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  push:
+    branches: [main, master]
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -69,8 +72,13 @@ jobs:
 
       - name: Download test assets
         run: |
-          mkdir -p assets/fonts
-          curl -sL -o assets/fonts/Roboto-Regular.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf
+          mkdir -p crates/director-core/assets/fonts
+          curl -sL -o crates/director-core/assets/fonts/Roboto-Regular.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf
+          curl -sL -o crates/director-core/assets/fonts/Roboto-Bold.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf
+          curl -sL -o crates/director-core/assets/fonts/Roboto-Italic.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Italic.ttf
+          curl -sL -o crates/director-core/assets/fonts/Inter-Regular.ttf https://github.com/google/fonts/raw/main/ofl/inter/Inter-Regular.ttf
+          curl -sL -o crates/director-core/assets/fonts/Inter-Bold.ttf https://github.com/google/fonts/raw/main/ofl/inter/Inter-Bold.ttf
+          curl -sL -o crates/director-core/assets/fonts/Poppins-Bold.ttf https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Bold.ttf
 
       - name: Run tests
         run: cargo test --workspace ${{ matrix.features }}

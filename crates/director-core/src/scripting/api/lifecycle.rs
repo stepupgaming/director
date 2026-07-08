@@ -15,19 +15,37 @@ use crate::timeline::TrackClip;
 use crate::video_wrapper::{get_encoder_info, EncoderMode, RenderMode};
 use crate::AssetLoader;
 use rhai::Engine;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
 use taffy::prelude::*;
 use tracing::warn;
+
+/// Process-global seedable RNG used by `rand_float`. Defaults to a fixed seed so
+/// renders are reproducible; `set_seed` re-seeds it. This makes procedurally
+/// generated scenes deterministic across runs (required for stable golden tests
+/// and agent iteration).
+static SEEDED_RNG: OnceLock<Mutex<StdRng>> = OnceLock::new();
+
+fn seeded_rng() -> &'static Mutex<StdRng> {
+    SEEDED_RNG.get_or_init(|| Mutex::new(StdRng::seed_from_u64(0xC0FFEE)))
+}
 
 use super::super::types::{ClipHandle, MovieHandle, SceneHandle, SequenceHandle, TrackHandle};
 use super::super::utils::parse_easing;
 
 /// Register lifecycle-related Rhai functions.
 pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode: RenderMode) {
-    // Randomness
-    engine.register_fn("rand_float", |min: f64, max: f64| {
-        use rand::Rng;
-        rand::thread_rng().gen_range(min..max)
+    // Randomness — uses a seedable process-global RNG so output is reproducible.
+    engine.register_fn("rand_float", |min: f64, max: f64| -> f64 {
+        seeded_rng().lock().unwrap().gen_range(min..max)
+    });
+
+    // Re-seed the global RNG so agent runs / golden tests are deterministic.
+    engine.register_fn("set_seed", |seed: i64| {
+        let mut rng = seeded_rng().lock().unwrap();
+        *rng = StdRng::seed_from_u64(seed as u64);
     });
 
     // ========== NOISE UTILITY ==========

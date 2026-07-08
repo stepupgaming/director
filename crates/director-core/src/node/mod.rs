@@ -48,6 +48,7 @@ pub use wgpu_node::WgpuNode;
 
 // Helper to parse easing
 pub fn parse_easing(e: &str) -> EasingType {
+    use tracing::warn;
     match e {
         "linear" => EasingType::Linear,
         "ease_in" => EasingType::EaseIn,
@@ -62,7 +63,14 @@ pub fn parse_easing(e: &str) -> EasingType {
         "back_out" => EasingType::BackOut,
         "back_in" => EasingType::BackIn,
         "back_in_out" => EasingType::BackInOut,
-        _ => EasingType::Linear,
+        _ => {
+            warn!(
+                "Unknown easing '{e}'; falling back to 'linear'. \
+                 Valid names: linear, ease_in, ease_out, ease_in_out, \
+                 bounce_in/out/in_out, elastic_in/out/in_out, back_in/out/in_out"
+            );
+            EasingType::Linear
+        }
     }
 }
 

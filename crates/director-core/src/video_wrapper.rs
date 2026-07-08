@@ -381,6 +381,8 @@ impl Encoder {
                 .arg(codec)
                 .arg("-pix_fmt")
                 .arg("yuva420p")
+                .arg("-color_range")
+                .arg("pc")
                 .arg("-lossless")
                 .arg("1")
                 .arg("-cpu-used")
@@ -400,7 +402,15 @@ impl Encoder {
             cmd.arg("-c:v")
                 .arg(codec)
                 .arg("-pix_fmt")
-                .arg("yuv420p");
+                .arg("yuv420p")
+                .arg("-color_range")
+                .arg("pc")
+                .arg("-colorspace")
+                .arg("bt709")
+                .arg("-color_primaries")
+                .arg("bt709")
+                .arg("-color_trc")
+                .arg("bt709");
 
             if is_hardware {
                 match codec {

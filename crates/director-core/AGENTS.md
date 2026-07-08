@@ -139,3 +139,20 @@ Every invariant the user list demands is enforced here:
 * No continuous motion: no wobble, no pulse, no kinetic lift, no
   ease_out_back overshoot.
 * Line reveal keeps geometry stable: only visual opacity ramps.
+## Bundled Fonts (deterministic text)
+
+Text rendering must be reproducible across machines, so fonts are bundled
+rather than relying on host system fonts.
+
+* Fonts live in crates/director-core/assets/fonts/ (force-committed via
+  .gitignore) and are registered at Director construction
+  (director.rs, BUNDLED_FONTS).
+* Multiple weights of a family (Regular/Bold/Italic) are registered under
+  the same family alias so font_weight / font_style resolve deterministically.
+* Roboto-Regular is required; Bold/Italic/Inter/Poppins are optional and
+  warn (not error) if missing. setup_assets.sh and CI download the full set.
+* Emoji fallback is loaded via DefaultAssetLoader::load_font_fallback
+  (assets/fonts/emoji.ttf or DIRECTOR_EMOJI_FONT env var).
+* Do NOT add host-system-font-dependent text paths; new caption/template
+  fonts must be added to BUNDLED_FONTS AND downloaded in setup_assets.sh
+  and .github/workflows/ci.yml, then force-kept in .gitignore.

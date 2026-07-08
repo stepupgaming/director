@@ -5,10 +5,17 @@ mkdir -p assets
 
 echo "⬇️ Downloading Assets..."
 
-# 1. Fonts
+# 1. Fonts (committed under crates/director-core/assets/fonts/ for deterministic rendering)
 echo "  - Fetching Fonts..."
-curl -L -o assets/Inter-Bold.ttf "https://github.com/google/fonts/raw/main/ofl/inter/Inter-Bold.ttf"
-curl -L -o assets/JetBrainsMono-Bold.ttf "https://github.com/google/fonts/raw/main/ofl/jetbrainsmono/JetBrainsMono-Bold.ttf"
+FONT_DIR="crates/director-core/assets/fonts"
+mkdir -p "$FONT_DIR"
+curl -L -o "$FONT_DIR/Roboto-Bold.ttf" "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
+curl -L -o "$FONT_DIR/Roboto-Italic.ttf" "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Italic.ttf"
+curl -L -o "$FONT_DIR/Inter-Regular.ttf" "https://github.com/google/fonts/raw/main/ofl/inter/Inter-Regular.ttf"
+curl -L -o "$FONT_DIR/Inter-Bold.ttf" "https://github.com/google/fonts/raw/main/ofl/inter/Inter-Bold.ttf"
+curl -L -o "$FONT_DIR/Poppins-Bold.ttf" "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Bold.ttf"
+# Optional emoji fallback (used by load_font_fallback as assets/fonts/emoji.ttf)
+curl -L -o assets/fonts/emoji.ttf "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf" || echo "  (emoji font fetch failed; optional)"
 
 # 2. Images (Abstract Tech)
 echo "  - Fetching Images..."

@@ -72,6 +72,7 @@ pub fn register(engine: &mut Engine) {
                             crate::animation::EasingType::Linear,
                         ),
                         _ => {
+                            error!("animate: unknown property '{prop}'; ignoring delay segment");
                             n.element.animate_property(
                                 prop,
                                 start as f32,
@@ -119,6 +120,11 @@ pub fn register(engine: &mut Engine) {
                             .add_segment(start as f32, end as f32, dur, ease_fn)
                     }
                     _ => {
+                        error!(
+                            "animate: unknown property '{prop}'; no animation applied. \
+                             Supported: scale, scale_x, scale_y, rotation, skew_x, skew_y, \
+                             translate_x/x, translate_y/y, or a node-specific property"
+                        );
                         n.element
                             .animate_property(prop, start as f32, end as f32, dur, ease);
                     }
@@ -183,6 +189,11 @@ pub fn register(engine: &mut Engine) {
                             .add_segment(start as f32, end as f32, dur, ease_fn)
                     }
                     _ => {
+                        error!(
+                            "animate: unknown property '{prop}'; no animation applied. \
+                             Supported: scale, scale_x, scale_y, rotation, skew_x, skew_y, \
+                             translate_x/x, translate_y/y, or a node-specific property"
+                        );
                         n.element
                             .animate_property(prop, start as f32, end as f32, dur, ease);
                     }
@@ -247,6 +258,11 @@ pub fn register(engine: &mut Engine) {
                             .add_segment(start as f32, end as f32, dur, ease_fn)
                     }
                     _ => {
+                        error!(
+                            "animate: unknown property '{prop}'; no animation applied. \
+                             Supported: scale, scale_x, scale_y, rotation, skew_x, skew_y, \
+                             translate_x/x, translate_y/y, or a node-specific property"
+                        );
                         n.element
                             .animate_property(prop, start as f32, end as f32, dur, ease);
                     }
@@ -285,6 +301,7 @@ pub fn register(engine: &mut Engine) {
                         n.transform.translate_y.add_spring(end as f32, spring_conf)
                     }
                     _ => {
+                        error!("animate (spring): unknown property '{prop}'; no spring applied");
                         n.element
                             .animate_property_spring(prop, None, end as f32, spring_conf);
                     }
@@ -353,6 +370,7 @@ pub fn register(engine: &mut Engine) {
                         spring_conf,
                     ),
                     _ => {
+                        error!("animate (spring): unknown property '{prop}'; no spring applied");
                         n.element.animate_property_spring(
                             prop,
                             Some(start as f32),

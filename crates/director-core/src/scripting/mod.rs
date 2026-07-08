@@ -31,6 +31,13 @@ use crate::AssetLoader;
 use rhai::Engine;
 use std::sync::Arc;
 
+/// Default maximum expression nesting depth for scripts. Bounded to keep
+/// autonomous agent loops from hanging or exhausting memory, while still
+/// allowing realistically nested motion-graphics logic.
+pub const MAX_EXPR_DEPTH: usize = 128;
+/// Default maximum total expression depth (call stack) for scripts.
+pub const MAX_EXPR_DEPTHS: usize = 128;
+
 /// Registers the Director Engine API into the provided Rhai `Engine`.
 ///
 /// This exposes `Movie`, `Scene`, `Node`, `AudioTrack` types and their methods.
@@ -50,8 +57,18 @@ pub fn register_rhai_api_with_default_mode(
     // Register theme module
     let theme_module = create_theme_api(DesignSystem::new());
     engine.register_static_module("theme", theme_module.into());
-    engine.set_max_expr_depths(0, 0);
+    // Bound Rhai expression recursion so an autonomous agent loop cannot hang or
+    // OOM the render process. These are generous for hand-written scripts but
+    // prevent runaway `while`/`for`/recursion. Override via `set_script_limits`.
+    engine.set_max_expr_depths(MAX_EXPR_DEPTH, MAX_EXPR_DEPTHS);
 
     // Register all API functions
     api::register_all_with_default_mode(engine, loader, default_mode);
+}
+
+/// Override the Rhai expression-depth limits at runtime (e.g. from a host
+/// config). `depth` bounds nesting; `depths` bounds total call-stack depth.
+/// Values of `0` are treated as unlimited for that axis.
+pub fn set_script_limits(engine: &mut Engine, depth: usize, depths: usize) {
+    engine.set_max_expr_depths(depth, depths);
 }
