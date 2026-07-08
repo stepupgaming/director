@@ -83,6 +83,9 @@ pub mod export;
 /// Capability registry for live reflection of nodes, effects, and transitions.
 pub mod registry;
 
+/// Versioned project (de)serialization (save/load a Director to JSON).
+pub mod project;
+
 pub use director::Director;
 pub use element::Element;
 pub use errors::RenderError;

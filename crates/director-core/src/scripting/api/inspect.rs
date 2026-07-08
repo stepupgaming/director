@@ -4,6 +4,7 @@
 //! introspection so agents (and humans) can harvest bounds, durations,
 //! supported node types, and effects without rendering.
 
+use crate::director::Director;
 use crate::registry;
 use crate::scripting::types::{MovieHandle, NodeHandle, SceneHandle};
 use rhai::{Array, Engine, Map};
@@ -96,5 +97,24 @@ pub fn register(engine: &mut Engine) {
             arr.push((*p).into());
         }
         arr
+    });
+
+    // ---- Project save / load (versioned JSON) ----
+
+    engine.register_fn("save_project", |movie: &mut MovieHandle, path: &str| -> bool {
+        let d = match movie.lock_director() {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        d.save_project_json(path).is_ok()
+    });
+
+    engine.register_fn("load_project", |path: &str| -> rhai::Dynamic {
+        match Director::load_project_json(path) {
+            Ok(d) => rhai::Dynamic::from(rhai::Shared::new(crate::scripting::types::MovieHandle {
+                director: std::sync::Arc::new(std::sync::Mutex::new(d)),
+            })),
+            Err(_) => rhai::Dynamic::UNIT,
+        }
     });
 }
