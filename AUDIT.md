@@ -19,6 +19,44 @@ But it is **not yet a foundation for an agent-driven video system**, and it is *
 
 **Maturity verdict:** a strong prototype / internal tool, not a v1-capable agentic platform. Ready today for deterministic, scripted, single-composition social clips authored by a person. Not ready for autonomous iterative authoring, reliable captioning at scale, or professional color-correct export.
 
+> **Note:** Several findings below are stale. See **Progress Since Audit** (2026-07-08) before prioritizing work.
+
+---
+
+# Progress Since Audit
+
+*Last updated: 2026-07-09. Tracks work landed after the original audit pass.*
+
+## Closed / fixed
+
+| Finding | What changed |
+|---|---|
+| **#3** Motion-blur weights | Normalized to equal `1/samples` in `systems/renderer.rs` and `export/video.rs` (was harmonic `1/(s+1)` → over-bright frames). |
+| **#9** Caption height estimate | `CaptionNode::measure` and render share `build_block_layout` SkParagraph metrics; the `font_size * 0.55` line-count guess is gone. |
+| **#11** FFmpeg color tags | H.264 export passes `-color_range pc`, `-colorspace bt709`, `-color_primaries bt709`, `-color_trc bt709` in `video_wrapper.rs`. |
+| **Captions (general)** | Production-tier kinetic captions: pop-overlay flash fix (base pass + clipped overlay), overlap cues replace in one anchor (no Y-slot stack), `phrase_line_mode: Replace` (one phrase line at a time), 3+ line phrase timing via `display_line_window_fracs`, dimensional scaling from `reference_canvas_height` (1920) not the tight layout box. 23 unit tests + visual fixtures + `caption_god_tier_proof.rhai`. Commits through `1d8cce4`. |
+| **#4** SkSL UV origin (likely) | `effect_uv_probe` harness asserts layer-local `pos`; audit claim that off-origin nodes break UVs may be obsolete — re-verify on Liquid/Acid presets, then close formally. |
+| **#2** Keyframe round-trip | `project.rs` now serializes `Animated` **keyframes** (not just `current_value`) for transform channels (scale/rotation/skew/translate) and Box props (opacity, bg_color, border_*, shadow_*, blur, backdrop_blur); `load_project_json` rebuilds them so motion reproduces exactly after `update(t)`. First-keyframe easing preserved via `add_segment` semantics. `project_roundtrip_preserves_animation` test asserts eased mid-point + end values match the original. |
+
+## Partially addressed
+
+| Finding | Progress | Still missing |
+|---|---|---|
+| **#1** Introspection API | Rhai: `node_id`, `node_bounds`, `node_children`, `scene_duration`, `list_scene_roots`; registry reflection (`list_effects`, `list_easings`, `get_effect_meta`, …). `render_manifest_json` + `director-manifest` CLI. `tests/inspect_api.rs`. | `media_metadata()`; manifest on every export by default; debug overlays / contact sheets; temporal diagnostics (overlap, clip, contrast). |
+| **#2** Project serialization | `api_catalog` single source of truth started; `director-schema` gained `ProjectManifest` + combined schema bundle; platform manifest CLI. | No live `Director` round-trip (`save_project`/`load_project`); JSON loader still one-way; schema still drifts (~6 vs ~20 transitions; no SKSL/`add_loop`/`add_freeze`). |
+| **#7** Text direction / bidi | `text_direction.rs` + `text_direction` Rhai prop on text/caption; auto-detect first strong; caption RTL test. | Full bidi parity across all text nodes; deterministic emoji/complex-script shaping. |
+
+## Still open (priority order)
+
+1. **#2** Live project (de)serialization + schema generated from Rhai API (blocks agent iterate/reload loop). **Round-trip foundation + keyframe animation now landed** (`project.rs`, `project_roundtrip` tests). Remaining: Text/Image/Video/Caption/Effect/Composition node *kinds* still reconstruct as Box placeholders (content, per-span styling, geometry, and Taffy layout not yet serialized); `director-pipeline` `MovieRequest` transition drift is now **compile-enforced** (`convert_transition_type` is exhaustive over the 20 `api_catalog` variants), so adding a catalog transition forces a matching pipeline mapping.
+2. **#1** Finish introspection: `media_metadata`, manifest-on-export, machine-readable validation diagnostics.
+3. **#5–#6** Animation: loud errors on bad props/easing; native bezier/hold/reverse/yoyo/expressions (promote from `lottie-core`).
+4. **#8** Bundle and pin deterministic fonts (Regular/Bold + emoji/CJK fallback).
+5. **#10, #12–#17** Text-fit decoupling, `f64` fps, handle-rewrite semantics, Rhai limits, seedable RNG, static cache, richer masking.
+6. **#18–#20** CI on push/PR, `add_freeze`/`add_loop` stubs, audio/export depth.
+
+Roadmap sections **Agent-first extensions** and **v1.0 architecture bets** (immutable draft model, parameterized components) remain entirely ahead. **Things Not To Build Yet** unchanged.
+
 ---
 
 # Architecture Map

@@ -24,12 +24,15 @@
 //!   On reload the node is reconstructed as a `BoxNode` placeholder with
 //!   a `warn!`. This is lossy for the original element type but keeps
 //!   the graph, layout and timeline loadable and renderable.
-//! * **Animation**: `Animated` fields serialize their current value
-//!   (lossy for keyframe sequences; full keyframe round-trip = follow-up).
+//! * **Animation**: transform channels (scale/rotation/skew/translate) and
+//!   Box props (opacity, bg_color, border_*, shadow_*, blur, backdrop_blur)
+//!   serialize their **keyframes**, so motion survives the round-trip and
+//!   reproduces at any time after `update(t)`. Text nodes preserve opacity
+//!   keyframes (reconstructed as Box placeholders; see below).
 //! * **Tracks & legacy timeline**: fully round-tripped (clips, fades,
 //!   speed, source in/out, z_index, audio_tracks).
 
-use crate::animation::Animated;
+use crate::animation::{Animated, EasingType};
 use crate::director::{Director, TimelineItem};
 use crate::node::text::TextNode;
 use crate::node::BoxNode;
@@ -126,6 +129,14 @@ pub struct NodeData {
     /// as `f32` px) as accepted by the Rhai builder.
     #[serde(default)]
     pub props: JsonMap<String, JsonValue>,
+    /// Keyframed animated channels (transform + Box/Text props) so motion
+    /// survives the round-trip. Keys: `scale_x`, `translate_x`, `opacity`,
+    /// `bg_color`, `border_radius`, ... Each value is a JSON array of
+    /// `{ time, value, easing }` (f32) or `{ time, value:[r,g,b,a], easing }`
+    /// (color). Absent keys mean the channel is static (use `transform`/
+    /// `props` current values).
+    #[serde(default)]
+    pub animations: JsonMap<String, JsonValue>,
 }
 
 fn default_blend() -> String {
@@ -209,6 +220,198 @@ fn str_to_blend(s: &str) -> BlendMode {
         "luminosity" => BlendMode::Luminosity,
         _ => BlendMode::SrcOver,
     }
+}
+
+// ---- Animated keyframe (de)serialization ----
+//
+// `Animated<T>` is not `Serialize` itself, but its `raw_keyframes`
+// (`Vec<(T, f64, EasingType)>`) fully describe a channel. We serialize the
+// keyframes so motion (not just the current value) round-trips.
+
+#[derive(Serialize, Deserialize, Clone)]
+struct KfF32 {
+    time: f64,
+    value: f32,
+    easing: EasingType,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct KfColor {
+    time: f64,
+    value: [f32; 4],
+    easing: EasingType,
+}
+
+fn serialize_animated_f32(a: &Animated<f32>) -> Option<JsonValue> {
+    if a.raw_keyframes.len() <= 1 {
+        return None; // static; current_value is preserved separately
+    }
+    let kfs: Vec<KfF32> = a
+        .raw_keyframes
+        .iter()
+        .map(|(v, t, e)| KfF32 {
+            time: *t,
+            value: *v,
+            easing: *e,
+        })
+        .collect();
+    serde_json::to_value(kfs).ok()
+}
+
+fn serialize_animated_color(a: &Animated<Color>) -> Option<JsonValue> {
+    if a.raw_keyframes.len() <= 1 {
+        return None;
+    }
+    let kfs: Vec<KfColor> = a
+        .raw_keyframes
+        .iter()
+        .map(|(v, t, e)| KfColor {
+            time: *t,
+            value: [v.r, v.g, v.b, v.a],
+            easing: *e,
+        })
+        .collect();
+    serde_json::to_value(kfs).ok()
+}
+
+fn rebuild_animated_f32(v: &JsonValue) -> Option<Animated<f32>> {
+    let kfs: Vec<KfF32> = serde_json::from_value(v.clone()).ok()?;
+    if kfs.is_empty() {
+        return None;
+    }
+    let mut a = Animated::new(kfs[0].value);
+    // The keyframe crate derives each segment's easing from the keyframe at its
+    // START, so the first keyframe's easing must be `kfs[0].easing` (matching
+    // how `animate`/`add_segment` store it). `Animated::new` hardcodes Linear,
+    // so re-apply it via `add_segment`, which sets the initial keyframe easing.
+    a.add_segment(kfs[0].value, kfs[0].value, 0.0, kfs[0].easing);
+    let mut prev = kfs[0].time;
+    for k in &kfs[1..] {
+        let dur = (k.time - prev).max(0.0);
+        a.add_keyframe(k.value, dur, k.easing);
+        prev = k.time;
+    }
+    Some(a)
+}
+
+fn rebuild_animated_color(v: &JsonValue) -> Option<Animated<Color>> {
+    let kfs: Vec<KfColor> = serde_json::from_value(v.clone()).ok()?;
+    if kfs.is_empty() {
+        return None;
+    }
+    let c0 = Color::new(
+        kfs[0].value[0],
+        kfs[0].value[1],
+        kfs[0].value[2],
+        kfs[0].value[3],
+    );
+    let mut a = Animated::new(c0);
+    a.add_segment(c0, c0, 0.0, kfs[0].easing);
+    let mut prev = kfs[0].time;
+    for k in &kfs[1..] {
+        let dur = (k.time - prev).max(0.0);
+        a.add_keyframe(
+            Color::new(k.value[0], k.value[1], k.value[2], k.value[3]),
+            dur,
+            k.easing,
+        );
+        prev = k.time;
+    }
+    Some(a)
+}
+
+/// Rebuild an `Animated<f32>` from saved keyframes, or fall back to a static
+/// `current_value` when no keyframes were stored.
+fn restore_animated_f32(field: &mut Animated<f32>, anim: Option<&JsonValue>, fallback: f32) {
+    match anim.and_then(rebuild_animated_f32) {
+        Some(a) => *field = a,
+        None => field.current_value = fallback,
+    }
+}
+
+/// Rebuild an optional `Animated<Color>` from saved keyframes, or fall back to
+/// a static `current_value` (or `None`) when no keyframes were stored.
+fn restore_animated_color(
+    field: &mut Option<Animated<Color>>,
+    anim: Option<&JsonValue>,
+    fallback: Option<Color>,
+) {
+    match anim.and_then(rebuild_animated_color) {
+        Some(a) => *field = Some(a),
+        None => *field = fallback.map(Animated::new),
+    }
+}
+
+/// Serialize every animated Box property that carries keyframes.
+fn box_anims_to_json(b: &BoxNode) -> JsonMap<String, JsonValue> {
+    let mut m = JsonMap::new();
+    if let Some(v) = serialize_animated_f32(&b.opacity) {
+        m.insert("opacity".into(), v);
+    }
+    if let Some(c) = &b.bg_color {
+        if let Some(v) = serialize_animated_color(c) {
+            m.insert("bg_color".into(), v);
+        }
+    }
+    if let Some(v) = serialize_animated_f32(&b.border_radius) {
+        m.insert("border_radius".into(), v);
+    }
+    if let Some(v) = serialize_animated_f32(&b.border_width) {
+        m.insert("border_width".into(), v);
+    }
+    if let Some(c) = &b.border_color {
+        if let Some(v) = serialize_animated_color(c) {
+            m.insert("border_color".into(), v);
+        }
+    }
+    if let Some(c) = &b.shadow_color {
+        if let Some(v) = serialize_animated_color(c) {
+            m.insert("shadow_color".into(), v);
+        }
+    }
+    if let Some(v) = serialize_animated_f32(&b.shadow_blur) {
+        m.insert("shadow_blur".into(), v);
+    }
+    if let Some(v) = serialize_animated_f32(&b.shadow_offset_x) {
+        m.insert("shadow_offset_x".into(), v);
+    }
+    if let Some(v) = serialize_animated_f32(&b.shadow_offset_y) {
+        m.insert("shadow_offset_y".into(), v);
+    }
+    if let Some(v) = serialize_animated_f32(&b.blur) {
+        m.insert("blur".into(), v);
+    }
+    if let Some(v) = serialize_animated_f32(&b.backdrop_blur) {
+        m.insert("backdrop_blur".into(), v);
+    }
+    m
+}
+
+/// Rebuild every animated Box property from saved keyframes, falling back to
+/// the static value already applied by `apply_box_props`.
+fn restore_box_props_anims(b: &mut BoxNode, anims: &JsonMap<String, JsonValue>) {
+    let fb_op = b.opacity.current_value;
+    restore_animated_f32(&mut b.opacity, anims.get("opacity"), fb_op);
+    let fb_bg = b.bg_color.as_ref().map(|a| a.current_value);
+    restore_animated_color(&mut b.bg_color, anims.get("bg_color"), fb_bg);
+    let fb_br = b.border_radius.current_value;
+    restore_animated_f32(&mut b.border_radius, anims.get("border_radius"), fb_br);
+    let fb_bw = b.border_width.current_value;
+    restore_animated_f32(&mut b.border_width, anims.get("border_width"), fb_bw);
+    let fb_bc = b.border_color.as_ref().map(|a| a.current_value);
+    restore_animated_color(&mut b.border_color, anims.get("border_color"), fb_bc);
+    let fb_sc = b.shadow_color.as_ref().map(|a| a.current_value);
+    restore_animated_color(&mut b.shadow_color, anims.get("shadow_color"), fb_sc);
+    let fb_sbl = b.shadow_blur.current_value;
+    restore_animated_f32(&mut b.shadow_blur, anims.get("shadow_blur"), fb_sbl);
+    let fb_sx = b.shadow_offset_x.current_value;
+    restore_animated_f32(&mut b.shadow_offset_x, anims.get("shadow_offset_x"), fb_sx);
+    let fb_sy = b.shadow_offset_y.current_value;
+    restore_animated_f32(&mut b.shadow_offset_y, anims.get("shadow_offset_y"), fb_sy);
+    let fb_bl = b.blur.current_value;
+    restore_animated_f32(&mut b.blur, anims.get("blur"), fb_bl);
+    let fb_bbl = b.backdrop_blur.current_value;
+    restore_animated_f32(&mut b.backdrop_blur, anims.get("backdrop_blur"), fb_bbl);
 }
 
 // ---- Box props ----
@@ -377,6 +580,40 @@ pub fn director_to_project(d: &Director) -> Project {
                     p
                 }
             };
+
+            // Animated channels (keyframes) so motion survives the round-trip.
+            let mut animations = JsonMap::new();
+            let t_channels: [(&str, &Animated<f32>); 7] = [
+                ("scale_x", &sn.transform.scale_x),
+                ("scale_y", &sn.transform.scale_y),
+                ("rotation", &sn.transform.rotation),
+                ("skew_x", &sn.transform.skew_x),
+                ("skew_y", &sn.transform.skew_y),
+                ("translate_x", &sn.transform.translate_x),
+                ("translate_y", &sn.transform.translate_y),
+            ];
+            for (k, a) in t_channels {
+                if let Some(v) = serialize_animated_f32(a) {
+                    animations.insert(k.to_string(), v);
+                }
+            }
+            match kind.as_str() {
+                "Box" => {
+                    if let Some(b) = sn.element.as_any().downcast_ref::<BoxNode>() {
+                        for (k, v) in box_anims_to_json(b) {
+                            animations.insert(k, v);
+                        }
+                    }
+                }
+                "Text" => {
+                    if let Some(t) = sn.element.as_any().downcast_ref::<TextNode>() {
+                        if let Some(v) = serialize_animated_f32(&t.opacity) {
+                            animations.insert("opacity".into(), v);
+                        }
+                    }
+                }
+                _ => {}
+            }
             nodes.push(NodeData {
                 id: i as NodeId,
                 parent: sn.parent,
@@ -386,6 +623,7 @@ pub fn director_to_project(d: &Director) -> Project {
                 z_index: sn.z_index,
                 blend_mode: blend_to_str(sn.blend_mode),
                 props,
+                animations,
             });
         }
     }
@@ -485,21 +723,63 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
         }
     }
 
-    // Third pass: restore transform / z_index / blend_mode on each node.
+    // Third pass: restore transform / z_index / blend_mode (+ keyframes) on each node.
     for n in &project.nodes {
         if let Some(&new_id) = id_map.get(&n.id) {
             if let Some(sn) = director.scene.get_node_mut(new_id) {
-                sn.transform.scale_x.current_value = n.transform.scale_x;
-                sn.transform.scale_y.current_value = n.transform.scale_y;
-                sn.transform.rotation.current_value = n.transform.rotation;
-                sn.transform.skew_x.current_value = n.transform.skew_x;
-                sn.transform.skew_y.current_value = n.transform.skew_y;
-                sn.transform.translate_x.current_value = n.transform.translate_x;
-                sn.transform.translate_y.current_value = n.transform.translate_y;
+                // Transform channels: rebuild from keyframes when present.
+                restore_animated_f32(
+                    &mut sn.transform.scale_x,
+                    n.animations.get("scale_x"),
+                    n.transform.scale_x,
+                );
+                restore_animated_f32(
+                    &mut sn.transform.scale_y,
+                    n.animations.get("scale_y"),
+                    n.transform.scale_y,
+                );
+                restore_animated_f32(
+                    &mut sn.transform.rotation,
+                    n.animations.get("rotation"),
+                    n.transform.rotation,
+                );
+                restore_animated_f32(
+                    &mut sn.transform.skew_x,
+                    n.animations.get("skew_x"),
+                    n.transform.skew_x,
+                );
+                restore_animated_f32(
+                    &mut sn.transform.skew_y,
+                    n.animations.get("skew_y"),
+                    n.transform.skew_y,
+                );
+                restore_animated_f32(
+                    &mut sn.transform.translate_x,
+                    n.animations.get("translate_x"),
+                    n.transform.translate_x,
+                );
+                restore_animated_f32(
+                    &mut sn.transform.translate_y,
+                    n.animations.get("translate_y"),
+                    n.transform.translate_y,
+                );
                 sn.transform.pivot_x = n.transform.pivot_x;
                 sn.transform.pivot_y = n.transform.pivot_y;
                 sn.z_index = n.z_index;
                 sn.blend_mode = str_to_blend(&n.blend_mode);
+
+                // Property animations. Real Box nodes restore all Box props;
+                // other kinds (reconstructed as Box placeholders) at least
+                // keep their opacity animation.
+                if let Some(b) = sn.element.as_any_mut().downcast_mut::<BoxNode>() {
+                    if n.kind == "Box" {
+                        restore_box_props_anims(b, &n.animations);
+                    } else if let Some(a) =
+                        n.animations.get("opacity").and_then(rebuild_animated_f32)
+                    {
+                        b.opacity = a;
+                    }
+                }
             }
         }
     }
