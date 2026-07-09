@@ -14,7 +14,8 @@ use crate::director::Director;
 use crate::element::{TextShadow, TextSpan};
 use crate::node::{BoxNode, CompositionNode, EffectNode, EffectType};
 use crate::types::{Color, GradientConfig, GradientType, NodeId, ObjectFit};
-use rhai::Map;
+use rhai::{Dynamic, Map};
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use taffy::prelude::*;
 use taffy::style::{GridPlacement, GridTemplateComponent, Style};
 
@@ -622,6 +623,155 @@ pub fn parse_layout_style(props: &rhai::Map, style: &mut Style) {
     }
     if let Some(v) = props.get("bottom").and_then(|v| to_lpa(v)) {
         style.inset.bottom = v;
+    }
+}
+
+/// Convert a Taffy `Style` into a JSON map using the same key vocabulary
+/// consumed by `parse_layout_style`, so a project save/load round-trip can
+/// faithfully restore node layout.
+///
+/// Only the layout knobs `parse_layout_style` understands are emitted; fields
+/// it does not handle (e.g. `border`, `flex_basis`, `flex_wrap`, `align_self`,
+/// `min_size`, grid templates) are intentionally omitted and remain
+/// un-round-tripped for this slice.
+pub fn style_to_json(style: &Style) -> JsonMap<String, JsonValue> {
+    let mut m = JsonMap::new();
+
+    // In taffy 0.9 the length types are newtype structs over a `CompactLength`
+    // tagged value. `is_auto()` / `value()` read the numeric payload and
+    // `tag()` distinguishes Length vs Percent (vs Auto).
+    let dim = |d: &taffy::style::Dimension| -> JsonValue {
+        if d.is_auto() {
+            JsonValue::from("auto")
+        } else if d.into_raw().tag() == taffy::style::CompactLength::PERCENT_TAG {
+            JsonValue::from(format!("{}%", d.into_raw().value() * 100.0))
+        } else {
+            JsonValue::from(d.into_raw().value() as f64)
+        }
+    };
+    let lp = |v: &taffy::style::LengthPercentage| -> JsonValue {
+        if v.into_raw().tag() == taffy::style::CompactLength::PERCENT_TAG {
+            JsonValue::from(format!("{}%", v.into_raw().value() * 100.0))
+        } else {
+            JsonValue::from(v.into_raw().value() as f64)
+        }
+    };
+    let lpa = |v: &taffy::style::LengthPercentageAuto| -> JsonValue {
+        if v.is_auto() {
+            JsonValue::from("auto")
+        } else if v.into_raw().tag() == taffy::style::CompactLength::PERCENT_TAG {
+            JsonValue::from(format!("{}%", v.into_raw().value() * 100.0))
+        } else {
+            JsonValue::from(v.into_raw().value() as f64)
+        }
+    };
+
+    m.insert(
+        "display".into(),
+        JsonValue::from(match style.display {
+            taffy::style::Display::Grid => "grid",
+            taffy::style::Display::None => "none",
+            _ => "flex",
+        }),
+    );
+    m.insert(
+        "position".into(),
+        JsonValue::from(match style.position {
+            taffy::style::Position::Absolute => "absolute",
+            _ => "relative",
+        }),
+    );
+    m.insert("width".into(), dim(&style.size.width));
+    m.insert("height".into(), dim(&style.size.height));
+    m.insert("max_width".into(), dim(&style.max_size.width));
+    m.insert("max_height".into(), dim(&style.max_size.height));
+    m.insert("left".into(), lpa(&style.inset.left));
+    m.insert("right".into(), lpa(&style.inset.right));
+    m.insert("top".into(), lpa(&style.inset.top));
+    m.insert("bottom".into(), lpa(&style.inset.bottom));
+    m.insert(
+        "flex_direction".into(),
+        JsonValue::from(match style.flex_direction {
+            taffy::style::FlexDirection::Row => "row",
+            taffy::style::FlexDirection::Column => "column",
+            taffy::style::FlexDirection::RowReverse => "row_reverse",
+            taffy::style::FlexDirection::ColumnReverse => "column_reverse",
+        }),
+    );
+    if let Some(a) = style.align_items {
+        m.insert(
+            "align_items".into(),
+            JsonValue::from(match a {
+                taffy::style::AlignItems::Center => "center",
+                taffy::style::AlignItems::FlexStart => "flex_start",
+                taffy::style::AlignItems::FlexEnd => "flex_end",
+                _ => "stretch",
+            }),
+        );
+    }
+    if let Some(j) = style.justify_content {
+        m.insert(
+            "justify_content".into(),
+            JsonValue::from(match j {
+                taffy::style::JustifyContent::Center => "center",
+                taffy::style::JustifyContent::FlexStart => "flex_start",
+                taffy::style::JustifyContent::FlexEnd => "flex_end",
+                taffy::style::JustifyContent::SpaceBetween => "space_between",
+                taffy::style::JustifyContent::SpaceAround => "space_around",
+                taffy::style::JustifyContent::SpaceEvenly => "space_evenly",
+                _ => "flex_start",
+            }),
+        );
+    }
+    m.insert("flex_grow".into(), JsonValue::from(style.flex_grow));
+    m.insert("flex_shrink".into(), JsonValue::from(style.flex_shrink));
+    if style.padding.left == style.padding.right
+        && style.padding.left == style.padding.top
+        && style.padding.left == style.padding.bottom
+    {
+        m.insert("padding".into(), lp(&style.padding.left));
+    }
+    if style.margin.left == style.margin.right
+        && style.margin.left == style.margin.top
+        && style.margin.left == style.margin.bottom
+    {
+        m.insert("margin".into(), lpa(&style.margin.left));
+    }
+    if style.gap.width == style.gap.height {
+        m.insert("gap".into(), lp(&style.gap.width));
+    }
+    if let Some(ar) = style.aspect_ratio {
+        m.insert("aspect_ratio".into(), JsonValue::from(ar));
+    }
+    m
+}
+
+/// Restore a Taffy `Style` from a JSON map produced by `style_to_json`, by
+/// routing it through `parse_layout_style` (the canonical Rhai layout parser).
+pub fn apply_layout_style_json(style: &mut Style, json: &JsonMap<String, JsonValue>) {
+    let mut map: rhai::Map = rhai::Map::new();
+    for (k, v) in json {
+        map.insert(k.clone().into(), json_to_rhai(v));
+    }
+    parse_layout_style(&map, style);
+}
+
+/// Convert a `serde_json::Value` into a `rhai::Dynamic` for the subset of
+/// types `parse_layout_style` reads (numbers, strings, arrays of strings).
+fn json_to_rhai(v: &JsonValue) -> Dynamic {
+    match v {
+        JsonValue::Null => Dynamic::UNIT,
+        JsonValue::Bool(b) => Dynamic::from(*b),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Dynamic::from(i)
+            } else {
+                Dynamic::from(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        JsonValue::String(s) => Dynamic::from(s.clone()),
+        JsonValue::Array(a) => Dynamic::from(a.iter().map(json_to_rhai).collect::<Vec<Dynamic>>()),
+        JsonValue::Object(_) => Dynamic::UNIT,
     }
 }
 

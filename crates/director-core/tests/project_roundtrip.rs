@@ -4,7 +4,9 @@
 //! to a versioned project JSON, loads it back, and asserts that the
 //! graph topology, node kinds, transforms, opacity, and tracks survive.
 
+use director_core::node::BoxNode;
 use director_core::scripting::register_rhai_api;
+use director_core::scripting::utils::style_to_json;
 use director_core::DefaultAssetLoader;
 use rhai::Engine;
 use std::sync::Arc;
@@ -224,4 +226,92 @@ fn sn_opacity(d: &director_core::Director, id: director_core::types::NodeId) -> 
         .downcast_ref::<director_core::node::BoxNode>()
         .map(|b| b.opacity.current_value)
         .unwrap_or(1.0)
+}
+
+/// Verifies that Taffy layout (`Style`) survives a save/load round-trip: the
+/// loaded node's full layout JSON equals the original node's layout JSON.
+#[test]
+fn project_roundtrip_preserves_layout() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let build = r##"
+        let movie = new_director(320, 240, 30);
+        let scene = movie.add_scene(2.0);
+        let bg = scene.add_box(#{
+            width: 320, height: 240,
+            position: "absolute", left: 10, top: 20, right: 10, bottom: 20,
+            padding: 8, margin: 4, gap: 6,
+            flex_direction: "row", align_items: "flex_start",
+            justify_content: "space_between",
+            flex_grow: 1.0, aspect_ratio: 1.5
+        });
+        movie
+    "##;
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(build)
+        .expect("build script must evaluate");
+
+    // Capture the original layout JSON for the absolutely-positioned box.
+    let orig_layout = {
+        let d = movie.director.lock().unwrap();
+        let id = find_abs_box(&d).expect("absolute box must exist");
+        let sn = d.scene.get_node(id).expect("node");
+        let b = sn
+            .element
+            .as_any()
+            .downcast_ref::<BoxNode>()
+            .expect("box node");
+        style_to_json(&b.style)
+    };
+
+    // Save + load.
+    let tmp = std::env::temp_dir().join("director_project_layout_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    // The loaded graph must contain an absolutely-positioned box with the
+    // exact same layout.
+    let loaded_layout = {
+        let id = find_abs_box(&loaded).expect("loaded absolute box must exist");
+        let sn = loaded.scene.get_node(id).expect("node");
+        let b = sn
+            .element
+            .as_any()
+            .downcast_ref::<BoxNode>()
+            .expect("loaded box node");
+        style_to_json(&b.style)
+    };
+
+    assert_eq!(
+        orig_layout, loaded_layout,
+        "Taffy layout must round-trip exactly"
+    );
+
+    // Spot-check a couple of fields directly for clarity on failure.
+    assert_eq!(loaded_layout.get("position"), Some(&serde_json::json!("absolute")));
+    assert_eq!(loaded_layout.get("left"), Some(&serde_json::json!(10.0)));
+    assert_eq!(loaded_layout.get("aspect_ratio"), Some(&serde_json::json!(1.5)));
+    assert_eq!(loaded_layout.get("justify_content"), Some(&serde_json::json!("space_between")));
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+fn find_abs_box(d: &director_core::Director) -> Option<director_core::types::NodeId> {
+    for (i, sn_opt) in d.scene.nodes.iter().enumerate() {
+        if let Some(sn) = sn_opt {
+            if let Some(b) = sn.element.as_any().downcast_ref::<BoxNode>() {
+                if matches!(b.style.position, taffy::style::Position::Absolute) {
+                    return Some(i as director_core::types::NodeId);
+                }
+            }
+        }
+    }
+    None
 }

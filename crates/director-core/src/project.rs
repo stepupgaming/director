@@ -11,19 +11,20 @@
 //!   `children` are preserved. On reload, node ids are remapped and
 //!   the `scene_root` in tracks/timeline is updated.
 //! * Per-node: `transform` (current values), `opacity`, `z_index`,
-//!   `blend_mode`, and a `props` map.
+//!   `blend_mode`, a `props` map, and the Taffy layout `Style`
+//!   (`position`, `size`, `inset`, `flex_*`, `align_items`,
+//!   `justify_content`, `padding`, `margin`, `gap`, `aspect_ratio`,
+//!   `display`) — see `style_to_json` / `apply_layout_style_json`.
 //! * **Box**: full node-field round-trip (opacity, bg_color, border_radius,
-//!   border_width, border_color, shadow_*, blur, overflow) and a minimal
-//!   layout subset (`width`, `height`, `left`, `top` as `f32` px). Full
-//!   Taffy `Style` round-trip is a documented follow-up.
+//!   border_width, border_color, shadow_*, blur, overflow) plus layout.
 //! * **Text**: minimal reconstruction (transform, opacity, `font_size`,
-//!   `color`, `font_family`, `content` from a `_content` prop key). Rich
-//!   per-span styling degrades to a single default span.
+//!   `color`, `font_family`, `content` from a `_content` prop key) plus
+//!   layout. Rich per-span styling degrades to a single default span.
 //! * **Other kinds** (Image, Video, Lottie, Effect, Composition, Caption,
-//!   Vector, Spectrum, WGPU): kind tag + transform + opacity preserved.
-//!   On reload the node is reconstructed as a `BoxNode` placeholder with
-//!   a `warn!`. This is lossy for the original element type but keeps
-//!   the graph, layout and timeline loadable and renderable.
+//!   Vector, Spectrum, WGPU): kind tag + transform + opacity + layout
+//!   preserved. On reload the node is reconstructed as a `BoxNode`
+//!   placeholder with its Taffy layout applied. The original element type is
+//!   lossy, but the graph, geometry, and timeline stay loadable and renderable.
 //! * **Animation**: transform channels (scale/rotation/skew/translate) and
 //!   Box props (opacity, bg_color, border_*, shadow_*, blur, backdrop_blur)
 //!   serialize their **keyframes**, so motion survives the round-trip and
@@ -36,6 +37,7 @@ use crate::animation::{Animated, EasingType};
 use crate::director::{Director, TimelineItem};
 use crate::node::text::TextNode;
 use crate::node::BoxNode;
+use crate::scripting::utils::{apply_layout_style_json, style_to_json};
 use crate::timeline::{Track, TrackClip};
 use crate::types::{Color, NodeId};
 use crate::video_wrapper::RenderMode;
@@ -137,6 +139,11 @@ pub struct NodeData {
     /// `props` current values).
     #[serde(default)]
     pub animations: JsonMap<String, JsonValue>,
+    /// Taffy layout `Style` so geometry/positioning survives the round-trip.
+    /// Serialized by `style_to_json` and restored by `apply_layout_style_json`
+    /// (which routes through the canonical Rhai layout parser).
+    #[serde(default)]
+    pub layout: JsonMap<String, JsonValue>,
 }
 
 fn default_blend() -> String {
@@ -439,8 +446,6 @@ fn box_props_to_json(b: &BoxNode) -> JsonMap<String, JsonValue> {
         JsonValue::from(b.backdrop_blur.current_value),
     );
     p.insert("overflow".into(), JsonValue::from(b.overflow.clone()));
-    // Note: Taffy `Style` round-trip is a documented follow-up (see module
-    // docs). Layout is not serialized in this slice.
     p
 }
 
@@ -487,7 +492,6 @@ fn apply_box_props(b: &mut BoxNode, props: &JsonMap<String, JsonValue>) {
     if let Some(v) = props.get("overflow").and_then(|v| v.as_str()) {
         b.overflow = v.to_string();
     }
-    // Layout restoration is a documented follow-up.
 }
 
 // ---- Node kind detection (for save) ----
@@ -581,6 +585,9 @@ pub fn director_to_project(d: &Director) -> Project {
                 }
             };
 
+            // Layout (Taffy Style) so geometry/positioning survives the round-trip.
+            let layout = style_to_json(&sn.element.layout_style());
+
             // Animated channels (keyframes) so motion survives the round-trip.
             let mut animations = JsonMap::new();
             let t_channels: [(&str, &Animated<f32>); 7] = [
@@ -624,6 +631,7 @@ pub fn director_to_project(d: &Director) -> Project {
                 blend_mode: blend_to_str(sn.blend_mode),
                 props,
                 animations,
+                layout,
             });
         }
     }
@@ -695,11 +703,13 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
             "Box" => {
                 let mut b = BoxNode::new();
                 apply_box_props(&mut b, &n.props);
+                apply_layout_style_json(&mut b.style, &n.layout);
                 director.scene.add_node(Box::new(b))
             }
             _ => {
                 let mut b = BoxNode::new();
                 b.opacity.current_value = n.opacity;
+                apply_layout_style_json(&mut b.style, &n.layout);
                 tracing::warn!(
                     "load_project: kind '{}' is not fully round-tripped; \
                      reconstructing as a BoxNode placeholder (id was {})",
