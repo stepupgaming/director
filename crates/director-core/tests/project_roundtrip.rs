@@ -4,6 +4,7 @@
 //! to a versioned project JSON, loads it back, and asserts that the
 //! graph topology, node kinds, transforms, opacity, and tracks survive.
 
+use director_core::animation::Animated;
 use director_core::node::BoxNode;
 use director_core::scripting::register_rhai_api;
 use director_core::scripting::utils::style_to_json;
@@ -532,3 +533,164 @@ fn project_roundtrip_preserves_image_kind() {
 
     let _ = std::fs::remove_file(&tmp);
 }
+
+/// CaptionNode must reload with its caption lines intact (audit #2).
+#[test]
+fn project_roundtrip_preserves_caption_lines() {
+    use director_core::node::caption::CaptionNode;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let build = r##"
+        let movie = new_director(640, 480, 30.0);
+        let scene = movie.add_scene(2.0);
+        let bg = scene.add_box(#{ width: 640, height: 480, bg_color: "#202028" });
+        let c = bg.add_caption(#{
+            source: "1\n00:00:00,500 --> 00:00:02,000\nHello world\n",
+            font_size: 42.0,
+            color: "#ffffff",
+            highlight_color: "#ffcc00",
+            position: "bottom",
+            pill_enabled: false,
+        });
+        movie
+    "##;
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(build)
+        .expect("script must evaluate");
+
+    // Save.
+    let (caption_id, original_count, original_first_text) = {
+        let dir = movie.director.lock().unwrap();
+        let mut caption_id = 0usize;
+        let mut count = 0usize;
+        let mut first_text = String::new();
+        for (i, n) in dir.scene.nodes.iter().enumerate() {
+            if let Some(sn) = n {
+                if let Some(c) = sn.element.as_any().downcast_ref::<CaptionNode>() {
+                    caption_id = i;
+                    count = c.lines.len();
+                    if let Some(first) = c.lines.first() {
+                        first_text = first.text.clone();
+                    }
+                }
+            }
+        }
+        (caption_id, count, first_text)
+    };
+    assert!(original_count > 0, "expected at least one caption line");
+
+    let tmp = std::env::temp_dir().join("director_caption_roundtrip.json");
+    {
+        let dir = movie.director.lock().unwrap();
+        director_core::Director::save_project_json(&dir, &tmp).expect("save");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp).expect("load");
+
+    let reloaded = loaded.scene.nodes[caption_id]
+        .as_ref()
+        .expect("caption slot present")
+        .element
+        .as_any()
+        .downcast_ref::<CaptionNode>()
+        .expect("CaptionNode must reload as CaptionNode, not Box placeholder");
+    assert_eq!(reloaded.lines.len(), original_count, "caption line count preserved");
+    assert_eq!(
+        reloaded.lines[0].text, original_first_text,
+        "first caption line text preserved"
+    );
+    // Pill was disabled in the build, must still be false on reload.
+    assert!(!reloaded.style.pill_enabled);
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// EffectNode must round-trip; the kind tags survive so reload restores each
+/// variant of EffectType instead of collapsing to a Box placeholder.
+#[test]
+fn project_roundtrip_preserves_effect_kinds() {
+    use director_core::node::effect::{EffectNode, EffectType};
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    // Direct unit-style construction is easier than going through the Rhai
+    // API here since we want every variant exercised at once.
+    let mut director = director_core::Director::new(
+        512,
+        512,
+        30.0,
+        Arc::new(DefaultAssetLoader),
+        director_core::video_wrapper::RenderMode::Preview,
+        None,
+    );
+    let mut original = EffectNode {
+        effects: Vec::new(),
+        style: taffy::style::Style::default(),
+        shader_cache: std::sync::Arc::new(std::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
+        current_time: 0.0,
+    };
+    original.effects = vec![
+        EffectType::Blur(Animated::new(4.0)),
+        EffectType::DropShadow {
+            blur: Animated::new(8.0),
+            offset_x: Animated::new(2.0),
+            offset_y: Animated::new(4.0),
+            color: Animated::new(director_core::types::Color::BLACK),
+        },
+        EffectType::Vignette {
+            intensity: Animated::new(0.7),
+            radius: Animated::new(0.6),
+            feather: Animated::new(0.4),
+        },
+        EffectType::Mirror,
+        EffectType::Thermal,
+    ];
+    let original_kinds: Vec<String> = original
+        .effects
+        .iter()
+        .map(director_core::project::effect_kind_name_pub)
+        .map(|s| s.to_string())
+        .collect();
+
+    let id = director.scene.add_node(Box::new(original));
+    director.timeline.push(director_core::director::TimelineItem {
+        scene_root: id,
+        name: None,
+        start_time: 0.0,
+        duration: 1.0,
+        z_index: 0,
+        audio_tracks: vec![],
+    });
+
+    let tmp = std::env::temp_dir().join("director_effect_roundtrip.json");
+    director.save_project_json(&tmp).expect("save");
+    let loaded = director_core::Director::load_project_json(&tmp).expect("load");
+
+    let reloaded = loaded
+        .scene
+        .nodes
+        .iter()
+        .find_map(|n| n.as_ref())
+        .and_then(|sn| sn.element.as_any().downcast_ref::<EffectNode>())
+        .expect("EffectNode must reload as EffectNode, not Box placeholder");
+    let reloaded_kinds: Vec<String> = reloaded
+        .effects
+        .iter()
+        .map(director_core::project::effect_kind_name_pub)
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        reloaded_kinds, original_kinds,
+        "effect kinds must survive round-trip"
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+fn _effect_kind_name_unused() {}
