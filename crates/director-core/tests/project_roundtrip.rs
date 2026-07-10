@@ -315,3 +315,220 @@ fn find_abs_box(d: &director_core::Director) -> Option<director_core::types::Nod
     }
     None
 }
+
+/// TextNode must round-trip its spans through save/load (audit #2 node kinds).
+/// Before this landed, a Text node silently collapsed to a Box placeholder with
+/// empty content — losing every span, color, and font size.
+#[test]
+fn project_roundtrip_preserves_text_spans() {
+    use director_core::node::TextNode;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let build = r##"
+        let movie = new_director(480, 270, 30.0);
+        let scene = movie.add_scene(2.0);
+        let bg = scene.add_box(#{ width: 480, height: 270, bg_color: "#0a0a14" });
+        let t = bg.add_text(#{
+            content: [
+                #{ text: "Hello ", font_size: 48.0, color: "#ffffff" },
+                #{ text: "World", font_size: 48.0, color: "#ff0066", font_weight: 700 }
+            ],
+            fit: "none",
+            text_align: "center",
+        });
+        movie
+    "##;
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(build)
+        .expect("script must evaluate");
+
+    // Capture the original text-node snapshot in one pass.
+    struct Snapshot {
+        id: director_core::types::NodeId,
+        first_text: String,
+        first_size: f32,
+        first_color: String,
+        second_text: String,
+        second_color: String,
+        text_count: usize,
+        box_count: usize,
+    }
+    let snap: Snapshot = {
+        let director = movie.director.lock().unwrap();
+        let mut text_count = 0usize;
+        let mut box_count = 0usize;
+        let mut id = 0usize;
+        let mut first_text = String::new();
+        let mut first_size = 0.0f32;
+        let mut first_color = String::new();
+        let mut second_text = String::new();
+        let mut second_color = String::new();
+        for (i, node_opt) in director.scene.nodes.iter().enumerate() {
+            if let Some(sn) = node_opt {
+                if let Some(t) = sn.element.as_any().downcast_ref::<TextNode>() {
+                    text_count += 1;
+                    id = i;
+                    let spans = &t.spans;
+                    if spans.len() >= 2 {
+                        first_text = spans[0].text.clone();
+                        first_size = spans[0].font_size.unwrap_or(0.0);
+                        first_color = spans[0]
+                            .color
+                            .map(color_hex)
+                            .unwrap_or_default();
+                        second_text = spans[1].text.clone();
+                        second_color = spans[1]
+                            .color
+                            .map(color_hex)
+                            .unwrap_or_default();
+                    }
+                }
+                if sn.element.as_any().is::<director_core::node::BoxNode>() {
+                    box_count += 1;
+                }
+            }
+        }
+        Snapshot {
+            id: id as director_core::types::NodeId,
+            first_text,
+            first_size,
+            first_color,
+            second_text,
+            second_color,
+            text_count,
+            box_count,
+        }
+    };
+    assert!(snap.text_count >= 1, "expected at least one TextNode");
+    assert!(snap.first_size > 0.0, "expected first span size > 0");
+
+    // Save + reload.
+    let tmp = std::env::temp_dir().join("director_text_roundtrip.json");
+    {
+        let dir = movie.director.lock().unwrap();
+        director_core::Director::save_project_json(&dir, &tmp)
+            .expect("save must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp).expect("load must succeed");
+
+    let reloaded = loaded.scene.nodes[snap.id as usize]
+        .as_ref()
+        .unwrap()
+        .element
+        .as_any()
+        .downcast_ref::<director_core::node::TextNode>()
+        .expect("TextNode must reload as TextNode, not Box placeholder");
+    assert_eq!(reloaded.spans.len(), 2, "span count must survive round-trip");
+    assert_eq!(reloaded.spans[0].text, snap.first_text);
+    assert_eq!(reloaded.spans[0].font_size.unwrap_or(0.0), snap.first_size);
+    assert_eq!(
+        reloaded.spans[0].color.map(color_hex).unwrap_or_default(),
+        snap.first_color,
+        "first span color must survive round-trip"
+    );
+    assert_eq!(reloaded.spans[1].text, snap.second_text);
+    assert_eq!(
+        reloaded.spans[1].color.map(color_hex).unwrap_or_default(),
+        snap.second_color,
+        "second span red color must survive round-trip"
+    );
+
+    // Box count should still include the bg from the build.
+    let mut still_box = 0usize;
+    let mut still_text = 0usize;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if sn.element.as_any().is::<director_core::node::BoxNode>() {
+            still_box += 1;
+        }
+        if sn.element.as_any().is::<TextNode>() {
+            still_text += 1;
+        }
+    }
+    assert_eq!(still_box, snap.box_count, "Box kind count preserved");
+    assert_eq!(still_text, snap.text_count, "Text kind count preserved");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+fn color_hex(c: director_core::types::Color) -> String {
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        (c.r * 255.0) as u8,
+        (c.g * 255.0) as u8,
+        (c.b * 255.0) as u8
+    )
+}
+
+/// ImageNode must reload as `Image` (audit #2 node kinds), not collapse to a
+/// Box placeholder. We use a non-existent path so we don't depend on a real
+/// PNG being on disk; the *kind* survives even when the bytes fail to load.
+#[test]
+fn project_roundtrip_preserves_image_kind() {
+    use director_core::node::image_node::ImageNode;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let build = r##"
+        let movie = new_director(640, 360, 30.0);
+        let scene = movie.add_scene(2.0);
+        let bg = scene.add_box(#{ width: 640, height: 360, bg_color: "#000000" });
+        let img = bg.add_image("does-not-exist.png", #{
+            object_fit: "contain",
+            border_radius: 12.0,
+        });
+        movie
+    "##;
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(build)
+        .expect("script must evaluate");
+
+    let image_id = {
+        let director = movie.director.lock().unwrap();
+        let mut found = None;
+        for (i, node_opt) in director.scene.nodes.iter().enumerate() {
+            if let Some(sn) = node_opt {
+                if sn.element.as_any().is::<ImageNode>() {
+                    found = Some(i as director_core::types::NodeId);
+                }
+            }
+        }
+        found.expect("build should produce an ImageNode")
+    };
+
+    let tmp = std::env::temp_dir().join("director_image_roundtrip.json");
+    {
+        let dir = movie.director.lock().unwrap();
+        director_core::Director::save_project_json(&dir, &tmp).expect("save");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp).expect("load");
+
+    let reloaded = loaded.scene.nodes[image_id as usize]
+        .as_ref()
+        .expect("image node slot present after round-trip")
+        .element
+        .as_any()
+        .downcast_ref::<ImageNode>()
+        .expect("round-tripped ImageNode must reconstruct as ImageNode, not Box placeholder");
+    assert_eq!(
+        reloaded.source_path.as_deref(),
+        Some("does-not-exist.png"),
+        "source path must survive round-trip"
+    );
+    assert_eq!(
+        reloaded.object_fit,
+        director_core::types::ObjectFit::Contain,
+        "object_fit must survive round-trip"
+    );
+    assert!(
+        (reloaded.border_radius.current_value - 12.0).abs() < 0.001,
+        "border_radius must survive round-trip"
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}

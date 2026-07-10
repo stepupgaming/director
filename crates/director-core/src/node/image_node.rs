@@ -16,6 +16,11 @@ pub struct ImageNode {
     pub style: Style,
     pub object_fit: ObjectFit,
     pub border_radius: Animated<f32>,
+    /// Optional asset path the image was loaded from. Populated by `add_image`
+    /// in the Rhai API; round-tripped through `Project.save_project_json`
+    /// so a loaded image can be re-fetched via the Director's AssetLoader
+    /// instead of falling back to a Box placeholder.
+    pub source_path: Option<String>,
 }
 
 impl ImageNode {
@@ -27,6 +32,7 @@ impl ImageNode {
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
             border_radius: Animated::new(0.0),
+            source_path: None,
         }
     }
 
@@ -37,7 +43,16 @@ impl ImageNode {
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
             border_radius: Animated::new(0.0),
+            source_path: None,
         }
+    }
+
+    /// Build an ImageNode from the contents of an asset path. `None` image if
+    /// the loader could not resolve the path.
+    pub fn from_path(path: &str) -> Self {
+        let mut node = Self::new(Vec::new());
+        node.source_path = Some(path.to_string());
+        node
     }
 }
 

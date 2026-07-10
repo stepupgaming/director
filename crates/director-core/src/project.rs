@@ -504,6 +504,254 @@ fn apply_box_props(b: &mut BoxNode, props: &JsonMap<String, JsonValue>) {
     }
 }
 
+// ---- Text props ----
+
+fn text_span_to_json(s: &crate::element::TextSpan) -> JsonValue {
+    let mut m = JsonMap::new();
+    m.insert("text".into(), JsonValue::from(s.text.clone()));
+    if let Some(c) = s.color {
+        m.insert("color".into(), JsonValue::from(crate::project::color_to_hex_pub(c)));
+    }
+    if let Some(f) = s.font_size {
+        m.insert("font_size".into(), JsonValue::from(f));
+    }
+    if let Some(w) = s.font_weight {
+        m.insert("font_weight".into(), JsonValue::from(w as i64));
+    }
+    if let Some(ff) = &s.font_family {
+        m.insert("font_family".into(), JsonValue::from(ff.clone()));
+    }
+    if let Some(fs) = &s.font_style {
+        m.insert("font_style".into(), JsonValue::from(fs.clone()));
+    }
+    if let Some(bc) = s.background_color {
+        m.insert("background_color".into(), JsonValue::from(crate::project::color_to_hex_pub(bc)));
+    }
+    if let Some(bp) = s.background_padding {
+        m.insert("background_padding".into(), JsonValue::from(bp));
+    }
+    if let Some(sw) = s.stroke_width {
+        m.insert("stroke_width".into(), JsonValue::from(sw));
+    }
+    if let Some(sc) = s.stroke_color {
+        m.insert("stroke_color".into(), JsonValue::from(crate::project::color_to_hex_pub(sc)));
+    }
+    if let Some(ls) = s.letter_spacing {
+        m.insert("letter_spacing".into(), JsonValue::from(ls));
+    }
+    if let Some(lh) = s.line_height {
+        m.insert("line_height".into(), JsonValue::from(lh));
+    }
+    JsonValue::Object(m)
+}
+
+fn text_span_from_json(v: &JsonValue) -> Option<crate::element::TextSpan> {
+    let obj = v.as_object()?;
+    let text = obj.get("text").and_then(|v| v.as_str())?.to_string();
+    let parse_color = |v: &JsonValue| -> Option<crate::types::Color> {
+        v.as_str().and_then(crate::project::parse_hex_pub)
+    };
+    Some(crate::element::TextSpan {
+        text,
+        color: obj.get("color").and_then(parse_color),
+        font_size: obj.get("font_size").and_then(|v| v.as_f64()).map(|v| v as f32),
+        font_weight: obj.get("font_weight").and_then(|v| v.as_i64()).map(|v| v as u16),
+        font_family: obj.get("font_family").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        font_style: obj.get("font_style").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        background_color: obj.get("background_color").and_then(parse_color),
+        background_padding: obj
+            .get("background_padding")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32),
+        stroke_width: obj.get("stroke_width").and_then(|v| v.as_f64()).map(|v| v as f32),
+        stroke_color: obj.get("stroke_color").and_then(parse_color),
+        fill_gradient: None,
+        letter_spacing: obj
+            .get("letter_spacing")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32),
+        line_height: obj.get("line_height").and_then(|v| v.as_f64()).map(|v| v as f32),
+    })
+}
+
+fn text_props_to_json(t: &TextNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    let spans: Vec<JsonValue> = t.spans.iter().map(text_span_to_json).collect();
+    p.insert("spans".into(), JsonValue::Array(spans));
+    p.insert(
+        "default_font_size".into(),
+        JsonValue::from(t.default_font_size.current_value),
+    );
+    p.insert(
+        "default_color".into(),
+        JsonValue::from(crate::project::color_to_hex_pub(t.default_color.current_value)),
+    );
+    p.insert("min_size".into(), JsonValue::from(t.min_size));
+    p.insert("max_size".into(), JsonValue::from(t.max_size));
+    let fit = match t.fit_mode {
+        crate::element::TextFit::None => "none",
+        crate::element::TextFit::Shrink => "shrink",
+    };
+    p.insert("fit".into(), JsonValue::from(fit));
+    let align = match t.text_align {
+        skia_safe::textlayout::TextAlign::Left => "left",
+        skia_safe::textlayout::TextAlign::Center => "center",
+        skia_safe::textlayout::TextAlign::Right => "right",
+        skia_safe::textlayout::TextAlign::Justify => "justify",
+        _ => "left",
+    };
+    p.insert("text_align".into(), JsonValue::from(align));
+    if let Some(sh) = &t.shadow {
+        p.insert(
+            "shadow_enabled".into(),
+            JsonValue::from(1.0),
+        );
+        p.insert(
+            "shadow_color".into(),
+            JsonValue::from(crate::project::color_to_hex_pub(sh.color)),
+        );
+        p.insert("shadow_blur".into(), JsonValue::from(sh.blur));
+        p.insert(
+            "shadow_offset_x".into(),
+            JsonValue::from(sh.offset.0),
+        );
+        p.insert(
+            "shadow_offset_y".into(),
+            JsonValue::from(sh.offset.1),
+        );
+    }
+    p
+}
+
+pub(crate) fn color_to_hex_pub(c: crate::types::Color) -> String {
+    color_to_hex(c)
+}
+
+pub(crate) fn parse_hex_pub(s: &str) -> Option<crate::types::Color> {
+    parse_hex(s)
+}
+
+fn apply_text_props(
+    node: &mut TextNode,
+    props: &JsonMap<String, JsonValue>,
+) {
+    // Rebuild the span list (the only piece TextNode::new needs to take).
+    let mut spans: Vec<crate::element::TextSpan> = Vec::new();
+    if let Some(arr) = props.get("spans").and_then(|v| v.as_array()) {
+        for s in arr {
+            if let Some(span) = text_span_from_json(s) {
+                spans.push(span);
+            }
+        }
+    }
+    node.spans = spans.clone();
+
+    if let Some(v) = props.get("default_font_size").and_then(|v| v.as_f64()) {
+        node.default_font_size = Animated::new(v as f32);
+    }
+    if let Some(s) = props.get("default_color").and_then(|v| v.as_str()) {
+        if let Some(c) = parse_hex(s) {
+            node.default_color = Animated::new(c);
+        } else {
+            node.default_color = Animated::new(crate::types::Color::WHITE);
+        }
+    } else {
+        // Bootstrap a default so `node.init_paragraph` has something to draw.
+        node.default_color = Animated::new(crate::types::Color::WHITE);
+    }
+    node.default_font_size.current_value = node.default_font_size.current_value.max(1.0);
+
+    if let Some(v) = props.get("min_size").and_then(|v| v.as_f64()) {
+        node.min_size = v as f32;
+    }
+    if let Some(v) = props.get("max_size").and_then(|v| v.as_f64()) {
+        node.max_size = v as f32;
+    }
+    if let Some(s) = props.get("fit").and_then(|v| v.as_str()) {
+        node.fit_mode = match s {
+            "shrink" => crate::element::TextFit::Shrink,
+            _ => crate::element::TextFit::None,
+        };
+    }
+    if let Some(s) = props.get("text_align").and_then(|v| v.as_str()) {
+        node.text_align = match s {
+            "center" => skia_safe::textlayout::TextAlign::Center,
+            "right" => skia_safe::textlayout::TextAlign::Right,
+            "justify" => skia_safe::textlayout::TextAlign::Justify,
+            _ => skia_safe::textlayout::TextAlign::Left,
+        };
+    }
+    if props.contains_key("shadow_color") {
+        let color = props
+            .get("shadow_color")
+            .and_then(|v| v.as_str())
+            .and_then(parse_hex)
+            .unwrap_or(crate::types::Color::BLACK);
+        let blur = props
+            .get("shadow_blur")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let offset_x = props
+            .get("shadow_offset_x")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let offset_y = props
+            .get("shadow_offset_y")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        node.shadow = Some(crate::element::TextShadow {
+            color,
+            blur,
+            offset: (offset_x, offset_y),
+        });
+    }
+    // Need to recompute the Skia paragraph after span/style mutation.
+    node.init_paragraph();
+}
+
+// ---- Image props ----
+
+fn image_props_to_json(n: &crate::node::image_node::ImageNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    if let Some(path) = &n.source_path {
+        p.insert("source".into(), JsonValue::from(path.clone()));
+    }
+    let fit = match n.object_fit {
+        crate::types::ObjectFit::Fill => "fill",
+        crate::types::ObjectFit::Contain => "contain",
+        crate::types::ObjectFit::Cover => "cover",
+    };
+    p.insert("object_fit".into(), JsonValue::from(fit));
+    p.insert(
+        "border_radius".into(),
+        JsonValue::from(n.border_radius.current_value),
+    );
+    p
+}
+
+fn apply_image_props(
+    n: &mut crate::node::image_node::ImageNode,
+    props: &JsonMap<String, JsonValue>,
+    loader: &dyn AssetLoader,
+) {
+    if let Some(s) = props.get("source").and_then(|v| v.as_str()) {
+        n.source_path = Some(s.to_string());
+        if let Ok(bytes) = loader.load_bytes(s) {
+            n.image = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes));
+        }
+    }
+    if let Some(s) = props.get("object_fit").and_then(|v| v.as_str()) {
+        n.object_fit = match s {
+            "contain" => crate::types::ObjectFit::Contain,
+            "fill" => crate::types::ObjectFit::Fill,
+            _ => crate::types::ObjectFit::Cover,
+        };
+    }
+    if let Some(v) = props.get("border_radius").and_then(|v| v.as_f64()) {
+        n.border_radius = Animated::new(v as f32);
+    }
+}
+
 // ---- Node kind detection (for save) ----
 
 fn node_kind_name(sn: &crate::scene::SceneNode) -> String {
@@ -579,12 +827,23 @@ pub fn director_to_project(d: &Director) -> Project {
                     .downcast_ref::<BoxNode>()
                     .map(box_props_to_json)
                     .unwrap_or_default(),
-                "Text" => {
-                    let mut p = JsonMap::new();
-                    p.insert("_content".into(), JsonValue::from(""));
-                    p.insert("font_size".into(), JsonValue::from(24.0));
-                    p
-                }
+                "Text" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<TextNode>()
+                    .map(text_props_to_json)
+                    .unwrap_or_else(|| {
+                        let mut p = JsonMap::new();
+                        p.insert("_content".into(), JsonValue::from(""));
+                        p.insert("font_size".into(), JsonValue::from(24.0));
+                        p
+                    }),
+                "Image" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<crate::node::image_node::ImageNode>()
+                    .map(image_props_to_json)
+                    .unwrap_or_default(),
                 _ => {
                     let mut p = JsonMap::new();
                     p.insert(
@@ -707,7 +966,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
 
     let mut id_map: std::collections::HashMap<NodeId, NodeId> = Default::default();
 
-    // First pass: create nodes (Box / Text / placeholder Box for others).
+    // First pass: create nodes (Box / Text / Image / placeholder Box for others).
     for n in &project.nodes {
         let new_id = match n.kind.as_str() {
             "Box" => {
@@ -715,6 +974,27 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 apply_box_props(&mut b, &n.props);
                 apply_layout_style_json(&mut b.style, &n.layout);
                 director.scene.add_node(Box::new(b))
+            }
+            "Text" => {
+                // Restore as a real TextNode. A TextNode with zero spans
+                // would otherwise render nothing, so seed an empty span if
+                // `apply_text_props` could not recover any from the JSON.
+                let fc = director.assets.font_collection.clone();
+                let mut t = TextNode::new(vec![crate::element::TextSpan {
+                    text: String::new(),
+                    ..Default::default()
+                }], fc);
+                apply_text_props(&mut t, &n.props);
+                apply_layout_style_json(&mut t.style, &n.layout);
+                director.scene.add_node(Box::new(t))
+            }
+            "Image" => {
+                // Reconstruct as a real ImageNode, then re-load bytes via the
+                // Director's AssetLoader if a source path was round-tripped.
+                let mut i = crate::node::image_node::ImageNode::new(Vec::new());
+                apply_image_props(&mut i, &n.props, director.assets.loader.as_ref());
+                apply_layout_style_json(&mut i.style, &n.layout);
+                director.scene.add_node(Box::new(i))
             }
             _ => {
                 let mut b = BoxNode::new();
@@ -798,6 +1078,37 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                         n.animations.get("opacity").and_then(rebuild_animated_f32)
                     {
                         b.opacity = a;
+                    }
+                }
+                // TextNode: rebuild opacity from the `opacity` animation channel.
+                if let Some(t) = sn.element.as_any_mut().downcast_mut::<TextNode>() {
+                    if let Some(a) = n
+                        .animations
+                        .get("opacity")
+                        .and_then(rebuild_animated_f32)
+                    {
+                        t.opacity = a;
+                    }
+                }
+                // ImageNode: same treatment.
+                if let Some(img) =
+                    sn.element
+                        .as_any_mut()
+                        .downcast_mut::<crate::node::image_node::ImageNode>()
+                {
+                    if let Some(a) = n
+                        .animations
+                        .get("opacity")
+                        .and_then(rebuild_animated_f32)
+                    {
+                        img.opacity = a;
+                    }
+                    if let Some(a) = n
+                        .animations
+                        .get("border_radius")
+                        .and_then(rebuild_animated_f32)
+                    {
+                        img.border_radius = a;
                     }
                 }
             }
