@@ -41,9 +41,16 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = LogFormat::Pretty)]
     log_format: LogFormat,
 
-    /// Write layout-time render manifest JSON alongside the video
+    /// Write layout-time render manifest JSON to an explicit path. Skips
+    /// auto-emit next to the output (`<output>.manifest.json`).
     #[arg(long, value_name = "PATH")]
     manifest: Option<PathBuf>,
+
+    /// Disable the default behaviour of writing `<output>.manifest.json`
+    /// next to the rendered video. Useful for previews or cases where the
+    /// caller writes the manifest through a different tool.
+    #[arg(long)]
+    no_auto_manifest: bool,
 
     /// Timeline instant (seconds) for manifest bounds sampling
     #[arg(long, default_value_t = 0.0)]
@@ -153,7 +160,31 @@ fn main() {
             info!("Script evaluated successfully. Starting render...");
             let mut director = movie.director.lock().unwrap();
 
-            if let Some(manifest_path) = &cli.manifest {
+            // Determine where (if anywhere) to write the render manifest.
+            // The CLI accepts an explicit `--manifest PATH`, but agents and CI
+            // pipelines almost always want a manifest next to the rendered
+            // video so they can inspect bounds / fps / timeline without a
+            // second tool invocation. When `--manifest` is not given, auto-
+            // emit `<output>.manifest.json` next to the video unless the
+            // caller opted out via `--no-auto-manifest` (audit #1 follow-up).
+            let auto_manifest_path = if cli.manifest.is_none() && !cli.no_auto_manifest {
+                let mut p = output_path.clone();
+                if p.extension().is_some() {
+                    let stem = p.file_stem().map(|s| s.to_os_string()).unwrap_or_default();
+                    let ext = p.extension().map(|s| s.to_os_string()).unwrap_or_default();
+                    p = p.with_file_name(format!(
+                        "{}.manifest.{}",
+                        stem.to_string_lossy(),
+                        ext.to_string_lossy()
+                    ));
+                } else {
+                    p.set_extension("manifest.json");
+                }
+                Some(p)
+            } else {
+                cli.manifest.clone()
+            };
+            if let Some(manifest_path) = &auto_manifest_path {
                 let json = director_core::render_manifest_json(&mut director, cli.manifest_time);
                 if let Err(e) = fs::write(manifest_path, json) {
                     error!("Failed to write manifest: {}", e);
