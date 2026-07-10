@@ -6,7 +6,8 @@ use crate::node::{build_effect_filter, parse_easing, EffectType};
 use crate::types::{Color, GradientConfig, GradientType};
 use skia_safe::{Canvas, ClipOp, Paint, PaintStyle, Point, RRect, Rect, TileMode};
 use std::any::Any;
-use taffy::style::{AlignItems, FlexDirection, JustifyContent, Style};
+use taffy::geometry::Rect as TaffyRect;
+use taffy::style::{AlignItems, FlexDirection, JustifyContent, LengthPercentage, Style};
 
 // --- Box Node ---
 /// A fundamental layout and styling block (div-like).
@@ -36,6 +37,11 @@ pub struct BoxNode {
     /// Optional clip-path polygon points (normalized 0..1) for non-rectangular clipping.
     /// e.g. [[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]] creates a triangle clip.
     pub clip_path: Option<Vec<(f32, f32)>>,
+    /// Platform safe-area preset name (e.g. "tiktok", "reels", "youtube_shorts").
+    /// Resolved against the DesignSystem and applied to `style.padding` when the
+    /// LayoutEngine runs `apply_safe_area` so children stay clear of platform UI
+    /// overlays (status bar, captions, like/comment buttons, etc.).
+    pub safe_area_preset: Option<String>,
 }
 
 /// A single box shadow definition for stacked/multiple shadows.
@@ -72,7 +78,34 @@ impl BoxNode {
             backdrop_blur: Animated::new(0.0),
             extra_shadows: Vec::new(),
             clip_path: None,
+            safe_area_preset: None,
         }
+    }
+
+    /// Resolve `safe_area_preset` against the DesignSystem, scale the result by
+    /// `canvas_h / reference_short_form_height`, and write the four insets into
+    /// `style.padding` so Taffy reserves space for platform UI overlays.
+    ///
+    /// Returns `true` when padding was changed (preset resolved and applied),
+    /// `false` when the preset is unset, unknown, or produced no change. Callers
+    /// (notably `LayoutEngine::compute_layout`) should mark the node dirty on
+    /// `true` so Taffy re-syncs the layout style.
+    pub fn apply_safe_area(&mut self, canvas_h: f32) -> bool {
+        let Some(preset) = self.safe_area_preset.clone() else {
+            return false;
+        };
+        let Some(zone) = crate::node::caption::scaled_safe_zone(&preset, canvas_h) else {
+            // Unknown preset name — leave existing padding untouched so user-set
+            // values aren't silently dropped by an unrecognized token.
+            return false;
+        };
+        self.style.padding = TaffyRect {
+            left: LengthPercentage::length(zone.left),
+            right: LengthPercentage::length(zone.right),
+            top: LengthPercentage::length(zone.top),
+            bottom: LengthPercentage::length(zone.bottom),
+        };
+        true
     }
 }
 
@@ -381,5 +414,89 @@ impl Element for BoxNode {
             "backdrop_blur" => apply(&mut self.backdrop_blur),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read_padding_px(node: &BoxNode) -> (f32, f32, f32, f32) {
+        let to_len = |lp: LengthPercentage| -> f32 { lp.into_raw().value() };
+        (
+            to_len(node.style.padding.left),
+            to_len(node.style.padding.right),
+            to_len(node.style.padding.top),
+            to_len(node.style.padding.bottom),
+        )
+    }
+
+    #[test]
+    fn apply_safe_area_no_preset_is_noop() {
+        let mut node = BoxNode::new();
+        assert!(node.safe_area_preset.is_none());
+        assert!(!node.apply_safe_area(1920.0));
+        // Default padding (zero on every side) is unchanged.
+        assert_eq!(read_padding_px(&node), (0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn apply_safe_area_unknown_preset_keeps_existing_padding() {
+        let mut node = BoxNode::new();
+        node.safe_area_preset = Some("not_a_real_platform".to_string());
+        // Seed a recognisable padding so we can detect "no change".
+        node.style.padding = TaffyRect {
+            left: LengthPercentage::length(12.0),
+            right: LengthPercentage::length(34.0),
+            top: LengthPercentage::length(56.0),
+            bottom: LengthPercentage::length(78.0),
+        };
+        assert!(!node.apply_safe_area(1920.0));
+        assert_eq!(read_padding_px(&node), (12.0, 34.0, 56.0, 78.0));
+    }
+
+    #[test]
+    fn apply_safe_area_tiktok_at_1920_matches_tokens_table() {
+        // From DesignSystem::new() — "tiktok" is `{top:100, right:80, bottom:180, left:24}`.
+        let mut node = BoxNode::new();
+        node.safe_area_preset = Some("tiktok".to_string());
+        assert!(node.apply_safe_area(1920.0));
+        let (l, r, t, b) = read_padding_px(&node);
+        assert_eq!((l, r, t, b), (24.0, 80.0, 100.0, 180.0));
+    }
+
+    #[test]
+    fn apply_safe_area_scales_with_canvas_height() {
+        let mut half = BoxNode::new();
+        half.safe_area_preset = Some("tiktok".to_string());
+        assert!(half.apply_safe_area(960.0));
+        let (l, r, t, b) = read_padding_px(&half);
+
+        let mut full = BoxNode::new();
+        full.safe_area_preset = Some("tiktok".to_string());
+        assert!(full.apply_safe_area(1920.0));
+        let (l2, r2, t2, b2) = read_padding_px(&full);
+
+        // Half-height canvas should produce insets at roughly half the 1920 values
+        // (within a small tolerance because DESIGN_SYSTEM_PADDING is integer pixels).
+        for (a, b) in [(l, l2), (r, r2), (t, t2), (b, b2)] {
+            assert!(
+                (a - b * 0.5).abs() < 1.0,
+                "half-height padding should scale linearly"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_safe_area_desktop_uses_squared_insets() {
+        // Desktop preset is 16:9; the helper still scales to 9:16 reference height,
+        // but verifies the box applies whatever the helper returns for that preset.
+        let mut node = BoxNode::new();
+        node.safe_area_preset = Some("desktop".to_string());
+        assert!(node.apply_safe_area(1920.0));
+        let (_l, r, t, _b) = read_padding_px(&node);
+        // Desktop (64/96) is symmetric on the vertical axis, so top==bottom==64.
+        assert_eq!(t, 64.0);
+        assert_eq!(r, 96.0);
     }
 }

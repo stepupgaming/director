@@ -1507,6 +1507,15 @@ fn apply_box_props(box_node: &mut BoxNode, props: &rhai::Map) {
             }
         }
     }
+    // Platform safe-area preset (e.g. "tiktok", "reels"). Applied as padding on
+    // the next LayoutEngine pass via BoxNode::apply_safe_area.
+    if let Some(p) = props
+        .get("safe_area")
+        .or_else(|| props.get("safe_area_preset"))
+        .and_then(|v| v.clone().into_string().ok())
+    {
+        box_node.safe_area_preset = Some(p);
+    }
 }
 
 /// Apply shape-specific properties from a Rhai map.

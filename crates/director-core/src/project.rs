@@ -446,6 +446,9 @@ fn box_props_to_json(b: &BoxNode) -> JsonMap<String, JsonValue> {
         JsonValue::from(b.backdrop_blur.current_value),
     );
     p.insert("overflow".into(), JsonValue::from(b.overflow.clone()));
+    if let Some(preset) = &b.safe_area_preset {
+        p.insert("safe_area".into(), JsonValue::from(preset.clone()));
+    }
     p
 }
 
@@ -491,6 +494,13 @@ fn apply_box_props(b: &mut BoxNode, props: &JsonMap<String, JsonValue>) {
     }
     if let Some(v) = props.get("overflow").and_then(|v| v.as_str()) {
         b.overflow = v.to_string();
+    }
+    if let Some(v) = props
+        .get("safe_area")
+        .or_else(|| props.get("safe_area_preset"))
+        .and_then(|v| v.as_str())
+    {
+        b.safe_area_preset = Some(v.to_string());
     }
 }
 
