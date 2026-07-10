@@ -132,6 +132,7 @@ fn collect_timeline(director: &Director) -> Vec<TimelineItem> {
                 duration: clip.duration,
                 z_index: clip.z_index,
                 audio_tracks: clip.audio_tracks.clone(),
+                freeze_time: clip.freeze_time,
             });
         }
     }
@@ -218,6 +219,7 @@ mod tests {
             duration: 2.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let manifest = build_render_manifest(&mut director, 0.0);

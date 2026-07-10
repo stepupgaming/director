@@ -97,6 +97,11 @@ pub struct ClipData {
     pub fade_out: f64,
     #[serde(default)]
     pub audio_tracks: Vec<usize>,
+    /// Freeze-frame override; when set, the renderer keeps sampling the
+    /// source at this local time for the entire clip window instead of
+    /// advancing.
+    #[serde(default)]
+    pub freeze_time: Option<f64>,
 }
 
 fn default_one_f() -> f64 {
@@ -114,6 +119,11 @@ pub struct TimelineItemData {
     pub name: Option<String>,
     #[serde(default)]
     pub audio_tracks: Vec<usize>,
+    /// Freeze-frame override; when set, the renderer keeps sampling the
+    /// scene at this local time for the entire timeline window instead of
+    /// advancing.
+    #[serde(default)]
+    pub freeze_time: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1654,6 +1664,7 @@ pub fn director_to_project(d: &Director) -> Project {
             z_index: it.z_index,
             name: it.name.clone(),
             audio_tracks: it.audio_tracks.clone(),
+            freeze_time: it.freeze_time,
         })
         .collect();
     Project {
@@ -1680,6 +1691,7 @@ fn track_clip_to_data(c: &TrackClip) -> ClipData {
         fade_in: c.fade_in,
         fade_out: c.fade_out,
         audio_tracks: c.audio_tracks.clone(),
+        freeze_time: c.freeze_time,
     }
 }
 
@@ -1951,6 +1963,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                             fade_in: c.fade_in,
                             fade_out: c.fade_out,
                             audio_tracks: c.audio_tracks,
+                            freeze_time: c.freeze_time,
                         })
                     })
                     .collect(),
@@ -1969,6 +1982,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 z_index: it.z_index,
                 name: it.name,
                 audio_tracks: it.audio_tracks,
+                freeze_time: it.freeze_time,
             })
         })
         .collect();

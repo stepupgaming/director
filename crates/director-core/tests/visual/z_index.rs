@@ -35,6 +35,7 @@ fn z_index_higher_on_top() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         // Blue box (inserted first, z_index=0)
@@ -96,6 +97,7 @@ fn z_index_overrides_insertion_order() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         // Red box (inserted first, z_index=2)

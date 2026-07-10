@@ -50,6 +50,10 @@ pub struct TimelineItem {
     pub z_index: i32,
     /// Associated audio tracks.
     pub audio_tracks: Vec<usize>,
+    /// When `Some(t)`, the renderer keeps sampling the scene at local time
+    /// `t` for the entire `duration` window instead of advancing — the
+    /// canonical "freeze frame" mechanism used by `add_freeze`.
+    pub freeze_time: Option<f64>,
 }
 
 /// The central engine coordinator.
@@ -315,7 +319,7 @@ impl Director {
         self.audio_mixer.add_track(track)
     }
 
-    fn collect_active_roots<'a>(&'a self, global_time: f64) -> Vec<(NodeId, f64)> {
+    pub fn collect_active_roots<'a>(&'a self, global_time: f64) -> Vec<(NodeId, f64)> {
         let mut roots = Vec::new();
         // Try new track system first
         if self.tracks.iter().any(|t| !t.clips.is_empty()) {
@@ -336,7 +340,10 @@ impl Director {
                 if global_time >= item.start_time
                     && global_time < item.start_time + item.duration
                 {
-                    let local_time = global_time - item.start_time;
+                    // Freeze takes precedence over wall-clock advancement.
+                    let local_time = item.freeze_time.unwrap_or_else(|| {
+                        global_time - item.start_time
+                    });
                     roots.push((item.scene_root, local_time));
                 }
             }

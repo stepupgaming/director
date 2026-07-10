@@ -33,6 +33,7 @@ fn text_basic() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -75,6 +76,7 @@ fn text_multiline() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -121,6 +123,7 @@ fn text_colored() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -163,6 +166,7 @@ fn text_large() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -205,6 +209,7 @@ fn text_shadow() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -253,6 +258,7 @@ fn text_rich_spans() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![
@@ -311,6 +317,7 @@ fn text_textfit_shrink() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -359,6 +366,7 @@ fn text_align_left() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -405,6 +413,7 @@ fn text_align_center() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -451,6 +460,7 @@ fn text_align_right() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -497,6 +507,7 @@ fn text_align_justify() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -547,6 +558,7 @@ fn text_fit_shrink() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -596,6 +608,7 @@ fn text_fit_auto() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         // Short text should be narrow, not stretched to fill the 400px frame
@@ -643,6 +656,7 @@ fn text_fit_wrap() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -689,6 +703,7 @@ fn text_stroke() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -733,6 +748,7 @@ fn text_background() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -781,6 +797,7 @@ fn font_weight_matrix() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![
@@ -842,6 +859,7 @@ fn font_style_italic() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![
@@ -899,6 +917,7 @@ fn text_gradient() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {

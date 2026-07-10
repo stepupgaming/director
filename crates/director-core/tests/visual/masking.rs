@@ -32,6 +32,7 @@ fn mask_circle() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         // Mask node: a white box with large border radius → circular mask
@@ -84,6 +85,7 @@ fn mask_strip() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         // Mask node: a thin vertical white strip

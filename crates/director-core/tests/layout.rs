@@ -82,6 +82,7 @@ fn layout_structure_snapshot() {
             duration: 10.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         // Row with space-between children
@@ -206,6 +207,7 @@ fn grid_layout_basic() {
         duration: 10.0,
         z_index: 0,
         audio_tracks: vec![],
+            freeze_time: None,
     });
 
     // Item 1 (0,0)
@@ -290,6 +292,7 @@ fn box_safe_area_preset_applies_padding() {
             duration: 10.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
     }
 

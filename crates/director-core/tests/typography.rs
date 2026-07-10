@@ -49,6 +49,7 @@ fn text_fit_shrink() {
             duration: 1.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
     // Trigger layout
@@ -105,6 +106,7 @@ fn text_span_rich_styling() {
             duration: 1.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
     // Should not panic during render
@@ -192,6 +194,7 @@ fn text_shadow() {
             duration: 1.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
     // Should not panic during render

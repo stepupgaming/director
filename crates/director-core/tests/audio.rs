@@ -186,6 +186,7 @@ fn audio_binding_uses_track_relative_time_and_duration_window() {
         duration: 5.0,
         z_index: 0,
         audio_tracks: vec![],
+            freeze_time: None,
     });
 
     let sample_rate = director.audio_mixer.sample_rate as usize;

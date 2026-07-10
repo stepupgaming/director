@@ -104,6 +104,7 @@ pub fn load_movie(request: MovieRequest, loader: Arc<dyn AssetLoader>) -> Result
                 duration: scene_data.duration_secs,
                 z_index: scene_data.z_index,
                 audio_tracks: vec![],
+                freeze_time: None,
             });
 
         // Rhai `add_loop` — duplicate plays on the timeline (same spacing as lifecycle.rs)
@@ -120,6 +121,7 @@ pub fn load_movie(request: MovieRequest, loader: Arc<dyn AssetLoader>) -> Result
                         duration: scene_duration,
                         z_index: scene_data.z_index,
                         audio_tracks: vec![],
+                        freeze_time: None,
                     });
             }
         }
@@ -136,6 +138,7 @@ pub fn load_movie(request: MovieRequest, loader: Arc<dyn AssetLoader>) -> Result
                     duration: hold.duration,
                     z_index: scene_data.z_index,
                     audio_tracks: vec![],
+                    freeze_time: hold.freeze_at,
                 });
             let _ = hold.freeze_at;
         }
@@ -623,6 +626,7 @@ fn build_node_recursive(
                         duration: scene_data.duration_secs,
                         z_index: scene_data.z_index,
                         audio_tracks: vec![],
+                        freeze_time: None,
                     });
                 cumulative_time += scene_data.duration_secs;
             }

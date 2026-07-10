@@ -58,6 +58,7 @@ fn video_export_mode_blocks() {
         duration: 10.0,
         z_index: 0,
         audio_tracks: vec![],
+            freeze_time: None,
     });
 
     let start = Instant::now();
@@ -90,6 +91,7 @@ fn video_bytes_source() {
         duration: 1.0,
         z_index: 0,
         audio_tracks: vec![],
+            freeze_time: None,
     });
 
     // Should not panic

@@ -417,6 +417,7 @@ fn caption_renders_visible_pixels() {
         duration: 5.0,
         z_index: 0,
         audio_tracks: vec![],
+            freeze_time: None,
     });
 
     // Render at time 1.0s (caption is active)

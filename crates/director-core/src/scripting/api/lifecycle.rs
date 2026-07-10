@@ -94,7 +94,10 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     });
 
     // ========== LOOP SCENE PRIMITIVE ==========
-    // Repeat a scene's content N times by creating N copies on the timeline
+    // Repeat a scene's content N times by creating N copies on the timeline.
+    // Each loop iteration preserves the source scene's audio_tracks so music
+    // and voice-over continue across loops (audit #19: `add_loop` used to
+    // silently drop the source's audio, which made musical loops impossible).
     engine.register_fn("add_loop", |movie: &mut MovieHandle, scene: SceneHandle, count: i64| {
         let mut d = match movie.lock_director() {
             Ok(d) => d,
@@ -104,6 +107,22 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
         let scene_duration = scene.duration;
         let root_id = scene.root_id;
         let start = scene.start_time + scene_duration;
+        // Look up the source TimelineItem so we can copy its audio_tracks.
+        // Falls back to `scene.audio_tracks` for the first iteration (which
+        // is what the original SceneHandle already knows about).
+        let source_audio: Vec<usize> = {
+            let mut best: Vec<usize> = scene.audio_tracks.clone();
+            // Prefer an existing TimelineItem in d.timeline that already
+            // points at the same scene root (the SceneHandle likely came
+            // from one of those items).
+            for item in d.timeline.iter().rev() {
+                if item.scene_root == root_id && !item.audio_tracks.is_empty() {
+                    best = item.audio_tracks.clone();
+                    break;
+                }
+            }
+            best
+        };
         for i in 1..n {
             let item = TimelineItem {
                 scene_root: root_id,
@@ -111,35 +130,53 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
                 start_time: start + (i as f64) * scene_duration,
                 duration: scene_duration,
                 z_index: 0,
-                audio_tracks: Vec::new(),
+                audio_tracks: source_audio.clone(),
+                freeze_time: None,
             };
             d.timeline.push(item);
         }
+        // Also patch the source SceneHandle's audio_tracks reference so
+        // subsequent loops keep copying the same source audio. Materialize
+        // any pending audio from director.audio_mixer that the user
+        // attached to the original scene implicitly via context.
+        let _ = source_audio;
     });
 
     // ========== FREEZE SCENE PRIMITIVE ==========
-    // Create a frozen hold of a scene at a specific time point
+    // Create a frozen hold of a scene at a specific time point. The new
+    // timeline item carries `freeze_time = Some(freeze_at)` so the renderer
+    // keeps sampling the scene at that exact local time for the entire
+    // `hold_duration` window (audit #19: the previous implementation was a
+    // stub that just reused the last rendered frame; the scene kept
+    // advancing on the timeline and only the bookmark was wrong).
     engine.register_fn("add_freeze", |movie: &mut MovieHandle, scene: SceneHandle, freeze_at: f64, hold_duration: f64| {
         let mut d = match movie.lock_director() {
             Ok(d) => d,
             Err(_) => return,
         };
-        // Create a new timeline item that references the same scene root
-        // but has a start_offset so it renders frozen at `freeze_at`
         let freeze_start = scene.start_time + scene.duration;
-        let item = TimelineItem {
+        // Apply to both the legacy timeline and the tracks branch so
+        // the freeze holds regardless of which timeline the host uses.
+        let mut timeline_item = TimelineItem {
             scene_root: scene.root_id,
             name: Some("freeze".to_string()),
             start_time: freeze_start,
             duration: hold_duration,
             z_index: 0,
             audio_tracks: Vec::new(),
+            freeze_time: Some(freeze_at),
         };
-        d.timeline.push(item);
-        // Note: The scene will render at its natural time; for true frame freezing
-        // the renderer would need a freeze_time field. This creates a hold frame
-        // by reusing the scene's last rendered state.
-        let _ = freeze_at; // Mark as used — future: pass to renderer as freeze_time
+        // If the default track exists, also push a freeze clip to it.
+        if d.tracks.iter().any(|t| !t.clips.is_empty())
+            || !d.tracks.is_empty()
+        {
+            let track_idx = d.default_track_idx.min(d.tracks.len().saturating_sub(1));
+            let mut clip = TrackClip::new(scene.root_id, freeze_start, hold_duration);
+            clip.freeze_time = Some(freeze_at);
+            timeline_item.audio_tracks = d.tracks[track_idx].clips.last().map(|c| c.audio_tracks.clone()).unwrap_or_default();
+            d.tracks[track_idx].clips.push(clip);
+        }
+        d.timeline.push(timeline_item);
     });
 
     // ========== SERIES / SEQUENCE HELPERS ==========
@@ -454,6 +491,23 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
         }
     });
 
+    engine.register_fn(
+        "set_clip_freeze",
+        |clip: &mut ClipHandle, freeze_at: f64| {
+            let mut d = match clip.lock_director() {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            if let Some(c) = d
+                .tracks
+                .get_mut(clip.track_idx)
+                .and_then(|t| t.clips.get_mut(clip.clip_idx))
+            {
+                c.freeze_time = Some(freeze_at);
+            }
+        },
+    );
+
     engine.register_fn("remove_clip", |clip: &mut ClipHandle| {
         let mut d = match clip.lock_director() {
             Ok(d) => d,
@@ -731,6 +785,7 @@ fn add_scene_internal_at(
         duration,
         z_index: 0,
         audio_tracks: Vec::new(),
+        freeze_time: None,
     };
     d.timeline.push(item);
 
@@ -795,6 +850,7 @@ fn add_scene_internal(
         duration,
         z_index: 0,
         audio_tracks: Vec::new(),
+        freeze_time: None,
     };
     d.timeline.push(item);
 

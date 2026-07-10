@@ -30,6 +30,7 @@ fn composition_nested() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         // Build inner director
@@ -55,6 +56,7 @@ fn composition_nested() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let comp_node = CompositionNode::new(inner);
@@ -88,6 +90,7 @@ fn composition_scaled() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         // Inner director with a smaller canvas and a rounded box
@@ -114,6 +117,7 @@ fn composition_scaled() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let mut comp_node = CompositionNode::new(inner);

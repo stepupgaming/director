@@ -33,6 +33,7 @@ fn karaoke_fade() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {
@@ -93,6 +94,7 @@ fn text_wave() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let spans = vec![TextSpan {

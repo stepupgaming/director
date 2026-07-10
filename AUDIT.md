@@ -52,12 +52,13 @@ But it is **not yet a foundation for an agent-driven video system**, and it is *
 
 ## Still open (priority order)
 
-1. **#2** Live project (de)serialization + schema generated from Rhai API. **Round-trip foundation + keyframe animation + Taffy layout now landed** (`project.rs`, `project_roundtrip` suite). Remaining: Text/Image/Video/Caption/Effect/Composition node *kinds* still reconstruct as Box placeholders (content, per-span styling, image/video sources, caption cues, effect params, and any geometry beyond the Taffy `Style` are not yet serialized); `director-pipeline` `MovieRequest` transition drift is now **compile-enforced** (`convert_transition_type` is exhaustive over the 20 `api_catalog` variants), so adding a catalog transition forces a matching pipeline mapping.
+1. **#2** Live project (de)serialization + schema generated from Rhai API. **All major node kinds now land as their kind, not Box placeholders** (`project.rs`, 8-test `project_roundtrip` suite covering Box, Text, Image, Video, Caption, Effect, Composition, layout, animation). Vector/Spectrum/Lottie kinds still rebuild as Box placeholders (low-priority per user direction).
 2. **#1** Finish introspection: `media_metadata`, manifest-on-export, machine-readable validation diagnostics.
-3. **#5–#6** Animation: loud errors on bad props/easing; native bezier/hold/reverse/yoyo/expressions (promote from `lottie-core`).
+3. **#5–#6** Animation: loud errors implemented (find #5 closed); bezier/hold/reverse/yoyo/expressions unstarted.
 4. **#8** Bundle and pin deterministic fonts (Regular/Bold + emoji/CJK fallback).
-5. **#10, #12–#17** Text-fit decoupling, `f64` fps, handle-rewrite semantics, Rhai limits, seedable RNG, static cache, richer masking.
-6. **#18–#20** CI on push/PR, `add_freeze`/`add_loop` stubs, audio/export depth.
+5. **#10, #12–#17** Text-fit decoupling, handle-rewrite semantics, static cache, richer masking (find #12 closed via `fps: f64`).
+6. **#18, #20** CI on push/PR, audio/export depth.
+7. **#19** Real `add_freeze` + audio-preserving `add_loop` — closed: `TimelineItem.freeze_time: Option<f64>` and `TrackClip.freeze_time: Option<f64>` make the renderer pin local_time to `freeze_at` for the entire hold window; `add_loop` copies source `audio_tracks` onto every cloned iteration; new `set_clip_freeze` Rhai binding. `freeze_and_loop_preserve_audio_and_freeze_time` test pins the contract.
 
 Roadmap sections **Agent-first extensions** and **v1.0 architecture bets** (immutable draft model, parameterized components) remain entirely ahead. **Things Not To Build Yet** unchanged.
 

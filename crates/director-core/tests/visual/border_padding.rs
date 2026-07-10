@@ -40,6 +40,7 @@ fn border_basic() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let mut box_node = BoxNode::new();
@@ -80,6 +81,7 @@ fn border_radius() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let mut box_node = BoxNode::new();
@@ -122,6 +124,7 @@ fn padding_basic() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let mut parent = BoxNode::new();
@@ -173,6 +176,7 @@ fn border_padding_combined() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let mut card = BoxNode::new();
@@ -228,6 +232,7 @@ fn template_pill_button() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         let mut pill = BoxNode::new();
@@ -289,6 +294,7 @@ fn overflow_hidden_border_radius() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
+            freeze_time: None,
         });
 
         // Container with rounded corners and overflow:hidden

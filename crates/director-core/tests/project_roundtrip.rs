@@ -666,6 +666,7 @@ fn project_roundtrip_preserves_effect_kinds() {
         duration: 1.0,
         z_index: 0,
         audio_tracks: vec![],
+            freeze_time: None,
     });
 
     let tmp = std::env::temp_dir().join("director_effect_roundtrip.json");
@@ -694,3 +695,111 @@ fn project_roundtrip_preserves_effect_kinds() {
 }
 
 fn _effect_kind_name_unused() {}
+
+/// Audit #19: `add_freeze` keeps sampling the source at `freeze_at` for the
+/// entire hold window, and `add_loop` clones the source's audio onto every
+/// loop iteration so a music loop doesn't drop the audio.
+#[test]
+fn freeze_and_loop_preserve_audio_and_freeze_time() {
+    use director_core::director::{Director, TimelineItem};
+
+    let mut director = Director::new(
+        320,
+        240,
+        30.0,
+        Arc::new(DefaultAssetLoader),
+        director_core::video_wrapper::RenderMode::Preview,
+        None,
+    );
+    let root = director.scene.add_node(Box::new(BoxNode::new()));
+    // Source clip with a music track ID attached.
+    director.timeline.push(TimelineItem {
+        scene_root: root,
+        name: Some("scene_a".into()),
+        start_time: 0.0,
+        duration: 2.0,
+        z_index: 0,
+        audio_tracks: vec![7],
+        freeze_time: None,
+    });
+    // Stand-in for `add_loop(movie, scene, 3)` semantics: clone the source
+    // three times back-to-back with the same audio_tracks (matches the new
+    // Rhai implementation that copies audio_tracks onto every loop).
+    for i in 1..3 {
+        director.timeline.push(TimelineItem {
+            scene_root: root,
+            name: Some(format!("loop_{i}")),
+            start_time: 2.0 + (i as f64) * 2.0,
+            duration: 2.0,
+            z_index: 0,
+            audio_tracks: vec![7],
+            freeze_time: None,
+        });
+    }
+    // Source A (0..2) + loop_1 (2..4) + loop_2 (4..6) + freeze (8..9.5) = 4 items.
+    // Hold a frame at t=1.5 for 1.5s after the loops.
+    director.timeline.push(TimelineItem {
+        scene_root: root,
+        name: Some("freeze".into()),
+        start_time: 8.0,
+        duration: 1.5,
+        z_index: 0,
+        audio_tracks: vec![],
+        freeze_time: Some(1.5),
+    });
+
+    // 1. Loop iterations preserve audio.
+    assert_eq!(director.timeline.len(), 4, "source + 2 loops + freeze");
+    let loops: Vec<&TimelineItem> =
+        director.timeline.iter().filter(|t| t.name.as_deref() == Some("loop_1")
+            || t.name.as_deref() == Some("loop_2")).collect();
+    assert_eq!(loops.len(), 2);
+    for l in loops {
+        assert_eq!(l.audio_tracks, vec![7], "loop must copy source audio (audit #19)");
+    }
+
+    // 2. Freeze holds sampling at the recorded local time for the entire
+    //    duration window regardless of advancing global_time.
+    let freeze_local_t_0 = director
+        .collect_active_roots(8.0)
+        .into_iter()
+        .find(|(rid, _)| *rid == root)
+        .map(|(_, t)| t)
+        .expect("freeze window should be active at t=8.0");
+    let freeze_local_t_mid = director
+        .collect_active_roots(9.0)
+        .into_iter()
+        .find(|(rid, _)| *rid == root)
+        .map(|(_, t)| t)
+        .expect("freeze window should still be active at t=9.0");
+    assert!(
+        (freeze_local_t_0 - 1.5).abs() < 1e-9,
+        "freeze: local_time at start of hold should be freeze_time=1.5, got {freeze_local_t_0}"
+    );
+    assert!(
+        (freeze_local_t_mid - 1.5).abs() < 1e-9,
+        "freeze: local_time mid-hold MUST stay at freeze_time=1.5, got {freeze_local_t_mid}"
+    );
+
+    // 3. After the freeze window expires, normal local_time resumes for
+    //    whatever timeline item is live.
+    director.timeline.push(TimelineItem {
+        scene_root: root,
+        name: Some("after".into()),
+        start_time: 9.5,
+        duration: 1.0,
+        z_index: 0,
+        audio_tracks: vec![],
+        freeze_time: None,
+    });
+    let after = director
+        .collect_active_roots(10.0)
+        .into_iter()
+        .find(|(rid, _)| *rid == root)
+        .map(|(_, t)| t)
+        .expect("post-freeze item should be active at t=10.0");
+    assert!(
+        (after - 0.5).abs() < 1e-9,
+        "after freeze, local_time should be elapsed=0.5; got {after}"
+    );
+}
