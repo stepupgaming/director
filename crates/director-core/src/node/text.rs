@@ -88,6 +88,12 @@ pub struct TextNode {
     pub fit_mode: TextFit,
     pub min_size: f32,
     pub max_size: f32,
+    /// The actual font size the renderer is currently using. Distinct from
+    /// `default_font_size` so animated keyframes don't fight with the
+    /// `TextFit::Shrink` binary search (audit #10): the animated value
+    /// sets an *upper bound*, and `post_layout` writes the resolved
+    /// shrinkage here.
+    pub resolved_font_size: f32,
     pub shadow: Option<TextShadow>,
     pub dirty_layout: bool,
     pub last_layout_rect: Rect,
@@ -123,6 +129,7 @@ impl Clone for TextNode {
             fit_mode: self.fit_mode.clone(),
             min_size: self.min_size,
             max_size: self.max_size,
+            resolved_font_size: self.resolved_font_size,
             shadow: self.shadow.clone(),
             dirty_layout: true,
             last_layout_rect: Rect::default(),
@@ -158,6 +165,7 @@ impl TextNode {
             fit_mode: TextFit::None,
             min_size: 10.0,
             max_size: 200.0,
+            resolved_font_size: 20.0,
             shadow: None,
             dirty_layout: true,
             last_layout_rect: Rect::default(),
@@ -224,10 +232,11 @@ impl TextNode {
         for span in &self.spans {
             let mut text_style = TextStyle::new();
 
-            // 1. Font Size
-            let size = span
-                .font_size
-                .unwrap_or(self.default_font_size.current_value);
+            // 1. Font Size — use the *resolved* size, not the animated
+            //    upper bound, so the rendered font size reflects post-fit
+            //    shrinkage and respects the user's `min_size` floor. Keyframe
+            //    animation still drives the upper bound via `default_font_size`.
+            let size = span.font_size.unwrap_or(self.resolved_font_size);
             text_style.set_font_size(size);
 
             // 2. Font Family
@@ -355,6 +364,14 @@ impl TextNode {
     /// Returns the total number of characters across all spans.
     pub fn get_total_char_count(&self) -> usize {
         self.spans.iter().map(|s| s.text.chars().count()).sum()
+    }
+
+    /// Clamp a font size candidate into [min_size, max_size]. Used by both
+    /// `update` (upper bound from animation) and `post_layout` (after Shrink
+    /// binary search) so the user's `min_size`/`max_size` is invariantly
+    /// honored regardless of animation.
+    pub fn clamp_to_bounds(&self, candidate: f32) -> f32 {
+        candidate.clamp(self.min_size, self.max_size.max(self.min_size))
     }
 
     /// Extracts per-glyph bounding boxes from the laid-out paragraph.
@@ -659,7 +676,15 @@ impl Element for TextNode {
 
         let mut changed = false;
 
-        // Check if visual properties changed
+        // Decoupled `resolved_font_size`: the keyframe drives the upper
+        // bound here (audit #10). `post_layout` then writes any smaller,
+        // fit-shrunken value back. We also clamp to the user-supplied
+        // `min_size`/`max_size` so animation that exceeds those bounds
+        // still respects them.
+        self.resolved_font_size = Self::clamp_to_bounds(
+            self,
+            self.default_font_size.current_value,
+        );
         if (self.default_font_size.current_value - old_size).abs() > 0.001 {
             changed = true;
         }
@@ -710,14 +735,19 @@ impl Element for TextNode {
             let target_width = rect.width();
             let target_height = rect.height();
 
+            // Shrink-to-fit: search [min_size, animated_upper_bound] so the
+            // final size never *grows* past what keyframes requested (audit
+            // #10). `resolved_font_size` was just refreshed from the keyframe
+            // value in `update`, so it carries the live upper bound.
+            let upper = self.clamp_to_bounds(self.resolved_font_size);
             let mut low = self.min_size;
-            let mut high = self.max_size;
+            let mut high = upper;
             let mut best_size = self.min_size;
 
             for _ in 0..5 {
                 let mid = (low + high) / 2.0;
 
-                self.default_font_size.current_value = mid;
+                self.resolved_font_size = mid;
                 self.init_paragraph();
 
                 let mut p_guard = match self.paragraph.lock() {
@@ -735,7 +765,10 @@ impl Element for TextNode {
                 }
             }
 
-            self.default_font_size.current_value = best_size;
+            // Persist the shrunken size; do NOT write back to
+            // `default_font_size.current_value` so the next frame's keyframe
+            // is still authoritative.
+            self.resolved_font_size = self.clamp_to_bounds(best_size);
             self.init_paragraph();
         }
 

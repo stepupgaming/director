@@ -56,7 +56,7 @@ But it is **not yet a foundation for an agent-driven video system**, and it is *
 2. **#1** Finish introspection: `media_metadata`, manifest-on-export, machine-readable validation diagnostics.
 3. **#5–#6** Animation: loud errors implemented (find #5 closed); bezier/hold/reverse/yoyo/expressions unstarted.
 4. **#8** Bundle and pin deterministic fonts (Regular/Bold + emoji/CJK fallback).
-5. **#10, #12–#17** Text-fit decoupling, handle-rewrite semantics, static cache, richer masking (find #12 closed via `fps: f64`).
+5. **#10, #12–#17** Text-fit decoupling (find #10 closed), handle-rewrite semantics, static cache, richer masking (find #12 closed via `fps: f64`).
 6. **#18, #20** CI on push/PR, audio/export depth.
 7. **#19** Real `add_freeze` + audio-preserving `add_loop` — closed: `TimelineItem.freeze_time: Option<f64>` and `TrackClip.freeze_time: Option<f64>` make the renderer pin local_time to `freeze_at` for the entire hold window; `add_loop` copies source `audio_tracks` onto every cloned iteration; new `set_clip_freeze` Rhai binding. `freeze_and_loop_preserve_audio_and_freeze_time` test pins the contract.
 
