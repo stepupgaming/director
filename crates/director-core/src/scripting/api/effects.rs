@@ -52,7 +52,14 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(
         "apply_effect",
         |node: &mut NodeHandle, name: &str| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
-            let mut d = node.lock_director()?;
+            // Clone the director Arc so we can lock it below without retaining
+            // an immutable borrow of `node` (audit #13: we mark the handle
+            // invalid on a rewrite below).
+            let director_arc = node.director.clone();
+            let mut d = match director_arc.lock() {
+                Ok(g) => g,
+                Err(_) => return Err("Director mutex poisoned".into()),
+            };
             node.ensure_alive(&d)?;
             let effect = match name {
                 "grayscale" => Some(EffectType::ColorMatrix(vec![
@@ -72,14 +79,28 @@ pub fn register(engine: &mut Engine) {
 
             if let Some(eff) = effect {
                 let id = push_or_wrap_effect(&mut d, node.id, eff);
+                if id != node.id {
+                    // Audit #13: a rewrite occurred (push_or_wrap_effect wrapped
+                    // the target in a new EffectNode). Mark the original handle
+                    // invalid so subsequent ops on it return a clear error and
+                    // the agent adopts the canonical handle we return below.
+                    tracing::error!(
+                        "apply_effect rewrote NodeHandle {} -> {} (audit #13).                          Adopt the new canonical handle returned by apply_effect;                          the previous one is no longer valid for property setters,
+                         animations, or further apply_effect calls.",
+                        node.id, id,
+                    );
+                    node.invalidate();
+                }
                 Ok(NodeHandle {
-                    director: node.director.clone(),
+                    director: director_arc.clone(),
                     id,
+                    invalidated: false,
                 })
             } else {
                 Ok(NodeHandle {
-                    director: node.director.clone(),
+                    director: director_arc.clone(),
                     id: node.id,
+                    invalidated: false,
                 })
             }
         },
@@ -92,7 +113,11 @@ pub fn register(engine: &mut Engine) {
          name: &str,
          val: f64|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
-            let mut d = node.lock_director()?;
+            let director_arc = node.director.clone();
+            let mut d = match director_arc.lock() {
+                Ok(g) => g,
+                Err(_) => return Err("Director mutex poisoned".into()),
+            };
             node.ensure_alive(&d)?;
             let val = val as f32;
             let effect = match name {
@@ -156,14 +181,28 @@ pub fn register(engine: &mut Engine) {
 
             if let Some(eff) = effect {
                 let id = push_or_wrap_effect(&mut d, node.id, eff);
+                if id != node.id {
+                    // Audit #13: a rewrite occurred (push_or_wrap_effect wrapped
+                    // the target in a new EffectNode). Mark the original handle
+                    // invalid so subsequent ops on it return a clear error and
+                    // the agent adopts the canonical handle we return below.
+                    tracing::error!(
+                        "apply_effect rewrote NodeHandle {} -> {} (audit #13).                          Adopt the new canonical handle returned by apply_effect;                          the previous one is no longer valid for property setters,
+                         animations, or further apply_effect calls.",
+                        node.id, id,
+                    );
+                    node.invalidate();
+                }
                 Ok(NodeHandle {
-                    director: node.director.clone(),
+                    director: director_arc.clone(),
                     id,
+                    invalidated: false,
                 })
             } else {
                 Ok(NodeHandle {
-                    director: node.director.clone(),
+                    director: director_arc.clone(),
                     id: node.id,
+                    invalidated: false,
                 })
             }
         },
@@ -176,7 +215,11 @@ pub fn register(engine: &mut Engine) {
          name: &str,
          map: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
-            let mut d = node.lock_director()?;
+            let director_arc = node.director.clone();
+            let mut d = match director_arc.lock() {
+                Ok(g) => g,
+                Err(_) => return Err("Director mutex poisoned".into()),
+            };
             node.ensure_alive(&d)?;
 
             let effect = match name {
@@ -557,14 +600,28 @@ pub fn register(engine: &mut Engine) {
 
             if let Some(eff) = effect {
                 let id = push_or_wrap_effect(&mut d, node.id, eff);
+                if id != node.id {
+                    // Audit #13: a rewrite occurred (push_or_wrap_effect wrapped
+                    // the target in a new EffectNode). Mark the original handle
+                    // invalid so subsequent ops on it return a clear error and
+                    // the agent adopts the canonical handle we return below.
+                    tracing::error!(
+                        "apply_effect rewrote NodeHandle {} -> {} (audit #13).                          Adopt the new canonical handle returned by apply_effect;                          the previous one is no longer valid for property setters,
+                         animations, or further apply_effect calls.",
+                        node.id, id,
+                    );
+                    node.invalidate();
+                }
                 Ok(NodeHandle {
-                    director: node.director.clone(),
+                    director: director_arc.clone(),
                     id,
+                    invalidated: false,
                 })
             } else {
                 Ok(NodeHandle {
-                    director: node.director.clone(),
+                    director: director_arc.clone(),
                     id: node.id,
+                    invalidated: false,
                 })
             }
         },

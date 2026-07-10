@@ -348,6 +348,7 @@ fn build_title_card(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -442,6 +443,7 @@ fn build_counter(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -531,6 +533,7 @@ fn build_waveform_visualizer(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -630,6 +633,7 @@ fn build_lower_third(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -762,6 +766,7 @@ fn build_split_screen(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -913,6 +918,7 @@ fn build_reaction_overlay(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -1055,6 +1061,7 @@ fn build_bento_grid(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -1190,6 +1197,7 @@ fn build_subscribe_button(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -1302,6 +1310,7 @@ fn build_progress_bar(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -1449,6 +1458,7 @@ fn build_countdown_timer(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -1593,6 +1603,7 @@ fn build_quote_card(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -1748,6 +1759,7 @@ fn build_social_handle_overlay(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 
@@ -1850,6 +1862,7 @@ fn build_watermark(
     Ok(NodeHandle {
         director: scene.director.clone(),
         id: root_id,
+            invalidated: false,
     })
 }
 

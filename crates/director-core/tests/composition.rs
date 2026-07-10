@@ -26,7 +26,7 @@ fn composition_nesting() {
 
     let script = r##"
 // 1. Define component (100x100 red box)
-let comp = new_director(100, 100, 30);
+let comp = new_director(100, 100, 30.0);
 let s1 = comp.add_scene(1.0);
 s1.add_box(#{
     width: 100.0,
@@ -35,7 +35,7 @@ s1.add_box(#{
 });
 
 // 2. Create main movie
-let main = new_director(200, 200, 30);
+let main = new_director(200, 200, 30.0);
 let s2 = main.add_scene(1.0);
 
 // 3. Add composition instance
@@ -94,7 +94,7 @@ fn composition_cycle_detection() {
     // This script attempts to add a composition to itself
     // The engine should handle this gracefully (returns dummy node, logs error)
     let script = r##"
-let movie = new_director(100, 100, 30);
+let movie = new_director(100, 100, 30.0);
 let scene = movie.add_scene(1.0);
 
 // This should NOT crash - cycle detection should prevent it

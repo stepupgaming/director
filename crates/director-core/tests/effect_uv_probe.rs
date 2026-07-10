@@ -28,7 +28,7 @@ half4 main(float2 pos) {
 
 fn build_probe_script() -> String {
     let mut s = String::new();
-    s.push_str("let movie = new_director(400, 200, 30);\n");
+    s.push_str("let movie = new_director(400, 200, 30.0);\n");
     s.push_str("let scene = movie.add_scene(1.0);\n");
     s.push_str(
         "let b = scene.add_box(#{ position: \"absolute\", left: 100.0, top: 50.0, \

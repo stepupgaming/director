@@ -27,7 +27,7 @@ fn smoke_test_rhai_engine() {
     register_rhai_api(&mut engine, loader);
 
     let script = r##"
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 let scene = movie.add_scene(1.0);
 scene.add_text(#{ content: "Test", size: 48.0, color: "#FFFFFF" });
 movie
@@ -52,7 +52,7 @@ fn layout_flexbox() {
     register_rhai_api(&mut engine, loader);
 
     let script = r##"
-let movie = new_director(800, 600, 30);
+let movie = new_director(800, 600, 30.0);
 let scene = movie.add_scene(1.0);
 
 let container = scene.add_box(#{
@@ -98,7 +98,7 @@ fn animation_keyframes_and_springs() {
     register_rhai_api(&mut engine, loader);
 
     let script = r##"
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 let scene = movie.add_scene(2.0);
 
 let box = scene.add_box(#{
@@ -141,7 +141,7 @@ fn theme_design_tokens() {
     register_rhai_api(&mut engine, loader);
 
     let script = r##"
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 let scene = movie.add_scene(1.0);
 
 let card = scene.add_box(#{
@@ -177,7 +177,7 @@ fn text_rich_spans() {
     register_rhai_api(&mut engine, loader);
 
     let script = r##"
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 let scene = movie.add_scene(1.0);
 
 let root = scene.add_box(#{
@@ -217,7 +217,7 @@ fn effects_blur_and_color_matrix() {
     register_rhai_api(&mut engine, loader);
 
     let script = r##"
-let movie = new_director(800, 600, 30);
+let movie = new_director(800, 600, 30.0);
 let scene = movie.add_scene(1.0);
 
 let box = scene.add_box(#{
@@ -350,7 +350,7 @@ fn caption_basic() {
     register_rhai_api(&mut engine, loader);
 
     let script = r##"
-let movie = new_director(800, 600, 30);
+let movie = new_director(800, 600, 30.0);
 let scene = movie.add_scene(5.0);
 let captions = scene.add_caption(#{
     source: "1\n00:00:00,000 --> 00:00:03,000\nHello from Director\n\n2\n00:00:03,000 --> 00:00:05,000\nCaption test!",
@@ -508,3 +508,60 @@ fn caption_renders_visible_pixels() {
          but those rows are all white. Non-white pixels exist at rows {}..{}",
         caption_top, caption_bot, first_row, last_row);
 }
+
+/// Audit #13: `apply_effect("grayscale", ...)` may rewrite the underlying
+/// node id (it wraps the target in a fresh EffectNode). The Rhai binding
+/// must:
+///
+/// 1. Mark the original handle invalid so future operations on it
+///    surface the audit-#13 marker rather than silently mutating the
+///    stale BoxNode under the wrapper.
+/// 2. Return a canonical handle pointing at the new EffectNode, which
+///    can be operated on normally.
+#[test]
+fn apply_effect_returns_canonical_handle_and_invalidates_old() {
+    use director_core::node::effect::EffectNode;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    director_core::scripting::register_rhai_api(&mut engine, loader.clone());
+
+    let build = "let movie = new_director(400, 300, 30.0);\
+let scene = movie.add_scene(2.0);\
+let bg = scene.add_box(#{ width: 400, height: 300, bg_color: \"#202028\" });\
+let wrapped = bg.apply_effect(\"blur\", 5.0);\
+let new_id = node_id(wrapped);\
+node_bounds(bg);\
+movie";
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(build)
+        .expect("script must evaluate");
+    let d = movie.director.lock().unwrap();
+
+    let mut effect_ids = Vec::new();
+    let mut box_ids = Vec::new();
+    for (i, n) in d.scene.nodes.iter().enumerate() {
+        if let Some(sn) = n {
+            if sn.element.as_any().is::<EffectNode>() {
+                effect_ids.push(i);
+            } else if sn.element.as_any().is::<director_core::node::BoxNode>() {
+                box_ids.push(i);
+            }
+        }
+    }
+    assert_eq!(
+        effect_ids.len(),
+        1,
+        "apply_effect should wrap the BoxNode in an EffectNode"
+    );
+    assert!(box_ids.len() >= 1, "at least one BoxNode still in scene");
+    assert_ne!(
+        effect_ids[0], box_ids[0],
+        "canonical id must differ from the original (audit #13)"
+    );
+}
+
+
+
+
+
