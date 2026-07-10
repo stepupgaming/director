@@ -18,7 +18,7 @@ use std::sync::Arc;
 #[test]
 fn text_fit_shrink() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(1920, 1080, 30, loader, RenderMode::Preview, None);
+    let mut director = Director::new(1920, 1080, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "This is a very long text that should shrink to fit.".to_string(),
@@ -77,7 +77,7 @@ fn text_fit_shrink() {
 #[test]
 fn text_span_rich_styling() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let mut director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "Styled Text".to_string(),
@@ -116,7 +116,7 @@ fn text_span_rich_styling() {
 #[test]
 fn text_explicit_ltr_english() {
     let loader = Arc::new(DefaultAssetLoader);
-    let director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "ABC".to_string(),
@@ -142,7 +142,7 @@ fn text_explicit_ltr_english() {
 #[test]
 fn text_auto_detects_arabic_rtl() {
     let loader = Arc::new(DefaultAssetLoader);
-    let director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "مرحبا".to_string(),
@@ -163,7 +163,7 @@ fn text_auto_detects_arabic_rtl() {
 #[test]
 fn text_shadow() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let mut director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "Shadow Test".to_string(),

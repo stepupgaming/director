@@ -153,7 +153,7 @@ pub fn setup_test_director(width: u32, height: u32) -> Arc<Mutex<Director>> {
     let director = Director::new(
         width as i32,
         height as i32,
-        30,
+        30.0,
         loader,
         RenderMode::Preview,
         Some(ctx),

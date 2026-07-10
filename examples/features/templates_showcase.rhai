@@ -11,7 +11,7 @@
 // Templates are sugar over add_box/add_text/add_image that solve common
 // layout problems without manual flexbox/grid configuration.
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 
 // ============================================================
 // SCENE 1: Title Card (3.0s)

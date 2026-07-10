@@ -35,7 +35,7 @@ fn test_pipeline_parity() {
     let req = MovieRequest {
         width: 1920,
         height: 1080,
-        fps: 30,
+        fps: 30.0,
         default_font: None,
         asset_search_paths: vec![],
         scenes: vec![director_schema::Scene {

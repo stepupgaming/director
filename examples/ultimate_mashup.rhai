@@ -3,7 +3,7 @@
 // Features: Dynamic Z-Index, Glassmorphism, Audio Reactivity, Kinetic Typography, 
 // Advanced Physics Easings, Shaders/Effects, Complex Grid Layouts.
 
-let movie = new_director(1920, 1080, 60);
+let movie = new_director(1920, 1080, 60.0);
 
 // --- DESIGN SYSTEM ---
 let colors = #{

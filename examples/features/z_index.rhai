@@ -2,7 +2,7 @@
 // Goal: Ensure Red Box (created first) renders ON TOP of Blue Box (created second)
 // by using z_index.
 
-let movie = new_director(200, 200, 30);
+let movie = new_director(200, 200, 30.0);
 let scene = movie.add_scene(1.0);
 
 // 1. Create Container

@@ -669,7 +669,7 @@ pub fn director_to_project(d: &Director) -> Project {
         version: PROJECT_VERSION,
         width: d.width,
         height: d.height,
-        fps: d.fps as f64,
+        fps: d.fps,
         nodes,
         tracks,
         legacy_timeline,
@@ -699,7 +699,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
     let mut director = Director::new(
         project.width,
         project.height,
-        project.fps.round() as u32, // Director.fps is u32; the f64 in Project is preserved for export-side timing.
+        project.fps,
         loader,
         RenderMode::Preview,
         None,

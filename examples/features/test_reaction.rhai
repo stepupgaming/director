@@ -1,4 +1,4 @@
-let movie = new_director(1080, 1920, 30);
+let movie = new_director(1080, 1920, 30.0);
 let scene = movie.add_scene(2.0);
 
 // Add a main background so the facecam overlay has something to sit on

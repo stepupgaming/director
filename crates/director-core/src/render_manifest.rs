@@ -22,7 +22,9 @@ pub struct RenderManifest {
     pub version: u32,
     pub width: i32,
     pub height: i32,
-    pub fps: u32,
+    /// Frames per second. Stored as `f64` so non-integer rates (23.976, 29.97)
+    /// round-trip without truncating.
+    pub fps: f64,
     pub sample_time: f64,
     pub duration_secs: f64,
     pub timeline: Vec<TimelineManifestEntry>,
@@ -203,7 +205,7 @@ mod tests {
         let mut director = Director::new(
             640,
             360,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,

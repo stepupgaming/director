@@ -1,7 +1,7 @@
 // Hardware Acceleration Test Script
 // Tests encoder detection and hardware encoding on NVIDIA 1050
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 
 // Test 1: Check encoder detection
 print("=== Encoder Detection Test ===");

@@ -1,5 +1,5 @@
 // Caption proof: white background, large red text on yellow pill
-let movie = new_director(1080, 1920, 30);
+let movie = new_director(1080, 1920, 30.0);
 let scene = movie.add_scene(4.0);
 
 let root = scene.add_box(#{

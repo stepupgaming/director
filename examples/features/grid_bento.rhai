@@ -1,7 +1,7 @@
 // Grid Bento Layout Demo
 // Showcases 3x3 Grid with spanning items and absolute positioning
 
-let movie = new_director(1080, 1080, 30);
+let movie = new_director(1080, 1080, 30.0);
 let scene = movie.add_scene(5.0);
 
 let root = scene.add_box(#{

@@ -4,7 +4,7 @@
 // - fetch_text(url): download raw text
 // - fetch_json(url): download JSON and convert to Rhai map
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 
 // ============================================================
 // SCENE 1: Title + fetch_json demo (4.0s)

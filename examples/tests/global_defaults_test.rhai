@@ -1,7 +1,7 @@
 // Global Defaults Test
 // Tests that default_font and asset_search_paths work correctly
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 let scene = movie.add_scene(3.0);
 
 // Dark background

@@ -10,7 +10,7 @@
 
 // Use the new Sequence builder to chain scenes back-to-back
 // (mirrors Remotion's <Series> primitive)
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 let seq = add_sequence(movie);
 
 // ---- Scene 1: Glassmorphism (backdrop blur) ----

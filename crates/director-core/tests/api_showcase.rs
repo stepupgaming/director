@@ -269,7 +269,7 @@ fn api_showcase_video_export() {
 
     let script = r##"
 // Full API Showcase
-let movie = new_director(1920, 1080, 30, #{ mode: "export" });
+let movie = new_director(1920, 1080, 30.0, #{ mode: "export" });
 let scene = movie.add_scene(2.0);
 
 let root = scene.add_box(#{
@@ -376,7 +376,7 @@ movie
 #[test]
 fn caption_renders_visible_pixels() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let mut director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     // Root box: white background, full size
     let mut root = BoxNode::new();

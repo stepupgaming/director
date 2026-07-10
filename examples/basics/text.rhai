@@ -8,7 +8,7 @@
 // - Text shadow
 // - Shrink-to-fit
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 let scene = movie.add_scene(3.0);
 
 let root = scene.add_box(#{

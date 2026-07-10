@@ -1,5 +1,5 @@
 // Caption system proof - bright background, visible text + pill styling
-let movie = new_director(1080, 1920, 30);
+let movie = new_director(1080, 1920, 30.0);
 let scene = movie.add_scene(4.0);
 
 // Gradient background

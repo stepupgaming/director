@@ -2,7 +2,7 @@
 // Uses assets from C:\Projects\gemmy\outputs
 // 16 seconds, 1920x1080, 30fps
 
-let movie = new_director(1280, 720, 30);
+let movie = new_director(1280, 720, 30.0);
 
 // ============================================================
 // SCENE 1: COSMIC OPENING (0-4s)

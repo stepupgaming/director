@@ -1,6 +1,6 @@
 // Test: Text fit modes — shrink, auto, wrap
 
-let movie = new_director(1280, 720, 30);
+let movie = new_director(1280, 720, 30.0);
 let scene = movie.add_scene(2.0);
 
 // Background

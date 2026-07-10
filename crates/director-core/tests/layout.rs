@@ -52,7 +52,7 @@ fn layout_structure_snapshot() {
     let director = Director::new(
         1000,
         1000,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -173,7 +173,7 @@ fn grid_layout_basic() {
     let director = Director::new(
         1000,
         1000,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -263,7 +263,7 @@ fn box_safe_area_preset_applies_padding() {
     let director = Director::new(
         1080,
         1920,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,

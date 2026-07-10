@@ -25,7 +25,8 @@ pub use generated::{EffectConfig, TransitionConfig, TransitionType};
 pub struct MovieRequest {
     pub width: u32,
     pub height: u32,
-    pub fps: u32,
+    /// Frame rate. Stored as `f64` so 23.976 / 29.97 NTSC rates don't truncate.
+    pub fps: f64,
     /// Optional default fallback font path used during text shaping.
     #[serde(default)]
     pub default_font: Option<String>,
@@ -156,9 +157,9 @@ pub enum NodeKind {
         width: u32,
         /// Height of the composition canvas
         height: u32,
-        /// Frames per second
+        /// Frames per second. `f64` so non-integer rates (23.976, 29.97) round-trip.
         #[serde(default = "default_comp_fps")]
-        fps: u32,
+        fps: f64,
         /// Scenes in this composition's timeline
         scenes: Vec<Scene>,
         /// Time offset for when the composition starts playing (relative to parent)
@@ -171,8 +172,8 @@ fn default_speed() -> f32 {
     1.0
 }
 
-fn default_comp_fps() -> u32 {
-    30
+fn default_comp_fps() -> f64 {
+    30.0
 }
 
 fn default_caption_font_size() -> f32 {
@@ -434,7 +435,7 @@ mod tests {
         let movie = MovieRequest {
             width: 1920,
             height: 1080,
-            fps: 30,
+            fps: 30.0,
             default_font: None,
             asset_search_paths: vec![],
             scenes: vec![Scene {
@@ -592,7 +593,7 @@ mod tests {
             kind: NodeKind::Composition {
                 width: 1920,
                 height: 1080,
-                fps: 30,
+                fps: 30.0,
                 scenes: vec![Scene {
                     id: "inner_scene".to_string(),
                     name: Some("Inner Scene".to_string()),
@@ -642,7 +643,7 @@ mod tests {
             } => {
                 assert_eq!(*width, 1920);
                 assert_eq!(*height, 1080);
-                assert_eq!(*fps, 30);
+                assert_eq!(*fps, 30.0);
                 assert_eq!(scenes.len(), 1);
                 assert_eq!(*start_offset, 0.5);
             }

@@ -1,7 +1,7 @@
 // Caption system demo
 // Renders a 4-second scene with SRT captions appearing at specific times
 
-let movie = new_director(1080, 1920, 30); // portrait (Shorts/Reels aspect)
+let movie = new_director(1080, 1920, 30.0); // portrait (Shorts/Reels aspect)
 let scene = movie.add_scene(4.0);
 
 // Dark background with relative positioning for absolute children

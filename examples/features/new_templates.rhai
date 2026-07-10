@@ -6,7 +6,7 @@
 // - add_loop: Repeat a scene N times
 // - add_freeze: Hold a scene at a specific frame
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 
 // ============================================================
 // SCENE 1: Counter / Number Ticker (4.0s)

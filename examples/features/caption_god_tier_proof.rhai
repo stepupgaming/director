@@ -1,6 +1,6 @@
 // God-tier caption export demo — 9:16 vertical, pills, safe area, phrase break.
 // Render: cargo run --release -p director-cli --bin director-engine -- examples/features/caption_god_tier_proof.rhai output/caption_god_tier_proof.mp4
-let movie = new_director(1080, 1920, 30);
+let movie = new_director(1080, 1920, 30.0);
 let scene = movie.add_scene(10.0);
 
 let root = scene.add_box(#{

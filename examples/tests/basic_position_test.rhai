@@ -2,7 +2,7 @@
 // A static blue square positioned at [400, 400] in an 800x800 composition
 // Expected: Blue 100x100 square centered at (400, 400)
 
-let movie = new_director(800, 800, 30);
+let movie = new_director(800, 800, 30.0);
 
 // Create scene for 1 second
 let scene = movie.add_scene(1.0);

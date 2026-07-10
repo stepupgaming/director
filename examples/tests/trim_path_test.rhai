@@ -1,7 +1,7 @@
 // Test: Simple trim path animation
 // A horizontal line that draws from left to right over 1 second (30 frames)
 
-let movie = new_director(400, 400, 30);
+let movie = new_director(400, 400, 30.0);
 
 // Create scene for exactly 30 frames at 30fps = 1 second
 let scene = movie.add_scene(1.0);

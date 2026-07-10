@@ -117,7 +117,7 @@ mod tests {
         let director = Arc::new(Mutex::new(Director::new(
             320,
             240,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,

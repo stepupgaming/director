@@ -1,7 +1,7 @@
 // Quick Encoder Diagnostic
 // Run this to verify hardware encoding detection
 
-let movie = new_director(100, 100, 30);
+let movie = new_director(100, 100, 30.0);
 
 print("=== Director Hardware Encoding Diagnostic ===\n");
 

@@ -20,7 +20,7 @@ fn project_roundtrip() {
     // Build a small project: a 320x240 director with one scene containing a
     // Box (full-screen black background) with a child Box (red, centered).
     let build = r##"
-        let movie = new_director(320, 240, 30);
+        let movie = new_director(320, 240, 30.0);
         let scene = movie.add_scene(2.0);
         let bg = scene.add_box(#{ width: 320, height: 240, bg_color: "#101018" });
         let card = bg.add_box(#{ width: 120, height: 80, bg_color: "#ff0066" });
@@ -46,7 +46,7 @@ fn project_roundtrip() {
     // Settings preserved.
     assert_eq!(loaded.width, 320);
     assert_eq!(loaded.height, 240);
-    assert_eq!(loaded.fps, 30);
+    assert_eq!(loaded.fps, 30.0);
 
     // Scene graph topology preserved.
     // The build creates a root (from add_scene) + bg (child of root) + card
@@ -105,7 +105,7 @@ fn project_roundtrip_preserves_animation() {
     register_rhai_api(&mut engine, loader.clone());
 
     let build = r##"
-        let movie = new_director(320, 240, 30);
+        let movie = new_director(320, 240, 30.0);
         let scene = movie.add_scene(3.0);
         let bg = scene.add_box(#{ width: 320, height: 240, bg_color: "#101018" });
         let card = bg.add_box(#{ width: 120, height: 80, bg_color: "#ff0066" });
@@ -237,7 +237,7 @@ fn project_roundtrip_preserves_layout() {
     register_rhai_api(&mut engine, loader.clone());
 
     let build = r##"
-        let movie = new_director(320, 240, 30);
+        let movie = new_director(320, 240, 30.0);
         let scene = movie.add_scene(2.0);
         let bg = scene.add_box(#{
             width: 320, height: 240,

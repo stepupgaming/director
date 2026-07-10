@@ -72,8 +72,11 @@ pub struct Director {
     pub width: i32,
     /// Output height in pixels.
     pub height: i32,
-    /// Frames Per Second.
-    pub fps: u32,
+    /// Frames Per Second. Stored as `f64` so 23.976, 29.97, and other
+    /// NTSC-accurate rates round-trip exactly rather than truncating to a `u32`.
+    /// Use [`Director::frame_to_time`] / [`Director::time_to_frame`] for the
+    /// canonical frame↔time conversions.
+    pub fps: f64,
     /// Number of sub-frame samples for motion blur (default: 1).
     pub samples_per_frame: u32,
     /// Shutter angle in degrees (0.0 to 360.0). Default: 180.0.
@@ -168,7 +171,7 @@ impl Director {
     pub fn new(
         width: i32,
         height: i32,
-        fps: u32,
+        fps: f64,
         asset_loader: Arc<dyn AssetLoader>,
         render_mode: RenderMode,
         context: Option<DirectorContext>,
@@ -339,6 +342,26 @@ impl Director {
             }
         }
         roots
+    }
+
+    /// Convert a frame index to a wall-clock time in seconds using the current
+    /// `fps`. Frame `n` corresponds to time `n / fps`.
+    #[inline]
+    pub fn frame_to_time(&self, frame: f64) -> f64 {
+        if self.fps <= 0.0 {
+            return 0.0;
+        }
+        frame / self.fps
+    }
+
+    /// Convert a wall-clock time in seconds to a fractional frame index using
+    /// the current `fps`. Inverse of [`Director::frame_to_time`].
+    #[inline]
+    pub fn time_to_frame(&self, time: f64) -> f64 {
+        if self.fps <= 0.0 {
+            return 0.0;
+        }
+        time * self.fps
     }
 
     /// Updates the state of all active nodes for the given global time.
@@ -560,5 +583,46 @@ impl Director {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod fps_tests {
+    use super::*;
+
+    #[test]
+    fn frame_to_time_inverse_time_to_frame() {
+        let mut d = Director::new(
+            10,
+            10,
+            23.976,
+            Arc::new(crate::DefaultAssetLoader),
+            RenderMode::Preview,
+            None,
+        );
+        // NTSC-accurate 23.976 must round-trip exactly (no integer truncation).
+        assert!((d.fps - 23.976).abs() < f64::EPSILON);
+        for frame in [0.0, 0.5, 1.0, 23.976, 47.952, 72.0, 1000.0] {
+            let t = d.frame_to_time(frame);
+            let frame_back = d.time_to_frame(t);
+            assert!(
+                (frame_back - frame).abs() < 1e-9,
+                "round-trip mismatch at {frame}: t={t}, back={frame_back}"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_fps_is_safe_and_returns_zero() {
+        let mut d = Director::new(
+            10,
+            10,
+            0.0,
+            Arc::new(crate::DefaultAssetLoader),
+            RenderMode::Preview,
+            None,
+        );
+        assert_eq!(d.frame_to_time(100.0), 0.0);
+        assert_eq!(d.time_to_frame(5.0), 0.0);
     }
 }

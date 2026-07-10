@@ -1,7 +1,7 @@
 // Test: Export heart_eyes.json Lottie to MP4 at 1920x1920
 // Matching official export specs: 1920x1920, 30fps, 91 frames = 3.033s
 
-let movie = new_director(1920, 1920, 30);
+let movie = new_director(1920, 1920, 30.0);
 
 // Create scene for exactly 91 frames at 30fps = 3.033 seconds
 // The Lottie is 800x800 native, but we'll scale it up

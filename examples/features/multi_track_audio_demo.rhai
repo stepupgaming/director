@@ -6,7 +6,7 @@
 // - Audio pan, reverb, delay, EQ, and compressor effects
 // - Track enable/disable and opacity control
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 
 // ============================================================
 // SCENE DEFINITIONS

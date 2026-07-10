@@ -208,12 +208,13 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     engine.register_type_with_name::<MovieHandle>("Movie");
 
     // Overload 1: 3 args (Default Preview)
+    // `fps` is `f64` to allow NTSC-accurate rates (23.976, 29.97, ...).
     let l1 = loader.clone();
-    engine.register_fn("new_director", move |w: i64, h: i64, fps: i64| {
+    engine.register_fn("new_director", move |w: i64, h: i64, fps: f64| {
         let director = Director::new(
             w as i32,
             h as i32,
-            fps as u32,
+            fps,
             l1.clone(),
             default_mode,
             None,
@@ -227,7 +228,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     let l2 = loader.clone();
     engine.register_fn(
         "new_director",
-        move |w: i64, h: i64, fps: i64, config: rhai::Map| {
+        move |w: i64, h: i64, fps: f64, config: rhai::Map| {
             let mode_str = config
                 .get("mode")
                 .and_then(|v| v.clone().into_string().ok())
@@ -236,7 +237,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
                 "export" => RenderMode::Export,
                 _ => RenderMode::Preview,
             };
-            let director = Director::new(w as i32, h as i32, fps as u32, l2.clone(), mode, None);
+            let director = Director::new(w as i32, h as i32, fps, l2.clone(), mode, None);
             MovieHandle {
                 director: Arc::new(Mutex::new(director)),
             }
@@ -282,6 +283,25 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
             );
         },
     );
+
+    // Frame↔time helpers (audit finding #12): expose the canonical conversions so
+    // Rhai authors can address a clip by frame index (e.g. `movie.frame_to_time(72)`
+    // at 23.976fps returns ~3.004s) without manually dividing by an integer rate.
+    engine.register_fn("movie_fps", |movie: &mut MovieHandle| -> f64 {
+        movie.lock_director().map(|d| d.fps).unwrap_or(0.0)
+    });
+    engine.register_fn("frame_to_time", |movie: &mut MovieHandle, frame: f64| -> f64 {
+        movie
+            .lock_director()
+            .map(|d| d.frame_to_time(frame))
+            .unwrap_or(0.0)
+    });
+    engine.register_fn("time_to_frame", |movie: &mut MovieHandle, time: f64| -> f64 {
+        movie
+            .lock_director()
+            .map(|d| d.time_to_frame(time))
+            .unwrap_or(0.0)
+    });
 
     // Get encoder diagnostics with warnings
     engine.register_fn("get_encoder_info", |movie: &mut MovieHandle| -> String {

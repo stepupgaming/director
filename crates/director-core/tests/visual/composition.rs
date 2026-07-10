@@ -36,7 +36,7 @@ fn composition_nested() {
         let mut inner = Director::new(
             150,
             150,
-            30,
+            30.0,
             d.assets.loader.clone(),
             director_core::video_wrapper::RenderMode::Preview,
             None,
@@ -94,7 +94,7 @@ fn composition_scaled() {
         let mut inner = Director::new(
             100,
             100,
-            30,
+            30.0,
             d.assets.loader.clone(),
             director_core::video_wrapper::RenderMode::Preview,
             None,

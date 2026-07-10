@@ -1,7 +1,7 @@
 // Intel QSV Hardware Encoding Test
 // Tests Intel Quick Sync hardware encoding
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 
 // Force Intel QSV encoder
 movie.configure_encoder("qsv");

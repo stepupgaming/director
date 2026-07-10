@@ -7,7 +7,7 @@
 // - Percentage and fixed sizing
 // - Padding and margin
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 let scene = movie.add_scene(3.0);
 
 // Root container - column layout

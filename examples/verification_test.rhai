@@ -1,5 +1,5 @@
 // verification_test.rhai - A complex test script generated using the director-rhai skill
-let movie = new_director(1920, 1080, 60);
+let movie = new_director(1920, 1080, 60.0);
 
 // Scene 1: Intro (3s)
 let s1 = movie.add_scene(3.0);

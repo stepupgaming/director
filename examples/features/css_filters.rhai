@@ -2,7 +2,7 @@
 // Demonstrates blur, brightness, contrast, saturation, and hue-rotate
 // applied to boxes, text, images, and shapes.
 
-let movie = new_director(1080, 1920, 30);
+let movie = new_director(1080, 1920, 30.0);
 let scene = movie.add_scene(5.0);
 
 let bg = scene.add_box(#{

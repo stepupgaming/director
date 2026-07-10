@@ -1,7 +1,7 @@
 // Elastic Easings Demo (Fixed)
 // Showcases new easing types with correct layout and scaling
 
-let movie = new_director(1080, 1920, 60);
+let movie = new_director(1080, 1920, 60.0);
 let scene = movie.add_scene(4.0);
 
 // Root container - vertical stack covering whole screen

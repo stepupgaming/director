@@ -1,7 +1,7 @@
 // Z-Index Test
 // Tests that nodes render in correct z-order
 
-let movie = new_director(1920, 1080, 30);
+let movie = new_director(1920, 1080, 30.0);
 let scene = movie.add_scene(2.0);
 
 // Black background
