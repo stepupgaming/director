@@ -17,9 +17,11 @@
 //!   `display`) — see `style_to_json` / `apply_layout_style_json`.
 //! * **Box**: full node-field round-trip (opacity, bg_color, border_radius,
 //!   border_width, border_color, shadow_*, blur, overflow) plus layout.
-//! * **Text**: minimal reconstruction (transform, opacity, `font_size`,
-//!   `color`, `font_family`, `content` from a `_content` prop key) plus
-//!   layout. Rich per-span styling degrades to a single default span.
+//! * **Text**: full reconstruction — content spans (text + per-span color,
+//!   font family/weight/style, size, background, stroke, letter spacing, line
+//!   height), default size/color, `fit`/`min_size`/`max_size`, `align`,
+//!   `text_direction`, and text shadow — rebuilt via `text_node_to_json` and
+//!   `build_text_node_from_props`, plus transform/opacity/layout.
 //! * **Other kinds** (Image, Video, Lottie, Effect, Composition, Caption,
 //!   Vector, Spectrum, WGPU): kind tag + transform + opacity + layout
 //!   preserved. On reload the node is reconstructed as a `BoxNode`
@@ -32,12 +34,16 @@
 //!   keyframes (reconstructed as Box placeholders; see below).
 //! * **Tracks & legacy timeline**: fully round-tripped (clips, fades,
 //!   speed, source in/out, z_index, audio_tracks).
-
 use crate::animation::{Animated, EasingType};
 use crate::director::{Director, TimelineItem};
 use crate::node::text::TextNode;
 use crate::node::BoxNode;
-use crate::scripting::utils::{apply_layout_style_json, style_to_json};
+use crate::node::caption::{CaptionNode, CaptionLine};
+use crate::node::composition::CompositionNode;
+use crate::node::effect::{EffectNode, EffectType};
+use crate::node::image_node::ImageNode;
+use crate::node::video_node::{VideoNode, VideoSource};
+use crate::scripting::utils::{apply_layout_style_json, json_map_to_rhai, style_to_json, text_node_to_json};
 use crate::timeline::{Track, TrackClip};
 use crate::types::{Color, NodeId};
 use crate::video_wrapper::RenderMode;
@@ -259,7 +265,7 @@ fn serialize_animated_f32(a: &Animated<f32>) -> Option<JsonValue> {
         .map(|(v, t, e)| KfF32 {
             time: *t,
             value: *v,
-            easing: *e,
+            easing: e.clone(),
         })
         .collect();
     serde_json::to_value(kfs).ok()
@@ -275,7 +281,7 @@ fn serialize_animated_color(a: &Animated<Color>) -> Option<JsonValue> {
         .map(|(v, t, e)| KfColor {
             time: *t,
             value: [v.r, v.g, v.b, v.a],
-            easing: *e,
+            easing: e.clone(),
         })
         .collect();
     serde_json::to_value(kfs).ok()
@@ -291,11 +297,11 @@ fn rebuild_animated_f32(v: &JsonValue) -> Option<Animated<f32>> {
     // START, so the first keyframe's easing must be `kfs[0].easing` (matching
     // how `animate`/`add_segment` store it). `Animated::new` hardcodes Linear,
     // so re-apply it via `add_segment`, which sets the initial keyframe easing.
-    a.add_segment(kfs[0].value, kfs[0].value, 0.0, kfs[0].easing);
+    a.add_segment(kfs[0].value, kfs[0].value, 0.0, kfs[0].easing.clone());
     let mut prev = kfs[0].time;
     for k in &kfs[1..] {
         let dur = (k.time - prev).max(0.0);
-        a.add_keyframe(k.value, dur, k.easing);
+        a.add_keyframe(k.value, dur, k.easing.clone());
         prev = k.time;
     }
     Some(a)
@@ -313,14 +319,14 @@ fn rebuild_animated_color(v: &JsonValue) -> Option<Animated<Color>> {
         kfs[0].value[3],
     );
     let mut a = Animated::new(c0);
-    a.add_segment(c0, c0, 0.0, kfs[0].easing);
+    a.add_segment(c0, c0, 0.0, kfs[0].easing.clone());
     let mut prev = kfs[0].time;
     for k in &kfs[1..] {
         let dur = (k.time - prev).max(0.0);
         a.add_keyframe(
             Color::new(k.value[0], k.value[1], k.value[2], k.value[3]),
             dur,
-            k.easing,
+            k.easing.clone(),
         );
         prev = k.time;
     }
@@ -539,6 +545,18 @@ fn node_opacity(sn: &crate::scene::SceneNode) -> f32 {
     if let Some(t) = sn.element.as_any().downcast_ref::<TextNode>() {
         return t.opacity.current_value;
     }
+    if let Some(img) = sn.element.as_any().downcast_ref::<ImageNode>() {
+        return img.opacity.current_value;
+    }
+    if let Some(vid) = sn.element.as_any().downcast_ref::<VideoNode>() {
+        return vid.opacity.current_value;
+    }
+    if let Some(cap) = sn.element.as_any().downcast_ref::<CaptionNode>() {
+        return cap.opacity.current_value;
+    }
+    if let Some(eff) = sn.element.as_any().downcast_ref::<EffectNode>() {
+        return eff.effects.first().map(|_| 1.0).unwrap_or(1.0);
+    }
     1.0
 }
 
@@ -569,12 +587,12 @@ pub fn director_to_project(d: &Director) -> Project {
                     .downcast_ref::<BoxNode>()
                     .map(box_props_to_json)
                     .unwrap_or_default(),
-                "Text" => {
-                    let mut p = JsonMap::new();
-                    p.insert("_content".into(), JsonValue::from(""));
-                    p.insert("font_size".into(), JsonValue::from(24.0));
-                    p
-                }
+                "Text" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<TextNode>()
+                    .map(text_node_to_json)
+                    .unwrap_or_default(),
                 _ => {
                     let mut p = JsonMap::new();
                     p.insert(
@@ -706,6 +724,18 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 apply_layout_style_json(&mut b.style, &n.layout);
                 director.scene.add_node(Box::new(b))
             }
+            "Text" => {
+                let mut map = json_map_to_rhai(&n.props);
+                for (k, v) in json_map_to_rhai(&n.layout) {
+                    map.insert(k, v);
+                }
+                let mut tnode = crate::scripting::api::nodes::build_text_node_from_props(
+                    director.assets.font_collection.clone(),
+                    &map,
+                );
+                tnode.opacity.current_value = n.opacity;
+                director.scene.add_node(Box::new(tnode))
+            }
             _ => {
                 let mut b = BoxNode::new();
                 b.opacity.current_value = n.opacity;
@@ -788,6 +818,10 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                         n.animations.get("opacity").and_then(rebuild_animated_f32)
                     {
                         b.opacity = a;
+                    }
+                } else if let Some(tn) = sn.element.as_any_mut().downcast_mut::<TextNode>() {
+                    if let Some(a) = n.animations.get("opacity").and_then(rebuild_animated_f32) {
+                        tn.opacity = a;
                     }
                 }
             }

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Supported easing functions for animations.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EasingType {
     Linear,
@@ -37,7 +37,16 @@ pub enum EasingType {
     BackOut,
     BackIn,
     BackInOut,
+    /// Cubic Bezier easing with control points (x1, y1, x2, y2).
+    CubicBezier { x1: f64, y1: f64, x2: f64, y2: f64 },
+    /// Hold / step: value stays at the start until the very end of the segment.
+    Hold,
+    /// Per-frame expression evaluated at 60fps and baked into linear keyframes.
+    /// The expression string supports `t` (0..1), `pi`, and functions
+    /// `sin`, `cos`, `tan`, `abs`, `min`, `max`, `clamp`, `sqrt`, `pow`.
+    Expression { expr: String },
 }
+
 
 impl EasingFunction for EasingType {
     fn y(&self, x: f64) -> f64 {
@@ -75,6 +84,19 @@ impl EasingFunction for EasingType {
                 } else {
                     (1.0 + back_out(2.0 * x - 1.0)) / 2.0
                 }
+            }
+            EasingType::CubicBezier { x1, y1, x2, y2 } => {
+                cubic_bezier_y(x, *x1, *y1, *x2, *y2)
+            }
+            EasingType::Hold => {
+                if x >= 1.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            EasingType::Expression { expr } => {
+                evaluate_expression(expr, x)
             }
         }
     }
@@ -123,6 +145,244 @@ impl EasingType {
     /// Evaluates the easing curve at a specific point `x` (0.0 to 1.0).
     pub fn eval(&self, x: f32) -> f32 {
         self.y(x as f64) as f32
+    }
+}
+
+/// Evaluate a cubic Bezier curve at normalized time `t` for control points
+/// `(x1, y1)` and `(x2, y2)`. Solves for `x(t) = t` using Newton-Raphson.
+fn cubic_bezier_y(t: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    if t <= 0.0 {
+        return 0.0;
+    }
+    if t >= 1.0 {
+        return 1.0;
+    }
+
+    let cx = 3.0 * x1;
+    let bx = 3.0 * (x2 - x1) - cx;
+    let ax = 1.0 - cx - bx;
+
+    let cy = 3.0 * y1;
+    let by = 3.0 * (y2 - y1) - cy;
+    let ay = 1.0 - cy - by;
+
+    // Newton-Raphson to find u such that x(u) = t
+    let mut u = t;
+    for _ in 0..8 {
+        let xu = ((ax * u + bx) * u + cx) * u;
+        let dx_du = (3.0 * ax * u + 2.0 * bx) * u + cx;
+        if dx_du.abs() < 1e-8 {
+            break;
+        }
+        u = (u - (xu - t) / dx_du).clamp(0.0, 1.0);
+    }
+
+    ((ay * u + by) * u + cy) * u
+}
+
+/// Tiny expression evaluator for `EasingType::Expression`. Supports the
+/// variable `t` (0..1), constants `pi`/`e`, numbers, parentheses and the
+/// functions `sin`, `cos`, `tan`, `abs`, `min`, `max`, `clamp`, `sqrt`, `pow`.
+pub fn evaluate_expression(expr: &str, t: f64) -> f64 {
+    match parse_expr(&mut expr.chars().peekable(), t) {
+        Ok(v) => v,
+        Err(_) => t,
+    }
+}
+
+use std::iter::Peekable;
+use std::str::Chars;
+
+fn parse_expr(iter: &mut Peekable<Chars>, t: f64) -> Result<f64, ()> {
+    parse_add_sub(iter, t)
+}
+
+fn parse_add_sub(iter: &mut Peekable<Chars>, t: f64) -> Result<f64, ()> {
+    let mut value = parse_mul_div(iter, t)?;
+    while let Some(&ch) = iter.peek() {
+        match ch {
+            '+' => {
+                iter.next();
+                value += parse_mul_div(iter, t)?;
+            }
+            '-' => {
+                iter.next();
+                value -= parse_mul_div(iter, t)?;
+            }
+            _ => break,
+        }
+    }
+    Ok(value)
+}
+
+fn parse_mul_div(iter: &mut Peekable<Chars>, t: f64) -> Result<f64, ()> {
+    let mut value = parse_power(iter, t)?;
+    while let Some(&ch) = iter.peek() {
+        match ch {
+            '*' => {
+                iter.next();
+                value *= parse_power(iter, t)?;
+            }
+            '/' => {
+                iter.next();
+                value /= parse_power(iter, t)?;
+            }
+            _ => break,
+        }
+    }
+    Ok(value)
+}
+
+fn parse_power(iter: &mut Peekable<Chars>, t: f64) -> Result<f64, ()> {
+    let base = parse_unary(iter, t)?;
+    if let Some(&'^') = iter.peek() {
+        iter.next();
+        let exp = parse_unary(iter, t)?;
+        return Ok(base.powf(exp));
+    }
+    Ok(base)
+}
+
+fn parse_unary(iter: &mut Peekable<Chars>, t: f64) -> Result<f64, ()> {
+    skip_ws(iter);
+    if let Some(&'-') = iter.peek() {
+        iter.next();
+        return Ok(-parse_unary(iter, t)?);
+    }
+    parse_primary(iter, t)
+}
+
+fn parse_primary(iter: &mut Peekable<Chars>, t: f64) -> Result<f64, ()> {
+    skip_ws(iter);
+    if let Some(&ch) = iter.peek() {
+        if ch == '(' {
+            iter.next();
+            let val = parse_expr(iter, t)?;
+            skip_ws(iter);
+            if let Some(&')') = iter.peek() {
+                iter.next();
+            }
+            return Ok(val);
+        }
+        if ch.is_ascii_digit() || ch == '.' {
+            return parse_number(iter);
+        }
+        if ch.is_alphabetic() {
+            return parse_ident(iter, t);
+        }
+    }
+    Err(())
+}
+
+fn parse_number(iter: &mut Peekable<Chars>) -> Result<f64, ()> {
+    let mut s = String::new();
+    while let Some(&ch) = iter.peek() {
+        if ch.is_ascii_digit() || ch == '.' {
+            s.push(ch);
+            iter.next();
+        } else {
+            break;
+        }
+    }
+    s.parse().map_err(|_| ())
+}
+
+fn parse_ident(iter: &mut Peekable<Chars>, t: f64) -> Result<f64, ()> {
+    let mut s = String::new();
+    while let Some(&ch) = iter.peek() {
+        if ch.is_alphabetic() || ch == '_' {
+            s.push(ch);
+            iter.next();
+        } else {
+            break;
+        }
+    }
+    skip_ws(iter);
+    match s.as_str() {
+        "t" => Ok(t),
+        "pi" => Ok(std::f64::consts::PI),
+        "e" => Ok(std::f64::consts::E),
+        "sin" | "cos" | "tan" | "abs" | "sqrt" => {
+            let arg = parse_func_arg(iter, t)?;
+            Ok(match s.as_str() {
+                "sin" => arg.sin(),
+                "cos" => arg.cos(),
+                "tan" => arg.tan(),
+                "abs" => arg.abs(),
+                "sqrt" => arg.sqrt(),
+                _ => arg,
+            })
+        }
+        "min" | "max" | "clamp" | "pow" => {
+            let args = parse_func_args(iter, t)?;
+            match s.as_str() {
+                "min" => Ok(args.iter().cloned().fold(f64::INFINITY, f64::min)),
+                "max" => Ok(args.iter().cloned().fold(f64::NEG_INFINITY, f64::max)),
+                "pow" => {
+                    if args.len() >= 2 {
+                        Ok(args[0].powf(args[1]))
+                    } else {
+                        Err(())
+                    }
+                }
+                "clamp" => {
+                    if args.len() >= 3 {
+                        Ok(args[0].clamp(args[1], args[2]))
+                    } else {
+                        Err(())
+                    }
+                }
+                _ => Err(()),
+            }
+        }
+        _ => Err(()),
+    }
+}
+
+fn parse_func_arg(iter: &mut Peekable<Chars>, t: f64) -> Result<f64, ()> {
+    skip_ws(iter);
+    if let Some(&'(') = iter.peek() {
+        iter.next();
+        let val = parse_expr(iter, t)?;
+        skip_ws(iter);
+        if let Some(&')') = iter.peek() {
+            iter.next();
+        }
+        Ok(val)
+    } else {
+        Err(())
+    }
+}
+
+fn parse_func_args(iter: &mut Peekable<Chars>, t: f64) -> Result<Vec<f64>, ()> {
+    skip_ws(iter);
+    if iter.peek() != Some(&'(') {
+        return Err(());
+    }
+    iter.next();
+    let mut args = Vec::new();
+    loop {
+        skip_ws(iter);
+        if let Some(&')') = iter.peek() {
+            iter.next();
+            break;
+        }
+        args.push(parse_expr(iter, t)?);
+        skip_ws(iter);
+        if let Some(&',') = iter.peek() {
+            iter.next();
+        }
+    }
+    Ok(args)
+}
+
+fn skip_ws(iter: &mut Peekable<Chars>) {
+    while let Some(&ch) = iter.peek() {
+        if ch.is_whitespace() {
+            iter.next();
+        } else {
+            break;
+        }
     }
 }
 
@@ -222,7 +482,7 @@ where
         let frames: Vec<Keyframe<T>> = self
             .raw_keyframes
             .iter()
-            .map(|(val, time, ease_type)| Keyframe::new(val.clone(), *time, *ease_type))
+            .map(|(val, time, ease_type)| Keyframe::new(val.clone(), *time, ease_type.clone()))
             .collect();
 
         self.sequence = AnimationSequence::from(frames);
@@ -240,8 +500,8 @@ where
         if self.sequence.duration() == 0.0 {
             // If no animation exists yet, treat start as the initial value
             // We use the requested easing for the first keyframe too
-            self.raw_keyframes = vec![(start.clone(), 0.0, easing)];
-            let kf = Keyframe::new(start.clone(), 0.0, easing);
+            self.raw_keyframes = vec![(start.clone(), 0.0, easing.clone())];
+            let kf = Keyframe::new(start.clone(), 0.0, easing.clone());
             self.sequence = AnimationSequence::from(vec![kf]);
             self.current_value = start;
         } else {
@@ -259,6 +519,27 @@ where
 }
 
 impl Animated<f32> {
+    /// Build an animation channel from a math expression evaluated at 60fps.
+    /// The expression uses `t` in [0, 1].
+    pub fn from_expression(expr: &str, duration: f64) -> Self {
+        let sample_rate = 60.0;
+        let samples = (duration * sample_rate).max(1.0) as usize;
+        let mut raw = Vec::new();
+        for i in 0..=samples {
+            let t = if samples == 0 { 0.0 } else { i as f64 / samples as f64 };
+            let v = evaluate_expression(expr, t) as f32;
+            raw.push((v, t * duration, EasingType::Linear));
+        }
+        let mut anim = Animated::new(raw[0].0);
+        anim.raw_keyframes = raw.clone();
+        let frames: Vec<Keyframe<f32>> = raw
+            .iter()
+            .map(|(val, time, _ease)| Keyframe::new(*val, *time, EasingType::Linear))
+            .collect();
+        anim.sequence = AnimationSequence::from(frames);
+        anim
+    }
+
     /// Adds a spring animation from the current value to the target.
     ///
     /// This "bakes" the physics simulation into a series of linear keyframes at 60fps.
@@ -346,6 +627,71 @@ where
         f.debug_struct("Animated")
             .field("current_value", &self.current_value)
             .finish()
+    }
+}
+
+impl<T> Animated<T>
+where
+    T: Clone + keyframe::CanTween + Default,
+{
+    /// Reverse the keyframe sequence in-place.
+    pub fn reverse(&mut self) {
+        if self.raw_keyframes.len() < 2 {
+            return;
+        }
+        let total_time = self.sequence.duration();
+        self.raw_keyframes.reverse();
+        for kf in &mut self.raw_keyframes {
+            kf.1 = total_time - kf.1;
+        }
+        // Rebuild sequence from raw keyframes.
+        let frames: Vec<Keyframe<T>> = self
+            .raw_keyframes
+            .iter()
+            .map(|(val, time, ease_type)| Keyframe::new(val.clone(), *time, ease_type.clone()))
+            .collect();
+        self.sequence = AnimationSequence::from(frames);
+    }
+
+    /// Append a reversed copy of the animation, creating a yoyo (ping-pong) loop.
+    pub fn yoyo(&mut self) {
+        let original = self.raw_keyframes.clone();
+        let total_time = self.sequence.duration();
+        if original.len() < 2 {
+            return;
+        }
+        // Append reversed keyframes shifted by total_time.
+        for kf in original.iter().rev() {
+            let t = total_time + (total_time - kf.1);
+            self.raw_keyframes.push((kf.0.clone(), t, kf.2.clone()));
+        }
+        let frames: Vec<Keyframe<T>> = self
+            .raw_keyframes
+            .iter()
+            .map(|(val, time, ease_type)| Keyframe::new(val.clone(), *time, ease_type.clone()))
+            .collect();
+        self.sequence = AnimationSequence::from(frames);
+    }
+
+    /// Repeat the entire animation `count` times.
+    pub fn loop_count(&mut self, count: i32) {
+        if count <= 1 {
+            return;
+        }
+        let original = self.raw_keyframes.clone();
+        let total_time = self.sequence.duration();
+        for i in 1..count {
+            for kf in &original {
+                let t = kf.1 + total_time * i as f64;
+                self.raw_keyframes.push((kf.0.clone(), t, kf.2.clone()));
+            }
+        }
+        let frames: Vec<Keyframe<T>> = self
+            .raw_keyframes
+            .iter()
+            .map(|(val, time, ease_type)| Keyframe::new(val.clone(), *time, ease_type.clone()))
+            .collect();
+        self.sequence = AnimationSequence::from(frames);
     }
 }
 

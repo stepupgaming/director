@@ -78,6 +78,10 @@ pub struct SceneNode {
 
     /// CSS-like image filters applied to this node and its children.
     pub filter: FilterConfig,
+
+    /// If true, the subtree rooted at this node is treated as static and may
+    /// be rasterized once and reused via the Director's static cache.
+    pub is_static: bool,
 }
 
 /// SAFETY: SceneNode is Send-safe because all current Element implementations
@@ -106,6 +110,7 @@ impl SceneNode {
             dirty_style: true,
             audio_bindings: Vec::new(),
             filter: FilterConfig::default(),
+            is_static: false,
         }
     }
 }

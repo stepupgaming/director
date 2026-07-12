@@ -17,7 +17,7 @@
 //! - `theme`: Design system token API
 //! - `api/`: Sub-modules for lifecycle, nodes, animation, audio, effects, properties
 
-mod api;
+pub(crate) mod api;
 mod theme;
 pub mod types;
 pub mod utils;

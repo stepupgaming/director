@@ -21,6 +21,16 @@
 //!   - Color/Grade: `duotone`, `posterize`, `threshold`, `temperature` (color matrix)
 //!   - Stylize: `scanlines`, `glitch`, `edge_detect`
 //!   - Light/Atmosphere: `zoom_blur`, `kaleidoscope`
+//! - **Batch 2 Shader Library** (SkSL runtime shaders):
+//!   - Lens/Distortion: `fisheye`, `bulge`, `barrel`, `lens_flare`
+//!   - Color-Grade Presets: `noir`, `cyberpunk`, `vintage`, `gameboy`, `bleach_bypass`, `teal_orange`
+//!   - Stylized: `plasma`, `hologram`, `emboss`, `toon`, `oil_paint`
+//!   - Atmosphere / More: `light_leak`, `aurora`, `sunrays`
+//! - **Batch 3 Shader Library** (SkSL runtime shaders, see `crate::node::effect_shaders`):
+//!   - Beauty/Portrait: `skin_smooth`, `beauty_glow`, `soft_focus`, `vibrance`
+//!   - Atmospheric/Weather: `fog`, `mist`, `rain`, `snow`, `dust`, `bokeh_dots`
+//!   - Cinematic Grades: `film_look`, `orange_teal`, `cross_process`, `polaroid`, `faded_film`, `midnight`
+//!   - Artistic Stylize: `watercolor`, `crosshatch`, `pointillism`, `mosaic`, `ink`, `pencil_color`
 //! - **Safety Guards**: stale-handle checks with script-level errors
 
 use crate::animation::{Animated, TweenableVector};
@@ -550,6 +560,293 @@ pub fn register(engine: &mut Engine) {
                     Some(EffectType::NeonEdge {
                         glow_color,
                         threshold: Animated::new(threshold),
+                    })
+                }
+                // --- Batch 2 shaders -------------------------------------------
+                "fisheye" | "fish_eye" => {
+                    let strength = map.get("strength").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    Some(EffectType::Fisheye(Animated::new(strength)))
+                }
+                "bulge" => {
+                    let strength = map.get("strength").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    let radius = map.get("radius").and_then(|v| v.as_float().ok()).unwrap_or(200.0) as f32;
+                    Some(EffectType::Bulge {
+                        strength: Animated::new(strength),
+                        radius: Animated::new(radius),
+                    })
+                }
+                "barrel" | "pincushion" => {
+                    let curvature = map.get("curvature").and_then(|v| v.as_float().ok()).unwrap_or(0.3) as f32;
+                    Some(EffectType::Barrel(Animated::new(curvature)))
+                }
+                "lens_flare" | "flare" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    let color = map
+                        .get("color")
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(1.0, 0.9, 0.7, 1.0));
+                    Some(EffectType::LensFlare {
+                        intensity: Animated::new(intensity),
+                        color,
+                    })
+                }
+                "noir" | "mono" => {
+                    let contrast = map.get("contrast").and_then(|v| v.as_float().ok()).unwrap_or(1.4) as f32;
+                    Some(EffectType::Noir(Animated::new(contrast)))
+                }
+                "cyberpunk" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    Some(EffectType::Cyberpunk(Animated::new(intensity)))
+                }
+                "vintage" | "retro" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    Some(EffectType::Vintage(Animated::new(amount)))
+                }
+                "gameboy" => Some(EffectType::Gameboy),
+                "bleach_bypass" | "bleach" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.7) as f32;
+                    Some(EffectType::BleachBypass(Animated::new(amount)))
+                }
+                "teal_orange" | "cinematic" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    Some(EffectType::TealOrange(Animated::new(amount)))
+                }
+                "plasma" => {
+                    let scale = map.get("scale").and_then(|v| v.as_float().ok()).unwrap_or(10.0) as f32;
+                    let speed = map.get("speed").and_then(|v| v.as_float().ok()).unwrap_or(1.5) as f32;
+                    Some(EffectType::Plasma {
+                        scale: Animated::new(scale),
+                        speed: Animated::new(speed),
+                    })
+                }
+                "hologram" | "holo" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.7) as f32;
+                    Some(EffectType::Hologram(Animated::new(intensity)))
+                }
+                "emboss" => {
+                    let angle = map.get("angle").and_then(|v| v.as_float().ok()).unwrap_or(45.0) as f32;
+                    let strength = map.get("strength").and_then(|v| v.as_float().ok()).unwrap_or(2.0) as f32;
+                    Some(EffectType::Emboss {
+                        angle: Animated::new(angle),
+                        strength: Animated::new(strength),
+                    })
+                }
+                "toon" | "cel" => {
+                    let levels = map.get("levels").and_then(|v| v.as_float().ok()).unwrap_or(6.0) as f32;
+                    let edge = map.get("edge").and_then(|v| v.as_float().ok()).unwrap_or(0.08) as f32;
+                    Some(EffectType::Toon {
+                        levels: Animated::new(levels),
+                        edge: Animated::new(edge),
+                    })
+                }
+                "oil_paint" | "oil" => {
+                    let block_size = map.get("block_size").and_then(|v| v.as_float().ok()).unwrap_or(8.0) as f32;
+                    let levels = map.get("levels").and_then(|v| v.as_float().ok()).unwrap_or(6.0) as f32;
+                    Some(EffectType::OilPaint {
+                        block_size: Animated::new(block_size),
+                        levels: Animated::new(levels),
+                    })
+                }
+                "light_leak" | "leak" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    let color = map
+                        .get("color")
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(1.0, 0.6, 0.3, 1.0));
+                    Some(EffectType::LightLeak {
+                        intensity: Animated::new(intensity),
+                        color,
+                    })
+                }
+                "aurora" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    let speed = map.get("speed").and_then(|v| v.as_float().ok()).unwrap_or(1.0) as f32;
+                    Some(EffectType::Aurora {
+                        intensity: Animated::new(intensity),
+                        speed: Animated::new(speed),
+                    })
+                }
+                "sunrays" | "rays" | "godrays" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    let angle = map.get("angle").and_then(|v| v.as_float().ok()).unwrap_or(0.0) as f32;
+                    let speed = map.get("speed").and_then(|v| v.as_float().ok()).unwrap_or(1.0) as f32;
+                    Some(EffectType::SunRays {
+                        intensity: Animated::new(intensity),
+                        angle: Animated::new(angle),
+                        speed: Animated::new(speed),
+                    })
+                }
+                // --- Batch 3 shaders -------------------------------------------
+                "skin_smooth" | "beauty_smooth" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    let radius = map.get("radius").and_then(|v| v.as_float().ok()).unwrap_or(3.0) as f32;
+                    Some(EffectType::SkinSmooth {
+                        intensity: Animated::new(intensity),
+                        radius: Animated::new(radius),
+                    })
+                }
+                "beauty_glow" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    let threshold = map.get("threshold").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    Some(EffectType::BeautyGlow {
+                        intensity: Animated::new(intensity),
+                        threshold: Animated::new(threshold),
+                    })
+                }
+                "soft_focus" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    Some(EffectType::SoftFocus {
+                        amount: Animated::new(amount),
+                    })
+                }
+                "vibrance" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    Some(EffectType::Vibrance {
+                        amount: Animated::new(amount),
+                    })
+                }
+                "fog" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    let color = map
+                        .get("color")
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(0.8, 0.85, 0.9, 1.0));
+                    Some(EffectType::Fog {
+                        intensity: Animated::new(intensity),
+                        color,
+                    })
+                }
+                "mist" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    let speed = map.get("speed").and_then(|v| v.as_float().ok()).unwrap_or(1.0) as f32;
+                    Some(EffectType::Mist {
+                        intensity: Animated::new(intensity),
+                        speed: Animated::new(speed),
+                    })
+                }
+                "rain" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    let speed = map.get("speed").and_then(|v| v.as_float().ok()).unwrap_or(1.0) as f32;
+                    Some(EffectType::Rain {
+                        intensity: Animated::new(intensity),
+                        speed: Animated::new(speed),
+                    })
+                }
+                "snow" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    let speed = map.get("speed").and_then(|v| v.as_float().ok()).unwrap_or(1.0) as f32;
+                    let size = map.get("size").and_then(|v| v.as_float().ok()).unwrap_or(2.0) as f32;
+                    Some(EffectType::Snow {
+                        intensity: Animated::new(intensity),
+                        speed: Animated::new(speed),
+                        size: Animated::new(size),
+                    })
+                }
+                "dust" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    let speed = map.get("speed").and_then(|v| v.as_float().ok()).unwrap_or(1.0) as f32;
+                    Some(EffectType::Dust {
+                        intensity: Animated::new(intensity),
+                        speed: Animated::new(speed),
+                    })
+                }
+                "bokeh_dots" | "bokeh" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.5) as f32;
+                    let size = map.get("size").and_then(|v| v.as_float().ok()).unwrap_or(12.0) as f32;
+                    let color = map
+                        .get("color")
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| crate::scripting::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::new(1.0, 0.9, 0.7, 1.0));
+                    Some(EffectType::BokehDots {
+                        intensity: Animated::new(intensity),
+                        size: Animated::new(size),
+                        color,
+                    })
+                }
+                "film_look" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    let grain = map.get("grain").and_then(|v| v.as_float().ok()).unwrap_or(1.0) as f32;
+                    Some(EffectType::FilmLook {
+                        amount: Animated::new(amount),
+                        grain: Animated::new(grain),
+                    })
+                }
+                "orange_teal" | "orange_and_teal" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    Some(EffectType::OrangeTeal {
+                        amount: Animated::new(amount),
+                    })
+                }
+                "cross_process" | "crossprocess" | "lomo" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.7) as f32;
+                    Some(EffectType::CrossProcess {
+                        amount: Animated::new(amount),
+                    })
+                }
+                "polaroid" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.7) as f32;
+                    Some(EffectType::Polaroid {
+                        amount: Animated::new(amount),
+                    })
+                }
+                "faded_film" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    Some(EffectType::FadedFilm {
+                        amount: Animated::new(amount),
+                    })
+                }
+                "midnight" | "night" => {
+                    let amount = map.get("amount").and_then(|v| v.as_float().ok()).unwrap_or(0.6) as f32;
+                    Some(EffectType::Midnight {
+                        amount: Animated::new(amount),
+                    })
+                }
+                "watercolor" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.7) as f32;
+                    let edge = map.get("edge").and_then(|v| v.as_float().ok()).unwrap_or(1.0) as f32;
+                    Some(EffectType::Watercolor {
+                        intensity: Animated::new(intensity),
+                        edge: Animated::new(edge),
+                    })
+                }
+                "crosshatch" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.8) as f32;
+                    let density = map.get("density").and_then(|v| v.as_float().ok()).unwrap_or(8.0) as f32;
+                    Some(EffectType::Crosshatch {
+                        intensity: Animated::new(intensity),
+                        density: Animated::new(density),
+                    })
+                }
+                "pointillism" => {
+                    let dot_size = map.get("dot_size").and_then(|v| v.as_float().ok()).unwrap_or(6.0) as f32;
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.9) as f32;
+                    Some(EffectType::Pointillism {
+                        dot_size: Animated::new(dot_size),
+                        intensity: Animated::new(intensity),
+                    })
+                }
+                "mosaic" => {
+                    let tile_size = map.get("tile_size").and_then(|v| v.as_float().ok()).unwrap_or(20.0) as f32;
+                    Some(EffectType::Mosaic {
+                        tile_size: Animated::new(tile_size),
+                    })
+                }
+                "ink" => {
+                    let threshold = map.get("threshold").and_then(|v| v.as_float().ok()).unwrap_or(0.1) as f32;
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.9) as f32;
+                    Some(EffectType::Ink {
+                        threshold: Animated::new(threshold),
+                        intensity: Animated::new(intensity),
+                    })
+                }
+                "pencil_color" | "colored_pencil" => {
+                    let intensity = map.get("intensity").and_then(|v| v.as_float().ok()).unwrap_or(0.8) as f32;
+                    Some(EffectType::PencilColor {
+                        intensity: Animated::new(intensity),
                     })
                 }
                 _ => None,

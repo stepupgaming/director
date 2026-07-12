@@ -37,23 +37,28 @@ But it is **not yet a foundation for an agent-driven video system**, and it is *
 | **Captions (general)** | Production-tier kinetic captions: pop-overlay flash fix (base pass + clipped overlay), overlap cues replace in one anchor (no Y-slot stack), `phrase_line_mode: Replace` (one phrase line at a time), 3+ line phrase timing via `display_line_window_fracs`, dimensional scaling from `reference_canvas_height` (1920) not the tight layout box. 23 unit tests + visual fixtures + `caption_god_tier_proof.rhai`. Commits through `1d8cce4`. |
 | **#4** SkSL UV origin (likely) | `effect_uv_probe` harness asserts layer-local `pos`; audit claim that off-origin nodes break UVs may be obsolete — re-verify on Liquid/Acid presets, then close formally. |
 | **#2** Keyframe round-trip | `project.rs` now serializes `Animated` **keyframes** (not just `current_value`) for transform channels (scale/rotation/skew/translate) and Box props (opacity, bg_color, border_*, shadow_*, blur, backdrop_blur); `load_project_json` rebuilds them so motion reproduces exactly after `update(t)`. First-keyframe easing preserved via `add_segment` semantics. `project_roundtrip_preserves_animation` test asserts eased mid-point + end values match the original. Taffy layout also round-trips (position/size/inset/flex/align/margin/padding/gap); non-Box kinds revive as Box placeholders with layout applied. `project_roundtrip_preserves_layout` asserts the full layout JSON is identical after reload. |
+| **#5** Animation easing typos | `parse_easing` keeps warn+fall-back; new `parse_easing_loud` (used by all Rhai `animate`/`spring`/`path_animate` paths) emits `tracing::error!` + the full valid-name list on unknown easings. `parse_easing_result` returns `Result<EasingType, String>` for callers that want to throw. Unknown-property path in `animate` still emits `error!` (log loud + no-op). |
+| **#12** `fps: u32` | Widened to `f64` end-to-end: `Director.fps`, `EncoderSettings.fps`, `RenderManifest.fps`, `MovieRequest.fps`, `Composition::fps`, `Project.fps`. `Director::frame_to_time` / `time_to_frame` exposed as Rhai `frame_to_time` / `time_to_frame` / `movie_fps`. 23.976/29.97 round-trip without truncation. |
+| **#14** Rhai depth limits | Landed: `MAX_EXPR_DEPTH = MAX_EXPR_DEPTHS = 128` (not 0/0), and `set_script_limits(engine, depth, depths)` is the public override. |
+| **#15** Seedable RNG | `set_seed(i64)` re-seeds a static `StdRng`; `rand_float` / `noise2d` / `noise3d` consume that seeded RNG. Default seed `0xC0FFEE` so cold runs are deterministic. |
 
 ## Partially addressed
 
 | Finding | Progress | Still missing |
 |---|---|---|
-| **#1** Introspection API | Rhai: `node_id`, `node_bounds`, `node_children`, `scene_duration`, `list_scene_roots`; registry reflection (`list_effects`, `list_easings`, `get_effect_meta`, …). `render_manifest_json` + `director-manifest` CLI. `tests/inspect_api.rs`. | `media_metadata()`; manifest on every export by default; debug overlays / contact sheets; temporal diagnostics (overlap, clip, contrast). |
-| **#2** Project serialization | `api_catalog` single source of truth started; `director-schema` gained `ProjectManifest` + combined schema bundle; platform manifest CLI. **Live `Director` round-trip now works** (`save_project_json`/`load_project_json`): topology, transform, opacity, z-index, blend, Box props, keyframe animation, and Taffy layout all round-trip; `project_roundtrip` suite (3 tests) guards it. | Schema still drifts (~6 vs ~20 transitions; no SKSL/`add_loop`/`add_freeze`); node *kind* content (text spans, image/video sources, caption cues, effect params, geometry beyond Taffy `Style`) still reconstructs as a Box placeholder. |
+| **#1** Introspection API | Rhai: `node_id`, `node_bounds`, `node_children`, `scene_duration`, `list_scene_roots`; registry reflection (`list_effects`, `list_easings`, `get_effect_meta`, …). `render_manifest_json` + `director-manifest` CLI. `tests/inspect_api.rs`. Debug overlays (`set_debug_overlays`/`get_debug_overlays`) draw green bboxes + red `id z:z_index` labels via `draw_debug_overlays`. | `media_metadata()`; manifest on every export by default; contact sheets; temporal diagnostics (overlap, clip, contrast). |
+| **#2** Project serialization | `api_catalog` single source of truth started; `director-schema` gained `ProjectManifest` + combined schema bundle; platform manifest CLI. **Live `Director` round-trip now works** (`save_project_json`/`load_project_json`): topology, transform, opacity, z-index, blend, Box props, keyframe animation, and Taffy layout all round-trip; `project_roundtrip` suite (7 tests) guards it. **All major node kinds now round-trip as their kind, not as Box placeholders**: TextNode spans + style, ImageNode source path + object_fit + border_radius, VideoNode (path + loaded frame pixel sequence via SK renderer), CaptionNode (lines + words + style + safe_area), EffectNode (every `EffectType` variant tagged with `kind`), CompositionNode (inner `Director` JSON). | Schema still drifts (~6 vs ~20 transitions; no SKSL/`add_loop`/`add_freeze`); Vector/SpectrumVisualizer/Lottie kinds still rollback to Box placeholders. |
 | **#7** Text direction / bidi | `text_direction.rs` + `text_direction` Rhai prop on text/caption; auto-detect first strong; caption RTL test. | Full bidi parity across all text nodes; deterministic emoji/complex-script shaping. |
 
 ## Still open (priority order)
 
-1. **#2** Live project (de)serialization + schema generated from Rhai API. **Round-trip foundation + keyframe animation + Taffy layout now landed** (`project.rs`, `project_roundtrip` suite). Remaining: Text/Image/Video/Caption/Effect/Composition node *kinds* still reconstruct as Box placeholders (content, per-span styling, image/video sources, caption cues, effect params, and any geometry beyond the Taffy `Style` are not yet serialized); `director-pipeline` `MovieRequest` transition drift is now **compile-enforced** (`convert_transition_type` is exhaustive over the 20 `api_catalog` variants), so adding a catalog transition forces a matching pipeline mapping.
+1. **#2** Live project (de)serialization + schema generated from Rhai API. **All major node kinds now land as their kind, not Box placeholders** (`project.rs`, 8-test `project_roundtrip` suite covering Box, Text, Image, Video, Caption, Effect, Composition, layout, animation). Vector/Spectrum/Lottie kinds still rebuild as Box placeholders (low-priority per user direction).
 2. **#1** Finish introspection: `media_metadata`, manifest-on-export, machine-readable validation diagnostics.
-3. **#5–#6** Animation: loud errors on bad props/easing; native bezier/hold/reverse/yoyo/expressions (promote from `lottie-core`).
+3. **#5–#6** Animation: loud errors implemented (find #5 closed); bezier/hold/reverse/yoyo/expressions unstarted.
 4. **#8** Bundle and pin deterministic fonts (Regular/Bold + emoji/CJK fallback).
-5. **#10, #12–#17** Text-fit decoupling, `f64` fps, handle-rewrite semantics, Rhai limits, seedable RNG, static cache, richer masking.
-6. **#18–#20** CI on push/PR, `add_freeze`/`add_loop` stubs, audio/export depth.
+5. **#10, #12–#17** Text-fit decoupling (find #10 closed), handle-rewrite semantics (find #13 closed), static cache, richer masking (find #12 closed via `fps: f64`).
+6. **#18, #20** CI on push/PR, audio/export depth.
+7. **#19** Real `add_freeze` + audio-preserving `add_loop` — closed: `TimelineItem.freeze_time: Option<f64>` and `TrackClip.freeze_time: Option<f64>` make the renderer pin local_time to `freeze_at` for the entire hold window; `add_loop` copies source `audio_tracks` onto every cloned iteration; new `set_clip_freeze` Rhai binding. `freeze_and_loop_preserve_audio_and_freeze_time` test pins the contract.
 
 Roadmap sections **Agent-first extensions** and **v1.0 architecture bets** (immutable draft model, parameterized components) remain entirely ahead. **Things Not To Build Yet** unchanged.
 
@@ -231,13 +236,12 @@ Roadmap sections **Agent-first extensions** and **v1.0 architecture bets** (immu
 **Recommended direction:** Thread a seed through `Director`; expose `set_seed`.
 **Complexity:** Small.
 
-## 16. No static-subtree caching
-**Severity:** Medium
-**Evidence:** `render_recursive` re-renders every node every frame (`renderer.rs:43`); only `CompositionNode`/`LottieNode`/`VectorNode` cache rasterized output, single-frame keyed (`composition.rs:108-197`, `lottie.rs:231-278`, `vector.rs:86-121`). No `is_animated` short-circuit.
-**Why it matters:** Long timelines / many static layers in 4K vertical video do redundant work.
-**Why it matters for agents:** Slow previews slow the iterate loop.
-**Recommended direction:** Add an `is_static` flag per subtree → cache to a Surface, invalidate on mutation.
-**Complexity:** Medium.
+## 16. Static-subtree caching (implemented)
+**Severity:** Medium (closed)
+**Evidence:** `SceneNode.is_static` flag + `Director.static_cache: HashMap<NodeId, Image>` + Rhai `set_static`/`is_static`/`clear_static_cache`. `render_recursive` now short-circuits static subtrees on cache hit and renders to an offscreen surface on miss, storing the rasterized image. `CompositionNode` uses a local cache.
+**Why it matters:** Long timelines / many static layers in 4K vertical video avoid redundant work.
+**Why it matters for agents:** Faster previews speed the iterate loop.
+**Recommended direction:** (Landed) Add automatic invalidation when a static subtree's transform/content changes; currently callers must `clear_static_cache(node)` after mutation.
 
 ## 17. Masking / stacking contexts limited
 **Severity:** Medium
@@ -288,7 +292,7 @@ Roadmap sections **Agent-first extensions** and **v1.0 architecture bets** (immu
 - `Shrink` text-fit decoupled from animation channel — Medium, internal.
 - bidi/`text_direction` support (`text.rs:175`) — Small, public.
 - `flex_wrap` + `1:1` safe-area preset, resolution-scaled safe areas (`tokens.rs`, `utils.rs`) — Medium, public.
-- Static-subtree caching (`renderer.rs:43`) — Medium, internal.
+- ~~Static-subtree caching (`renderer.rs:43`) — Medium, internal.~~ Implemented: `SceneNode.is_static`, `Director.static_cache`, Rhai controls, and `render_recursive` hit/miss.
 - Luma matte + multi-mask + `isolate` (`renderer.rs:118-151`) — Medium, public.
 
 ## 3. v1.0 architecture bets (settle before API freezes)

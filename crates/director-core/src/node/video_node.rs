@@ -31,6 +31,8 @@ pub struct VideoNode {
     pub style: Style,
     pub object_fit: ObjectFit,
     pub border_radius: Animated<f32>,
+    /// Original asset path, if loaded from a file or blob path.
+    pub source_path: Option<String>,
     current_frame: Mutex<Option<(f64, Image)>>,
 
     loader: Option<VideoLoader>,
@@ -57,6 +59,7 @@ impl Clone for VideoNode {
             style: self.style.clone(),
             object_fit: self.object_fit,
             border_radius: self.border_radius.clone(),
+            source_path: self.source_path.clone(),
             current_frame: Mutex::new(None),
             loader,
             render_mode: self.render_mode,
@@ -91,12 +94,18 @@ impl VideoNode {
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
             border_radius: Animated::new(0.0),
+            source_path: None,
             current_frame: Mutex::new(None),
             loader,
             render_mode: mode,
             temp_file,
             path,
         }
+    }
+
+    pub fn with_source_path(mut self, path: impl Into<String>) -> Self {
+        self.source_path = Some(path.into());
+        self
     }
 }
 

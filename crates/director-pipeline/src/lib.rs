@@ -551,6 +551,147 @@ fn build_node_recursive(
                     glow_color: glow_color.unwrap_or(Color::new(0.0, 1.0, 1.0, 1.0)),
                     threshold: Animated::new(*threshold),
                 },
+                EffectConfig::Fisheye { strength } => {
+                    EffectType::Fisheye(Animated::new(*strength))
+                }
+                EffectConfig::Bulge { strength, radius } => EffectType::Bulge {
+                    strength: Animated::new(*strength),
+                    radius: Animated::new(*radius),
+                },
+                EffectConfig::Barrel { curvature } => {
+                    EffectType::Barrel(Animated::new(*curvature))
+                }
+                EffectConfig::LensFlare { intensity, color } => EffectType::LensFlare {
+                    intensity: Animated::new(*intensity),
+                    color: color.unwrap_or(Color::new(1.0, 0.9, 0.7, 1.0)),
+                },
+                EffectConfig::Noir { contrast } => {
+                    EffectType::Noir(Animated::new(*contrast))
+                }
+                EffectConfig::Cyberpunk { intensity } => {
+                    EffectType::Cyberpunk(Animated::new(*intensity))
+                }
+                EffectConfig::Vintage { amount } => EffectType::Vintage(Animated::new(*amount)),
+                EffectConfig::Gameboy => EffectType::Gameboy,
+                EffectConfig::BleachBypass { amount } => {
+                    EffectType::BleachBypass(Animated::new(*amount))
+                }
+                EffectConfig::TealOrange { amount } => {
+                    EffectType::TealOrange(Animated::new(*amount))
+                }
+                EffectConfig::Plasma { scale, speed } => EffectType::Plasma {
+                    scale: Animated::new(*scale),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::Hologram { intensity } => {
+                    EffectType::Hologram(Animated::new(*intensity))
+                }
+                EffectConfig::Emboss { angle, strength } => EffectType::Emboss {
+                    angle: Animated::new(*angle),
+                    strength: Animated::new(*strength),
+                },
+                EffectConfig::Toon { levels, edge } => EffectType::Toon {
+                    levels: Animated::new(*levels),
+                    edge: Animated::new(*edge),
+                },
+                EffectConfig::OilPaint { block_size, levels } => EffectType::OilPaint {
+                    block_size: Animated::new(*block_size),
+                    levels: Animated::new(*levels),
+                },
+                EffectConfig::LightLeak { intensity, color } => EffectType::LightLeak {
+                    intensity: Animated::new(*intensity),
+                    color: color.unwrap_or(Color::new(1.0, 0.6, 0.3, 1.0)),
+                },
+                EffectConfig::Aurora { intensity, speed } => EffectType::Aurora {
+                    intensity: Animated::new(*intensity),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::Sunrays { intensity, angle, speed } => EffectType::SunRays {
+                    intensity: Animated::new(*intensity),
+                    angle: Animated::new(*angle),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::SkinSmooth { intensity, radius } => EffectType::SkinSmooth {
+                    intensity: Animated::new(*intensity),
+                    radius: Animated::new(*radius),
+                },
+                EffectConfig::BeautyGlow { intensity, threshold } => EffectType::BeautyGlow {
+                    intensity: Animated::new(*intensity),
+                    threshold: Animated::new(*threshold),
+                },
+                EffectConfig::SoftFocus { amount } => {
+                    EffectType::SoftFocus { amount: Animated::new(*amount) }
+                },
+                EffectConfig::Vibrance { amount } => {
+                    EffectType::Vibrance { amount: Animated::new(*amount) }
+                },
+                EffectConfig::Fog { intensity, color } => EffectType::Fog {
+                    intensity: Animated::new(*intensity),
+                    color: color.unwrap_or(Color::new(0.8, 0.85, 0.9, 1.0)),
+                },
+                EffectConfig::Mist { intensity, speed } => EffectType::Mist {
+                    intensity: Animated::new(*intensity),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::Rain { intensity, speed } => EffectType::Rain {
+                    intensity: Animated::new(*intensity),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::Snow { intensity, speed, size } => EffectType::Snow {
+                    intensity: Animated::new(*intensity),
+                    speed: Animated::new(*speed),
+                    size: Animated::new(*size),
+                },
+                EffectConfig::Dust { intensity, speed } => EffectType::Dust {
+                    intensity: Animated::new(*intensity),
+                    speed: Animated::new(*speed),
+                },
+                EffectConfig::BokehDots { intensity, size, color } => EffectType::BokehDots {
+                    intensity: Animated::new(*intensity),
+                    size: Animated::new(*size),
+                    color: color.unwrap_or(Color::new(1.0, 0.9, 0.7, 1.0)),
+                },
+                EffectConfig::FilmLook { amount, grain } => EffectType::FilmLook {
+                    amount: Animated::new(*amount),
+                    grain: Animated::new(*grain),
+                },
+                EffectConfig::OrangeTeal { amount } => {
+                    EffectType::OrangeTeal { amount: Animated::new(*amount) }
+                },
+                EffectConfig::CrossProcess { amount } => {
+                    EffectType::CrossProcess { amount: Animated::new(*amount) }
+                },
+                EffectConfig::Polaroid { amount } => {
+                    EffectType::Polaroid { amount: Animated::new(*amount) }
+                },
+                EffectConfig::FadedFilm { amount } => {
+                    EffectType::FadedFilm { amount: Animated::new(*amount) }
+                },
+                EffectConfig::Midnight { amount } => {
+                    EffectType::Midnight { amount: Animated::new(*amount) }
+                },
+                EffectConfig::Watercolor { intensity, edge } => EffectType::Watercolor {
+                    intensity: Animated::new(*intensity),
+                    edge: Animated::new(*edge),
+                },
+                EffectConfig::Crosshatch { intensity, density } => EffectType::Crosshatch {
+                    intensity: Animated::new(*intensity),
+                    density: Animated::new(*density),
+                },
+                EffectConfig::Pointillism { dot_size, intensity } => EffectType::Pointillism {
+                    dot_size: Animated::new(*dot_size),
+                    intensity: Animated::new(*intensity),
+                },
+                EffectConfig::Mosaic { tile_size } => {
+                    EffectType::Mosaic { tile_size: Animated::new(*tile_size) }
+                },
+                EffectConfig::Ink { threshold, intensity } => EffectType::Ink {
+                    threshold: Animated::new(*threshold),
+                    intensity: Animated::new(*intensity),
+                },
+                EffectConfig::PencilColor { intensity } => {
+                    EffectType::PencilColor { intensity: Animated::new(*intensity) }
+                },
                 EffectConfig::SkslShader { code, uniforms } => {
                     let mut uniform_map = HashMap::new();
                     for (k, v) in uniforms {
@@ -1090,6 +1231,9 @@ fn easing_to_str(easing: &EasingType) -> &'static str {
         EasingType::BackOut => "back_out",
         EasingType::BackIn => "back_in",
         EasingType::BackInOut => "back_in_out",
+        EasingType::CubicBezier { .. } => "cubic_bezier",
+        EasingType::Hold => "hold",
+        EasingType::Expression { .. } => "expression",
     }
 }
 

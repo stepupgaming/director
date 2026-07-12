@@ -299,25 +299,62 @@ pub fn parse_font_weight(w: &rhai::Dynamic) -> Option<u16> {
         };
     }
     None
+}/// Parse easing type from string.
+pub fn parse_easing(ease: &str) -> EasingType {
+    parse_easing_result(ease).unwrap_or(EasingType::Linear)
 }
 
-/// Parse easing type from string.
-pub fn parse_easing(ease: &str) -> EasingType {
+/// Parse easing type from string, logging an error with the valid name list on failure.
+pub fn parse_easing_loud(ease: &str) -> EasingType {
+    match parse_easing_result(ease) {
+        Ok(e) => e,
+        Err(msg) => {
+            tracing::error!("{msg}");
+            EasingType::Linear
+        }
+    }
+}
+
+
+/// Parse easing type from string, returning an error for unknown names.
+pub fn parse_easing_result(ease: &str) -> Result<EasingType, String> {
+    if let Some(inner) = ease.strip_prefix("cubic_bezier(") {
+        let inner = inner.strip_suffix(')').ok_or_else(|| "missing closing parenthesis in cubic_bezier(...)".to_string())?;
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err("cubic_bezier expects 4 numbers: x1,y1,x2,y2".to_string());
+        }
+        let vals: Vec<f64> = parts
+            .iter()
+            .map(|s| s.trim().parse::<f64>().map_err(|e| format!("{e}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(EasingType::CubicBezier {
+            x1: vals[0],
+            y1: vals[1],
+            x2: vals[2],
+            y2: vals[3],
+        });
+    }
+    if let Some(inner) = ease.strip_prefix("expr(") {
+        let expr = inner.strip_suffix(')').ok_or_else(|| "missing closing parenthesis in expr(...)".to_string())?;
+        return Ok(EasingType::Expression { expr: expr.to_string() });
+    }
     match ease {
-        "linear" => EasingType::Linear,
-        "ease_in" => EasingType::EaseIn,
-        "ease_out" => EasingType::EaseOut,
-        "ease_in_out" => EasingType::EaseInOut,
-        "bounce_out" => EasingType::BounceOut,
-        "bounce_in" => EasingType::BounceIn,
-        "bounce_in_out" => EasingType::BounceInOut,
-        "elastic_out" => EasingType::ElasticOut,
-        "elastic_in" => EasingType::ElasticIn,
-        "elastic_in_out" => EasingType::ElasticInOut,
-        "back_out" => EasingType::BackOut,
-        "back_in" => EasingType::BackIn,
-        "back_in_out" => EasingType::BackInOut,
-        _ => EasingType::Linear,
+        "linear" => Ok(EasingType::Linear),
+        "ease_in" => Ok(EasingType::EaseIn),
+        "ease_out" => Ok(EasingType::EaseOut),
+        "ease_in_out" => Ok(EasingType::EaseInOut),
+        "bounce_out" => Ok(EasingType::BounceOut),
+        "bounce_in" => Ok(EasingType::BounceIn),
+        "bounce_in_out" => Ok(EasingType::BounceInOut),
+        "elastic_out" => Ok(EasingType::ElasticOut),
+        "elastic_in" => Ok(EasingType::ElasticIn),
+        "elastic_in_out" => Ok(EasingType::ElasticInOut),
+        "back_out" => Ok(EasingType::BackOut),
+        "back_in" => Ok(EasingType::BackIn),
+        "back_in_out" => Ok(EasingType::BackInOut),
+        "hold" | "step" => Ok(EasingType::Hold),
+        _ => Err(format!("unknown easing '{}'; valid: linear, ease_in/out/in_out, bounce_*, elastic_*, back_*, hold/step, cubic_bezier(x1,y1,x2,y2), expr(...)", ease)),
     }
 }
 
@@ -398,6 +435,17 @@ pub fn parse_layout_style(props: &rhai::Map, style: &mut Style) {
             "space_around" | "space-around" => Some(JustifyContent::SpaceAround),
             "space_evenly" | "space-evenly" => Some(JustifyContent::SpaceEvenly),
             _ => Some(JustifyContent::FlexStart),
+        };
+    }
+
+    if let Some(s) = props
+        .get("flex_wrap")
+        .and_then(|v| v.clone().into_string().ok())
+    {
+        style.flex_wrap = match s.as_str() {
+            "wrap" => FlexWrap::Wrap,
+            "wrap_reverse" | "wrap-reverse" => FlexWrap::WrapReverse,
+            _ => FlexWrap::NoWrap,
         };
     }
 
@@ -698,6 +746,14 @@ pub fn style_to_json(style: &Style) -> JsonMap<String, JsonValue> {
             taffy::style::FlexDirection::ColumnReverse => "column_reverse",
         }),
     );
+    m.insert(
+        "flex_wrap".into(),
+        JsonValue::from(match style.flex_wrap {
+            taffy::style::FlexWrap::Wrap => "wrap",
+            taffy::style::FlexWrap::WrapReverse => "wrap_reverse",
+            _ => "no_wrap",
+        }),
+    );
     if let Some(a) = style.align_items {
         m.insert(
             "align_items".into(),
@@ -771,7 +827,134 @@ fn json_to_rhai(v: &JsonValue) -> Dynamic {
         }
         JsonValue::String(s) => Dynamic::from(s.clone()),
         JsonValue::Array(a) => Dynamic::from(a.iter().map(json_to_rhai).collect::<Vec<Dynamic>>()),
-        JsonValue::Object(_) => Dynamic::UNIT,
+        JsonValue::Object(o) => {
+            let mut m: rhai::Map = rhai::Map::new();
+            for (k, v) in o {
+                m.insert(k.clone().into(), json_to_rhai(v));
+            }
+            Dynamic::from(m)
+        }
+    }
+}
+
+/// Build a `rhai::Map` from a `serde_json::Map` so the canonical Rhai parsers
+/// (`parse_layout_style`, `apply_text_props`, ...) can consume it.
+pub fn json_map_to_rhai(json: &JsonMap<String, JsonValue>) -> rhai::Map {
+    let mut map: rhai::Map = rhai::Map::new();
+    for (k, v) in json {
+        map.insert(k.clone().into(), json_to_rhai(v));
+    }
+    map
+}
+
+/// Serialize a `TextNode` into the same Rhai-props vocabulary consumed by
+/// `parse_spans_from_dynamic` + `apply_text_props` + `parse_text_shadow`, so a
+/// project save/load round-trip can faithfully restore rich text. Layout is
+/// intentionally excluded (see `style_to_json`); merge the two maps on load.
+pub fn text_node_to_json(t: &crate::node::text::TextNode) -> JsonMap<String, JsonValue> {
+    let mut m = JsonMap::new();
+
+    let spans: Vec<JsonValue> = t
+        .spans
+        .iter()
+        .map(|s| {
+            let mut sm = JsonMap::new();
+            sm.insert("text".into(), JsonValue::from(s.text.clone()));
+            if let Some(c) = s.color {
+                sm.insert("color".into(), JsonValue::from(color_hex(c)));
+            }
+            if let Some(w) = s.font_weight {
+                sm.insert("weight".into(), JsonValue::from(w as i64));
+            }
+            if let Some(fs) = s.font_size {
+                sm.insert("size".into(), JsonValue::from(fs as f64));
+            }
+            if let Some(f) = &s.font_family {
+                sm.insert("font_family".into(), JsonValue::from(f.clone()));
+            }
+            if let Some(st) = &s.font_style {
+                sm.insert("font_style".into(), JsonValue::from(st.clone()));
+            }
+            if let Some(c) = s.background_color {
+                sm.insert("background_color".into(), JsonValue::from(color_hex(c)));
+            }
+            if let Some(p) = s.background_padding {
+                sm.insert("background_padding".into(), JsonValue::from(p as f64));
+            }
+            if let Some(w) = s.stroke_width {
+                sm.insert("stroke_width".into(), JsonValue::from(w as f64));
+            }
+            if let Some(c) = s.stroke_color {
+                sm.insert("stroke_color".into(), JsonValue::from(color_hex(c)));
+            }
+            if let Some(ls) = s.letter_spacing {
+                sm.insert("letter_spacing".into(), JsonValue::from(ls as f64));
+            }
+            if let Some(lh) = s.line_height {
+                sm.insert("line_height".into(), JsonValue::from(lh as f64));
+            }
+            JsonValue::Object(sm)
+        })
+        .collect();
+    m.insert("content".into(), JsonValue::Array(spans));
+
+    m.insert("size".into(), JsonValue::from(t.default_font_size.current_value as f64));
+    m.insert("color".into(), JsonValue::from(color_hex(t.default_color.current_value)));
+
+    match t.fit_mode {
+        crate::element::TextFit::Shrink => {
+            m.insert("fit".into(), JsonValue::from("shrink"));
+        }
+        crate::element::TextFit::None => {
+            m.insert("fit".into(), JsonValue::from("auto"));
+        }
+    }
+    m.insert("min_size".into(), JsonValue::from(t.min_size as f64));
+    m.insert("max_size".into(), JsonValue::from(t.max_size as f64));
+    m.insert(
+        "align".into(),
+        JsonValue::from(match t.text_align {
+            skia_safe::textlayout::TextAlign::Center => "center",
+            skia_safe::textlayout::TextAlign::Right => "right",
+            skia_safe::textlayout::TextAlign::Justify => "justify",
+            _ => "left",
+        }),
+    );
+    m.insert(
+        "text_direction".into(),
+        JsonValue::from(match t.text_direction {
+            crate::text_direction::TextDirectionMode::Ltr => "ltr",
+            crate::text_direction::TextDirectionMode::Rtl => "rtl",
+            _ => "auto",
+        }),
+    );
+    if let Some(sh) = &t.shadow {
+        m.insert("text_shadow_color".into(), JsonValue::from(color_hex(sh.color)));
+        m.insert("text_shadow_blur".into(), JsonValue::from(sh.blur as f64));
+        m.insert("text_shadow_x".into(), JsonValue::from(sh.offset.0 as f64));
+        m.insert("text_shadow_y".into(), JsonValue::from(sh.offset.1 as f64));
+    }
+    m
+}
+
+/// `#rrggbb` (or `#rrggbbaa`) hex string for a `Color`, matching the format
+/// `parse_hex_color` / `parse_text_style` consume.
+fn color_hex(c: Color) -> String {
+    if (c.a * 255.0).round() as u8 == 255 {
+        format!(
+            "#{:02x}{:02x}{:02x}",
+            (c.r * 255.0) as u8,
+            (c.g * 255.0) as u8,
+            (c.b * 255.0) as u8
+        )
+    } else {
+        format!(
+            "#{:02x}{:02x}{:02x}{:02x}",
+            (c.r * 255.0) as u8,
+            (c.g * 255.0) as u8,
+            (c.b * 255.0) as u8,
+            (c.a * 255.0) as u8
+        )
     }
 }
 

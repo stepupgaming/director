@@ -175,6 +175,173 @@ pub enum EffectType {
         glow_color: Color,
         threshold: Animated<f32>,
     },
+    /// Fisheye: radial magnification (or pinch when negative).
+    Fisheye(Animated<f32>),
+    /// Bulge: localized magnification/pinch around the center.
+    Bulge {
+        strength: Animated<f32>,
+        radius: Animated<f32>,
+    },
+    /// Barrel: barrel/pincushion lens distortion.
+    Barrel(Animated<f32>),
+    /// LensFlare: additive radial glow and streak.
+    LensFlare {
+        intensity: Animated<f32>,
+        color: Color,
+    },
+    /// Noir: high-contrast monochrome.
+    Noir(Animated<f32>),
+    /// Cyberpunk: magenta/cyan color grade.
+    Cyberpunk(Animated<f32>),
+    /// Vintage: faded warm film grade.
+    Vintage(Animated<f32>),
+    /// Gameboy: 4-tone green palette.
+    Gameboy,
+    /// BleachBypass: desaturated high-contrast film look.
+    BleachBypass(Animated<f32>),
+    /// TealOrange: cinematic teal-shadow / orange-highlight grade.
+    TealOrange(Animated<f32>),
+    /// Plasma: animated color plasma overlay.
+    Plasma {
+        scale: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// Hologram: chromatic scanline cyan hologram.
+    Hologram(Animated<f32>),
+    /// Emboss: directional emboss.
+    Emboss {
+        angle: Animated<f32>,
+        strength: Animated<f32>,
+    },
+    /// Toon: cel-shaded posterize with outline.
+    Toon {
+        levels: Animated<f32>,
+        edge: Animated<f32>,
+    },
+    /// OilPaint: quantized color blocks.
+    OilPaint {
+        block_size: Animated<f32>,
+        levels: Animated<f32>,
+    },
+    /// LightLeak: warm radial gradient overlay.
+    LightLeak {
+        intensity: Animated<f32>,
+        color: Color,
+    },
+    /// Aurora: animated vertical light bands.
+    Aurora {
+        intensity: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// SunRays: radial light rays from the center.
+    SunRays {
+        intensity: Animated<f32>,
+        angle: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// SkinSmooth: edge-preserving (bilateral-ish) smoothing for portraits.
+    SkinSmooth {
+        intensity: Animated<f32>,
+        radius: Animated<f32>,
+    },
+    /// BeautyGlow: soft diffuse glow biased to bright areas.
+    BeautyGlow {
+        intensity: Animated<f32>,
+        threshold: Animated<f32>,
+    },
+    /// SoftFocus: dreamy diffusion (source mixed with a wide blur).
+    SoftFocus {
+        amount: Animated<f32>,
+    },
+    /// Vibrance: selective saturation boost (lifts low-saturation colors more).
+    Vibrance {
+        amount: Animated<f32>,
+    },
+    /// Fog: ground-hugging atmospheric mist toward a tint color.
+    Fog {
+        intensity: Animated<f32>,
+        color: Color,
+    },
+    /// Mist: animated drifting haze bands.
+    Mist {
+        intensity: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// Rain: animated slanted rain columns.
+    Rain {
+        intensity: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// Snow: animated drifting snow flakes.
+    Snow {
+        intensity: Animated<f32>,
+        speed: Animated<f32>,
+        size: Animated<f32>,
+    },
+    /// Dust: floating bokeh dust motes.
+    Dust {
+        intensity: Animated<f32>,
+        speed: Animated<f32>,
+    },
+    /// BokehDots: decorative out-of-focus colored circles.
+    BokehDots {
+        intensity: Animated<f32>,
+        size: Animated<f32>,
+        color: Color,
+    },
+    /// FilmLook: film-stock emulation (contrast + color + grain).
+    FilmLook {
+        amount: Animated<f32>,
+        grain: Animated<f32>,
+    },
+    /// OrangeTeal: split-tone teal-shadow/orange-highlight grade (alt algorithm).
+    OrangeTeal {
+        amount: Animated<f32>,
+    },
+    /// CrossProcess: lomo cross-process (crushed greens, cyan shadows, vignette).
+    CrossProcess {
+        amount: Animated<f32>,
+    },
+    /// Polaroid: instant-film warm wash with a soft vignette.
+    Polaroid {
+        amount: Animated<f32>,
+    },
+    /// FadedFilm: low-contrast matte washed look with lifted blacks.
+    FadedFilm {
+        amount: Animated<f32>,
+    },
+    /// Midnight: cool blue-night grade biased to shadows.
+    Midnight {
+        amount: Animated<f32>,
+    },
+    /// Watercolor: soft quantized washes with a paper edge.
+    Watercolor {
+        intensity: Animated<f32>,
+        edge: Animated<f32>,
+    },
+    /// Crosshatch: progressive ink hatching in darker regions.
+    Crosshatch {
+        intensity: Animated<f32>,
+        density: Animated<f32>,
+    },
+    /// Pointillism: painted-dot stipple on a paper background.
+    Pointillism {
+        dot_size: Animated<f32>,
+        intensity: Animated<f32>,
+    },
+    /// Mosaic: square tile grid with dark grout between tiles.
+    Mosaic {
+        tile_size: Animated<f32>,
+    },
+    /// Ink: bold black ink outline on white.
+    Ink {
+        threshold: Animated<f32>,
+        intensity: Animated<f32>,
+    },
+    /// PencilColor: colored-pencil sketch keeping the source hue.
+    PencilColor {
+        intensity: Animated<f32>,
+    },
 }
 
 impl EffectType {
@@ -294,6 +461,111 @@ impl EffectType {
             EffectType::NeonEdge { threshold, .. } => {
                 threshold.update(time);
             }
+            EffectType::Fisheye(a) => a.update(time),
+            EffectType::Bulge { strength, radius } => {
+                strength.update(time);
+                radius.update(time);
+            }
+            EffectType::Barrel(a) => a.update(time),
+            EffectType::LensFlare { intensity, .. } => {
+                intensity.update(time);
+            }
+            EffectType::Noir(a) => a.update(time),
+            EffectType::Cyberpunk(a) => a.update(time),
+            EffectType::Vintage(a) => a.update(time),
+            EffectType::Gameboy => {}
+            EffectType::BleachBypass(a) => a.update(time),
+            EffectType::TealOrange(a) => a.update(time),
+            EffectType::Plasma { scale, speed } => {
+                scale.update(time);
+                speed.update(time);
+            }
+            EffectType::Hologram(a) => a.update(time),
+            EffectType::Emboss { angle, strength } => {
+                angle.update(time);
+                strength.update(time);
+            }
+            EffectType::Toon { levels, edge } => {
+                levels.update(time);
+                edge.update(time);
+            }
+            EffectType::OilPaint { block_size, levels } => {
+                block_size.update(time);
+                levels.update(time);
+            }
+            EffectType::LightLeak { intensity, .. } => {
+                intensity.update(time);
+            }
+            EffectType::Aurora { intensity, speed } => {
+                intensity.update(time);
+                speed.update(time);
+            }
+            EffectType::SunRays { intensity, angle, speed } => {
+                intensity.update(time);
+                angle.update(time);
+                speed.update(time);
+            }
+            EffectType::SkinSmooth { intensity, radius } => {
+                intensity.update(time);
+                radius.update(time);
+            }
+            EffectType::BeautyGlow { intensity, threshold } => {
+                intensity.update(time);
+                threshold.update(time);
+            }
+            EffectType::SoftFocus { amount } => amount.update(time),
+            EffectType::Vibrance { amount } => amount.update(time),
+            EffectType::Fog { intensity, .. } => {
+                intensity.update(time);
+            }
+            EffectType::Mist { intensity, speed } => {
+                intensity.update(time);
+                speed.update(time);
+            }
+            EffectType::Rain { intensity, speed } => {
+                intensity.update(time);
+                speed.update(time);
+            }
+            EffectType::Snow { intensity, speed, size } => {
+                intensity.update(time);
+                speed.update(time);
+                size.update(time);
+            }
+            EffectType::Dust { intensity, speed } => {
+                intensity.update(time);
+                speed.update(time);
+            }
+            EffectType::BokehDots { intensity, size, .. } => {
+                intensity.update(time);
+                size.update(time);
+            }
+            EffectType::FilmLook { amount, grain } => {
+                amount.update(time);
+                grain.update(time);
+            }
+            EffectType::OrangeTeal { amount } => amount.update(time),
+            EffectType::CrossProcess { amount } => amount.update(time),
+            EffectType::Polaroid { amount } => amount.update(time),
+            EffectType::FadedFilm { amount } => amount.update(time),
+            EffectType::Midnight { amount } => amount.update(time),
+            EffectType::Watercolor { intensity, edge } => {
+                intensity.update(time);
+                edge.update(time);
+            }
+            EffectType::Crosshatch { intensity, density } => {
+                intensity.update(time);
+                density.update(time);
+            }
+            EffectType::Pointillism { dot_size, intensity } => {
+                dot_size.update(time);
+                intensity.update(time);
+            }
+            EffectType::Mosaic { tile_size } => tile_size.update(time),
+            EffectType::Ink { threshold, intensity } => {
+                threshold.update(time);
+                intensity.update(time);
+            }
+            EffectType::PencilColor { intensity } => intensity.update(time),
         }
     }
 }
@@ -388,290 +660,79 @@ pub fn build_effect_filter(
                 angle,
                 samples: _,
             } => {
-                // Use fixed 16 samples for simplicity and compatibility
-                // (SkSL has restrictions on dynamic loop bounds)
-                let sksl = r#"
-uniform shader image;
-uniform float2 u_resolution;
-uniform float u_strength;
-uniform float u_angle;
-
-half4 main(float2 pos) {
-    float rad = radians(u_angle);
-    float2 dir = float2(cos(rad), sin(rad));
-    
-    half4 color = half4(0.0);
-    // Fixed 16 samples for motion blur
-    for (int i = 0; i < 16; i++) {
-        float t = (float(i) - 7.5) / 8.0;  // Range: -0.9375 to +0.9375
-        float2 offset = dir * u_strength * t;
-        color += image.eval(pos + offset);
-    }
-    return color / 16.0;
-}
-"#;
-                if let Some(cache_arc) = shader_cache {
-                    let cache_key = "__directional_blur__".to_string();
-                    let mut cache = cache_arc.lock().unwrap();
-                    if !cache.contains_key(&cache_key) {
-                        match RuntimeEffect::make_for_shader(sksl, None) {
-                            Ok(effect) => {
-                                cache.insert(cache_key.clone(), effect);
-                            }
-                            Err(e) => {
-                                error!("DirectionalBlur shader compilation error: {}", e);
-                                continue;
-                            }
-                        }
-                    }
-                    if let Some(effect) = cache.get(&cache_key) {
-                        let mut builder = RuntimeShaderBuilder::new(effect.clone());
-                        let _ = builder
-                            .set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
-                        let _ = builder.set_uniform_float("u_strength", &[strength.current_value]);
-                        let _ = builder.set_uniform_float("u_angle", &[angle.current_value]);
-                        current_filter =
-                            image_filters::runtime_shader(&builder, "image", current_filter);
-                    }
-                }
+                current_filter = super::effect_shaders::build_directional_blur(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    strength.current_value,
+                    angle.current_value,
+                );
             }
             EffectType::FilmGrain { intensity, size } => {
-                let sksl = r#"
-uniform shader image;
-uniform float2 u_resolution;
-uniform float u_time;
-uniform float u_intensity;
-uniform float u_size;
-
-float hash(float2 p) {
-    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
-}
-
-half4 main(float2 pos) {
-    half4 color = image.eval(pos);
-    
-    // Animated grain based on time and position
-    float2 grain_pos = floor(pos / u_size) + floor(u_time * 24.0);
-    float grain = hash(grain_pos) * 2.0 - 1.0;
-    
-    color.rgb += half3(grain * u_intensity);
-    return color;
-}
-"#;
-                if let Some(cache_arc) = shader_cache {
-                    let cache_key = "__film_grain__".to_string();
-                    let mut cache = cache_arc.lock().unwrap();
-                    if !cache.contains_key(&cache_key) {
-                        match RuntimeEffect::make_for_shader(sksl, None) {
-                            Ok(effect) => {
-                                cache.insert(cache_key.clone(), effect);
-                            }
-                            Err(e) => {
-                                error!("FilmGrain shader compilation error: {}", e);
-                                continue;
-                            }
-                        }
-                    }
-                    if let Some(effect) = cache.get(&cache_key) {
-                        let mut builder = RuntimeShaderBuilder::new(effect.clone());
-                        let _ = builder
-                            .set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
-                        let _ = builder.set_uniform_float("u_time", &[time]);
-                        let _ =
-                            builder.set_uniform_float("u_intensity", &[intensity.current_value]);
-                        let _ = builder.set_uniform_float("u_size", &[size.current_value]);
-                        current_filter =
-                            image_filters::runtime_shader(&builder, "image", current_filter);
-                    }
-                }
+                current_filter = super::effect_shaders::build_film_grain(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    intensity.current_value,
+                    size.current_value,
+                );
             }
             EffectType::Vignette {
                 intensity,
                 radius,
                 feather,
-            } => if let Some(cache_arc) = shader_cache {
-                let sksl = r#"
-uniform shader image;
-uniform float2 u_resolution;
-uniform float u_intensity;
-uniform float u_radius;
-uniform float u_feather;
-
-half4 main(float2 pos) {
-    half4 color = image.eval(pos);
-    float2 center = u_resolution * 0.5;
-    float dist = distance(pos, center) / length(center);
-    float v = 1.0 - smoothstep(u_radius - u_feather, u_radius + u_feather, dist) * u_intensity;
-    return half4(color.rgb * v, color.a);
-}
-"#;
-                let cache_key = "__vignette__".to_string();
-                let mut cache = cache_arc.lock().unwrap();
-                if !cache.contains_key(&cache_key) {
-                    match RuntimeEffect::make_for_shader(sksl, None) {
-                        Ok(effect) => cache.insert(cache_key.clone(), effect),
-                        Err(e) => {
-                            error!("Vignette shader compilation error: {}", e);
-                            continue;
-                        }
-                    };
-                }
-                if let Some(effect) = cache.get(&cache_key) {
-                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
-                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
-                    let _ = builder.set_uniform_float("u_intensity", &[intensity.current_value]);
-                    let _ = builder.set_uniform_float("u_radius", &[radius.current_value]);
-                    let _ = builder.set_uniform_float("u_feather", &[feather.current_value]);
-                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
-                }
+            } => {
+                current_filter = super::effect_shaders::build_vignette(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    intensity.current_value,
+                    radius.current_value,
+                    feather.current_value,
+                );
             }
-            EffectType::ChromaticAberration(strength) => if let Some(cache_arc) = shader_cache {
-                let sksl = r#"
-uniform shader image;
-uniform float2 u_resolution;
-uniform float u_strength;
-
-half4 main(float2 pos) {
-    half4 color = image.eval(pos);
-    float r = image.eval(pos + float2(u_strength, 0.0)).r;
-    float g = color.g;
-    float b = image.eval(pos - float2(u_strength, 0.0)).b;
-    return half4(r, g, b, color.a);
-}
-"#;
-                let cache_key = "__chromatic_aberration__".to_string();
-                let mut cache = cache_arc.lock().unwrap();
-                if !cache.contains_key(&cache_key) {
-                    match RuntimeEffect::make_for_shader(sksl, None) {
-                        Ok(effect) => cache.insert(cache_key.clone(), effect),
-                        Err(e) => {
-                            error!("ChromaticAberration shader compilation error: {}", e);
-                            continue;
-                        }
-                    };
-                }
-                if let Some(effect) = cache.get(&cache_key) {
-                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
-                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
-                    let _ = builder.set_uniform_float("u_strength", &[strength.current_value]);
-                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
-                }
+            EffectType::ChromaticAberration(strength) => {
+                current_filter = super::effect_shaders::build_chromatic_aberration(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    strength.current_value,
+                );
             }
-            EffectType::Pixelate(block_size) => if let Some(cache_arc) = shader_cache {
-                let sksl = r#"
-uniform shader image;
-uniform float2 u_resolution;
-uniform float u_block_size;
-
-half4 main(float2 pos) {
-    float2 block = floor(pos / u_block_size) * u_block_size + u_block_size * 0.5;
-    return image.eval(block);
-}
-"#;
-                let cache_key = "__pixelate__".to_string();
-                let mut cache = cache_arc.lock().unwrap();
-                if !cache.contains_key(&cache_key) {
-                    match RuntimeEffect::make_for_shader(sksl, None) {
-                        Ok(effect) => cache.insert(cache_key.clone(), effect),
-                        Err(e) => {
-                            error!("Pixelate shader compilation error: {}", e);
-                            continue;
-                        }
-                    };
-                }
-                if let Some(effect) = cache.get(&cache_key) {
-                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
-                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
-                    let _ = builder.set_uniform_float("u_block_size", &[block_size.current_value]);
-                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
-                }
+            EffectType::Pixelate(block_size) => {
+                current_filter = super::effect_shaders::build_pixelate(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    block_size.current_value,
+                );
             }
-            EffectType::Sharpen(strength) => if let Some(cache_arc) = shader_cache {
-                let sksl = r#"
-uniform shader image;
-uniform float2 u_resolution;
-uniform float u_strength;
-
-half4 main(float2 pos) {
-    half4 center = image.eval(pos);
-    half4 n[8];
-    n[0] = image.eval(pos + float2(-1, -1));
-    n[1] = image.eval(pos + float2(0, -1));
-    n[2] = image.eval(pos + float2(1, -1));
-    n[3] = image.eval(pos + float2(-1, 0));
-    n[4] = image.eval(pos + float2(1, 0));
-    n[5] = image.eval(pos + float2(-1, 1));
-    n[6] = image.eval(pos + float2(0, 1));
-    n[7] = image.eval(pos + float2(1, 1));
-    half4 sum = n[0] + n[1] + n[2] + n[3] + n[4] + n[5] + n[6] + n[7];
-    half4 laplacian = center * 9.0 - sum;
-    return center + laplacian * u_strength;
-}
-"#;
-                let cache_key = "__sharpen__".to_string();
-                let mut cache = cache_arc.lock().unwrap();
-                if !cache.contains_key(&cache_key) {
-                    match RuntimeEffect::make_for_shader(sksl, None) {
-                        Ok(effect) => cache.insert(cache_key.clone(), effect),
-                        Err(e) => {
-                            error!("Sharpen shader compilation error: {}", e);
-                            continue;
-                        }
-                    };
-                }
-                if let Some(effect) = cache.get(&cache_key) {
-                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
-                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
-                    let _ = builder.set_uniform_float("u_strength", &[strength.current_value]);
-                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
-                }
+            EffectType::Sharpen(strength) => {
+                current_filter = super::effect_shaders::build_sharpen(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    strength.current_value,
+                );
             }
             EffectType::Glow {
                 intensity,
                 threshold,
-            } => if let Some(cache_arc) = shader_cache {
-                let sksl = r#"
-uniform shader image;
-uniform float2 u_resolution;
-uniform float u_intensity;
-uniform float u_threshold;
-
-half4 main(float2 pos) {
-    half4 color = image.eval(pos);
-    float lum = dot(color.rgb, half3(0.2126, 0.7152, 0.0722));
-    half4 blur = half4(0);
-    int radius = 4;
-    int count = 0;
-    for (int x = -radius; x <= radius; x += 2) {
-        for (int y = -radius; y <= radius; y += 2) {
-            blur += image.eval(pos + float2(float(x), float(y)));
-            count++;
-        }
-    }
-    blur /= float(count);
-    float glow_lum = dot(blur.rgb, half3(0.2126, 0.7152, 0.0722));
-    float mask = smoothstep(u_threshold, 1.0, glow_lum) * u_intensity;
-    return half4(min(color.rgb + blur.rgb * mask, 1.0), color.a);
-}
-"#;
-                let cache_key = "__glow__".to_string();
-                let mut cache = cache_arc.lock().unwrap();
-                if !cache.contains_key(&cache_key) {
-                    match RuntimeEffect::make_for_shader(sksl, None) {
-                        Ok(effect) => cache.insert(cache_key.clone(), effect),
-                        Err(e) => {
-                            error!("Glow shader compilation error: {}", e);
-                            continue;
-                        }
-                    };
-                }
-                if let Some(effect) = cache.get(&cache_key) {
-                    let mut builder = RuntimeShaderBuilder::new(effect.clone());
-                    let _ = builder.set_uniform_float("u_resolution", &[resolution.0, resolution.1]);
-                    let _ = builder.set_uniform_float("u_intensity", &[intensity.current_value]);
-                    let _ = builder.set_uniform_float("u_threshold", &[threshold.current_value]);
-                    current_filter = image_filters::runtime_shader(&builder, "image", current_filter);
-                }
+            } => {
+                current_filter = super::effect_shaders::build_glow(
+                    shader_cache,
+                    resolution,
+                    time,
+                    current_filter,
+                    intensity.current_value,
+                    threshold.current_value,
+                );
             }
             EffectType::Warp {
                 amplitude,
@@ -868,6 +929,245 @@ half4 main(float2 pos) {
                     *glow_color, threshold.current_value,
                 );
             }
+            EffectType::Fisheye(strength) => {
+                current_filter = super::effect_shaders::build_fisheye(
+                    shader_cache, resolution, time, current_filter,
+                    strength.current_value,
+                );
+            }
+            EffectType::Bulge { strength, radius } => {
+                current_filter = super::effect_shaders::build_bulge(
+                    shader_cache, resolution, time, current_filter,
+                    strength.current_value, radius.current_value,
+                );
+            }
+            EffectType::Barrel(curvature) => {
+                current_filter = super::effect_shaders::build_barrel(
+                    shader_cache, resolution, time, current_filter,
+                    curvature.current_value,
+                );
+            }
+            EffectType::LensFlare { intensity, color } => {
+                current_filter = super::effect_shaders::build_lens_flare(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, *color,
+                );
+            }
+            EffectType::Noir(contrast) => {
+                current_filter = super::effect_shaders::build_noir(
+                    shader_cache, resolution, time, current_filter,
+                    contrast.current_value,
+                );
+            }
+            EffectType::Cyberpunk(intensity) => {
+                current_filter = super::effect_shaders::build_cyberpunk(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value,
+                );
+            }
+            EffectType::Vintage(amount) => {
+                current_filter = super::effect_shaders::build_vintage(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::Gameboy => {
+                current_filter = super::effect_shaders::build_gameboy(
+                    shader_cache, resolution, time, current_filter,
+                );
+            }
+            EffectType::BleachBypass(amount) => {
+                current_filter = super::effect_shaders::build_bleach_bypass(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::TealOrange(amount) => {
+                current_filter = super::effect_shaders::build_teal_orange(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::Plasma { scale, speed } => {
+                current_filter = super::effect_shaders::build_plasma(
+                    shader_cache, resolution, time, current_filter,
+                    scale.current_value, speed.current_value,
+                );
+            }
+            EffectType::Hologram(intensity) => {
+                current_filter = super::effect_shaders::build_hologram(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value,
+                );
+            }
+            EffectType::Emboss { angle, strength } => {
+                current_filter = super::effect_shaders::build_emboss(
+                    shader_cache, resolution, time, current_filter,
+                    angle.current_value, strength.current_value,
+                );
+            }
+            EffectType::Toon { levels, edge } => {
+                current_filter = super::effect_shaders::build_toon(
+                    shader_cache, resolution, time, current_filter,
+                    levels.current_value, edge.current_value,
+                );
+            }
+            EffectType::OilPaint { block_size, levels } => {
+                current_filter = super::effect_shaders::build_oil_paint(
+                    shader_cache, resolution, time, current_filter,
+                    block_size.current_value, levels.current_value,
+                );
+            }
+            EffectType::LightLeak { intensity, color } => {
+                current_filter = super::effect_shaders::build_light_leak(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, *color,
+                );
+            }
+            EffectType::Aurora { intensity, speed } => {
+                current_filter = super::effect_shaders::build_aurora(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, speed.current_value,
+                );
+            }
+            EffectType::SunRays { intensity, angle, speed } => {
+                current_filter = super::effect_shaders::build_sunrays(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, angle.current_value, speed.current_value,
+                );
+            }
+            EffectType::SkinSmooth { intensity, radius } => {
+                current_filter = super::effect_shaders::build_skin_smooth(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, radius.current_value,
+                );
+            }
+            EffectType::BeautyGlow { intensity, threshold } => {
+                current_filter = super::effect_shaders::build_beauty_glow(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, threshold.current_value,
+                );
+            }
+            EffectType::SoftFocus { amount } => {
+                current_filter = super::effect_shaders::build_soft_focus(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::Vibrance { amount } => {
+                current_filter = super::effect_shaders::build_vibrance(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::Fog { intensity, color } => {
+                current_filter = super::effect_shaders::build_fog(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, *color,
+                );
+            }
+            EffectType::Mist { intensity, speed } => {
+                current_filter = super::effect_shaders::build_mist(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, speed.current_value,
+                );
+            }
+            EffectType::Rain { intensity, speed } => {
+                current_filter = super::effect_shaders::build_rain(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, speed.current_value,
+                );
+            }
+            EffectType::Snow { intensity, speed, size } => {
+                current_filter = super::effect_shaders::build_snow(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, speed.current_value, size.current_value,
+                );
+            }
+            EffectType::Dust { intensity, speed } => {
+                current_filter = super::effect_shaders::build_dust(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, speed.current_value,
+                );
+            }
+            EffectType::BokehDots { intensity, size, color } => {
+                current_filter = super::effect_shaders::build_bokeh_dots(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, size.current_value, *color,
+                );
+            }
+            EffectType::FilmLook { amount, grain } => {
+                current_filter = super::effect_shaders::build_film_look(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value, grain.current_value,
+                );
+            }
+            EffectType::OrangeTeal { amount } => {
+                current_filter = super::effect_shaders::build_orange_teal(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::CrossProcess { amount } => {
+                current_filter = super::effect_shaders::build_cross_process(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::Polaroid { amount } => {
+                current_filter = super::effect_shaders::build_polaroid(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::FadedFilm { amount } => {
+                current_filter = super::effect_shaders::build_faded_film(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::Midnight { amount } => {
+                current_filter = super::effect_shaders::build_midnight(
+                    shader_cache, resolution, time, current_filter,
+                    amount.current_value,
+                );
+            }
+            EffectType::Watercolor { intensity, edge } => {
+                current_filter = super::effect_shaders::build_watercolor(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, edge.current_value,
+                );
+            }
+            EffectType::Crosshatch { intensity, density } => {
+                current_filter = super::effect_shaders::build_crosshatch(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value, density.current_value,
+                );
+            }
+            EffectType::Pointillism { dot_size, intensity } => {
+                current_filter = super::effect_shaders::build_pointillism(
+                    shader_cache, resolution, time, current_filter,
+                    dot_size.current_value, intensity.current_value,
+                );
+            }
+            EffectType::Mosaic { tile_size } => {
+                current_filter = super::effect_shaders::build_mosaic(
+                    shader_cache, resolution, time, current_filter,
+                    tile_size.current_value,
+                );
+            }
+            EffectType::Ink { threshold, intensity } => {
+                current_filter = super::effect_shaders::build_ink(
+                    shader_cache, resolution, time, current_filter,
+                    threshold.current_value, intensity.current_value,
+                );
+            }
+            EffectType::PencilColor { intensity } => {
+                current_filter = super::effect_shaders::build_pencil_color(
+                    shader_cache, resolution, time, current_filter,
+                    intensity.current_value,
+                );
+            }
         }
     }
     current_filter
@@ -963,7 +1263,7 @@ impl Element for EffectNode {
             if let EffectType::RuntimeShader { uniforms, .. } = effect {
                 if let Some(anim) = uniforms.get_mut(property) {
                     if let ShaderUniform::Float(a) = anim {
-                        a.add_segment(start, target, duration, ease_fn);
+                        a.add_segment(start, target, duration, ease_fn.clone());
                     }
                 }
             }
@@ -1106,6 +1406,154 @@ mod shader_compile_tests {
             assert!(
                 filter.is_some(),
                 "new shader #{i} ({:?}) did not produce an ImageFilter (SkSL compile failed)",
+                eff
+            );
+        }
+    }
+
+    /// Batch 2 shaders (lens, grade presets, stylized, atmosphere) must compile.
+    #[test]
+    fn batch2_shader_effects_compile() {
+        let cache = cache();
+        let sc = Some(&cache);
+        let res = (64.0_f32, 64.0_f32);
+        let t = 0.0_f32;
+        let cases: Vec<EffectType> = vec![
+            EffectType::Fisheye(Animated::new(0.5)),
+            EffectType::Bulge {
+                strength: Animated::new(0.5),
+                radius: Animated::new(200.0),
+            },
+            EffectType::Barrel(Animated::new(0.3)),
+            EffectType::LensFlare {
+                intensity: Animated::new(0.6),
+                color: Color::new(1.0, 0.9, 0.7, 1.0),
+            },
+            EffectType::Noir(Animated::new(1.4)),
+            EffectType::Cyberpunk(Animated::new(0.6)),
+            EffectType::Vintage(Animated::new(0.6)),
+            EffectType::Gameboy,
+            EffectType::BleachBypass(Animated::new(0.7)),
+            EffectType::TealOrange(Animated::new(0.6)),
+            EffectType::Plasma {
+                scale: Animated::new(10.0),
+                speed: Animated::new(1.5),
+            },
+            EffectType::Hologram(Animated::new(0.7)),
+            EffectType::Emboss {
+                angle: Animated::new(45.0),
+                strength: Animated::new(2.0),
+            },
+            EffectType::Toon {
+                levels: Animated::new(6.0),
+                edge: Animated::new(0.08),
+            },
+            EffectType::OilPaint {
+                block_size: Animated::new(8.0),
+                levels: Animated::new(6.0),
+            },
+            EffectType::LightLeak {
+                intensity: Animated::new(0.5),
+                color: Color::new(1.0, 0.6, 0.3, 1.0),
+            },
+            EffectType::Aurora {
+                intensity: Animated::new(0.5),
+                speed: Animated::new(1.0),
+            },
+            EffectType::SunRays {
+                intensity: Animated::new(0.5),
+                angle: Animated::new(0.0),
+                speed: Animated::new(1.0),
+            },
+        ];
+        for (i, eff) in cases.iter().enumerate() {
+            let filter = build_effect_filter(std::slice::from_ref(eff), sc, res, t);
+            assert!(
+                filter.is_some(),
+                "batch2 shader #{i} ({:?}) did not produce an ImageFilter (SkSL compile failed)",
+                eff
+            );
+        }
+    }
+
+    /// Batch 3 shaders (beauty, weather, cinematic grades, artistic stylize)
+    /// must compile.
+    #[test]
+    fn batch3_shader_effects_compile() {
+        let cache = cache();
+        let sc = Some(&cache);
+        let res = (64.0_f32, 64.0_f32);
+        let t = 0.0_f32;
+        let cases: Vec<EffectType> = vec![
+            EffectType::SkinSmooth {
+                intensity: Animated::new(0.6),
+                radius: Animated::new(3.0),
+            },
+            EffectType::BeautyGlow {
+                intensity: Animated::new(0.5),
+                threshold: Animated::new(0.6),
+            },
+            EffectType::SoftFocus { amount: Animated::new(0.5) },
+            EffectType::Vibrance { amount: Animated::new(0.5) },
+            EffectType::Fog {
+                intensity: Animated::new(0.5),
+                color: Color::new(0.8, 0.85, 0.9, 1.0),
+            },
+            EffectType::Mist {
+                intensity: Animated::new(0.5),
+                speed: Animated::new(1.0),
+            },
+            EffectType::Rain {
+                intensity: Animated::new(0.6),
+                speed: Animated::new(1.0),
+            },
+            EffectType::Snow {
+                intensity: Animated::new(0.6),
+                speed: Animated::new(1.0),
+                size: Animated::new(2.0),
+            },
+            EffectType::Dust {
+                intensity: Animated::new(0.5),
+                speed: Animated::new(1.0),
+            },
+            EffectType::BokehDots {
+                intensity: Animated::new(0.5),
+                size: Animated::new(12.0),
+                color: Color::new(1.0, 0.9, 0.7, 1.0),
+            },
+            EffectType::FilmLook {
+                amount: Animated::new(0.6),
+                grain: Animated::new(1.0),
+            },
+            EffectType::OrangeTeal { amount: Animated::new(0.6) },
+            EffectType::CrossProcess { amount: Animated::new(0.7) },
+            EffectType::Polaroid { amount: Animated::new(0.7) },
+            EffectType::FadedFilm { amount: Animated::new(0.6) },
+            EffectType::Midnight { amount: Animated::new(0.6) },
+            EffectType::Watercolor {
+                intensity: Animated::new(0.7),
+                edge: Animated::new(1.0),
+            },
+            EffectType::Crosshatch {
+                intensity: Animated::new(0.8),
+                density: Animated::new(8.0),
+            },
+            EffectType::Pointillism {
+                dot_size: Animated::new(6.0),
+                intensity: Animated::new(0.9),
+            },
+            EffectType::Mosaic { tile_size: Animated::new(20.0) },
+            EffectType::Ink {
+                threshold: Animated::new(0.1),
+                intensity: Animated::new(0.9),
+            },
+            EffectType::PencilColor { intensity: Animated::new(0.8) },
+        ];
+        for (i, eff) in cases.iter().enumerate() {
+            let filter = build_effect_filter(std::slice::from_ref(eff), sc, res, t);
+            assert!(
+                filter.is_some(),
+                "batch3 shader #{i} ({:?}) did not produce an ImageFilter (SkSL compile failed)",
                 eff
             );
         }

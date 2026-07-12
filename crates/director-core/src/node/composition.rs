@@ -3,7 +3,9 @@ use crate::element::Element;
 use crate::errors::RenderError;
 use crate::systems::layout::LayoutEngine;
 use crate::systems::renderer::render_recursive;
+use crate::types::NodeId;
 use skia_safe::{AlphaType, Canvas, ColorType, Paint, Rect, Surface};
+use std::collections::HashMap;
 use std::any::Any;
 use std::fmt;
 use std::sync::Mutex;
@@ -144,6 +146,7 @@ impl Element for CompositionNode {
                 .map(|n| n.last_visit_time)
                 .unwrap_or(0.0);
 
+            let mut local_cache: HashMap<NodeId, skia_safe::Image> = HashMap::new();
             let has_tracks = d.tracks.iter().any(|t| !t.clips.is_empty());
             if has_tracks {
                 let mut clips: Vec<(usize, usize, &crate::timeline::TrackClip)> = Vec::new();
@@ -164,6 +167,7 @@ impl Element for CompositionNode {
                     render_recursive(
                         &d.scene,
                         &d.assets,
+                        &mut local_cache,
                         clip.scene_root,
                         c,
                         track_opacity * fade_opacity,
@@ -184,7 +188,7 @@ impl Element for CompositionNode {
                 items.sort_by_key(|(_, item)| item.z_index);
 
                 for (_, item) in items {
-                    render_recursive(&d.scene, &d.assets, item.scene_root, c, 1.0, 0)?;
+                    render_recursive(&d.scene, &d.assets, &mut local_cache, item.scene_root, c, 1.0, 0)?;
                 }
             }
 

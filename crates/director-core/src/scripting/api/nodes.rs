@@ -149,7 +149,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parent.ensure_alive(&d)?;
             let image = d.assets.load_image(path);
 
-            let img_node = ImageNode::from_image(image);
+            let img_node = ImageNode::from_image_with_path(image, path);
             let id = d.scene.add_node(Box::new(img_node));
             if !d.scene.try_add_child(parent.id, id) {
                 d.scene.destroy_node(id);
@@ -170,7 +170,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = scene.lock_director()?;
             let image = d.assets.load_image(path);
 
-            let img_node = ImageNode::from_image(image);
+            let img_node = ImageNode::from_image_with_path(image, path);
             let id = d.scene.add_node(Box::new(img_node));
             if !d.scene.try_add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
@@ -196,7 +196,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = scene.lock_director()?;
             let image = d.assets.load_image(path);
 
-            let mut img_node = ImageNode::from_image(image);
+            let mut img_node = ImageNode::from_image_with_path(image, path);
             parse_layout_style(&props, &mut img_node.style);
 
             if let Some(fit_str) = props
@@ -245,7 +245,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parent.ensure_alive(&d)?;
             let image = d.assets.load_image(path);
 
-            let mut img_node = ImageNode::from_image(image);
+            let mut img_node = ImageNode::from_image_with_path(image, path);
             parse_layout_style(&props, &mut img_node.style);
 
             if let Some(fit_str) = props
@@ -574,7 +574,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 VideoSource::Bytes((*blob).clone())
             };
 
-            let vid_node = VideoNode::new(source, mode);
+            let vid_node = VideoNode::new(source, mode).with_source_path(path);
             let id = d.scene.add_node(Box::new(vid_node));
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
@@ -610,7 +610,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 VideoSource::Bytes((*blob).clone())
             };
 
-            let mut vid_node = VideoNode::new(source, mode);
+            let mut vid_node = VideoNode::new(source, mode).with_source_path(path);
             parse_layout_style(&props, &mut vid_node.style);
 
             if let Some(fit_str) = props
@@ -661,7 +661,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 VideoSource::Bytes((*blob).clone())
             };
 
-            let vid_node = VideoNode::new(source, mode);
+            let vid_node = VideoNode::new(source, mode).with_source_path(path);
             let id = d.scene.add_node(Box::new(vid_node));
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
@@ -698,7 +698,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 VideoSource::Bytes((*blob).clone())
             };
 
-            let mut vid_node = VideoNode::new(source, mode);
+            let mut vid_node = VideoNode::new(source, mode).with_source_path(path);
             parse_layout_style(&props, &mut vid_node.style);
 
             if let Some(fit_str) = props
@@ -1390,6 +1390,38 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             },
         );
     }
+
+    // Static-subtree caching controls
+    engine.register_fn(
+        "set_static",
+        |node: &mut NodeHandle, enabled: bool| -> Result<bool, Box<rhai::EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            node.ensure_alive(&d)?;
+            if let Some(n) = d.scene.get_node_mut(node.id) {
+                n.is_static = enabled;
+            }
+            Ok(enabled)
+        },
+    );
+
+    engine.register_fn(
+        "is_static",
+        |node: &mut NodeHandle| -> Result<bool, Box<rhai::EvalAltResult>> {
+            let d = node.lock_director()?;
+            node.ensure_alive(&d)?;
+            Ok(d.scene.get_node(node.id).map(|n| n.is_static).unwrap_or(false))
+        },
+    );
+
+    engine.register_fn(
+        "clear_static_cache",
+        |node: &mut NodeHandle| -> Result<(), Box<rhai::EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            node.ensure_alive(&d)?;
+            d.static_cache.remove(&node.id);
+            Ok(())
+        },
+    );
 }
 
 /// Parse CSS-like filter properties from a Rhai map.
@@ -1914,4 +1946,25 @@ fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
     {
         text_node.set_text_direction(crate::text_direction::parse_text_direction_mode(&d));
     }
+}
+
+/// Rebuild a `TextNode` from a Rhai props map (the same vocabulary `add_text`
+/// consumes), reusing the canonical text/layout parsers. Used by the project
+/// save/load round-trip to faithfully restore rich text. `font_collection`
+/// comes from `Director::assets`.
+pub fn build_text_node_from_props(
+    font_collection: Arc<std::sync::Mutex<skia_safe::textlayout::FontCollection>>,
+    props: &rhai::Map,
+) -> TextNode {
+    let spans = if let Some(c) = props.get("content") {
+        parse_spans_from_dynamic(c.clone())
+    } else {
+        Vec::new()
+    };
+    let mut text_node = TextNode::new(spans, font_collection);
+    parse_layout_style(props, &mut text_node.style);
+    apply_text_props(&mut text_node, props);
+    text_node.shadow = parse_text_shadow(props);
+    text_node.init_paragraph();
+    text_node
 }

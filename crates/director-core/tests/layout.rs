@@ -158,7 +158,9 @@ fn layout_structure_snapshot() {
         );
     }
 
-    let expected = fs::read_to_string(&snapshot_path).expect("Failed to read snapshot");
+    let expected = fs::read_to_string(&snapshot_path)
+        .expect("Failed to read snapshot")
+        .replace("\r\n", "\n");
     assert_eq!(
         actual.trim(),
         expected.trim(),
@@ -251,4 +253,24 @@ fn grid_layout_basic() {
     assert_eq!(n2.layout_rect.top, 500.0);
     assert_eq!(n2.layout_rect.width(), 500.0);
     assert_eq!(n2.layout_rect.height(), 500.0);
+}
+
+#[test]
+fn flex_wrap_parses_and_round_trips() {
+    use director_core::scripting::utils::{parse_layout_style, style_to_json};
+    use rhai::Map;
+
+    let mut style = taffy::style::Style::default();
+    let mut props = Map::new();
+    props.insert("flex_wrap".into(), "wrap".into());
+    parse_layout_style(&props, &mut style);
+    assert!(matches!(style.flex_wrap, taffy::style::FlexWrap::Wrap));
+
+    let json = style_to_json(&style);
+    assert_eq!(json.get("flex_wrap").unwrap(), "wrap");
+
+    // wrap-reverse alias
+    props.insert("flex_wrap".into(), "wrap-reverse".into());
+    parse_layout_style(&props, &mut style);
+    assert!(matches!(style.flex_wrap, taffy::style::FlexWrap::WrapReverse));
 }

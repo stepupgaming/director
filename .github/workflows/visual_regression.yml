@@ -1,6 +1,9 @@
 name: Visual Regression
 
 on:
+  push:
+    branches: [main, master]
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -42,8 +45,10 @@ jobs:
         # The memory says "Large binary assets... are managed via a setup_assets.sh script that downloads them... to prevent repository bloat."
         # So I should run `setup_assets.sh` if it exists, or replicate the download.
 
-        mkdir -p assets/fonts
-        curl -o assets/fonts/Roboto-Regular.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf
+        mkdir -p crates/director-core/assets/fonts
+        for font in Roboto-Regular.ttf Roboto-Bold.ttf Roboto-Italic.ttf Inter-Regular.ttf Inter-Bold.ttf Poppins-Bold.ttf; do
+          curl -sL -o "crates/director-core/assets/fonts/$font" "https://github.com/google/fonts/raw/main/$(case $font in Roboto*) echo 'apache/roboto';; Inter*) echo 'ofl/inter';; Poppins*) echo 'ofl/poppins';; esac)/$font"
+        done
 
         # Run the tests
         cd crates/director-core
