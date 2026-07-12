@@ -84,6 +84,21 @@ pub fn register(engine: &mut Engine) {
         registry::api_manifest_json()
     });
 
+    engine.register_fn("set_debug_overlays", |movie: &mut MovieHandle, enabled: bool| -> bool {
+        if let Ok(mut d) = movie.lock_director() {
+            d.debug_overlays = enabled;
+        }
+        enabled
+    });
+
+    engine.register_fn("get_debug_overlays", |movie: &mut MovieHandle| -> bool {
+        if let Ok(d) = movie.lock_director() {
+            d.debug_overlays
+        } else {
+            false
+        }
+    });
+
     engine.register_fn("get_effect_meta", |name: &str| -> String {
         match registry::get_effect(name) {
             Some(info) => serde_json::to_string(&info).unwrap_or_default(),

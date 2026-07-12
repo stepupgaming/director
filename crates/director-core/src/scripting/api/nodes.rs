@@ -1390,6 +1390,38 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             },
         );
     }
+
+    // Static-subtree caching controls
+    engine.register_fn(
+        "set_static",
+        |node: &mut NodeHandle, enabled: bool| -> Result<bool, Box<rhai::EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            node.ensure_alive(&d)?;
+            if let Some(n) = d.scene.get_node_mut(node.id) {
+                n.is_static = enabled;
+            }
+            Ok(enabled)
+        },
+    );
+
+    engine.register_fn(
+        "is_static",
+        |node: &mut NodeHandle| -> Result<bool, Box<rhai::EvalAltResult>> {
+            let d = node.lock_director()?;
+            node.ensure_alive(&d)?;
+            Ok(d.scene.get_node(node.id).map(|n| n.is_static).unwrap_or(false))
+        },
+    );
+
+    engine.register_fn(
+        "clear_static_cache",
+        |node: &mut NodeHandle| -> Result<(), Box<rhai::EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            node.ensure_alive(&d)?;
+            d.static_cache.remove(&node.id);
+            Ok(())
+        },
+    );
 }
 
 /// Parse CSS-like filter properties from a Rhai map.
