@@ -25,6 +25,7 @@ use crate::systems::layout::LayoutEngine;
 use crate::systems::transitions::draw_transition;
 use crate::timeline::TrackClip;
 use crate::types::NodeId;
+use std::collections::HashMap;
 use tracing::debug;
 
 #[cfg(feature = "vulkan")]
@@ -37,12 +38,108 @@ pub type GpuContext = DirectContext;
 /// Placeholder for GPU context when Vulkan feature is disabled.
 pub type GpuContext = ();
 
+/// Renders a node's element and children to the given canvas. The caller is
+/// responsible for setting up the canvas transform.
+fn render_node_subtree(
+    scene: &SceneGraph,
+    assets: &AssetManager,
+    static_cache: &mut HashMap<NodeId, skia_safe::Image>,
+    node_id: NodeId,
+    canvas: &skia_safe::Canvas,
+    parent_opacity: f32,
+    depth: usize,
+) -> Result<(), RenderError> {
+    let node = match scene.get_node(node_id) {
+        Some(n) => n,
+        None => return Ok(()),
+    };
+
+    let local_rect = skia_safe::Rect::from_wh(node.layout_rect.width(), node.layout_rect.height());
+
+    let mut last_error = Ok(());
+    let mut draw_children = |canvas: &skia_safe::Canvas| {
+        // Z-Index Sorting
+        let mut sorted_children: Vec<(NodeId, i32)> = Vec::with_capacity(node.children.len());
+        for &child_id in &node.children {
+            if let Some(child) = scene.get_node(child_id) {
+                sorted_children.push((child_id, child.z_index));
+            }
+        }
+        sorted_children.sort_by_key(|k| k.1);
+
+        for (child_id, _) in sorted_children {
+            if let Err(e) = render_recursive(
+                scene,
+                assets,
+                static_cache,
+                child_id,
+                canvas,
+                parent_opacity,
+                depth + 1,
+            ) {
+                last_error = Err(e);
+            }
+        }
+    };
+
+    // Check if we need a save layer for blending, masking, or filters
+    let need_layer = node.mask_node.is_some()
+        || node.blend_mode != skia_safe::BlendMode::SrcOver
+        || node.filter.has_effects();
+
+    let result = if need_layer {
+        let mut paint = skia_safe::Paint::default();
+        paint.set_blend_mode(node.blend_mode);
+
+        // Apply CSS-like image filters (blur, brightness, contrast, saturation, hue-rotate)
+        if let Some(filter) = node.filter.to_image_filter() {
+            paint.set_image_filter(filter);
+        }
+
+        // Create an isolated layer.
+        canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&paint));
+
+        let r = node
+            .element
+            .render(canvas, local_rect, parent_opacity, &mut draw_children);
+
+        if r.is_ok() && last_error.is_ok() {
+            if let Some(mask_id) = node.mask_node {
+                let mut mask_paint = skia_safe::Paint::default();
+                mask_paint.set_blend_mode(skia_safe::BlendMode::DstIn);
+
+                canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&mask_paint));
+                if let Err(e) =
+                    render_recursive(scene, assets, static_cache, mask_id, canvas, 1.0, depth + 1)
+                {
+                    last_error = Err(e);
+                }
+                canvas.restore();
+            }
+        }
+
+        canvas.restore();
+        r
+    } else {
+        node.element
+            .render(canvas, local_rect, parent_opacity, &mut draw_children)
+    };
+
+    result?;
+    last_error?;
+    Ok(())
+}
+
 /// Recursively renders a node and its children to the canvas.
 ///
-/// Handles transformation stack, blending modes, and masking.
+/// Handles transformation stack, blending modes, masking, and static-subtree
+/// caching. When a node is marked `is_static`, its rasterized output is looked
+/// up in `static_cache`; on a miss the subtree is rendered to an offscreen
+/// surface, stored, and then drawn.
 pub fn render_recursive(
     scene: &SceneGraph,
     assets: &AssetManager,
+    static_cache: &mut HashMap<NodeId, skia_safe::Image>,
     node_id: NodeId,
     canvas: &skia_safe::Canvas,
     parent_opacity: f32,
@@ -51,125 +148,171 @@ pub fn render_recursive(
     if depth > 100 {
         return Err(RenderError::RecursionLimit);
     }
-    if let Some(node) = scene.get_node(node_id) {
-        canvas.save();
 
-        // Layout Position
-        let layout_x = node.layout_rect.left;
-        let layout_y = node.layout_rect.top;
-
-        // Transform Properties
-        let tx = node.transform.translate_x.current_value;
-        let ty = node.transform.translate_y.current_value;
-        let scale_x = node.transform.scale_x.current_value;
-        let scale_y = node.transform.scale_y.current_value;
-        let rotation = node.transform.rotation.current_value;
-        let skew_x = node.transform.skew_x.current_value;
-        let skew_y = node.transform.skew_y.current_value;
-
-        // Pivot Calculation (absolute)
-        let pivot_x = node.layout_rect.width() * node.transform.pivot_x;
-        let pivot_y = node.layout_rect.height() * node.transform.pivot_y;
-
-        // Apply Transform Stack
-        // 1. Move to position
-        canvas.translate((layout_x + tx, layout_y + ty));
-
-        // 2. Move to pivot
-        canvas.translate((pivot_x, pivot_y));
-
-        // 3. Rotate
-        canvas.rotate(rotation, None);
-
-        // 4. Scale
-        canvas.scale((scale_x, scale_y));
-
-        // 5. Skew (Degrees to Tangent)
-        let tan_skew_x = skew_x.to_radians().tan();
-        let tan_skew_y = skew_y.to_radians().tan();
-        canvas.skew((tan_skew_x, tan_skew_y));
-
-        // 6. Move back from pivot
-        canvas.translate((-pivot_x, -pivot_y));
-
-        let local_rect =
-            skia_safe::Rect::from_wh(node.layout_rect.width(), node.layout_rect.height());
-
-        let mut last_error = Ok(());
-        let mut draw_children = |canvas: &skia_safe::Canvas| {
-            // Z-Index Sorting
-            let mut sorted_children: Vec<(NodeId, i32)> = Vec::with_capacity(node.children.len());
-            for &child_id in &node.children {
-                if let Some(child) = scene.get_node(child_id) {
-                    sorted_children.push((child_id, child.z_index));
-                }
-            }
-            sorted_children.sort_by_key(|k| k.1);
-
-            for (child_id, _) in sorted_children {
-                if let Err(e) =
-                    render_recursive(scene, assets, child_id, canvas, parent_opacity, depth + 1)
-                {
-                    last_error = Err(e);
-                }
-            }
+    // Extract the values we need so we can release the borrow on `scene` before
+    // recursing or rendering to an offscreen surface.
+    let (
+        is_static,
+        layout_x,
+        layout_y,
+        width,
+        height,
+        tx,
+        ty,
+        scale_x,
+        scale_y,
+        rotation,
+        skew_x,
+        skew_y,
+        pivot_x,
+        pivot_y,
+    ) = {
+        let node = match scene.get_node(node_id) {
+            Some(n) => n,
+            None => return Ok(()),
         };
+        (
+            node.is_static,
+            node.layout_rect.left,
+            node.layout_rect.top,
+            node.layout_rect.width(),
+            node.layout_rect.height(),
+            node.transform.translate_x.current_value,
+            node.transform.translate_y.current_value,
+            node.transform.scale_x.current_value,
+            node.transform.scale_y.current_value,
+            node.transform.rotation.current_value,
+            node.transform.skew_x.current_value,
+            node.transform.skew_y.current_value,
+            node.layout_rect.width() * node.transform.pivot_x,
+            node.layout_rect.height() * node.transform.pivot_y,
+        )
+    };
 
-        // Check if we need a save layer for blending, masking, or filters
-        let need_layer = node.mask_node.is_some()
-            || node.blend_mode != skia_safe::BlendMode::SrcOver
-            || node.filter.has_effects();
+    let tan_skew_x = skew_x.to_radians().tan();
+    let tan_skew_y = skew_y.to_radians().tan();
 
-        let result = if need_layer {
-            let mut paint = skia_safe::Paint::default();
-            paint.set_blend_mode(node.blend_mode);
-
-            // Apply CSS-like image filters (blur, brightness, contrast, saturation, hue-rotate)
-            if let Some(filter) = node.filter.to_image_filter() {
-                paint.set_image_filter(filter);
-            }
-
-            // Create an isolated layer.
-            canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&paint));
-
-            let r = node
-                .element
-                .render(canvas, local_rect, parent_opacity, &mut draw_children);
-
-            if r.is_ok() && last_error.is_ok() {
-                if let Some(mask_id) = node.mask_node {
-                    let mut mask_paint = skia_safe::Paint::default();
-                    mask_paint.set_blend_mode(skia_safe::BlendMode::DstIn);
-
-                    canvas
-                        .save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&mask_paint));
-                    if let Err(e) = render_recursive(scene, assets, mask_id, canvas, 1.0, depth + 1)
-                    {
-                        last_error = Err(e);
-                    }
-                    canvas.restore();
-                }
-            }
-
+    if is_static {
+        // Static cache hit: draw the cached image at the node's position.
+        if let Some(image) = static_cache.get(&node_id) {
+            canvas.save();
+            canvas.translate((layout_x + tx, layout_y + ty));
+            canvas.draw_image(image, (0, 0), None);
             canvas.restore();
-            r
-        } else {
-            node.element
-                .render(canvas, local_rect, parent_opacity, &mut draw_children)
-        };
+            return Ok(());
+        }
 
+        // Cache miss: render the subtree to an offscreen surface and cache it.
+        let info = skia_safe::ImageInfo::new(
+            (width as i32, height as i32),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            Some(skia_safe::ColorSpace::new_srgb()),
+        );
+        let mut surface =
+            skia_safe::surfaces::raster(&info, None, None).ok_or(RenderError::SurfaceFailure)?;
+        let offscreen = surface.canvas();
+
+        offscreen.save();
+        // Apply local transforms only (position is applied when drawing the image).
+        offscreen.translate((pivot_x, pivot_y));
+        offscreen.rotate(rotation, None);
+        offscreen.scale((scale_x, scale_y));
+        offscreen.skew((tan_skew_x, tan_skew_y));
+        offscreen.translate((-pivot_x, -pivot_y));
+
+        render_node_subtree(
+            scene,
+            assets,
+            static_cache,
+            node_id,
+            offscreen,
+            parent_opacity,
+            depth,
+        )?;
+
+        offscreen.restore();
+
+        let image = surface.image_snapshot();
+        static_cache.insert(node_id, image.clone());
+
+        canvas.save();
+        canvas.translate((layout_x + tx, layout_y + ty));
+        canvas.draw_image(&image, (0, 0), None);
         canvas.restore();
 
-        result?;
-        last_error?;
+        return Ok(());
     }
+
+    canvas.save();
+
+    // Apply Transform Stack
+    // 1. Move to position
+    canvas.translate((layout_x + tx, layout_y + ty));
+
+    // 2. Move to pivot
+    canvas.translate((pivot_x, pivot_y));
+
+    // 3. Rotate
+    canvas.rotate(rotation, None);
+
+    // 4. Scale
+    canvas.scale((scale_x, scale_y));
+
+    // 5. Skew (Degrees to Tangent)
+    canvas.skew((tan_skew_x, tan_skew_y));
+
+    // 6. Move back from pivot
+    canvas.translate((-pivot_x, -pivot_y));
+
+    render_node_subtree(
+        scene,
+        assets,
+        static_cache,
+        node_id,
+        canvas,
+        parent_opacity,
+        depth,
+    )?;
+
+    canvas.restore();
+
     Ok(())
+}
+
+/// Draws debug overlays (green bounding boxes and red id/z-index labels) for
+/// every node in the scene graph.
+pub fn draw_debug_overlays(scene: &SceneGraph, canvas: &skia_safe::Canvas) {
+    let mut paint = skia_safe::Paint::default();
+    paint.set_color(skia_safe::Color::GREEN);
+    paint.set_style(skia_safe::paint::Style::Stroke);
+    paint.set_stroke_width(2.0);
+
+    let mut text_paint = skia_safe::Paint::default();
+    text_paint.set_color(skia_safe::Color::RED);
+
+    let font = skia_safe::Font::default();
+
+    for (id, node_opt) in scene.nodes.iter().enumerate() {
+        let Some(node) = node_opt else { continue };
+        let rect = node.layout_rect;
+        if rect.width() <= 0.0 || rect.height() <= 0.0 {
+            continue;
+        }
+
+        canvas.draw_rect(rect, &paint);
+
+        let label = format!("{} z:{}", id, node.z_index);
+        if let Some(blob) = skia_safe::TextBlob::new(&label, &font) {
+            canvas.draw_text_blob(&blob, (rect.left + 2.0, rect.top + 12.0), &text_paint);
+        }
+    }
 }
 
 /// Renders the scene at the current director state to a canvas.
 /// Assumes `director.update()` and layout have already been called.
 fn render_scene_to_canvas(
-    director: &Director,
+    director: &mut Director,
     time: f64,
     canvas: &skia_safe::Canvas,
 ) -> Result<(), RenderError> {
@@ -196,6 +339,7 @@ fn render_scene_to_canvas(
             render_recursive(
                 &director.scene,
                 assets,
+                &mut director.static_cache,
                 clip.scene_root,
                 canvas,
                 track_opacity * fade_opacity,
@@ -213,9 +357,22 @@ fn render_scene_to_canvas(
         items.sort_by_key(|(_, item)| item.z_index);
 
         for (_, item) in items {
-            render_recursive(&director.scene, assets, item.scene_root, canvas, 1.0, 0)?;
+            render_recursive(
+                &director.scene,
+                assets,
+                &mut director.static_cache,
+                item.scene_root,
+                canvas,
+                1.0,
+                0,
+            )?;
         }
     }
+
+    if director.debug_overlays {
+        draw_debug_overlays(&director.scene, canvas);
+    }
+
     Ok(())
 }
 
@@ -253,8 +410,8 @@ pub fn render_frame(
         Some(skia_safe::ColorSpace::new_srgb()),
     );
 
-    let mut scratch_surface = skia_safe::surfaces::raster(&info, None, None)
-        .ok_or(RenderError::SurfaceFailure)?;
+    let mut scratch_surface =
+        skia_safe::surfaces::raster(&info, None, None).ok_or(RenderError::SurfaceFailure)?;
 
     let mut layout_engine = LayoutEngine::new();
 
@@ -267,7 +424,12 @@ pub fn render_frame(
         let sample_time = shutter_start_time + t_offset;
 
         director.update(sample_time);
-        layout_engine.compute_layout(&mut director.scene, director.width, director.height, sample_time);
+        layout_engine.compute_layout(
+            &mut director.scene,
+            director.width,
+            director.height,
+            sample_time,
+        );
         director.run_post_layout(sample_time);
 
         render_scene_to_canvas(director, sample_time, scratch_surface.canvas())?;
@@ -340,6 +502,7 @@ pub fn render_at_time(
                             render_recursive(
                                 &director.scene,
                                 assets_ref,
+                                &mut director.static_cache,
                                 item_a.scene_root,
                                 surf_a.canvas(),
                                 1.0,
@@ -348,6 +511,7 @@ pub fn render_at_time(
                             render_recursive(
                                 &director.scene,
                                 assets_ref,
+                                &mut director.static_cache,
                                 item_b.scene_root,
                                 surf_b.canvas(),
                                 1.0,
@@ -375,12 +539,28 @@ pub fn render_at_time(
                     drawn_transition = true;
                 }
             } else {
-                render_recursive(&director.scene, assets_ref, item.scene_root, canvas, 1.0, 0)?;
+                render_recursive(
+                    &director.scene,
+                    assets_ref,
+                    &mut director.static_cache,
+                    item.scene_root,
+                    canvas,
+                    1.0,
+                    0,
+                )?;
             }
         }
     } else {
         for (_, item) in items {
-            render_recursive(&director.scene, assets_ref, item.scene_root, canvas, 1.0, 0)?;
+            render_recursive(
+                &director.scene,
+                assets_ref,
+                &mut director.static_cache,
+                item.scene_root,
+                canvas,
+                1.0,
+                0,
+            )?;
         }
     }
     if time < 0.1 {

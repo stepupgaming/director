@@ -46,7 +46,7 @@ But it is **not yet a foundation for an agent-driven video system**, and it is *
 
 | Finding | Progress | Still missing |
 |---|---|---|
-| **#1** Introspection API | Rhai: `node_id`, `node_bounds`, `node_children`, `scene_duration`, `list_scene_roots`; registry reflection (`list_effects`, `list_easings`, `get_effect_meta`, …). `render_manifest_json` + `director-manifest` CLI. `tests/inspect_api.rs`. | `media_metadata()`; manifest on every export by default; debug overlays / contact sheets; temporal diagnostics (overlap, clip, contrast). |
+| **#1** Introspection API | Rhai: `node_id`, `node_bounds`, `node_children`, `scene_duration`, `list_scene_roots`; registry reflection (`list_effects`, `list_easings`, `get_effect_meta`, …). `render_manifest_json` + `director-manifest` CLI. `tests/inspect_api.rs`. Debug overlays (`set_debug_overlays`/`get_debug_overlays`) draw green bboxes + red `id z:z_index` labels via `draw_debug_overlays`. | `media_metadata()`; manifest on every export by default; contact sheets; temporal diagnostics (overlap, clip, contrast). |
 | **#2** Project serialization | `api_catalog` single source of truth started; `director-schema` gained `ProjectManifest` + combined schema bundle; platform manifest CLI. **Live `Director` round-trip now works** (`save_project_json`/`load_project_json`): topology, transform, opacity, z-index, blend, Box props, keyframe animation, and Taffy layout all round-trip; `project_roundtrip` suite (7 tests) guards it. **All major node kinds now round-trip as their kind, not as Box placeholders**: TextNode spans + style, ImageNode source path + object_fit + border_radius, VideoNode (path + loaded frame pixel sequence via SK renderer), CaptionNode (lines + words + style + safe_area), EffectNode (every `EffectType` variant tagged with `kind`), CompositionNode (inner `Director` JSON). | Schema still drifts (~6 vs ~20 transitions; no SKSL/`add_loop`/`add_freeze`); Vector/SpectrumVisualizer/Lottie kinds still rollback to Box placeholders. |
 | **#7** Text direction / bidi | `text_direction.rs` + `text_direction` Rhai prop on text/caption; auto-detect first strong; caption RTL test. | Full bidi parity across all text nodes; deterministic emoji/complex-script shaping. |
 
@@ -236,13 +236,12 @@ Roadmap sections **Agent-first extensions** and **v1.0 architecture bets** (immu
 **Recommended direction:** Thread a seed through `Director`; expose `set_seed`.
 **Complexity:** Small.
 
-## 16. No static-subtree caching
-**Severity:** Medium
-**Evidence:** `render_recursive` re-renders every node every frame (`renderer.rs:43`); only `CompositionNode`/`LottieNode`/`VectorNode` cache rasterized output, single-frame keyed (`composition.rs:108-197`, `lottie.rs:231-278`, `vector.rs:86-121`). No `is_animated` short-circuit.
-**Why it matters:** Long timelines / many static layers in 4K vertical video do redundant work.
-**Why it matters for agents:** Slow previews slow the iterate loop.
-**Recommended direction:** Add an `is_static` flag per subtree → cache to a Surface, invalidate on mutation.
-**Complexity:** Medium.
+## 16. Static-subtree caching (implemented)
+**Severity:** Medium (closed)
+**Evidence:** `SceneNode.is_static` flag + `Director.static_cache: HashMap<NodeId, Image>` + Rhai `set_static`/`is_static`/`clear_static_cache`. `render_recursive` now short-circuits static subtrees on cache hit and renders to an offscreen surface on miss, storing the rasterized image. `CompositionNode` uses a local cache.
+**Why it matters:** Long timelines / many static layers in 4K vertical video avoid redundant work.
+**Why it matters for agents:** Faster previews speed the iterate loop.
+**Recommended direction:** (Landed) Add automatic invalidation when a static subtree's transform/content changes; currently callers must `clear_static_cache(node)` after mutation.
 
 ## 17. Masking / stacking contexts limited
 **Severity:** Medium
@@ -293,7 +292,7 @@ Roadmap sections **Agent-first extensions** and **v1.0 architecture bets** (immu
 - `Shrink` text-fit decoupled from animation channel — Medium, internal.
 - bidi/`text_direction` support (`text.rs:175`) — Small, public.
 - `flex_wrap` + `1:1` safe-area preset, resolution-scaled safe areas (`tokens.rs`, `utils.rs`) — Medium, public.
-- Static-subtree caching (`renderer.rs:43`) — Medium, internal.
+- ~~Static-subtree caching (`renderer.rs:43`) — Medium, internal.~~ Implemented: `SceneNode.is_static`, `Director.static_cache`, Rhai controls, and `render_recursive` hit/miss.
 - Luma matte + multi-mask + `isolate` (`renderer.rs:118-151`) — Medium, public.
 
 ## 3. v1.0 architecture bets (settle before API freezes)

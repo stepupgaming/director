@@ -95,6 +95,10 @@ pub struct Director {
     pub assets: AssetManager,
     /// Video encoder mode (hardware acceleration).
     pub encoder_mode: EncoderMode,
+    /// Render debug overlays (bounding boxes, ids, z-indices) on top of frames.
+    pub debug_overlays: bool,
+    /// Cached rasterized images for static subtrees.
+    pub static_cache: std::collections::HashMap<NodeId, skia_safe::Image>,
 }
 
 /// SAFETY: Director is not thread-safe due to Skia internals (RefCounts).
@@ -265,6 +269,8 @@ impl Director {
             audio_analyzer: AudioAnalyzer::new(2048, 48000),
             assets,
             encoder_mode: EncoderMode::Auto, // Default to auto-detect hardware
+            debug_overlays: false,
+            static_cache: HashMap::new(),
         }
     }
 
