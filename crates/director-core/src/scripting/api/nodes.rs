@@ -149,7 +149,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parent.ensure_alive(&d)?;
             let image = d.assets.load_image(path);
 
-            let img_node = ImageNode::from_image(image);
+            let img_node = ImageNode::from_image_with_path(image, path);
             let id = d.scene.add_node(Box::new(img_node));
             if !d.scene.try_add_child(parent.id, id) {
                 d.scene.destroy_node(id);
@@ -170,7 +170,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = scene.lock_director()?;
             let image = d.assets.load_image(path);
 
-            let img_node = ImageNode::from_image(image);
+            let img_node = ImageNode::from_image_with_path(image, path);
             let id = d.scene.add_node(Box::new(img_node));
             if !d.scene.try_add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
@@ -196,7 +196,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = scene.lock_director()?;
             let image = d.assets.load_image(path);
 
-            let mut img_node = ImageNode::from_image(image);
+            let mut img_node = ImageNode::from_image_with_path(image, path);
             parse_layout_style(&props, &mut img_node.style);
 
             if let Some(fit_str) = props
@@ -245,7 +245,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parent.ensure_alive(&d)?;
             let image = d.assets.load_image(path);
 
-            let mut img_node = ImageNode::from_image(image);
+            let mut img_node = ImageNode::from_image_with_path(image, path);
             parse_layout_style(&props, &mut img_node.style);
 
             if let Some(fit_str) = props
@@ -574,7 +574,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 VideoSource::Bytes((*blob).clone())
             };
 
-            let vid_node = VideoNode::new(source, mode);
+            let vid_node = VideoNode::new(source, mode).with_source_path(path);
             let id = d.scene.add_node(Box::new(vid_node));
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
@@ -610,7 +610,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 VideoSource::Bytes((*blob).clone())
             };
 
-            let mut vid_node = VideoNode::new(source, mode);
+            let mut vid_node = VideoNode::new(source, mode).with_source_path(path);
             parse_layout_style(&props, &mut vid_node.style);
 
             if let Some(fit_str) = props
@@ -661,7 +661,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 VideoSource::Bytes((*blob).clone())
             };
 
-            let vid_node = VideoNode::new(source, mode);
+            let vid_node = VideoNode::new(source, mode).with_source_path(path);
             let id = d.scene.add_node(Box::new(vid_node));
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
@@ -698,7 +698,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 VideoSource::Bytes((*blob).clone())
             };
 
-            let mut vid_node = VideoNode::new(source, mode);
+            let mut vid_node = VideoNode::new(source, mode).with_source_path(path);
             parse_layout_style(&props, &mut vid_node.style);
 
             if let Some(fit_str) = props

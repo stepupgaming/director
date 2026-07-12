@@ -137,17 +137,14 @@ impl AssetLoader for DefaultAssetLoader {
         if let Ok(bytes) = std::fs::read(path) {
             return Ok(bytes);
         }
-        // Fallback to assets/
-        let alt = format!("assets/{}", path);
-        std::fs::read(&alt).map_err(|e| {
-            anyhow::anyhow!(
-                "Asset not found: {} (checked '{}' and '{}'): {}",
-                path,
-                path,
-                alt,
-                e
-            )
-        })
+        // Fallback to assets/ and the crate assets directory so bundled fonts
+        // are discoverable both from the workspace root and from test runners.
+        for alt in [format!("assets/{}", path), format!("crates/director-core/assets/{}", path)] {
+            if let Ok(bytes) = std::fs::read(&alt) {
+                return Ok(bytes);
+            }
+        }
+        anyhow::bail!("Asset not found: {} (checked '{}' and '{}'): file not found", path, path, path)
     }
 
     /// Attempts to load an emoji font.

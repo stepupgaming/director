@@ -10,8 +10,6 @@ members = [
     "crates/lottie-skia",
 ]
 
-[patch.crates-io]
-skia-safe = { path = "vendor/skia-safe" }
 
 [workspace.package]
 version = "0.1.0"

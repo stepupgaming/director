@@ -158,7 +158,9 @@ fn layout_structure_snapshot() {
         );
     }
 
-    let expected = fs::read_to_string(&snapshot_path).expect("Failed to read snapshot");
+    let expected = fs::read_to_string(&snapshot_path)
+        .expect("Failed to read snapshot")
+        .replace("\r\n", "\n");
     assert_eq!(
         actual.trim(),
         expected.trim(),

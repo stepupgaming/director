@@ -16,6 +16,8 @@ pub struct ImageNode {
     pub style: Style,
     pub object_fit: ObjectFit,
     pub border_radius: Animated<f32>,
+    /// Original asset path, if loaded from a file or blob path.
+    pub source_path: Option<String>,
 }
 
 impl ImageNode {
@@ -27,6 +29,7 @@ impl ImageNode {
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
             border_radius: Animated::new(0.0),
+            source_path: None,
         }
     }
 
@@ -37,6 +40,18 @@ impl ImageNode {
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
             border_radius: Animated::new(0.0),
+            source_path: None,
+        }
+    }
+
+    pub fn from_image_with_path(image: Option<Image>, path: impl Into<String>) -> Self {
+        Self {
+            image,
+            opacity: Animated::new(1.0),
+            style: Style::DEFAULT,
+            object_fit: ObjectFit::Cover,
+            border_radius: Animated::new(0.0),
+            source_path: Some(path.into()),
         }
     }
 }

@@ -1263,7 +1263,7 @@ impl Element for EffectNode {
             if let EffectType::RuntimeShader { uniforms, .. } = effect {
                 if let Some(anim) = uniforms.get_mut(property) {
                     if let ShaderUniform::Float(a) = anim {
-                        a.add_segment(start, target, duration, ease_fn);
+                        a.add_segment(start, target, duration, ease_fn.clone());
                     }
                 }
             }

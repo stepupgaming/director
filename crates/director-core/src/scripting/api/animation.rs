@@ -15,7 +15,7 @@ use skia_safe::Path;
 use tracing::error;
 
 use super::super::types::NodeHandle;
-use super::super::utils::{parse_easing, parse_hex_color, parse_spring_config};
+use super::super::utils::{parse_easing_loud, parse_hex_color, parse_spring_config};
 
 /// Register animation-related Rhai functions.
 pub fn register(engine: &mut Engine) {
@@ -34,7 +34,7 @@ pub fn register(engine: &mut Engine) {
                 Err(_) => return,
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease_fn = parse_easing(ease);
+                let ease_fn = parse_easing_loud(ease);
 
                 // Add delay segment (hold at start value)
                 if delay > 0.0 {
@@ -89,7 +89,7 @@ pub fn register(engine: &mut Engine) {
                     "scale" => {
                         n.transform
                             .scale_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn);
+                            .add_segment(start as f32, end as f32, dur, ease_fn.clone());
                         n.transform
                             .scale_y
                             .add_segment(start as f32, end as f32, dur, ease_fn);
@@ -142,13 +142,13 @@ pub fn register(engine: &mut Engine) {
                 Err(_) => return,
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease_fn = parse_easing(ease);
+                let ease_fn = parse_easing_loud(ease);
 
                 match prop {
                     "scale" => {
                         n.transform
                             .scale_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn);
+                            .add_segment(start as f32, end as f32, dur, ease_fn.clone());
                         n.transform
                             .scale_y
                             .add_segment(start as f32, end as f32, dur, ease_fn);
@@ -211,13 +211,13 @@ pub fn register(engine: &mut Engine) {
                 Err(_) => return,
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease_fn = parse_easing(ease);
+                let ease_fn = parse_easing_loud(ease);
 
                 match prop {
                     "scale" => {
                         n.transform
                             .scale_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn);
+                            .add_segment(start as f32, end as f32, dur, ease_fn.clone());
                         n.transform
                             .scale_y
                             .add_segment(start as f32, end as f32, dur, ease_fn);
@@ -394,7 +394,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 // Try to parse SVG path
                 if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing(ease);
+                    let ease_fn = parse_easing_loud(ease);
                     let mut state = PathAnimationState::new(path, false, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     n.path_animation = Some(state);
@@ -416,7 +416,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 // Try to parse SVG path
                 if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing(ease);
+                    let ease_fn = parse_easing_loud(ease);
                     let mut state = PathAnimationState::new(path, true, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     n.path_animation = Some(state);
@@ -438,7 +438,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(from_path) = Path::from_svg(from_svg) {
                     if let Some(to_path) = Path::from_svg(to_svg) {
-                        let ease_fn = parse_easing(ease);
+                        let ease_fn = parse_easing_loud(ease);
                         let mut state = PathMorphState::new(from_path, to_path, false, dur);
                         state.progress.add_keyframe(1.0, dur, ease_fn);
                         n.path_morph = Some(state);
@@ -462,7 +462,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(from_path) = Path::from_svg(from_svg) {
                     if let Some(to_path) = Path::from_svg(to_svg) {
-                        let ease_fn = parse_easing(ease);
+                        let ease_fn = parse_easing_loud(ease);
                         let mut state = PathMorphState::new(from_path, to_path, true, dur);
                         state.progress.add_keyframe(1.0, dur, ease_fn);
                         n.path_morph = Some(state);
@@ -486,7 +486,7 @@ pub fn register(engine: &mut Engine) {
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing(ease);
+                    let ease_fn = parse_easing_loud(ease);
                     let mut state = PathAnimationState::new(path, false, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     state.loop_count = loop_count as i32;
@@ -508,7 +508,7 @@ pub fn register(engine: &mut Engine) {
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing(ease);
+                    let ease_fn = parse_easing_loud(ease);
                     let mut state = PathAnimationState::new(path, follow_tangent, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     state.loop_count = loop_count as i32;
@@ -532,7 +532,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(from_path) = Path::from_svg(from_svg) {
                     if let Some(to_path) = Path::from_svg(to_svg) {
-                        let ease_fn = parse_easing(ease);
+                        let ease_fn = parse_easing_loud(ease);
                         let mut state = PathMorphState::new(from_path, to_path, false, dur);
                         state.progress.add_keyframe(1.0, dur, ease_fn);
                         state.loop_count = loop_count as i32;
@@ -696,4 +696,161 @@ pub fn register(engine: &mut Engine) {
             }
         },
     );
+
+    // ========== ADVANCED EASING / LOOPING PRIMITIVES ==========
+
+    /// `animate_bezier(prop, start, end, dur, x1, y1, x2, y2)` — cubic bezier easing.
+    engine.register_fn(
+        "animate_bezier",
+        |node: &mut NodeHandle,
+         prop: &str,
+         start: f64,
+         end: f64,
+         dur: f64,
+         x1: f64,
+         y1: f64,
+         x2: f64,
+         y2: f64| {
+            let mut d = match node.lock_director() {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            if let Some(n) = d.scene.get_node_mut(node.id) {
+                let ease = crate::animation::EasingType::CubicBezier { x1, y1, x2, y2 };
+                apply_transform_or_element_anim(n, prop, start as f32, end as f32, dur, ease);
+            }
+        },
+    );
+
+    /// `animate_hold(prop, start, end, dur)` — hold at start then jump to end.
+    engine.register_fn(
+        "animate_hold",
+        |node: &mut NodeHandle, prop: &str, start: f64, end: f64, dur: f64| {
+            let mut d = match node.lock_director() {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            if let Some(n) = d.scene.get_node_mut(node.id) {
+                let ease = crate::animation::EasingType::Hold;
+                apply_transform_or_element_anim(n, prop, start as f32, end as f32, dur, ease);
+            }
+        },
+    );
+
+    /// `animate_expression(prop, expr, duration)` — bake a math expression into keyframes.
+    engine.register_fn(
+        "animate_expression",
+        |node: &mut NodeHandle, prop: &str, expr: &str, duration: f64| {
+            let mut d = match node.lock_director() {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            if let Some(n) = d.scene.get_node_mut(node.id) {
+                let anim = crate::animation::Animated::<f32>::from_expression(expr, duration);
+                apply_f32_anim(n, prop, anim);
+            }
+        },
+    );
+
+    /// `reverse_animation(prop)` — reverse existing keyframes on a channel.
+    engine.register_fn("reverse_animation", |node: &mut NodeHandle, prop: &str| {
+        let mut d = match node.lock_director() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        if let Some(n) = d.scene.get_node_mut(node.id) {
+            mutate_f32_channel(n, prop, |anim| anim.reverse());
+        }
+    });
+
+    /// `yoyo_animation(prop)` — append a reversed copy of the channel (ping-pong).
+    engine.register_fn("yoyo_animation", |node: &mut NodeHandle, prop: &str| {
+        let mut d = match node.lock_director() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        if let Some(n) = d.scene.get_node_mut(node.id) {
+            mutate_f32_channel(n, prop, |anim| anim.yoyo());
+        }
+    });
+
+    /// `loop_animation(prop, count)` — repeat the channel `count` times.
+    engine.register_fn("loop_animation", |node: &mut NodeHandle, prop: &str, count: i64| {
+        let mut d = match node.lock_director() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        if let Some(n) = d.scene.get_node_mut(node.id) {
+            mutate_f32_channel(n, prop, |anim| anim.loop_count(count as i32));
+        }
+    });
+}
+
+fn apply_transform_or_element_anim(
+    n: &mut crate::scene::SceneNode,
+    prop: &str,
+    start: f32,
+    end: f32,
+    dur: f64,
+    ease: crate::animation::EasingType,
+) {
+    match prop {
+        "scale" => {
+            n.transform.scale_x.add_segment(start, end, dur, ease.clone());
+            n.transform.scale_y.add_segment(start, end, dur, ease);
+        }
+        "scale_x" => n.transform.scale_x.add_segment(start, end, dur, ease),
+        "scale_y" => n.transform.scale_y.add_segment(start, end, dur, ease),
+        "rotation" => n.transform.rotation.add_segment(start, end, dur, ease),
+        "skew_x" => n.transform.skew_x.add_segment(start, end, dur, ease),
+        "skew_y" => n.transform.skew_y.add_segment(start, end, dur, ease),
+        "translate_x" | "x" => n.transform.translate_x.add_segment(start, end, dur, ease),
+        "translate_y" | "y" => n.transform.translate_y.add_segment(start, end, dur, ease),
+        _ => {
+            n.element.animate_property(prop, start, end, dur, "linear");
+        }
+    }
+}
+
+fn apply_f32_anim(n: &mut crate::scene::SceneNode, prop: &str, anim: crate::animation::Animated<f32>) {
+    match prop {
+        "scale" => {
+            n.transform.scale_x = anim.clone();
+            n.transform.scale_y = anim;
+        }
+        "scale_x" => n.transform.scale_x = anim,
+        "scale_y" => n.transform.scale_y = anim,
+        "rotation" => n.transform.rotation = anim,
+        "skew_x" => n.transform.skew_x = anim,
+        "skew_y" => n.transform.skew_y = anim,
+        "translate_x" | "x" => n.transform.translate_x = anim,
+        "translate_y" | "y" => n.transform.translate_y = anim,
+        _ => {
+            if let Some(v) = anim.raw_keyframes.first() {
+                let start = v.0;
+                let end = anim.raw_keyframes.last().map(|k| k.0).unwrap_or(start);
+                n.element.animate_property(prop, start, end, anim.sequence.duration(), "linear");
+            }
+        }
+    }
+}
+
+fn mutate_f32_channel<F>(n: &mut crate::scene::SceneNode, prop: &str, mut f: F)
+where
+    F: FnMut(&mut crate::animation::Animated<f32>),
+{
+    match prop {
+        "scale" => {
+            f(&mut n.transform.scale_x);
+            f(&mut n.transform.scale_y);
+        }
+        "scale_x" => f(&mut n.transform.scale_x),
+        "scale_y" => f(&mut n.transform.scale_y),
+        "rotation" => f(&mut n.transform.rotation),
+        "skew_x" => f(&mut n.transform.skew_x),
+        "skew_y" => f(&mut n.transform.skew_y),
+        "translate_x" | "x" => f(&mut n.transform.translate_x),
+        "translate_y" | "y" => f(&mut n.transform.translate_y),
+        _ => {}
+    }
 }

@@ -655,6 +655,9 @@ pub const EASING_CATALOG: &[EasingCatalogEntry] = &[
     ease("back_out", "Slight overshoot"),
     ease("back_in", "Slight anticipation"),
     ease("back_in_out", "Anticipation and overshoot"),
+    ease("hold", "Hold value until end of segment"),
+    ease("cubic_bezier", "Custom cubic bezier: cubic_bezier(x1,y1,x2,y2)"),
+    ease("expr", "Per-frame math expression: expr(sin(t*pi))"),
 ];
 
 /// Rhai lifecycle / authoring helpers not represented as scene-graph nodes.

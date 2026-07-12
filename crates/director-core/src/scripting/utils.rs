@@ -299,25 +299,62 @@ pub fn parse_font_weight(w: &rhai::Dynamic) -> Option<u16> {
         };
     }
     None
+}/// Parse easing type from string.
+pub fn parse_easing(ease: &str) -> EasingType {
+    parse_easing_result(ease).unwrap_or(EasingType::Linear)
 }
 
-/// Parse easing type from string.
-pub fn parse_easing(ease: &str) -> EasingType {
+/// Parse easing type from string, logging an error with the valid name list on failure.
+pub fn parse_easing_loud(ease: &str) -> EasingType {
+    match parse_easing_result(ease) {
+        Ok(e) => e,
+        Err(msg) => {
+            tracing::error!("{msg}");
+            EasingType::Linear
+        }
+    }
+}
+
+
+/// Parse easing type from string, returning an error for unknown names.
+pub fn parse_easing_result(ease: &str) -> Result<EasingType, String> {
+    if let Some(inner) = ease.strip_prefix("cubic_bezier(") {
+        let inner = inner.strip_suffix(')').ok_or_else(|| "missing closing parenthesis in cubic_bezier(...)".to_string())?;
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err("cubic_bezier expects 4 numbers: x1,y1,x2,y2".to_string());
+        }
+        let vals: Vec<f64> = parts
+            .iter()
+            .map(|s| s.trim().parse::<f64>().map_err(|e| format!("{e}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(EasingType::CubicBezier {
+            x1: vals[0],
+            y1: vals[1],
+            x2: vals[2],
+            y2: vals[3],
+        });
+    }
+    if let Some(inner) = ease.strip_prefix("expr(") {
+        let expr = inner.strip_suffix(')').ok_or_else(|| "missing closing parenthesis in expr(...)".to_string())?;
+        return Ok(EasingType::Expression { expr: expr.to_string() });
+    }
     match ease {
-        "linear" => EasingType::Linear,
-        "ease_in" => EasingType::EaseIn,
-        "ease_out" => EasingType::EaseOut,
-        "ease_in_out" => EasingType::EaseInOut,
-        "bounce_out" => EasingType::BounceOut,
-        "bounce_in" => EasingType::BounceIn,
-        "bounce_in_out" => EasingType::BounceInOut,
-        "elastic_out" => EasingType::ElasticOut,
-        "elastic_in" => EasingType::ElasticIn,
-        "elastic_in_out" => EasingType::ElasticInOut,
-        "back_out" => EasingType::BackOut,
-        "back_in" => EasingType::BackIn,
-        "back_in_out" => EasingType::BackInOut,
-        _ => EasingType::Linear,
+        "linear" => Ok(EasingType::Linear),
+        "ease_in" => Ok(EasingType::EaseIn),
+        "ease_out" => Ok(EasingType::EaseOut),
+        "ease_in_out" => Ok(EasingType::EaseInOut),
+        "bounce_out" => Ok(EasingType::BounceOut),
+        "bounce_in" => Ok(EasingType::BounceIn),
+        "bounce_in_out" => Ok(EasingType::BounceInOut),
+        "elastic_out" => Ok(EasingType::ElasticOut),
+        "elastic_in" => Ok(EasingType::ElasticIn),
+        "elastic_in_out" => Ok(EasingType::ElasticInOut),
+        "back_out" => Ok(EasingType::BackOut),
+        "back_in" => Ok(EasingType::BackIn),
+        "back_in_out" => Ok(EasingType::BackInOut),
+        "hold" | "step" => Ok(EasingType::Hold),
+        _ => Err(format!("unknown easing '{}'; valid: linear, ease_in/out/in_out, bounce_*, elastic_*, back_*, hold/step, cubic_bezier(x1,y1,x2,y2), expr(...)", ease)),
     }
 }
 

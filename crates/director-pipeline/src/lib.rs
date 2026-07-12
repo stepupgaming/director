@@ -1231,6 +1231,9 @@ fn easing_to_str(easing: &EasingType) -> &'static str {
         EasingType::BackOut => "back_out",
         EasingType::BackIn => "back_in",
         EasingType::BackInOut => "back_in_out",
+        EasingType::CubicBezier { .. } => "cubic_bezier",
+        EasingType::Hold => "hold",
+        EasingType::Expression { .. } => "expression",
     }
 }
 

@@ -111,9 +111,9 @@ pub fn setup_test_director(width: u32, height: u32) -> Arc<Mutex<Director>> {
     let mut font_provider = TypefaceFontProvider::new();
 
     // 2. Load Bundled Font (Roboto)
-    // We try to load from assets/fonts/Roboto-Regular.ttf
+    // We try to load from crates/director-core/assets/fonts/Roboto-Regular.ttf
     // We need to ensure we can find it.
-    let font_path = "fonts/Roboto-Regular.ttf";
+    let font_path = "crates/director-core/assets/fonts/Roboto-Regular.ttf";
     match loader.load_bytes(font_path) {
         Ok(bytes) => {
             let data = Data::new_copy(&bytes);
