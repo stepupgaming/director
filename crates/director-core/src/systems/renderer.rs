@@ -241,7 +241,7 @@ pub fn render_frame(
     }
 
     // Motion blur: sample across the shutter duration and accumulate.
-    let fps = director.fps;
+    let fps = director.fps as f64;
     let frame_duration = 1.0 / fps;
     let shutter_duration = frame_duration * (shutter_angle as f64 / 360.0);
     let shutter_start_time = time - (shutter_duration / 2.0);

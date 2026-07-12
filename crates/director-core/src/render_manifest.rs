@@ -22,9 +22,7 @@ pub struct RenderManifest {
     pub version: u32,
     pub width: i32,
     pub height: i32,
-    /// Frames per second. Stored as `f64` so non-integer rates (23.976, 29.97)
-    /// round-trip without truncating.
-    pub fps: f64,
+    pub fps: u32,
     pub sample_time: f64,
     pub duration_secs: f64,
     pub timeline: Vec<TimelineManifestEntry>,
@@ -132,7 +130,6 @@ fn collect_timeline(director: &Director) -> Vec<TimelineItem> {
                 duration: clip.duration,
                 z_index: clip.z_index,
                 audio_tracks: clip.audio_tracks.clone(),
-                freeze_time: clip.freeze_time,
             });
         }
     }
@@ -206,7 +203,7 @@ mod tests {
         let mut director = Director::new(
             640,
             360,
-            30.0,
+            30,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -219,7 +216,6 @@ mod tests {
             duration: 2.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let manifest = build_render_manifest(&mut director, 0.0);

@@ -1,7 +1,7 @@
 // Audio-Reactive Spectrum Visualizer
 // Uses the FFT analyzer to drive bar heights in real time from audio.
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 let scene = movie.add_scene(5.0);
 
 // Add audio track (use a WAV file from the smoke test assets)

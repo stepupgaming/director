@@ -50,81 +50,33 @@ pub mod wgpu_node;
 #[cfg(feature = "wgpu")]
 pub use wgpu_node::WgpuNode;
 
-// Helper to parse easing.
-//
-// `parse_easing` keeps the historical silent-fallback behaviour so existing
-// internal callers don't break; new and agent-facing callers should prefer
-// `parse_easing_result` so a typo surfaces as an error rather than a
-// hand-cranked `Linear` segment.
+// Helper to parse easing
 pub fn parse_easing(e: &str) -> EasingType {
-    match parse_easing_result(e) {
-        Ok(e) => e,
-        Err(msg) => {
-            use tracing::warn;
-            warn!("{msg}");
-            EasingType::Linear
-        }
-    }
-}
-
-/// Loud easing parser for Rhai / agent-facing paths that want a typo to shout
-/// in the logs (tracing `error!`) instead of slipping past as a `Linear`
-/// segment. Use this everywhere an unknown name would otherwise silently
-/// degrade on-screen motion.
-pub fn parse_easing_loud(e: &str) -> EasingType {
-    match parse_easing_result(e) {
-        Ok(e) => e,
-        Err(msg) => {
-            tracing::error!("{msg}");
-            EasingType::Linear
-        }
-    }
-}
-
-/// Strict easing parser used by Rhai / agent-facing paths: returns
-/// `Err(message)` on unknown names so the caller can surface it. The message
-/// lists every valid name so a typo produced by an LLM becomes self-correcting.
-pub fn parse_easing_result(e: &str) -> Result<EasingType, String> {
+    use tracing::warn;
     match e {
-        "linear" => Ok(EasingType::Linear),
-        "ease_in" => Ok(EasingType::EaseIn),
-        "ease_out" => Ok(EasingType::EaseOut),
-        "ease_in_out" => Ok(EasingType::EaseInOut),
-        "bounce_out" => Ok(EasingType::BounceOut),
-        "bounce_in" => Ok(EasingType::BounceIn),
-        "bounce_in_out" => Ok(EasingType::BounceInOut),
-        "elastic_out" => Ok(EasingType::ElasticOut),
-        "elastic_in" => Ok(EasingType::ElasticIn),
-        "elastic_in_out" => Ok(EasingType::ElasticInOut),
-        "back_out" => Ok(EasingType::BackOut),
-        "back_in" => Ok(EasingType::BackIn),
-        "back_in_out" => Ok(EasingType::BackInOut),
-        other => Err(format!(
-            "Unknown easing '{other}'; valid names: linear, ease_in, ease_out, ease_in_out, \
-             bounce_in, bounce_out, bounce_in_out, elastic_in, elastic_out, elastic_in_out, \
-             back_in, back_out, back_in_out"
-        )),
+        "linear" => EasingType::Linear,
+        "ease_in" => EasingType::EaseIn,
+        "ease_out" => EasingType::EaseOut,
+        "ease_in_out" => EasingType::EaseInOut,
+        "bounce_out" => EasingType::BounceOut,
+        "bounce_in" => EasingType::BounceIn,
+        "bounce_in_out" => EasingType::BounceInOut,
+        "elastic_out" => EasingType::ElasticOut,
+        "elastic_in" => EasingType::ElasticIn,
+        "elastic_in_out" => EasingType::ElasticInOut,
+        "back_out" => EasingType::BackOut,
+        "back_in" => EasingType::BackIn,
+        "back_in_out" => EasingType::BackInOut,
+        _ => {
+            warn!(
+                "Unknown easing '{e}'; falling back to 'linear'. \
+                 Valid names: linear, ease_in, ease_out, ease_in_out, \
+                 bounce_in/out/in_out, elastic_in/out/in_out, back_in/out/in_out"
+            );
+            EasingType::Linear
+        }
     }
 }
-
-/// Names accepted by `parse_easing` / `parse_easing_result`. Useful for
-/// generating API documentation / introspection output without hard-coding
-/// the list in two places.
-pub const VALID_EASING_NAMES: &[&str] = &[
-    "linear",
-    "ease_in",
-    "ease_out",
-    "ease_in_out",
-    "bounce_in",
-    "bounce_out",
-    "bounce_in_out",
-    "elastic_in",
-    "elastic_out",
-    "elastic_in_out",
-    "back_in",
-    "back_out",
-    "back_in_out",
-];
 
 pub fn calculate_object_fit_rect(src_w: f32, src_h: f32, dst_rect: Rect, fit: ObjectFit) -> Rect {
     match fit {
@@ -160,46 +112,5 @@ pub fn calculate_object_fit_rect(src_w: f32, src_h: f32, dst_rect: Rect, fit: Ob
 
             Rect::from_xywh(new_x, new_y, new_w, new_h)
         }
-    }
-}
-
-#[cfg(test)]
-mod easing_tests {
-    use super::*;
-
-    #[test]
-    fn parse_easing_result_accepts_every_documented_name() {
-        for name in VALID_EASING_NAMES {
-            assert!(
-                parse_easing_result(name).is_ok(),
-                "{name} should be a recognized easing"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_easing_result_rejects_unknown_names_with_self_correcting_message() {
-        let err = parse_easing_result("eaze-inn").unwrap_err();
-        // The error message must list every valid name so an LLM producing a
-        // typo has the corrective set in front of it.
-        for name in VALID_EASING_NAMES {
-            assert!(err.contains(name), "Help message missing valid name '{name}'");
-        }
-        assert!(err.contains("eaze-inn"));
-    }
-
-    #[test]
-    fn parse_easing_loud_falls_back_to_linear_but_flags_via_logger() {
-        // The function still produces *some* EasingType so existing call
-        // shapes compile, but tracing::error fires. We verify the return is
-        // Linear (the safe fallback) and that the function is callable.
-        assert!(matches!(
-            parse_easing_loud("nonsense"),
-            crate::animation::EasingType::Linear
-        ));
-        assert!(matches!(
-            parse_easing_loud("linear"),
-            crate::animation::EasingType::Linear
-        ));
     }
 }

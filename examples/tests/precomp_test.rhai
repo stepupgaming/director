@@ -1,4 +1,4 @@
-let movie = new_director(800, 800, 30.0);
+let movie = new_director(800, 800, 30);
 let scene = movie.add_scene(1.0);
 
 // White background

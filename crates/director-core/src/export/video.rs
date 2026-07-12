@@ -88,7 +88,7 @@ pub fn render_export(
         max_duration = 5.0;
     }
 
-    let total_frames = (max_duration * fps).ceil() as usize;
+    let total_frames = (max_duration * fps as f64).ceil() as usize;
 
     if let Some(path) = audio_track_path {
         if let Ok(bytes) = std::fs::read(path) {
@@ -133,10 +133,10 @@ pub fn render_export(
 
     let samples = director.samples_per_frame.max(1);
     let shutter_angle = director.shutter_angle.clamp(0.0, 360.0);
-    let frame_duration = 1.0 / fps;
+    let frame_duration = 1.0 / fps as f64;
     let shutter_duration = frame_duration * (shutter_angle as f64 / 360.0);
 
-    let samples_per_frame = (director.audio_mixer.sample_rate as f64 / fps).round() as usize;
+    let samples_per_frame = (director.audio_mixer.sample_rate as f64 / fps as f64).round() as usize;
 
     // Pre-allocate transition surfaces to avoid per-frame allocation churn
     let mut transition_surfaces = if !director.transitions.is_empty() {
@@ -150,7 +150,7 @@ pub fn render_export(
     };
 
     for i in 0..total_frames {
-        let frame_start_time = i as f64 / fps;
+        let frame_start_time = i as f64 / fps as f64;
         let shutter_start_time = frame_start_time - (shutter_duration / 2.0);
 
         if samples == 1 {
@@ -216,7 +216,7 @@ pub fn render_export(
             );
             pixels
         };
-        encoder.encode(&pixels, i as f64 / fps)?;
+        encoder.encode(&pixels, i as f64 / fps as f64)?;
 
         let audio_samples = director.mix_audio(samples_per_frame, frame_start_time);
         encoder.encode_audio(&audio_samples, frame_start_time)?;

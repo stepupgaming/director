@@ -401,6 +401,17 @@ pub fn parse_layout_style(props: &rhai::Map, style: &mut Style) {
         };
     }
 
+    if let Some(s) = props
+        .get("flex_wrap")
+        .and_then(|v| v.clone().into_string().ok())
+    {
+        style.flex_wrap = match s.as_str() {
+            "wrap" => FlexWrap::Wrap,
+            "wrap_reverse" | "wrap-reverse" => FlexWrap::WrapReverse,
+            _ => FlexWrap::NoWrap,
+        };
+    }
+
     if let Some(f) = props.get("flex_grow").and_then(|v| v.as_float().ok()) {
         style.flex_grow = f as f32;
     }
@@ -698,6 +709,14 @@ pub fn style_to_json(style: &Style) -> JsonMap<String, JsonValue> {
             taffy::style::FlexDirection::ColumnReverse => "column_reverse",
         }),
     );
+    m.insert(
+        "flex_wrap".into(),
+        JsonValue::from(match style.flex_wrap {
+            taffy::style::FlexWrap::Wrap => "wrap",
+            taffy::style::FlexWrap::WrapReverse => "wrap_reverse",
+            _ => "no_wrap",
+        }),
+    );
     if let Some(a) = style.align_items {
         m.insert(
             "align_items".into(),
@@ -771,7 +790,134 @@ fn json_to_rhai(v: &JsonValue) -> Dynamic {
         }
         JsonValue::String(s) => Dynamic::from(s.clone()),
         JsonValue::Array(a) => Dynamic::from(a.iter().map(json_to_rhai).collect::<Vec<Dynamic>>()),
-        JsonValue::Object(_) => Dynamic::UNIT,
+        JsonValue::Object(o) => {
+            let mut m: rhai::Map = rhai::Map::new();
+            for (k, v) in o {
+                m.insert(k.clone().into(), json_to_rhai(v));
+            }
+            Dynamic::from(m)
+        }
+    }
+}
+
+/// Build a `rhai::Map` from a `serde_json::Map` so the canonical Rhai parsers
+/// (`parse_layout_style`, `apply_text_props`, ...) can consume it.
+pub fn json_map_to_rhai(json: &JsonMap<String, JsonValue>) -> rhai::Map {
+    let mut map: rhai::Map = rhai::Map::new();
+    for (k, v) in json {
+        map.insert(k.clone().into(), json_to_rhai(v));
+    }
+    map
+}
+
+/// Serialize a `TextNode` into the same Rhai-props vocabulary consumed by
+/// `parse_spans_from_dynamic` + `apply_text_props` + `parse_text_shadow`, so a
+/// project save/load round-trip can faithfully restore rich text. Layout is
+/// intentionally excluded (see `style_to_json`); merge the two maps on load.
+pub fn text_node_to_json(t: &crate::node::text::TextNode) -> JsonMap<String, JsonValue> {
+    let mut m = JsonMap::new();
+
+    let spans: Vec<JsonValue> = t
+        .spans
+        .iter()
+        .map(|s| {
+            let mut sm = JsonMap::new();
+            sm.insert("text".into(), JsonValue::from(s.text.clone()));
+            if let Some(c) = s.color {
+                sm.insert("color".into(), JsonValue::from(color_hex(c)));
+            }
+            if let Some(w) = s.font_weight {
+                sm.insert("weight".into(), JsonValue::from(w as i64));
+            }
+            if let Some(fs) = s.font_size {
+                sm.insert("size".into(), JsonValue::from(fs as f64));
+            }
+            if let Some(f) = &s.font_family {
+                sm.insert("font_family".into(), JsonValue::from(f.clone()));
+            }
+            if let Some(st) = &s.font_style {
+                sm.insert("font_style".into(), JsonValue::from(st.clone()));
+            }
+            if let Some(c) = s.background_color {
+                sm.insert("background_color".into(), JsonValue::from(color_hex(c)));
+            }
+            if let Some(p) = s.background_padding {
+                sm.insert("background_padding".into(), JsonValue::from(p as f64));
+            }
+            if let Some(w) = s.stroke_width {
+                sm.insert("stroke_width".into(), JsonValue::from(w as f64));
+            }
+            if let Some(c) = s.stroke_color {
+                sm.insert("stroke_color".into(), JsonValue::from(color_hex(c)));
+            }
+            if let Some(ls) = s.letter_spacing {
+                sm.insert("letter_spacing".into(), JsonValue::from(ls as f64));
+            }
+            if let Some(lh) = s.line_height {
+                sm.insert("line_height".into(), JsonValue::from(lh as f64));
+            }
+            JsonValue::Object(sm)
+        })
+        .collect();
+    m.insert("content".into(), JsonValue::Array(spans));
+
+    m.insert("size".into(), JsonValue::from(t.default_font_size.current_value as f64));
+    m.insert("color".into(), JsonValue::from(color_hex(t.default_color.current_value)));
+
+    match t.fit_mode {
+        crate::element::TextFit::Shrink => {
+            m.insert("fit".into(), JsonValue::from("shrink"));
+        }
+        crate::element::TextFit::None => {
+            m.insert("fit".into(), JsonValue::from("auto"));
+        }
+    }
+    m.insert("min_size".into(), JsonValue::from(t.min_size as f64));
+    m.insert("max_size".into(), JsonValue::from(t.max_size as f64));
+    m.insert(
+        "align".into(),
+        JsonValue::from(match t.text_align {
+            skia_safe::textlayout::TextAlign::Center => "center",
+            skia_safe::textlayout::TextAlign::Right => "right",
+            skia_safe::textlayout::TextAlign::Justify => "justify",
+            _ => "left",
+        }),
+    );
+    m.insert(
+        "text_direction".into(),
+        JsonValue::from(match t.text_direction {
+            crate::text_direction::TextDirectionMode::Ltr => "ltr",
+            crate::text_direction::TextDirectionMode::Rtl => "rtl",
+            _ => "auto",
+        }),
+    );
+    if let Some(sh) = &t.shadow {
+        m.insert("text_shadow_color".into(), JsonValue::from(color_hex(sh.color)));
+        m.insert("text_shadow_blur".into(), JsonValue::from(sh.blur as f64));
+        m.insert("text_shadow_x".into(), JsonValue::from(sh.offset.0 as f64));
+        m.insert("text_shadow_y".into(), JsonValue::from(sh.offset.1 as f64));
+    }
+    m
+}
+
+/// `#rrggbb` (or `#rrggbbaa`) hex string for a `Color`, matching the format
+/// `parse_hex_color` / `parse_text_style` consume.
+fn color_hex(c: Color) -> String {
+    if (c.a * 255.0).round() as u8 == 255 {
+        format!(
+            "#{:02x}{:02x}{:02x}",
+            (c.r * 255.0) as u8,
+            (c.g * 255.0) as u8,
+            (c.b * 255.0) as u8
+        )
+    } else {
+        format!(
+            "#{:02x}{:02x}{:02x}{:02x}",
+            (c.r * 255.0) as u8,
+            (c.g * 255.0) as u8,
+            (c.b * 255.0) as u8,
+            (c.a * 255.0) as u8
+        )
     }
 }
 

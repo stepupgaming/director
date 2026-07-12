@@ -43,7 +43,6 @@ fn setup_scene_with_box(
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let mut box_node = BoxNode::new();
@@ -177,7 +176,6 @@ fn effect_overflow_hidden() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         // Parent box (red) with overflow hidden, 100x100 centered
@@ -232,7 +230,6 @@ fn cross_blur_shadow_overflow() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         // Parent with blur, shadow, rounded corners, and overflow hidden
@@ -289,7 +286,6 @@ fn cross_animated_border_radius() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let mut box_node = BoxNode::new();
@@ -335,7 +331,6 @@ fn cross_text_in_rotated() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         // Parent box with rotation and scale

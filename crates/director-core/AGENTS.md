@@ -215,3 +215,9 @@ rather than relying on host system fonts.
 * Do NOT add host-system-font-dependent text paths; new caption/template
   fonts must be added to BUNDLED_FONTS AND downloaded in setup_assets.sh
   and .github/workflows/ci.yml, then force-kept in .gitignore.
+
+## Child DOX Index
+
+- `src/node/AGENTS.md` — effect/shader system: the 6-place shader registration
+  contract, SkSL conventions (resolution-relative sampling, Rec.709 luma), and
+  the `api_catalog` → `EffectConfig` auto-generation rule.

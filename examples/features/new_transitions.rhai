@@ -6,7 +6,7 @@
 // - ClockWipe: Radial sweep from 12 o'clock, clockwise
 // - Cube: 3D cube rotation between scenes
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 
 // ============================================================
 // SCENE 1: Red (3.0s)

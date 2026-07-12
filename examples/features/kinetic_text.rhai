@@ -7,7 +7,7 @@
 // 4. Scale (grow from small)
 // 5. Rotation (spin in)
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 let scene = movie.add_scene(6.0);
 
 let root = scene.add_box(#{

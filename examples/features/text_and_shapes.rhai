@@ -7,7 +7,7 @@
 // - interpolate_color for color blending
 // - measure_text for data-driven layout
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 
 // ============================================================
 // SCENE 1: Typography (letter_spacing + line_height) (5.0s)

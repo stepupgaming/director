@@ -23,7 +23,7 @@ fn test_load_movie_error_propagation() {
     let request = MovieRequest {
         width: 1920,
         height: 1080,
-        fps: 30.0,
+        fps: 30,
         default_font: None,
         asset_search_paths: vec![],
         scenes: vec![Scene {
@@ -65,7 +65,7 @@ fn test_load_movie_rejects_missing_audio_binding_track() {
     let request = MovieRequest {
         width: 1920,
         height: 1080,
-        fps: 30.0,
+        fps: 30,
         default_font: None,
         asset_search_paths: vec![],
         scenes: vec![Scene {

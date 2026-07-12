@@ -8,7 +8,7 @@
 // making it pulse/scale/rotate as a unit. Combine this with manually
 // created nodes for a rich, layered audio-visual experience.
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 
 // Add global audio track
 let music = movie.add_audio("assets/music.mp3");

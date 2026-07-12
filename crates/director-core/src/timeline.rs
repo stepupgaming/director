@@ -25,10 +25,6 @@ pub struct TrackClip {
     pub fade_in: f64,
     /// Fade-out duration in seconds (0 = no fade).
     pub fade_out: f64,
-    /// When `Some(t)`, the renderer keeps sampling the source at local time
-    /// `t` for the entire `duration` window — the canonical "freeze frame"
-    /// mechanism used by `add_freeze`.
-    pub freeze_time: Option<f64>,
 }
 
 impl TrackClip {
@@ -45,7 +41,6 @@ impl TrackClip {
             audio_tracks: Vec::new(),
             fade_in: 0.0,
             fade_out: 0.0,
-            freeze_time: None,
         }
     }
 
@@ -63,11 +58,6 @@ impl TrackClip {
 
     /// Returns the local time within the source for a given global time.
     pub fn local_time(&self, global_time: f64) -> f64 {
-        // Freeze overrides everything: the clip keeps sampling the same
-        // source frame for its entire visible window.
-        if let Some(frozen) = self.freeze_time {
-            return frozen;
-        }
         if self.speed <= 0.0 {
             return self.source_start;
         }

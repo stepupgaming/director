@@ -32,7 +32,6 @@ fn shape_circle_fill() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let shape = ShapeNode::new(ShapeType::Circle { cx: 150.0, cy: 100.0, r: 60.0 });
@@ -69,7 +68,6 @@ fn shape_circle_stroke_only() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let mut shape = ShapeNode::new(ShapeType::Circle { cx: 150.0, cy: 100.0, r: 60.0 });
@@ -107,7 +105,6 @@ fn shape_circle_fill_and_stroke() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let mut shape = ShapeNode::new(ShapeType::Circle { cx: 150.0, cy: 100.0, r: 60.0 });
@@ -145,7 +142,6 @@ fn shape_ellipse_fill() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let mut shape = ShapeNode::new(ShapeType::Ellipse { cx: 150.0, cy: 100.0, rx: 100.0, ry: 50.0 });
@@ -181,7 +177,6 @@ fn shape_ellipse_gradient() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let mut shape = ShapeNode::new(ShapeType::Ellipse { cx: 150.0, cy: 100.0, rx: 100.0, ry: 50.0 });
@@ -226,7 +221,6 @@ fn shape_path_triangle() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let commands = vec![
@@ -268,7 +262,6 @@ fn shape_path_quad_curve() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let commands = vec![
@@ -312,7 +305,6 @@ fn shape_path_cubic_curve() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let commands = vec![
@@ -354,7 +346,6 @@ fn shape_path_arc() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let commands = vec![

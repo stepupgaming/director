@@ -2,7 +2,7 @@
 // Combining Kinetic Typography with Elastic & Bounce Easings
 // A demonstration of the full range of motion capabilities in the engine.
 
-let movie = new_director(1920, 1080, 60.0);
+let movie = new_director(1920, 1080, 60);
 let scene = movie.add_scene(7.0);
 
 // Set deep aesthetic background

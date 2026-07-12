@@ -39,8 +39,8 @@ pub struct VideoNode {
     // Keep temp file alive
     #[allow(dead_code)]
     temp_file: Option<Arc<NamedTempFile>>,
-    // Public so project round-trip can rewrite the source path on reload.
-    pub path: PathBuf,
+    // Also keep path for cloning if it was a file path
+    path: PathBuf,
 }
 
 impl Clone for VideoNode {
@@ -259,22 +259,6 @@ impl Element for VideoNode {
                 }
             }
             _ => {}
-        }
-    }
-}
-
-impl VideoNode {
-    /// Re-prime the internal VideoLoader against the current `path`. Used
-    /// after the source path was rewritten (e.g. by project round-trip) so
-    /// playback resumes without an explicit re-prime from the host.
-    pub fn reprime_loader(&mut self, mode: RenderMode) {
-        self.render_mode = mode;
-        match VideoLoader::new(self.path.clone(), mode) {
-            Ok(l) => self.loader = Some(l),
-            Err(e) => {
-                tracing::error!("Failed to reprime VideoLoader for {:?}: {}", self.path, e);
-                self.loader = None;
-            }
         }
     }
 }

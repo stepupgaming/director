@@ -1,7 +1,7 @@
 // Director V1 Showcase — All 13 New Features
 // A polished 18-second showcase demonstrating every new capability.
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 
 // ============================================================
 // FEATURE 1 & 2: letter_spacing + line_height

@@ -1,5 +1,5 @@
 // Minimal test for path_animate functionality
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 let scene = movie.add_scene(2.0);
 
 let bg = scene.add_box(#{

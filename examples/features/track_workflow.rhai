@@ -10,7 +10,7 @@
 // Tracks are a flat layer stack (Track 0 = background, Track 1 = content, etc.)
 // that provide global z-ordering without scene graph nesting limitations.
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 
 // ============================================================
 // SETUP TRACKS

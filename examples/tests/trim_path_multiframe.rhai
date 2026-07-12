@@ -1,7 +1,7 @@
 // Test: Multi-frame trim path sampling
 // Samples trim values at multiple frames to verify animation works
 
-let movie = new_director(400, 400, 30.0);
+let movie = new_director(400, 400, 30);
 
 // Create scene for 2 seconds (60 frames) to sample multiple points
 let scene = movie.add_scene(2.0);

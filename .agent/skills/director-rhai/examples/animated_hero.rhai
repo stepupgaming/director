@@ -1,5 +1,5 @@
 // animated_hero.rhai - Advanced Animation and Layout
-let movie = new_director(1920, 1080, 60.0);
+let movie = new_director(1920, 1080, 60);
 let s1 = movie.add_scene(5.0);
 
 // Background

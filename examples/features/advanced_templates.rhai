@@ -10,7 +10,7 @@
 // These build on the basic templates (title_card, lower_third, etc.)
 // and solve even more common short-form layout problems.
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 
 // ============================================================
 // SCENE 1: Subscribe Button (4.0s)

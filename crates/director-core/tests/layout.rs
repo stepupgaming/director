@@ -52,7 +52,7 @@ fn layout_structure_snapshot() {
     let director = Director::new(
         1000,
         1000,
-        30.0,
+        30,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -82,7 +82,6 @@ fn layout_structure_snapshot() {
             duration: 10.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         // Row with space-between children
@@ -174,7 +173,7 @@ fn grid_layout_basic() {
     let director = Director::new(
         1000,
         1000,
-        30.0,
+        30,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -207,7 +206,6 @@ fn grid_layout_basic() {
         duration: 10.0,
         z_index: 0,
         audio_tracks: vec![],
-            freeze_time: None,
     });
 
     // Item 1 (0,0)
@@ -255,72 +253,22 @@ fn grid_layout_basic() {
     assert_eq!(n2.layout_rect.height(), 500.0);
 }
 
-/// Box safe-area preset must be resolved into padding by the layout pass so
-/// children stay clear of platform UI overlays. The TikTok preset (top=100,
-/// right=80, bottom=180, left=24 at the reference 9:16 height) is the canonical
-/// case the rest of the safe-area stack has been hitting, so verify the BoxNode
-/// gets the same insets when the layout engine runs.
 #[test]
-fn box_safe_area_preset_applies_padding() {
-    let director = Director::new(
-        1080,
-        1920,
-        30.0,
-        Arc::new(DefaultAssetLoader),
-        RenderMode::Preview,
-        None,
-    );
-    let director_arc = Arc::new(Mutex::new(director));
+fn flex_wrap_parses_and_round_trips() {
+    use director_core::scripting::utils::{parse_layout_style, style_to_json};
+    use rhai::Map;
 
-    let root_id;
-    {
-        let mut d = director_arc.lock().unwrap();
-        let mut root = BoxNode::new();
-        root.style.size = taffy::geometry::Size {
-            width: Dimension::length(1080.0),
-            height: Dimension::length(1920.0),
-        };
-        root.style.display = taffy::style::Display::Flex;
-        root.style.flex_direction = taffy::style::FlexDirection::Column;
-        root.safe_area_preset = Some("tiktok".to_string());
-        root_id = d.scene.add_node(Box::new(root));
+    let mut style = taffy::style::Style::default();
+    let mut props = Map::new();
+    props.insert("flex_wrap".into(), "wrap".into());
+    parse_layout_style(&props, &mut style);
+    assert!(matches!(style.flex_wrap, taffy::style::FlexWrap::Wrap));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 10.0,
-            z_index: 0,
-            audio_tracks: vec![],
-            freeze_time: None,
-        });
-    }
+    let json = style_to_json(&style);
+    assert_eq!(json.get("flex_wrap").unwrap(), "wrap");
 
-    {
-        let mut d = director_arc.lock().unwrap();
-        let mut layout_engine = director_core::systems::layout::LayoutEngine::new();
-        d.update(0.0);
-        let width = d.width;
-        let height = d.height;
-        layout_engine.compute_layout(&mut d.scene, width, height, 0.0);
-        d.run_post_layout(0.0);
-    }
-
-    let d = director_arc.lock().unwrap();
-    let Some(node) = d.scene.get_node(root_id) else {
-        panic!("root missing after layout");
-    };
-    let Some(box_node) = node.element.as_any().downcast_ref::<BoxNode>() else {
-        panic!("root is not a BoxNode");
-    };
-
-    // Pad extraction via LengthPercentage::into_raw().value() because
-    // LengthPercentage wraps a private CompactLength on Taffy 0.9.2.
-    use taffy::style::LengthPercentage;
-    let to_len = |lp: LengthPercentage| -> f32 { lp.into_raw().value() };
-    let pad = box_node.style.padding;
-    assert_eq!(to_len(pad.left), 24.0, "tiktok left inset");
-    assert_eq!(to_len(pad.right), 80.0, "tiktok right inset");
-    assert_eq!(to_len(pad.top), 100.0, "tiktok top inset");
-    assert_eq!(to_len(pad.bottom), 180.0, "tiktok bottom inset");
+    // wrap-reverse alias
+    props.insert("flex_wrap".into(), "wrap-reverse".into());
+    parse_layout_style(&props, &mut style);
+    assert!(matches!(style.flex_wrap, taffy::style::FlexWrap::WrapReverse));
 }

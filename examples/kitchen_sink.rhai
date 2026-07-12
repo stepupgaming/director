@@ -2,7 +2,7 @@
 // Goal: exercise every Rhai API to find broken/lacking/low-quality features
 // 12 seconds, 1920x1080, 30fps - kitchen sink feature test
 
-let movie = new_director(1920, 1080, 30.0, #{ mode: "export" });
+let movie = new_director(1920, 1080, 30, #{ mode: "export" });
 
 // ============================================================
 // GLOBAL CONFIG
@@ -388,7 +388,7 @@ shader_box.apply_effect("shader", #{
 shader_box.animate("opacity", 0.0, 0.8, 2.0, "ease_in_out");
 
 // Nested composition
-let inner_movie = new_director(400, 400, 30.0);
+let inner_movie = new_director(400, 400, 30);
 let inner_scene = inner_movie.add_scene(2.0);
 inner_scene.add_text(#{
     content: "NESTED",

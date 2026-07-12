@@ -5,7 +5,7 @@
 // - Transition types (fade, slide, wipe, circle)
 // - Transition timing
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 
 // Scene 1: Red
 let s1 = movie.add_scene(3.0);

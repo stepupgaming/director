@@ -28,7 +28,6 @@ fn basic_box() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         // Child
@@ -72,7 +71,6 @@ crate::visual_test_matrix!(
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         // Bottom Box (Red)
@@ -134,7 +132,6 @@ fn box_gradient_diagonal() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let mut box_node = BoxNode::new();

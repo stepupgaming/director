@@ -1,7 +1,7 @@
 // Motion Blur Test Script
 // Tests the configure_motion_blur API with fast-moving elements
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 
 // Configure motion blur: 4 samples per frame, 180 degree shutter angle
 movie.configure_motion_blur(4, 180.0);

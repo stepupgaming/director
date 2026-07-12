@@ -33,7 +33,6 @@ crate::visual_test_matrix!(
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let colors = [
@@ -84,7 +83,6 @@ crate::visual_test_matrix!(
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         // Child Items of different sizes

@@ -72,4 +72,3 @@ Updates layout and visual style properties.
 - `z_index`: Integer
 - `opacity`: 0.0 to 1.0
 - `object_fit`: "cover", "contain", "fill"
-- `safe_area` / `safe_area_preset`: Platform preset name (e.g. `tiktok`, `instagram_reel`, `youtube_shorts`, `mobile`, `desktop`). Resolved through `scaled_safe_zone()` and written into the node's `padding` so children stay clear of platform UI overlays. Trailing alias is preferred for backward compatibility with caption props.

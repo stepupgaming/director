@@ -9,7 +9,7 @@
 // Each scene applies one or more effects to a labeled colored card so the
 // result is easy to compare against the unfiltered original.
 
-let movie = new_director(1280, 720, 30.0);
+let movie = new_director(1280, 720, 30);
 
 // Helper: a labeled card with a solid color and rounded corners.
 fn make_card(parent, label, color) {

@@ -176,7 +176,7 @@ fn audio_energy_bands_separation() {
 #[test]
 fn audio_binding_uses_track_relative_time_and_duration_window() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(640, 360, 30.0, loader, RenderMode::Preview, None);
+    let mut director = Director::new(640, 360, 30, loader, RenderMode::Preview, None);
 
     let root_id = director.scene.add_node(Box::new(BoxNode::new()));
     director.timeline.push(TimelineItem {
@@ -186,7 +186,6 @@ fn audio_binding_uses_track_relative_time_and_duration_window() {
         duration: 5.0,
         z_index: 0,
         audio_tracks: vec![],
-            freeze_time: None,
     });
 
     let sample_rate = director.audio_mixer.sample_rate as usize;

@@ -99,7 +99,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -135,7 +134,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -151,7 +149,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parent.ensure_alive(&d)?;
             let image = d.assets.load_image(path);
 
-            let mut img_node = ImageNode::from_image(image); img_node.source_path = Some(path.to_string());
+            let img_node = ImageNode::from_image(image);
             let id = d.scene.add_node(Box::new(img_node));
             if !d.scene.try_add_child(parent.id, id) {
                 d.scene.destroy_node(id);
@@ -162,7 +160,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -173,7 +170,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = scene.lock_director()?;
             let image = d.assets.load_image(path);
 
-            let mut img_node = ImageNode::from_image(image); img_node.source_path = Some(path.to_string());
+            let img_node = ImageNode::from_image(image);
             let id = d.scene.add_node(Box::new(img_node));
             if !d.scene.try_add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
@@ -186,7 +183,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -200,7 +196,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = scene.lock_director()?;
             let image = d.assets.load_image(path);
 
-            let mut img_node = ImageNode::from_image(image); img_node.source_path = Some(path.to_string());
+            let mut img_node = ImageNode::from_image(image);
             parse_layout_style(&props, &mut img_node.style);
 
             if let Some(fit_str) = props
@@ -235,7 +231,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -250,7 +245,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             parent.ensure_alive(&d)?;
             let image = d.assets.load_image(path);
 
-            let mut img_node = ImageNode::from_image(image); img_node.source_path = Some(path.to_string());
+            let mut img_node = ImageNode::from_image(image);
             parse_layout_style(&props, &mut img_node.style);
 
             if let Some(fit_str) = props
@@ -283,7 +278,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -313,7 +307,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     Ok(NodeHandle {
                         director: parent.director.clone(),
                         id,
-            invalidated: false,
                     })
                 }
                 Err(e) => Err(format!("Failed to parse lottie: {}", e).into()),
@@ -375,7 +368,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     Ok(NodeHandle {
                         director: parent.director.clone(),
                         id,
-            invalidated: false,
                     })
                 }
                 Err(e) => Err(format!("Failed to parse lottie: {}", e).into()),
@@ -436,7 +428,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     Ok(NodeHandle {
                         director: scene.director.clone(),
                         id,
-            invalidated: false,
                     })
                 }
                 Err(e) => Err(format!("Failed to parse lottie: {}", e).into()),
@@ -467,7 +458,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -504,7 +494,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -530,7 +519,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -566,7 +554,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -601,7 +588,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -657,7 +643,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -692,7 +677,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -749,7 +733,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -795,7 +778,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -841,7 +823,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -879,7 +860,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -917,7 +897,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -966,7 +945,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1011,7 +989,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1042,7 +1019,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1079,7 +1055,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1110,7 +1085,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1148,7 +1122,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1186,7 +1159,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1224,7 +1196,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1262,7 +1233,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1301,7 +1271,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1336,7 +1305,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: parent.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1372,7 +1340,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             Ok(NodeHandle {
                 director: scene.director.clone(),
                 id,
-            invalidated: false,
             })
         },
     );
@@ -1400,7 +1367,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 Ok(NodeHandle {
                     director: parent.director.clone(),
                     id,
-            invalidated: false,
                 })
             },
         );
@@ -1420,7 +1386,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 Ok(NodeHandle {
                     director: parent.director.clone(),
                     id,
-            invalidated: false,
                 })
             },
         );
@@ -1541,15 +1506,6 @@ fn apply_box_props(box_node: &mut BoxNode, props: &rhai::Map) {
                 });
             }
         }
-    }
-    // Platform safe-area preset (e.g. "tiktok", "reels"). Applied as padding on
-    // the next LayoutEngine pass via BoxNode::apply_safe_area.
-    if let Some(p) = props
-        .get("safe_area")
-        .or_else(|| props.get("safe_area_preset"))
-        .and_then(|v| v.clone().into_string().ok())
-    {
-        box_node.safe_area_preset = Some(p);
     }
 }
 
@@ -1958,4 +1914,25 @@ fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
     {
         text_node.set_text_direction(crate::text_direction::parse_text_direction_mode(&d));
     }
+}
+
+/// Rebuild a `TextNode` from a Rhai props map (the same vocabulary `add_text`
+/// consumes), reusing the canonical text/layout parsers. Used by the project
+/// save/load round-trip to faithfully restore rich text. `font_collection`
+/// comes from `Director::assets`.
+pub fn build_text_node_from_props(
+    font_collection: Arc<std::sync::Mutex<skia_safe::textlayout::FontCollection>>,
+    props: &rhai::Map,
+) -> TextNode {
+    let spans = if let Some(c) = props.get("content") {
+        parse_spans_from_dynamic(c.clone())
+    } else {
+        Vec::new()
+    };
+    let mut text_node = TextNode::new(spans, font_collection);
+    parse_layout_style(props, &mut text_node.style);
+    apply_text_props(&mut text_node, props);
+    text_node.shadow = parse_text_shadow(props);
+    text_node.init_paragraph();
+    text_node
 }

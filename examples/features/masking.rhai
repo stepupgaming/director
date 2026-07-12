@@ -4,7 +4,7 @@
 // - Alpha masking (set_mask)
 // - Blend modes (set_blend_mode)
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 let scene = movie.add_scene(3.0);
 
 let root = scene.add_box(#{

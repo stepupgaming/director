@@ -4,7 +4,7 @@
 // - Second line fades in mid-cue to its already-reserved position.
 // - One global active word per frame (warm yellow, subtle 1.04 scale pop).
 // - Completed words stay briefly visible in dimmed white then cue exits.
-let movie = new_director(800, 600, 30.0);
+let movie = new_director(800, 600, 30);
 let scene = movie.add_scene(10.0);
 
 // Real-world-like bright bg for legibility.

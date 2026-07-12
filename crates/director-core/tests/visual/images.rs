@@ -72,7 +72,6 @@ fn setup_image_director(fit: ObjectFit) -> std::sync::Arc<std::sync::Mutex<direc
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let png_bytes = create_test_image();
@@ -138,7 +137,6 @@ fn image_opacity() {
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let png_bytes = create_test_image();

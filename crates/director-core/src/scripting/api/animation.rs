@@ -16,11 +16,6 @@ use tracing::error;
 
 use super::super::types::NodeHandle;
 use super::super::utils::{parse_easing, parse_hex_color, parse_spring_config};
-// IMPORTANT: animation/ease/loop/forwarding paths use `parse_easing_loud`
-// (tracing::error on unknown names) instead of `parse_easing` (warn+fall-
-// back-to-Linear) so a typo from an agent makes the render log scream
-// instead of silently degrading on-screen motion.
-use crate::node::parse_easing_loud as parse_easing_strict;
 
 /// Register animation-related Rhai functions.
 pub fn register(engine: &mut Engine) {
@@ -39,7 +34,7 @@ pub fn register(engine: &mut Engine) {
                 Err(_) => return,
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease_fn = parse_easing_strict(ease);
+                let ease_fn = parse_easing(ease);
 
                 // Add delay segment (hold at start value)
                 if delay > 0.0 {
@@ -147,7 +142,7 @@ pub fn register(engine: &mut Engine) {
                 Err(_) => return,
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease_fn = parse_easing_strict(ease);
+                let ease_fn = parse_easing(ease);
 
                 match prop {
                     "scale" => {
@@ -216,7 +211,7 @@ pub fn register(engine: &mut Engine) {
                 Err(_) => return,
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease_fn = parse_easing_strict(ease);
+                let ease_fn = parse_easing(ease);
 
                 match prop {
                     "scale" => {
@@ -399,7 +394,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 // Try to parse SVG path
                 if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing_strict(ease);
+                    let ease_fn = parse_easing(ease);
                     let mut state = PathAnimationState::new(path, false, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     n.path_animation = Some(state);
@@ -421,7 +416,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 // Try to parse SVG path
                 if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing_strict(ease);
+                    let ease_fn = parse_easing(ease);
                     let mut state = PathAnimationState::new(path, true, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     n.path_animation = Some(state);
@@ -443,7 +438,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(from_path) = Path::from_svg(from_svg) {
                     if let Some(to_path) = Path::from_svg(to_svg) {
-                        let ease_fn = parse_easing_strict(ease);
+                        let ease_fn = parse_easing(ease);
                         let mut state = PathMorphState::new(from_path, to_path, false, dur);
                         state.progress.add_keyframe(1.0, dur, ease_fn);
                         n.path_morph = Some(state);
@@ -467,7 +462,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(from_path) = Path::from_svg(from_svg) {
                     if let Some(to_path) = Path::from_svg(to_svg) {
-                        let ease_fn = parse_easing_strict(ease);
+                        let ease_fn = parse_easing(ease);
                         let mut state = PathMorphState::new(from_path, to_path, true, dur);
                         state.progress.add_keyframe(1.0, dur, ease_fn);
                         n.path_morph = Some(state);
@@ -491,7 +486,7 @@ pub fn register(engine: &mut Engine) {
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing_strict(ease);
+                    let ease_fn = parse_easing(ease);
                     let mut state = PathAnimationState::new(path, false, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     state.loop_count = loop_count as i32;
@@ -513,7 +508,7 @@ pub fn register(engine: &mut Engine) {
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing_strict(ease);
+                    let ease_fn = parse_easing(ease);
                     let mut state = PathAnimationState::new(path, follow_tangent, dur);
                     state.progress.add_keyframe(1.0, dur, ease_fn);
                     state.loop_count = loop_count as i32;
@@ -537,7 +532,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 if let Some(from_path) = Path::from_svg(from_svg) {
                     if let Some(to_path) = Path::from_svg(to_svg) {
-                        let ease_fn = parse_easing_strict(ease);
+                        let ease_fn = parse_easing(ease);
                         let mut state = PathMorphState::new(from_path, to_path, false, dur);
                         state.progress.add_keyframe(1.0, dur, ease_fn);
                         state.loop_count = loop_count as i32;

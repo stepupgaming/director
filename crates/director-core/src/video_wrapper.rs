@@ -87,8 +87,7 @@ pub struct EncoderSettings {
     pub height: usize,
     pub sample_rate: i32,
     pub hardware_accel: HardwareAccel,
-    /// Frames per second. `f64` so 23.976 / 29.97 don't truncate.
-    pub fps: f64,
+    pub fps: u32,
     pub encoder_mode: EncoderMode,
     pub alpha: bool,
 }
@@ -100,7 +99,7 @@ impl EncoderSettings {
             height: h,
             sample_rate: 48000,
             hardware_accel: HardwareAccel::Auto,
-            fps: 30.0,
+            fps: 30,
             encoder_mode: EncoderMode::Auto,
             alpha: false,
         }

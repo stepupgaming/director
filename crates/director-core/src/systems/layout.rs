@@ -10,7 +10,6 @@
 //! ## Key Types
 //! - `LayoutEngine`: Manages the Taffy tree and layout cache.
 
-use crate::node::BoxNode;
 use crate::scene::SceneGraph;
 use crate::types::NodeId;
 use taffy::prelude::*;
@@ -48,15 +47,6 @@ impl LayoutEngine {
         // Iterate over all potential node IDs in the Scene
         for (id, node_opt) in scene.nodes.iter_mut().enumerate() {
             if let Some(node) = node_opt {
-                // Resolve Box safe-area preset into padding BEFORE we read the style
-                // for Taffy sync. When the preset changes the padding, mark the node
-                // dirty so the new insets are pushed into Taffy on this frame.
-                if let Some(box_node) = node.element.as_any_mut().downcast_mut::<BoxNode>() {
-                    if box_node.apply_safe_area(height as f32) {
-                        node.dirty_style = true;
-                    }
-                }
-
                 // Ensure existence in Taffy
                 let t_id = if let Some(&existing_t_id) = self.node_map.get(&id) {
                     existing_t_id

@@ -17,9 +17,11 @@
 //!   `display`) — see `style_to_json` / `apply_layout_style_json`.
 //! * **Box**: full node-field round-trip (opacity, bg_color, border_radius,
 //!   border_width, border_color, shadow_*, blur, overflow) plus layout.
-//! * **Text**: minimal reconstruction (transform, opacity, `font_size`,
-//!   `color`, `font_family`, `content` from a `_content` prop key) plus
-//!   layout. Rich per-span styling degrades to a single default span.
+//! * **Text**: full reconstruction — content spans (text + per-span color,
+//!   font family/weight/style, size, background, stroke, letter spacing, line
+//!   height), default size/color, `fit`/`min_size`/`max_size`, `align`,
+//!   `text_direction`, and text shadow — rebuilt via `text_node_to_json` and
+//!   `build_text_node_from_props`, plus transform/opacity/layout.
 //! * **Other kinds** (Image, Video, Lottie, Effect, Composition, Caption,
 //!   Vector, Spectrum, WGPU): kind tag + transform + opacity + layout
 //!   preserved. On reload the node is reconstructed as a `BoxNode`
@@ -37,13 +39,12 @@ use crate::animation::{Animated, EasingType};
 use crate::director::{Director, TimelineItem};
 use crate::node::text::TextNode;
 use crate::node::BoxNode;
-use crate::scripting::utils::{apply_layout_style_json, style_to_json};
+use crate::scripting::utils::{apply_layout_style_json, json_map_to_rhai, style_to_json, text_node_to_json};
 use crate::timeline::{Track, TrackClip};
 use crate::types::{Color, NodeId};
 use crate::video_wrapper::RenderMode;
 use crate::{AssetLoader, DefaultAssetLoader};
 use serde::{Deserialize, Serialize};
-use taffy::style::Style;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use skia_safe::BlendMode;
 use std::sync::Arc;
@@ -97,11 +98,6 @@ pub struct ClipData {
     pub fade_out: f64,
     #[serde(default)]
     pub audio_tracks: Vec<usize>,
-    /// Freeze-frame override; when set, the renderer keeps sampling the
-    /// source at this local time for the entire clip window instead of
-    /// advancing.
-    #[serde(default)]
-    pub freeze_time: Option<f64>,
 }
 
 fn default_one_f() -> f64 {
@@ -119,11 +115,6 @@ pub struct TimelineItemData {
     pub name: Option<String>,
     #[serde(default)]
     pub audio_tracks: Vec<usize>,
-    /// Freeze-frame override; when set, the renderer keeps sampling the
-    /// scene at this local time for the entire timeline window instead of
-    /// advancing.
-    #[serde(default)]
-    pub freeze_time: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -457,9 +448,6 @@ fn box_props_to_json(b: &BoxNode) -> JsonMap<String, JsonValue> {
         JsonValue::from(b.backdrop_blur.current_value),
     );
     p.insert("overflow".into(), JsonValue::from(b.overflow.clone()));
-    if let Some(preset) = &b.safe_area_preset {
-        p.insert("safe_area".into(), JsonValue::from(preset.clone()));
-    }
     p
 }
 
@@ -505,968 +493,6 @@ fn apply_box_props(b: &mut BoxNode, props: &JsonMap<String, JsonValue>) {
     }
     if let Some(v) = props.get("overflow").and_then(|v| v.as_str()) {
         b.overflow = v.to_string();
-    }
-    if let Some(v) = props
-        .get("safe_area")
-        .or_else(|| props.get("safe_area_preset"))
-        .and_then(|v| v.as_str())
-    {
-        b.safe_area_preset = Some(v.to_string());
-    }
-}
-
-// ---- Text props ----
-
-fn text_span_to_json(s: &crate::element::TextSpan) -> JsonValue {
-    let mut m = JsonMap::new();
-    m.insert("text".into(), JsonValue::from(s.text.clone()));
-    if let Some(c) = s.color {
-        m.insert("color".into(), JsonValue::from(crate::project::color_to_hex_pub(c)));
-    }
-    if let Some(f) = s.font_size {
-        m.insert("font_size".into(), JsonValue::from(f));
-    }
-    if let Some(w) = s.font_weight {
-        m.insert("font_weight".into(), JsonValue::from(w as i64));
-    }
-    if let Some(ff) = &s.font_family {
-        m.insert("font_family".into(), JsonValue::from(ff.clone()));
-    }
-    if let Some(fs) = &s.font_style {
-        m.insert("font_style".into(), JsonValue::from(fs.clone()));
-    }
-    if let Some(bc) = s.background_color {
-        m.insert("background_color".into(), JsonValue::from(crate::project::color_to_hex_pub(bc)));
-    }
-    if let Some(bp) = s.background_padding {
-        m.insert("background_padding".into(), JsonValue::from(bp));
-    }
-    if let Some(sw) = s.stroke_width {
-        m.insert("stroke_width".into(), JsonValue::from(sw));
-    }
-    if let Some(sc) = s.stroke_color {
-        m.insert("stroke_color".into(), JsonValue::from(crate::project::color_to_hex_pub(sc)));
-    }
-    if let Some(ls) = s.letter_spacing {
-        m.insert("letter_spacing".into(), JsonValue::from(ls));
-    }
-    if let Some(lh) = s.line_height {
-        m.insert("line_height".into(), JsonValue::from(lh));
-    }
-    JsonValue::Object(m)
-}
-
-fn text_span_from_json(v: &JsonValue) -> Option<crate::element::TextSpan> {
-    let obj = v.as_object()?;
-    let text = obj.get("text").and_then(|v| v.as_str())?.to_string();
-    let parse_color = |v: &JsonValue| -> Option<crate::types::Color> {
-        v.as_str().and_then(crate::project::parse_hex_pub)
-    };
-    Some(crate::element::TextSpan {
-        text,
-        color: obj.get("color").and_then(parse_color),
-        font_size: obj.get("font_size").and_then(|v| v.as_f64()).map(|v| v as f32),
-        font_weight: obj.get("font_weight").and_then(|v| v.as_i64()).map(|v| v as u16),
-        font_family: obj.get("font_family").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        font_style: obj.get("font_style").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        background_color: obj.get("background_color").and_then(parse_color),
-        background_padding: obj
-            .get("background_padding")
-            .and_then(|v| v.as_f64())
-            .map(|v| v as f32),
-        stroke_width: obj.get("stroke_width").and_then(|v| v.as_f64()).map(|v| v as f32),
-        stroke_color: obj.get("stroke_color").and_then(parse_color),
-        fill_gradient: None,
-        letter_spacing: obj
-            .get("letter_spacing")
-            .and_then(|v| v.as_f64())
-            .map(|v| v as f32),
-        line_height: obj.get("line_height").and_then(|v| v.as_f64()).map(|v| v as f32),
-    })
-}
-
-fn text_props_to_json(t: &TextNode) -> JsonMap<String, JsonValue> {
-    let mut p = JsonMap::new();
-    let spans: Vec<JsonValue> = t.spans.iter().map(text_span_to_json).collect();
-    p.insert("spans".into(), JsonValue::Array(spans));
-    p.insert(
-        "default_font_size".into(),
-        JsonValue::from(t.default_font_size.current_value),
-    );
-    p.insert(
-        "default_color".into(),
-        JsonValue::from(crate::project::color_to_hex_pub(t.default_color.current_value)),
-    );
-    p.insert("min_size".into(), JsonValue::from(t.min_size));
-    p.insert("max_size".into(), JsonValue::from(t.max_size));
-    let fit = match t.fit_mode {
-        crate::element::TextFit::None => "none",
-        crate::element::TextFit::Shrink => "shrink",
-    };
-    p.insert("fit".into(), JsonValue::from(fit));
-    let align = match t.text_align {
-        skia_safe::textlayout::TextAlign::Left => "left",
-        skia_safe::textlayout::TextAlign::Center => "center",
-        skia_safe::textlayout::TextAlign::Right => "right",
-        skia_safe::textlayout::TextAlign::Justify => "justify",
-        _ => "left",
-    };
-    p.insert("text_align".into(), JsonValue::from(align));
-    if let Some(sh) = &t.shadow {
-        p.insert(
-            "shadow_enabled".into(),
-            JsonValue::from(1.0),
-        );
-        p.insert(
-            "shadow_color".into(),
-            JsonValue::from(crate::project::color_to_hex_pub(sh.color)),
-        );
-        p.insert("shadow_blur".into(), JsonValue::from(sh.blur));
-        p.insert(
-            "shadow_offset_x".into(),
-            JsonValue::from(sh.offset.0),
-        );
-        p.insert(
-            "shadow_offset_y".into(),
-            JsonValue::from(sh.offset.1),
-        );
-    }
-    p
-}
-
-pub(crate) fn color_to_hex_pub(c: crate::types::Color) -> String {
-    color_to_hex(c)
-}
-
-pub(crate) fn parse_hex_pub(s: &str) -> Option<crate::types::Color> {
-    parse_hex(s)
-}
-
-fn apply_text_props(
-    node: &mut TextNode,
-    props: &JsonMap<String, JsonValue>,
-) {
-    // Rebuild the span list (the only piece TextNode::new needs to take).
-    let mut spans: Vec<crate::element::TextSpan> = Vec::new();
-    if let Some(arr) = props.get("spans").and_then(|v| v.as_array()) {
-        for s in arr {
-            if let Some(span) = text_span_from_json(s) {
-                spans.push(span);
-            }
-        }
-    }
-    node.spans = spans.clone();
-
-    if let Some(v) = props.get("default_font_size").and_then(|v| v.as_f64()) {
-        node.default_font_size = Animated::new(v as f32);
-    }
-    if let Some(s) = props.get("default_color").and_then(|v| v.as_str()) {
-        if let Some(c) = parse_hex(s) {
-            node.default_color = Animated::new(c);
-        } else {
-            node.default_color = Animated::new(crate::types::Color::WHITE);
-        }
-    } else {
-        // Bootstrap a default so `node.init_paragraph` has something to draw.
-        node.default_color = Animated::new(crate::types::Color::WHITE);
-    }
-    node.default_font_size.current_value = node.default_font_size.current_value.max(1.0);
-
-    if let Some(v) = props.get("min_size").and_then(|v| v.as_f64()) {
-        node.min_size = v as f32;
-    }
-    if let Some(v) = props.get("max_size").and_then(|v| v.as_f64()) {
-        node.max_size = v as f32;
-    }
-    if let Some(s) = props.get("fit").and_then(|v| v.as_str()) {
-        node.fit_mode = match s {
-            "shrink" => crate::element::TextFit::Shrink,
-            _ => crate::element::TextFit::None,
-        };
-    }
-    if let Some(s) = props.get("text_align").and_then(|v| v.as_str()) {
-        node.text_align = match s {
-            "center" => skia_safe::textlayout::TextAlign::Center,
-            "right" => skia_safe::textlayout::TextAlign::Right,
-            "justify" => skia_safe::textlayout::TextAlign::Justify,
-            _ => skia_safe::textlayout::TextAlign::Left,
-        };
-    }
-    if props.contains_key("shadow_color") {
-        let color = props
-            .get("shadow_color")
-            .and_then(|v| v.as_str())
-            .and_then(parse_hex)
-            .unwrap_or(crate::types::Color::BLACK);
-        let blur = props
-            .get("shadow_blur")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32;
-        let offset_x = props
-            .get("shadow_offset_x")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32;
-        let offset_y = props
-            .get("shadow_offset_y")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32;
-        node.shadow = Some(crate::element::TextShadow {
-            color,
-            blur,
-            offset: (offset_x, offset_y),
-        });
-    }
-    // Need to recompute the Skia paragraph after span/style mutation.
-    node.init_paragraph();
-}
-
-// ---- Image props ----
-
-fn image_props_to_json(n: &crate::node::image_node::ImageNode) -> JsonMap<String, JsonValue> {
-    let mut p = JsonMap::new();
-    if let Some(path) = &n.source_path {
-        p.insert("source".into(), JsonValue::from(path.clone()));
-    }
-    let fit = match n.object_fit {
-        crate::types::ObjectFit::Fill => "fill",
-        crate::types::ObjectFit::Contain => "contain",
-        crate::types::ObjectFit::Cover => "cover",
-    };
-    p.insert("object_fit".into(), JsonValue::from(fit));
-    p.insert(
-        "border_radius".into(),
-        JsonValue::from(n.border_radius.current_value),
-    );
-    p
-}
-
-fn apply_image_props(
-    n: &mut crate::node::image_node::ImageNode,
-    props: &JsonMap<String, JsonValue>,
-    loader: &dyn AssetLoader,
-) {
-    if let Some(s) = props.get("source").and_then(|v| v.as_str()) {
-        n.source_path = Some(s.to_string());
-        if let Ok(bytes) = loader.load_bytes(s) {
-            n.image = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes));
-        }
-    }
-    if let Some(s) = props.get("object_fit").and_then(|v| v.as_str()) {
-        n.object_fit = match s {
-            "contain" => crate::types::ObjectFit::Contain,
-            "fill" => crate::types::ObjectFit::Fill,
-            _ => crate::types::ObjectFit::Cover,
-        };
-    }
-    if let Some(v) = props.get("border_radius").and_then(|v| v.as_f64()) {
-        n.border_radius = Animated::new(v as f32);
-    }
-}
-
-// ---- Video props ----
-
-fn video_props_to_json(n: &crate::node::video_node::VideoNode) -> JsonMap<String, JsonValue> {
-    let mut p = JsonMap::new();
-    p.insert(
-        "source".into(),
-        JsonValue::from(n.path.to_string_lossy().into_owned()),
-    );
-    let fit = match n.object_fit {
-        crate::types::ObjectFit::Fill => "fill",
-        crate::types::ObjectFit::Contain => "contain",
-        crate::types::ObjectFit::Cover => "cover",
-    };
-    p.insert("object_fit".into(), JsonValue::from(fit));
-    p.insert(
-        "border_radius".into(),
-        JsonValue::from(n.border_radius.current_value),
-    );
-    p
-}
-
-fn apply_video_props(n: &mut crate::node::video_node::VideoNode, props: &JsonMap<String, JsonValue>) {
-    if let Some(s) = props.get("source").and_then(|v| v.as_str()) {
-        n.path = std::path::PathBuf::from(s);
-        // Re-prime the loader against the new path so reload playback works
-        // without an explicit re-prime from the host.
-        n.reprime_loader(crate::video_wrapper::RenderMode::Preview);
-    }
-    if let Some(s) = props.get("object_fit").and_then(|v| v.as_str()) {
-        n.object_fit = match s {
-            "contain" => crate::types::ObjectFit::Contain,
-            "fill" => crate::types::ObjectFit::Fill,
-            _ => crate::types::ObjectFit::Cover,
-        };
-    }
-    if let Some(v) = props.get("border_radius").and_then(|v| v.as_f64()) {
-        n.border_radius = Animated::new(v as f32);
-    }
-}
-
-// ---- Caption props ----
-
-fn caption_word_to_json(w: &crate::node::caption::CaptionWord) -> JsonValue {
-    let mut m = JsonMap::new();
-    m.insert("text".into(), JsonValue::from(w.text.clone()));
-    m.insert("start".into(), JsonValue::from(w.start_sec));
-    m.insert("end".into(), JsonValue::from(w.end_sec));
-    JsonValue::Object(m)
-}
-
-fn caption_word_from_json(v: &JsonValue) -> Option<crate::node::caption::CaptionWord> {
-    let o = v.as_object()?;
-    Some(crate::node::caption::CaptionWord {
-        text: o.get("text").and_then(|v| v.as_str())?.to_string(),
-        start_sec: o.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0),
-        end_sec: o.get("end").and_then(|v| v.as_f64()).unwrap_or(0.0),
-        display_line_idx: 0,
-    })
-}
-
-fn caption_line_to_json(l: &crate::node::caption::CaptionLine) -> JsonValue {
-    let mut m = JsonMap::new();
-    m.insert("text".into(), JsonValue::from(l.text.clone()));
-    m.insert("start".into(), JsonValue::from(l.start_sec));
-    m.insert("end".into(), JsonValue::from(l.end_sec));
-    let words: Vec<JsonValue> = l.words.iter().map(caption_word_to_json).collect();
-    m.insert("words".into(), JsonValue::Array(words));
-    JsonValue::Object(m)
-}
-
-fn caption_line_from_json(v: &JsonValue) -> Option<crate::node::caption::CaptionLine> {
-    let o = v.as_object()?;
-    let text = o.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let start_sec = o.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let end_sec = o.get("end").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let mut words = Vec::new();
-    if let Some(arr) = o.get("words").and_then(|v| v.as_array()) {
-        for w in arr {
-            if let Some(w) = caption_word_from_json(w) {
-                words.push(w);
-            }
-        }
-    }
-    Some(crate::node::caption::CaptionLine {
-        text,
-        words,
-        start_sec,
-        end_sec,
-    })
-}
-
-fn caption_props_to_json(c: &crate::node::caption::CaptionNode) -> JsonMap<String, JsonValue> {
-    let mut p = JsonMap::new();
-    let lines: Vec<JsonValue> = c.lines.iter().map(caption_line_to_json).collect();
-    p.insert("lines".into(), JsonValue::Array(lines));
-
-    let s = &c.style;
-    p.insert("font_size".into(), JsonValue::from(s.font_size));
-    p.insert(
-        "color".into(),
-        JsonValue::from(crate::project::color_to_hex_pub(s.color)),
-    );
-    p.insert(
-        "highlight_color".into(),
-        JsonValue::from(crate::project::color_to_hex_pub(s.highlight_color)),
-    );
-    p.insert(
-        "spoken_color".into(),
-        JsonValue::from(crate::project::color_to_hex_pub(s.spoken_color)),
-    );
-    p.insert(
-        "position".into(),
-        JsonValue::from(match s.position {
-            crate::node::caption::CaptionPosition::Top => "top",
-            crate::node::caption::CaptionPosition::Center => "center",
-            crate::node::caption::CaptionPosition::Bottom => "bottom",
-        }),
-    );
-    p.insert(
-        "bottom_margin".into(),
-        JsonValue::from(s.bottom_margin),
-    );
-    p.insert("top_margin".into(), JsonValue::from(s.top_margin));
-    p.insert(
-        "pill_enabled".into(),
-        JsonValue::from(s.pill_enabled),
-    );
-    p.insert(
-        "pill_color".into(),
-        JsonValue::from(crate::project::color_to_hex_pub(s.pill_color)),
-    );
-    if let Some(preset) = &s.safe_area_preset {
-        p.insert("safe_area".into(), JsonValue::from(preset.clone()));
-    }
-    p
-}
-
-fn apply_caption_props(
-    c: &mut crate::node::caption::CaptionNode,
-    props: &JsonMap<String, JsonValue>,
-) {
-    let mut lines = Vec::new();
-    if let Some(arr) = props.get("lines").and_then(|v| v.as_array()) {
-        for l in arr {
-            if let Some(line) = caption_line_from_json(l) {
-                lines.push(line);
-            }
-        }
-    }
-    c.lines = lines;
-
-    let s = &mut c.style;
-    if let Some(v) = props.get("font_size").and_then(|v| v.as_f64()) {
-        s.font_size = v as f32;
-    }
-    if let Some(c_str) = props.get("color").and_then(|v| v.as_str()) {
-        if let Some(col) = crate::project::parse_hex_pub(c_str) {
-            s.color = col;
-        }
-    }
-    if let Some(c_str) = props.get("highlight_color").and_then(|v| v.as_str()) {
-        if let Some(col) = crate::project::parse_hex_pub(c_str) {
-            s.highlight_color = col;
-        }
-    }
-    if let Some(c_str) = props.get("spoken_color").and_then(|v| v.as_str()) {
-        if let Some(col) = crate::project::parse_hex_pub(c_str) {
-            s.spoken_color = col;
-        }
-    }
-    if let Some(p) = props.get("position").and_then(|v| v.as_str()) {
-        s.position = crate::node::caption::CaptionPosition::from_str(p);
-    }
-    if let Some(v) = props.get("bottom_margin").and_then(|v| v.as_f64()) {
-        s.bottom_margin = v as f32;
-    }
-    if let Some(v) = props.get("top_margin").and_then(|v| v.as_f64()) {
-        s.top_margin = v as f32;
-    }
-    if let Some(b) = props.get("pill_enabled").and_then(|v| v.as_bool()) {
-        s.pill_enabled = b;
-    }
-    if let Some(c_str) = props.get("pill_color").and_then(|v| v.as_str()) {
-        if let Some(col) = crate::project::parse_hex_pub(c_str) {
-            s.pill_color = col;
-        }
-    }
-    if let Some(p) = props.get("safe_area").and_then(|v| v.as_str()) {
-        s.safe_area_preset = Some(p.to_string());
-    }
-    c.after_style_changed();
-}
-
-// ---- Effect props ----
-
-fn animated_f32_to_json(a: &Animated<f32>) -> JsonValue {
-    JsonValue::from(a.current_value)
-}
-
-fn json_to_animated_f32(v: &JsonValue, fallback: f32) -> Animated<f32> {
-    Animated::new(v.as_f64().unwrap_or(fallback as f64) as f32)
-}
-
-fn json_to_animated_color(v: &JsonValue, fallback: crate::types::Color) -> Animated<crate::types::Color> {
-    let c = v
-        .as_str()
-        .and_then(crate::project::parse_hex_pub)
-        .unwrap_or(fallback);
-    Animated::new(c)
-}
-
-fn color_field(m: &mut JsonMap<String, JsonValue>, key: &str, c: crate::types::Color) {
-    m.insert(key.into(), JsonValue::from(crate::project::color_to_hex_pub(c)));
-}
-
-fn read_color_field(o: &JsonMap<String, JsonValue>, key: &str, fallback: crate::types::Color) -> crate::types::Color {
-    o.get(key)
-        .and_then(|v| v.as_str())
-        .and_then(crate::project::parse_hex_pub)
-        .unwrap_or(fallback)
-}
-
-fn effect_to_json(e: &crate::node::effect::EffectType) -> JsonValue {
-    use crate::node::effect::EffectType;
-    let mut m = JsonMap::new();
-    match e {
-        EffectType::Blur(sigma) => {
-            m.insert("kind".into(), JsonValue::from("blur"));
-            m.insert("sigma".into(), animated_f32_to_json(sigma));
-        }
-        EffectType::ColorMatrix(m_) => {
-            m.insert("kind".into(), JsonValue::from("color_matrix"));
-            let arr: Vec<JsonValue> = m_.iter().map(|v| JsonValue::from(*v)).collect();
-            m.insert("matrix".into(), JsonValue::Array(arr));
-        }
-        EffectType::RuntimeShader { sksl, uniforms } => {
-            m.insert("kind".into(), JsonValue::from("runtime_shader"));
-            m.insert("sksl".into(), JsonValue::from(sksl.clone()));
-            let mut uniforms_json = JsonMap::new();
-            for (k, v) in uniforms {
-                let mut inner = JsonMap::new();
-                match v {
-                    crate::node::effect::ShaderUniform::Float(f) => {
-                        inner.insert("type".into(), JsonValue::from("float"));
-                        inner.insert("value".into(), JsonValue::from(f.current_value));
-                    }
-                    crate::node::effect::ShaderUniform::Vec(tv) => {
-                        inner.insert("type".into(), JsonValue::from("vec"));
-                        let arr: Vec<JsonValue> = tv.current_value.0.iter().map(|v| JsonValue::from(*v)).collect();
-                        inner.insert("value".into(), JsonValue::Array(arr));
-                    }
-                }
-                uniforms_json.insert(k.clone(), JsonValue::Object(inner));
-            }
-            m.insert("uniforms".into(), JsonValue::Object(uniforms_json));
-        }
-        EffectType::DropShadow { blur, offset_x, offset_y, color } => {
-            m.insert("kind".into(), JsonValue::from("drop_shadow"));
-            m.insert("blur".into(), animated_f32_to_json(blur));
-            m.insert("offset_x".into(), animated_f32_to_json(offset_x));
-            m.insert("offset_y".into(), animated_f32_to_json(offset_y));
-            color_field(&mut m, "color", color.current_value);
-        }
-        EffectType::DirectionalBlur { strength, angle, samples } => {
-            m.insert("kind".into(), JsonValue::from("directional_blur"));
-            m.insert("strength".into(), animated_f32_to_json(strength));
-            m.insert("angle".into(), animated_f32_to_json(angle));
-            m.insert("samples".into(), JsonValue::from(*samples as i64));
-        }
-        EffectType::FilmGrain { intensity, size } => {
-            m.insert("kind".into(), JsonValue::from("film_grain"));
-            m.insert("intensity".into(), animated_f32_to_json(intensity));
-            m.insert("size".into(), animated_f32_to_json(size));
-        }
-        EffectType::Vignette { intensity, radius, feather } => {
-            m.insert("kind".into(), JsonValue::from("vignette"));
-            m.insert("intensity".into(), animated_f32_to_json(intensity));
-            m.insert("radius".into(), animated_f32_to_json(radius));
-            m.insert("feather".into(), animated_f32_to_json(feather));
-        }
-        EffectType::ChromaticAberration(s) => {
-            m.insert("kind".into(), JsonValue::from("chromatic_aberration"));
-            m.insert("strength".into(), animated_f32_to_json(s));
-        }
-        EffectType::Pixelate(s) => {
-            m.insert("kind".into(), JsonValue::from("pixelate"));
-            m.insert("size".into(), animated_f32_to_json(s));
-        }
-        EffectType::Sharpen(s) => {
-            m.insert("kind".into(), JsonValue::from("sharpen"));
-            m.insert("strength".into(), animated_f32_to_json(s));
-        }
-        EffectType::Glow { intensity, threshold } => {
-            m.insert("kind".into(), JsonValue::from("glow"));
-            m.insert("intensity".into(), animated_f32_to_json(intensity));
-            m.insert("threshold".into(), animated_f32_to_json(threshold));
-        }
-        EffectType::Warp { amplitude, frequency, direction, speed } => {
-            m.insert("kind".into(), JsonValue::from("warp"));
-            m.insert("amplitude".into(), animated_f32_to_json(amplitude));
-            m.insert("frequency".into(), animated_f32_to_json(frequency));
-            m.insert("direction".into(), animated_f32_to_json(direction));
-            m.insert("speed".into(), animated_f32_to_json(speed));
-        }
-        EffectType::Swirl { radius, angle } => {
-            m.insert("kind".into(), JsonValue::from("swirl"));
-            m.insert("radius".into(), animated_f32_to_json(radius));
-            m.insert("angle".into(), animated_f32_to_json(angle));
-        }
-        EffectType::Ripple { amplitude, frequency, speed } => {
-            m.insert("kind".into(), JsonValue::from("ripple"));
-            m.insert("amplitude".into(), animated_f32_to_json(amplitude));
-            m.insert("frequency".into(), animated_f32_to_json(frequency));
-            m.insert("speed".into(), animated_f32_to_json(speed));
-        }
-        EffectType::Glass { scale, intensity } => {
-            m.insert("kind".into(), JsonValue::from("glass"));
-            m.insert("scale".into(), animated_f32_to_json(scale));
-            m.insert("intensity".into(), animated_f32_to_json(intensity));
-        }
-        EffectType::Shake { intensity, speed } => {
-            m.insert("kind".into(), JsonValue::from("shake"));
-            m.insert("intensity".into(), animated_f32_to_json(intensity));
-            m.insert("speed".into(), animated_f32_to_json(speed));
-        }
-        EffectType::Duotone { shadow, highlight } => {
-            m.insert("kind".into(), JsonValue::from("duotone"));
-            color_field(&mut m, "shadow", *shadow);
-            color_field(&mut m, "highlight", *highlight);
-        }
-        EffectType::Posterize(s) => {
-            m.insert("kind".into(), JsonValue::from("posterize"));
-            m.insert("levels".into(), animated_f32_to_json(s));
-        }
-        EffectType::Threshold(s) => {
-            m.insert("kind".into(), JsonValue::from("threshold"));
-            m.insert("cutoff".into(), animated_f32_to_json(s));
-        }
-        EffectType::Scanlines { intensity, count } => {
-            m.insert("kind".into(), JsonValue::from("scanlines"));
-            m.insert("intensity".into(), animated_f32_to_json(intensity));
-            m.insert("count".into(), animated_f32_to_json(count));
-        }
-        EffectType::Glitch { intensity, speed } => {
-            m.insert("kind".into(), JsonValue::from("glitch"));
-            m.insert("intensity".into(), animated_f32_to_json(intensity));
-            m.insert("speed".into(), animated_f32_to_json(speed));
-        }
-        EffectType::EdgeDetect(s) => {
-            m.insert("kind".into(), JsonValue::from("edge_detect"));
-            m.insert("strength".into(), animated_f32_to_json(s));
-        }
-        EffectType::ZoomBlur(s) => {
-            m.insert("kind".into(), JsonValue::from("zoom_blur"));
-            m.insert("strength".into(), animated_f32_to_json(s));
-        }
-        EffectType::Kaleidoscope(s) => {
-            m.insert("kind".into(), JsonValue::from("kaleidoscope"));
-            m.insert("segments".into(), animated_f32_to_json(s));
-        }
-        EffectType::Thermal => {
-            m.insert("kind".into(), JsonValue::from("thermal"));
-        }
-        EffectType::Liquid { frequency, amplitude } => {
-            m.insert("kind".into(), JsonValue::from("liquid"));
-            m.insert("frequency".into(), animated_f32_to_json(frequency));
-            m.insert("amplitude".into(), animated_f32_to_json(amplitude));
-        }
-        EffectType::Acid { color, speed } => {
-            m.insert("kind".into(), JsonValue::from("acid"));
-            color_field(&mut m, "color", *color);
-            m.insert("speed".into(), animated_f32_to_json(speed));
-        }
-        EffectType::Halftone(s) => {
-            m.insert("kind".into(), JsonValue::from("halftone"));
-            m.insert("size".into(), animated_f32_to_json(s));
-        }
-        EffectType::Ascii { scale, color } => {
-            m.insert("kind".into(), JsonValue::from("ascii"));
-            m.insert("scale".into(), animated_f32_to_json(scale));
-            color_field(&mut m, "color", *color);
-        }
-        EffectType::Sketch(s) => {
-            m.insert("kind".into(), JsonValue::from("sketch"));
-            m.insert("strength".into(), animated_f32_to_json(s));
-        }
-        EffectType::Mirror => {
-            m.insert("kind".into(), JsonValue::from("mirror"));
-        }
-        EffectType::TriTone { shadow, mid, highlight, midpoint } => {
-            m.insert("kind".into(), JsonValue::from("tritone"));
-            color_field(&mut m, "shadow", *shadow);
-            color_field(&mut m, "mid", *mid);
-            color_field(&mut m, "highlight", *highlight);
-            m.insert("midpoint".into(), animated_f32_to_json(midpoint));
-        }
-        EffectType::Vhs { distortion, scanline } => {
-            m.insert("kind".into(), JsonValue::from("vhs"));
-            m.insert("distortion".into(), animated_f32_to_json(distortion));
-            m.insert("scanline".into(), animated_f32_to_json(scanline));
-        }
-        EffectType::NeonEdge { glow_color, threshold } => {
-            m.insert("kind".into(), JsonValue::from("neon_edge"));
-            color_field(&mut m, "glow_color", *glow_color);
-            m.insert("threshold".into(), animated_f32_to_json(threshold));
-        }
-    }
-    JsonValue::Object(m)
-}
-
-fn effect_from_json(v: &JsonValue) -> Option<crate::node::effect::EffectType> {
-    use crate::node::effect::EffectType;
-    let o = v.as_object()?;
-    let kind = o.get("kind").and_then(|v| v.as_str())?;
-    Some(match kind {
-        "blur" => EffectType::Blur(json_to_animated_f32(
-            o.get("sigma").unwrap_or(&JsonValue::from(0.0)),
-            0.0,
-        )),
-        "color_matrix" => {
-            let arr = o.get("matrix").and_then(|v| v.as_array());
-            let mut m = vec![0.0; 20];
-            if let Some(arr) = arr {
-                for (i, val) in arr.iter().enumerate() {
-                    if i >= 20 {
-                        break;
-                    }
-                    if let Some(f) = val.as_f64() {
-                        m[i] = f as f32;
-                    }
-                }
-            }
-            EffectType::ColorMatrix(m)
-        }
-        "runtime_shader" => {
-            let sksl = o.get("sksl").and_then(|v| v.as_str())?.to_string();
-            let mut uniforms = std::collections::HashMap::new();
-            if let Some(u) = o.get("uniforms").and_then(|v| v.as_object()) {
-                for (k, v_) in u {
-                    let inner = match v_.as_object() {
-                        Some(i) => i,
-                        None => continue,
-                    };
-                    let t = inner.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                    let uniform = match t {
-                        "float" => crate::node::effect::ShaderUniform::Float(Animated::new(
-                            inner.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-                        )),
-                        "vec" => {
-                            let arr = inner.get("value").and_then(|v| v.as_array());
-                            let mut v: Vec<f32> = Vec::new();
-                            if let Some(arr) = arr {
-                                for x in arr {
-                                    if let Some(f) = x.as_f64() {
-                                        v.push(f as f32);
-                                    }
-                                }
-                            }
-                            crate::node::effect::ShaderUniform::Vec(Animated::new(
-                                crate::animation::TweenableVector(v),
-                            ))
-                        }
-                        _ => continue,
-                    };
-                    uniforms.insert(k.clone(), uniform);
-                }
-            }
-            EffectType::RuntimeShader { sksl, uniforms }
-        }
-        "drop_shadow" => EffectType::DropShadow {
-            blur: json_to_animated_f32(o.get("blur").unwrap_or(&JsonValue::from(8.0)), 8.0),
-            offset_x: json_to_animated_f32(o.get("offset_x").unwrap_or(&JsonValue::from(0.0)), 0.0),
-            offset_y: json_to_animated_f32(o.get("offset_y").unwrap_or(&JsonValue::from(0.0)), 0.0),
-            color: json_to_animated_color(
-                o.get("color").unwrap_or(&JsonValue::from("")),
-                crate::types::Color::BLACK,
-            ),
-        },
-        "directional_blur" => EffectType::DirectionalBlur {
-            strength: json_to_animated_f32(o.get("strength").unwrap_or(&JsonValue::from(8.0)), 8.0),
-            angle: json_to_animated_f32(o.get("angle").unwrap_or(&JsonValue::from(0.0)), 0.0),
-            samples: o.get("samples").and_then(|v| v.as_i64()).unwrap_or(16) as u32,
-        },
-        "film_grain" => EffectType::FilmGrain {
-            intensity: json_to_animated_f32(o.get("intensity").unwrap_or(&JsonValue::from(0.5)), 0.5),
-            size: json_to_animated_f32(o.get("size").unwrap_or(&JsonValue::from(1.0)), 1.0),
-        },
-        "vignette" => EffectType::Vignette {
-            intensity: json_to_animated_f32(o.get("intensity").unwrap_or(&JsonValue::from(0.5)), 0.5),
-            radius: json_to_animated_f32(o.get("radius").unwrap_or(&JsonValue::from(0.8)), 0.8),
-            feather: json_to_animated_f32(o.get("feather").unwrap_or(&JsonValue::from(0.5)), 0.5),
-        },
-        "chromatic_aberration" => EffectType::ChromaticAberration(json_to_animated_f32(
-            o.get("strength").unwrap_or(&JsonValue::from(4.0)),
-            4.0,
-        )),
-        "pixelate" => EffectType::Pixelate(json_to_animated_f32(
-            o.get("size").unwrap_or(&JsonValue::from(4.0)),
-            4.0,
-        )),
-        "sharpen" => EffectType::Sharpen(json_to_animated_f32(
-            o.get("strength").unwrap_or(&JsonValue::from(1.0)),
-            1.0,
-        )),
-        "glow" => EffectType::Glow {
-            intensity: json_to_animated_f32(o.get("intensity").unwrap_or(&JsonValue::from(0.5)), 0.5),
-            threshold: json_to_animated_f32(o.get("threshold").unwrap_or(&JsonValue::from(0.6)), 0.6),
-        },
-        "warp" => EffectType::Warp {
-            amplitude: json_to_animated_f32(o.get("amplitude").unwrap_or(&JsonValue::from(10.0)), 10.0),
-            frequency: json_to_animated_f32(o.get("frequency").unwrap_or(&JsonValue::from(1.0)), 1.0),
-            direction: json_to_animated_f32(o.get("direction").unwrap_or(&JsonValue::from(0.0)), 0.0),
-            speed: json_to_animated_f32(o.get("speed").unwrap_or(&JsonValue::from(1.0)), 1.0),
-        },
-        "swirl" => EffectType::Swirl {
-            radius: json_to_animated_f32(o.get("radius").unwrap_or(&JsonValue::from(80.0)), 80.0),
-            angle: json_to_animated_f32(o.get("angle").unwrap_or(&JsonValue::from(180.0)), 180.0),
-        },
-        "ripple" => EffectType::Ripple {
-            amplitude: json_to_animated_f32(o.get("amplitude").unwrap_or(&JsonValue::from(20.0)), 20.0),
-            frequency: json_to_animated_f32(o.get("frequency").unwrap_or(&JsonValue::from(2.0)), 2.0),
-            speed: json_to_animated_f32(o.get("speed").unwrap_or(&JsonValue::from(1.0)), 1.0),
-        },
-        "glass" => EffectType::Glass {
-            scale: json_to_animated_f32(o.get("scale").unwrap_or(&JsonValue::from(1.0)), 1.0),
-            intensity: json_to_animated_f32(o.get("intensity").unwrap_or(&JsonValue::from(0.5)), 0.5),
-        },
-        "shake" => EffectType::Shake {
-            intensity: json_to_animated_f32(o.get("intensity").unwrap_or(&JsonValue::from(4.0)), 4.0),
-            speed: json_to_animated_f32(o.get("speed").unwrap_or(&JsonValue::from(8.0)), 8.0),
-        },
-        "duotone" => EffectType::Duotone {
-            shadow: read_color_field(o, "shadow", crate::types::Color::BLACK),
-            highlight: read_color_field(o, "highlight", crate::types::Color::WHITE),
-        },
-        "posterize" => EffectType::Posterize(json_to_animated_f32(
-            o.get("levels").unwrap_or(&JsonValue::from(4.0)),
-            4.0,
-        )),
-        "threshold" => EffectType::Threshold(json_to_animated_f32(
-            o.get("cutoff").unwrap_or(&JsonValue::from(0.5)),
-            0.5,
-        )),
-        "scanlines" => EffectType::Scanlines {
-            intensity: json_to_animated_f32(o.get("intensity").unwrap_or(&JsonValue::from(0.5)), 0.5),
-            count: json_to_animated_f32(o.get("count").unwrap_or(&JsonValue::from(50.0)), 50.0),
-        },
-        "glitch" => EffectType::Glitch {
-            intensity: json_to_animated_f32(o.get("intensity").unwrap_or(&JsonValue::from(0.5)), 0.5),
-            speed: json_to_animated_f32(o.get("speed").unwrap_or(&JsonValue::from(1.0)), 1.0),
-        },
-        "edge_detect" => EffectType::EdgeDetect(json_to_animated_f32(
-            o.get("strength").unwrap_or(&JsonValue::from(1.0)),
-            1.0,
-        )),
-        "zoom_blur" => EffectType::ZoomBlur(json_to_animated_f32(
-            o.get("strength").unwrap_or(&JsonValue::from(4.0)),
-            4.0,
-        )),
-        "kaleidoscope" => EffectType::Kaleidoscope(json_to_animated_f32(
-            o.get("segments").unwrap_or(&JsonValue::from(8.0)),
-            8.0,
-        )),
-        "thermal" => EffectType::Thermal,
-        "liquid" => EffectType::Liquid {
-            frequency: json_to_animated_f32(o.get("frequency").unwrap_or(&JsonValue::from(2.0)), 2.0),
-            amplitude: json_to_animated_f32(o.get("amplitude").unwrap_or(&JsonValue::from(20.0)), 20.0),
-        },
-        "acid" => EffectType::Acid {
-            color: read_color_field(o, "color", crate::types::Color::new(0.4, 1.0, 0.4, 1.0)),
-            speed: json_to_animated_f32(o.get("speed").unwrap_or(&JsonValue::from(1.0)), 1.0),
-        },
-        "halftone" => EffectType::Halftone(json_to_animated_f32(
-            o.get("size").unwrap_or(&JsonValue::from(4.0)),
-            4.0,
-        )),
-        "ascii" => EffectType::Ascii {
-            scale: json_to_animated_f32(o.get("scale").unwrap_or(&JsonValue::from(8.0)), 8.0),
-            color: read_color_field(o, "color", crate::types::Color::WHITE),
-        },
-        "sketch" => EffectType::Sketch(json_to_animated_f32(
-            o.get("strength").unwrap_or(&JsonValue::from(1.0)),
-            1.0,
-        )),
-        "mirror" => EffectType::Mirror,
-        "tritone" => EffectType::TriTone {
-            shadow: read_color_field(o, "shadow", crate::types::Color::BLACK),
-            mid: read_color_field(o, "mid", crate::types::Color::new(0.5, 0.5, 0.5, 1.0)),
-            highlight: read_color_field(o, "highlight", crate::types::Color::WHITE),
-            midpoint: json_to_animated_f32(o.get("midpoint").unwrap_or(&JsonValue::from(0.5)), 0.5),
-        },
-        "vhs" => EffectType::Vhs {
-            distortion: json_to_animated_f32(o.get("distortion").unwrap_or(&JsonValue::from(0.5)), 0.5),
-            scanline: json_to_animated_f32(o.get("scanline").unwrap_or(&JsonValue::from(0.5)), 0.5),
-        },
-        "neon_edge" => EffectType::NeonEdge {
-            glow_color: read_color_field(
-                o,
-                "glow_color",
-                crate::types::Color::new(0.6, 0.8, 1.0, 1.0),
-            ),
-            threshold: json_to_animated_f32(o.get("threshold").unwrap_or(&JsonValue::from(0.4)), 0.4),
-        },
-        _ => return None,
-    })
-}
-
-fn effect_props_to_json(n: &crate::node::effect::EffectNode) -> JsonMap<String, JsonValue> {
-    let mut p = JsonMap::new();
-    let arr: Vec<JsonValue> = n.effects.iter().map(effect_to_json).collect();
-    p.insert("effects".into(), JsonValue::Array(arr));
-    p
-}
-
-/// Return the round-trip "kind" tag for an EffectType. Public so integration
-/// tests can assert that reload preserved effect variety.
-pub fn effect_kind_name_pub(e: &crate::node::effect::EffectType) -> &'static str {
-    use crate::node::effect::EffectType;
-    match e {
-        EffectType::Blur(_) => "blur",
-        EffectType::ColorMatrix(_) => "color_matrix",
-        EffectType::RuntimeShader { .. } => "runtime_shader",
-        EffectType::DropShadow { .. } => "drop_shadow",
-        EffectType::DirectionalBlur { .. } => "directional_blur",
-        EffectType::FilmGrain { .. } => "film_grain",
-        EffectType::Vignette { .. } => "vignette",
-        EffectType::ChromaticAberration(_) => "chromatic_aberration",
-        EffectType::Pixelate(_) => "pixelate",
-        EffectType::Sharpen(_) => "sharpen",
-        EffectType::Glow { .. } => "glow",
-        EffectType::Warp { .. } => "warp",
-        EffectType::Swirl { .. } => "swirl",
-        EffectType::Ripple { .. } => "ripple",
-        EffectType::Glass { .. } => "glass",
-        EffectType::Shake { .. } => "shake",
-        EffectType::Duotone { .. } => "duotone",
-        EffectType::Posterize(_) => "posterize",
-        EffectType::Threshold(_) => "threshold",
-        EffectType::Scanlines { .. } => "scanlines",
-        EffectType::Glitch { .. } => "glitch",
-        EffectType::EdgeDetect(_) => "edge_detect",
-        EffectType::ZoomBlur(_) => "zoom_blur",
-        EffectType::Kaleidoscope(_) => "kaleidoscope",
-        EffectType::Thermal => "thermal",
-        EffectType::Liquid { .. } => "liquid",
-        EffectType::Acid { .. } => "acid",
-        EffectType::Halftone(_) => "halftone",
-        EffectType::Ascii { .. } => "ascii",
-        EffectType::Sketch(_) => "sketch",
-        EffectType::Mirror => "mirror",
-        EffectType::TriTone { .. } => "tritone",
-        EffectType::Vhs { .. } => "vhs",
-        EffectType::NeonEdge { .. } => "neon_edge",
-    }
-}
-
-fn apply_effect_props(n: &mut crate::node::effect::EffectNode, props: &JsonMap<String, JsonValue>) {
-    let mut out = Vec::new();
-    if let Some(arr) = props.get("effects").and_then(|v| v.as_array()) {
-        for v in arr {
-            if let Some(e) = effect_from_json(v) {
-                out.push(e);
-            }
-        }
-    }
-    n.effects = out;
-}
-
-// ---- Composition props ----
-//
-// CompositionNode holds a full nested Director. Persist it as a JSON string
-// (the inner Director's own save_project_json output) so reload reconstructs
-// the pre-comp via the existing loader.
-
-fn composition_props_to_json(c: &crate::node::composition::CompositionNode) -> JsonMap<String, JsonValue> {
-    let mut p = JsonMap::new();
-    if let Ok(dir) = c.internal_director.lock() {
-        match save_inner_project(&dir) {
-            Ok(json) => {
-                p.insert("inner_json".into(), JsonValue::from(json));
-            }
-            Err(e) => {
-                tracing::warn!("comp save skipped: {e}");
-            }
-        }
-    }
-    p.insert("start_offset".into(), JsonValue::from(c.start_offset));
-    p
-}
-
-fn apply_composition_props(
-    node: &mut crate::node::composition::CompositionNode,
-    props: &JsonMap<String, JsonValue>,
-    loader: Arc<dyn AssetLoader>,
-) {
-    if let Some(v) = props.get("start_offset").and_then(|v| v.as_f64()) {
-        node.start_offset = v;
-    }
-    if let Some(s) = props.get("inner_json").and_then(|v| v.as_str()) {
-        if let Ok(mut inner) = load_inner_project(s, loader.clone()) {
-            if let Ok(mut guard) = node.internal_director.lock() {
-                *guard = inner;
-            }
-        }
     }
 }
 
@@ -1549,42 +575,7 @@ pub fn director_to_project(d: &Director) -> Project {
                     .element
                     .as_any()
                     .downcast_ref::<TextNode>()
-                    .map(text_props_to_json)
-                    .unwrap_or_else(|| {
-                        let mut p = JsonMap::new();
-                        p.insert("_content".into(), JsonValue::from(""));
-                        p.insert("font_size".into(), JsonValue::from(24.0));
-                        p
-                    }),
-                "Image" => sn
-                    .element
-                    .as_any()
-                    .downcast_ref::<crate::node::image_node::ImageNode>()
-                    .map(image_props_to_json)
-                    .unwrap_or_default(),
-                "Video" => sn
-                    .element
-                    .as_any()
-                    .downcast_ref::<crate::node::video_node::VideoNode>()
-                    .map(video_props_to_json)
-                    .unwrap_or_default(),
-                "Caption" => sn
-                    .element
-                    .as_any()
-                    .downcast_ref::<crate::node::caption::CaptionNode>()
-                    .map(caption_props_to_json)
-                    .unwrap_or_default(),
-                "Effect" => sn
-                    .element
-                    .as_any()
-                    .downcast_ref::<crate::node::effect::EffectNode>()
-                    .map(effect_props_to_json)
-                    .unwrap_or_default(),
-                "Composition" => sn
-                    .element
-                    .as_any()
-                    .downcast_ref::<crate::node::composition::CompositionNode>()
-                    .map(composition_props_to_json)
+                    .map(text_node_to_json)
                     .unwrap_or_default(),
                 _ => {
                     let mut p = JsonMap::new();
@@ -1664,14 +655,13 @@ pub fn director_to_project(d: &Director) -> Project {
             z_index: it.z_index,
             name: it.name.clone(),
             audio_tracks: it.audio_tracks.clone(),
-            freeze_time: it.freeze_time,
         })
         .collect();
     Project {
         version: PROJECT_VERSION,
         width: d.width,
         height: d.height,
-        fps: d.fps,
+        fps: d.fps as f64,
         nodes,
         tracks,
         legacy_timeline,
@@ -1691,7 +681,6 @@ fn track_clip_to_data(c: &TrackClip) -> ClipData {
         fade_in: c.fade_in,
         fade_out: c.fade_out,
         audio_tracks: c.audio_tracks.clone(),
-        freeze_time: c.freeze_time,
     }
 }
 
@@ -1702,7 +691,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
     let mut director = Director::new(
         project.width,
         project.height,
-        project.fps,
+        project.fps.round() as u32, // Director.fps is u32; the f64 in Project is preserved for export-side timing.
         loader,
         RenderMode::Preview,
         None,
@@ -1710,7 +699,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
 
     let mut id_map: std::collections::HashMap<NodeId, NodeId> = Default::default();
 
-    // First pass: create nodes (Box / Text / Image / placeholder Box for others).
+    // First pass: create nodes (Box / Text / placeholder Box for others).
     for n in &project.nodes {
         let new_id = match n.kind.as_str() {
             "Box" => {
@@ -1720,72 +709,16 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 director.scene.add_node(Box::new(b))
             }
             "Text" => {
-                // Restore as a real TextNode. A TextNode with zero spans
-                // would otherwise render nothing, so seed an empty span if
-                // `apply_text_props` could not recover any from the JSON.
-                let fc = director.assets.font_collection.clone();
-                let mut t = TextNode::new(vec![crate::element::TextSpan {
-                    text: String::new(),
-                    ..Default::default()
-                }], fc);
-                apply_text_props(&mut t, &n.props);
-                apply_layout_style_json(&mut t.style, &n.layout);
-                director.scene.add_node(Box::new(t))
-            }
-            "Image" => {
-                // Reconstruct as a real ImageNode, then re-load bytes via the
-                // Director's AssetLoader if a source path was round-tripped.
-                let mut i = crate::node::image_node::ImageNode::new(Vec::new());
-                apply_image_props(&mut i, &n.props, director.assets.loader.as_ref());
-                apply_layout_style_json(&mut i.style, &n.layout);
-                director.scene.add_node(Box::new(i))
-            }
-            "Video" => {
-                let mut v = crate::node::video_node::VideoNode::new(
-                    crate::node::video_node::VideoSource::Path(std::path::PathBuf::from("")),
-                    crate::video_wrapper::RenderMode::Preview,
+                let mut map = json_map_to_rhai(&n.props);
+                for (k, v) in json_map_to_rhai(&n.layout) {
+                    map.insert(k, v);
+                }
+                let mut tnode = crate::scripting::api::nodes::build_text_node_from_props(
+                    director.assets.font_collection.clone(),
+                    &map,
                 );
-                apply_video_props(&mut v, &n.props);
-                apply_layout_style_json(&mut v.style, &n.layout);
-                director.scene.add_node(Box::new(v))
-            }
-            "Caption" => {
-                let fc = director.assets.font_collection.clone();
-                let mut c = crate::node::caption::CaptionNode::new(Vec::new(), fc);
-                apply_caption_props(&mut c, &n.props);
-                apply_layout_style_json(&mut c.style_cache, &n.layout);
-                director.scene.add_node(Box::new(c))
-            }
-            "Effect" => {
-                let mut e = crate::node::effect::EffectNode {
-                    effects: Vec::new(),
-                    style: Style::default(),
-                    shader_cache: director.assets.shader_cache.clone(),
-                    current_time: 0.0,
-                };
-                apply_effect_props(&mut e, &n.props);
-                apply_layout_style_json(&mut e.style, &n.layout);
-                director.scene.add_node(Box::new(e))
-            }
-            "Composition" => {
-                // A stub inner Director; apply_composition_props replaces it
-                // from the round-tripped `inner_json` if one was saved.
-                let inner = Director::new(
-                    director.width,
-                    director.height,
-                    director.fps,
-                    director.assets.loader.clone(),
-                    RenderMode::Preview,
-                    None,
-                );
-                let mut comp = crate::node::composition::CompositionNode::new(inner);
-                apply_composition_props(
-                    &mut comp,
-                    &n.props,
-                    director.assets.loader.clone(),
-                );
-                apply_layout_style_json(&mut comp.style, &n.layout);
-                director.scene.add_node(Box::new(comp))
+                tnode.opacity.current_value = n.opacity;
+                director.scene.add_node(Box::new(tnode))
             }
             _ => {
                 let mut b = BoxNode::new();
@@ -1870,67 +803,9 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                     {
                         b.opacity = a;
                     }
-                }
-                // TextNode: rebuild opacity from the `opacity` animation channel.
-                if let Some(t) = sn.element.as_any_mut().downcast_mut::<TextNode>() {
-                    if let Some(a) = n
-                        .animations
-                        .get("opacity")
-                        .and_then(rebuild_animated_f32)
-                    {
-                        t.opacity = a;
-                    }
-                }
-                // CaptionNode: rebuild opacity from the `opacity` animation channel.
-                if let Some(c) =
-                    sn.element.as_any_mut().downcast_mut::<crate::node::caption::CaptionNode>()
-                {
-                    if let Some(a) = n
-                        .animations
-                        .get("opacity")
-                        .and_then(rebuild_animated_f32)
-                    {
-                        c.opacity = a;
-                    }
-                }
-                // ImageNode: same treatment.
-                if let Some(img) =
-                    sn.element
-                        .as_any_mut()
-                        .downcast_mut::<crate::node::image_node::ImageNode>()
-                {
-                    if let Some(a) = n
-                        .animations
-                        .get("opacity")
-                        .and_then(rebuild_animated_f32)
-                    {
-                        img.opacity = a;
-                    }
-                    if let Some(a) = n
-                        .animations
-                        .get("border_radius")
-                        .and_then(rebuild_animated_f32)
-                    {
-                        img.border_radius = a;
-                    }
-                }
-                // VideoNode: opacity + border_radius keyframes.
-                if let Some(v) =
-                    sn.element.as_any_mut().downcast_mut::<crate::node::video_node::VideoNode>()
-                {
-                    if let Some(a) = n
-                        .animations
-                        .get("opacity")
-                        .and_then(rebuild_animated_f32)
-                    {
-                        v.opacity = a;
-                    }
-                    if let Some(a) = n
-                        .animations
-                        .get("border_radius")
-                        .and_then(rebuild_animated_f32)
-                    {
-                        v.border_radius = a;
+                } else if let Some(tn) = sn.element.as_any_mut().downcast_mut::<TextNode>() {
+                    if let Some(a) = n.animations.get("opacity").and_then(rebuild_animated_f32) {
+                        tn.opacity = a;
                     }
                 }
             }
@@ -1963,7 +838,6 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                             fade_in: c.fade_in,
                             fade_out: c.fade_out,
                             audio_tracks: c.audio_tracks,
-                            freeze_time: c.freeze_time,
                         })
                     })
                     .collect(),
@@ -1982,7 +856,6 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 z_index: it.z_index,
                 name: it.name,
                 audio_tracks: it.audio_tracks,
-                freeze_time: it.freeze_time,
             })
         })
         .collect();
@@ -2021,39 +894,4 @@ impl Director {
         }
         director_from_project(project)
     }
-}
-
-// ---- Composition save/load helpers ----
-//
-// CompositionNode owns another full Director; we persist it as a JSON string
-// of its own project JSON so the inner Director's scene graph survives the
-// same fidelity as the outer one. These helpers are private to this module
-// (and only used for the nested save/load step) so they can't accidentally
-// recurse through the public `Director::save_project_json` API.
-
-fn save_inner_project(d: &Director) -> anyhow::Result<String> {
-    let project = director_to_project(d);
-    serde_json::to_string_pretty(&project).map_err(Into::into)
-}
-
-fn load_inner_project(
-    json: &str,
-    loader: Arc<dyn AssetLoader>,
-) -> anyhow::Result<Director> {
-    let project: Project = serde_json::from_str(json)?;
-    if project.version > PROJECT_VERSION {
-        anyhow::bail!(
-            "Inner project version {} is newer than supported version {}.",
-            project.version,
-            PROJECT_VERSION
-        );
-    }
-    director_from_project(project).map(|d| {
-        // Harmonize width / height / fps with outer caller's choice — the
-        // inner JSON may carry the *original* authoring canvas which is
-        // rarely what the host wants at the parent-render stage.
-        let mut d = d;
-        d.width = d.width; // kept; no caller-side override path here yet
-        d
-    })
 }

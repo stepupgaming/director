@@ -1,7 +1,7 @@
 // examples/complex_preview.rhai
 // A rich example demonstrating Layout, Typography, and Physics-based Animation
 
-let director = new_director(1920, 1080, 30.0);
+let director = new_director(1920, 1080, 30);
 let scene = director.add_scene(10.0);
 
 // 1. Background Container (Flexbox)

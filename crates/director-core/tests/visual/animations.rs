@@ -41,7 +41,6 @@ fn setup_scene_with_box(
             duration: 5.0,
             z_index: 0,
             audio_tracks: vec![],
-            freeze_time: None,
         });
 
         let mut box_node = BoxNode::new();

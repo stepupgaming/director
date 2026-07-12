@@ -2,7 +2,7 @@
 // 8 seconds, 1920x1080, 30fps, motion blur enabled
 // Coherent narrative: cosmic opening -> product showcase -> urban energy -> grand finale
 
-let movie = new_director(1920, 1080, 30.0, #{ mode: "export" });
+let movie = new_director(1920, 1080, 30, #{ mode: "export" });
 movie.configure_encoder("auto");
 movie.configure_motion_blur(4, 180.0);
 

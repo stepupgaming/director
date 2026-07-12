@@ -6,7 +6,7 @@
 //
 // Each scene shows one or more effects applied to labeled colored cards.
 
-let movie = new_director(1280, 720, 30.0);
+let movie = new_director(1280, 720, 30);
 
 // Helper: a labeled card with a gradient background and rounded corners.
 fn make_card(parent, label, color) {

@@ -1,7 +1,7 @@
 // Elastic & Bounce Showcase
 // A high-end demonstration of the new physics-based easing engines.
 
-let movie = new_director(1920, 1080, 60.0);
+let movie = new_director(1920, 1080, 60);
 let scene = movie.add_scene(5.0);
 
 // Deep metallic background

@@ -6,7 +6,7 @@
 //
 // These effects add professional, cinematic quality to animations.
 
-let movie = new_director(1920, 1080, 30.0);
+let movie = new_director(1920, 1080, 30);
 
 // Scene 1: Directional Blur (Motion Blur)
 let scene1 = movie.add_scene(3.0);

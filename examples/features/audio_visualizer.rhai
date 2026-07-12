@@ -1,7 +1,7 @@
 // NEON AUDIO VISUALIZER
 // Polished visualizer with glow effects and proper composition
 
-let movie = new_director(1920, 1080, 60.0);  // 60fps for smoothness
+let movie = new_director(1920, 1080, 60);  // 60fps for smoothness
 let scene = movie.add_scene(10.0);
 
 // Load audio
