@@ -10,6 +10,7 @@
 //! - **Handle Validation**: Shared helpers for lock/stale-handle safety
 
 use crate::director::Director;
+use crate::render_manifest::RenderManifest;
 use crate::types::NodeId;
 use rhai::EvalAltResult;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -87,6 +88,15 @@ pub struct SequenceHandle {
 }
 
 impl_lock_director!(SequenceHandle);
+
+/// Handle to a built render manifest for verification/repair from Rhai scripts.
+#[derive(Clone)]
+pub struct RenderManifestHandle {
+    pub director: Arc<Mutex<Director>>,
+    pub manifest: Arc<Mutex<RenderManifest>>,
+}
+
+impl_lock_director!(RenderManifestHandle);
 
 impl_lock_director!(TrackHandle);
 

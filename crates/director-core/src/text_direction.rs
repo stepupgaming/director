@@ -1,9 +1,10 @@
 //! Text direction helpers for SkParagraph (LTR / RTL / auto-detect).
 
+use serde::{Deserialize, Serialize};
 use skia_safe::textlayout::TextDirection;
 
 /// How to resolve paragraph text direction before layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TextDirectionMode {
     /// Infer from the first strong bidi character in the content.
     #[default]

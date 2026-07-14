@@ -84,6 +84,10 @@ impl Element for BoxNode {
         self
     }
 
+    fn kind(&self) -> &'static str {
+        "box"
+    }
+
     fn layout_style(&self) -> Style {
         self.style.clone()
     }

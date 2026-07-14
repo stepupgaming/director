@@ -51,6 +51,10 @@ impl Element for VectorNode {
         self
     }
 
+    fn kind(&self) -> &'static str {
+        "vector"
+    }
+
     fn layout_style(&self) -> Style {
         self.style.clone()
     }

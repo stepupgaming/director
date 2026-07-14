@@ -107,6 +107,15 @@ impl VideoNode {
         self.source_path = Some(path.into());
         self
     }
+
+    /// Returns the currently buffered video frame, if any.
+    ///
+    /// The returned tuple is `(presentation_time_seconds, image)`. This is
+    /// intended for wrapper nodes such as `ActiveSpeakerCamera` that need to
+    /// render the decoded frame with a custom source crop rectangle.
+    pub fn get_current_frame(&self) -> Option<(f64, Image)> {
+        self.current_frame.lock().unwrap().clone()
+    }
 }
 
 impl Element for VideoNode {
@@ -115,6 +124,10 @@ impl Element for VideoNode {
     }
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn kind(&self) -> &'static str {
+        "video"
     }
 
     fn layout_style(&self) -> Style {

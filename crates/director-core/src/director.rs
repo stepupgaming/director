@@ -16,7 +16,16 @@
 
 use rayon::prelude::*;
 use crate::audio::{AudioAnalyzer, AudioMixer, AudioTrack};
+use crate::compiler::{DependencyGraph, DependencyInput};
+use crate::entity::{EntityId, EntityRegistry};
+use crate::node::caption::{CaptionLine, CaptionNode};
+use crate::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
+use crate::render_manifest::IssueSeverity;
+use crate::semantic::{SemanticManifest, SolverConfig};
 use crate::scene::SceneGraph;
+use crate::style_policy::{StylePolicy, StylePolicyScorer, PolicyScore};
+use crate::systems::layout::LayoutEngine;
+use crate::types::BoundsRect;
 use crate::systems::assets::AssetManager;
 use crate::systems::transitions::Transition;
 use crate::timeline::Track;
@@ -33,6 +42,27 @@ use tracing::instrument;
 #[derive(Clone)]
 pub struct DirectorContext {
     pub assets: AssetManager,
+}
+
+/// Lightweight snapshot of node bounds at a specific time.
+///
+/// This is cheaper than cloning the whole [`Director`] and is intended for
+/// verification passes (e.g. static-stretch detection) that only need to
+/// compare per-node layout rectangles across time.
+#[derive(Debug, Clone)]
+pub struct LayoutSnapshot {
+    pub width: i32,
+    pub height: i32,
+    pub sample_time: f64,
+    pub nodes: Vec<LayoutNodeSnapshot>,
+}
+
+/// A single node's bounds inside a [`LayoutSnapshot`].
+#[derive(Debug, Clone)]
+pub struct LayoutNodeSnapshot {
+    pub id: usize,
+    pub kind: &'static str,
+    pub bounds: BoundsRect,
 }
 
 /// Represents a scene (or clip) on the timeline.
@@ -92,6 +122,17 @@ pub struct Director {
     pub debug_overlays: bool,
     /// Cached rasterized images for static subtrees.
     pub static_cache: std::collections::HashMap<NodeId, skia_safe::Image>,
+    /// Persistent semantic entity registry (faces, speakers, objects, caption phrases).
+    pub entities: EntityRegistry,
+    /// Compile-phase dependency graph built by `compile()`.
+    pub compiler: DependencyGraph,
+    /// Nodes marked dirty by the last `invalidate()` call.
+    pub dirty_nodes: std::collections::HashSet<NodeId>,
+    /// Production style policy used by the compiler to score the scene.
+    pub style_policy: StylePolicy,
+    /// Most recent style-policy score produced by `compile()`, including any
+    /// violations that were emitted as warnings/errors.
+    pub last_policy_score: Option<PolicyScore>,
 }
 
 /// SAFETY: Director is not thread-safe due to Skia internals (RefCounts).
@@ -264,6 +305,11 @@ impl Director {
             encoder_mode: EncoderMode::Auto, // Default to auto-detect hardware
             debug_overlays: false,
             static_cache: HashMap::new(),
+            entities: EntityRegistry::new(),
+            compiler: DependencyGraph::new(),
+            dirty_nodes: std::collections::HashSet::new(),
+            style_policy: StylePolicy::default(),
+            last_policy_score: None,
         }
     }
 
@@ -301,6 +347,110 @@ impl Director {
             loop_audio: false,
         };
         self.audio_mixer.add_track(track)
+    }
+
+    /// Create a `SmartCaptionNode` from caption lines and a semantic manifest,
+    /// register it in the scene graph, and wire it to the entity registry.
+    ///
+    /// The node's `entity_refs` are set from the manifest so that compile-time
+    /// dependency tracking and invalidation know which entities affect this
+    /// caption.
+    ///
+    /// # Note
+    /// This helper only registers the node in the scene graph. The caller is
+    /// responsible for wiring the returned `NodeId` into a timeline item or
+    /// track clip so the caption is rendered during export.
+    ///
+    /// Returns the `NodeId` of the registered smart caption node.
+    pub fn add_smart_caption(
+        &mut self,
+        lines: Vec<CaptionLine>,
+        manifest: SemanticManifest,
+        config: SmartCaptionConfig,
+    ) -> NodeId {
+        self.add_smart_caption_with(lines, manifest, config, SmartCaptionNode::from_manifest)
+    }
+
+    /// Create a `SmartCaptionNode` using the continuous temporal constraint
+    /// solver, register it in the scene graph, and wire it to the entity registry.
+    ///
+    /// This is the same as [`Director::add_smart_caption`] but uses the
+    /// continuous solver, which produces absolute `(x, y)` trajectories instead
+    /// of discrete anchors.
+    ///
+    /// # Note
+    /// This helper only registers the node in the scene graph. The caller is
+    /// responsible for wiring the returned `NodeId` into a timeline item or
+    /// track clip so the caption is rendered during export.
+    pub fn add_smart_caption_continuous(
+        &mut self,
+        lines: Vec<CaptionLine>,
+        manifest: SemanticManifest,
+        config: SmartCaptionConfig,
+    ) -> NodeId {
+        self.add_smart_caption_with(lines, manifest, config, SmartCaptionNode::from_manifest_continuous)
+    }
+
+    /// Shared implementation for creating and registering a `SmartCaptionNode`.
+    fn add_smart_caption_with(
+        &mut self,
+        lines: Vec<CaptionLine>,
+        manifest: SemanticManifest,
+        config: SmartCaptionConfig,
+        build: fn(CaptionNode, &EntityRegistry, &SemanticManifest, SmartCaptionConfig) -> SmartCaptionNode,
+    ) -> NodeId {
+        let entity_refs = manifest.entity_refs.clone();
+        let font_collection = self.assets.font_collection.clone();
+        let inner = CaptionNode::new(lines, font_collection);
+        let smart = build(inner, &self.entities, &manifest, config);
+        let id = self.scene.add_node(Box::new(smart));
+        if let Some(node) = self.scene.get_node_mut(id) {
+            node.entity_refs = entity_refs;
+        }
+        id
+    }
+
+    /// Convenience overload: build a `SemanticManifest` from entity refs and
+    /// shot boundaries, then create and register a `SmartCaptionNode`.
+    ///
+    /// This is the same as [`Director::add_smart_caption`] but builds the
+    /// manifest for you from the supplied shot range and entity references.
+    pub fn add_smart_caption_for_shot(
+        &mut self,
+        lines: Vec<CaptionLine>,
+        entity_refs: Vec<EntityId>,
+        start_time: f64,
+        end_time: f64,
+        config: SmartCaptionConfig,
+    ) -> NodeId {
+        let manifest = SemanticManifest {
+            entity_refs,
+            start_time,
+            end_time,
+            solver: SolverConfig::default(),
+        };
+        self.add_smart_caption(lines, manifest, config)
+    }
+
+    /// Convenience overload for the continuous solver.
+    ///
+    /// This is the same as [`Director::add_smart_caption_for_shot`] but uses the
+    /// continuous solver.
+    pub fn add_smart_caption_for_shot_continuous(
+        &mut self,
+        lines: Vec<CaptionLine>,
+        entity_refs: Vec<EntityId>,
+        start_time: f64,
+        end_time: f64,
+        config: SmartCaptionConfig,
+    ) -> NodeId {
+        let manifest = SemanticManifest {
+            entity_refs,
+            start_time,
+            end_time,
+            solver: SolverConfig::default(),
+        };
+        self.add_smart_caption_continuous(lines, manifest, config)
     }
 
     /// Adds an audio track synchronized to a specific scene's start time.
@@ -347,12 +497,23 @@ impl Director {
         roots
     }
 
-    /// Updates the state of all active nodes for the given global time.
+    /// Updates the state of active nodes for the given global time.
     ///
-    /// This method calculates local time for each node, updates animations (transform, path),
-    /// and calls `update()` on the underlying Elements.
+    /// When `self.dirty_nodes` is empty, every active node is updated as
+    /// before. When it is non-empty, only the dirty nodes and their ancestors
+    /// are updated, allowing incremental re-rendering after `invalidate()`.
     #[instrument(level = "debug", skip(self), fields(time = global_time))]
     pub fn update(&mut self, global_time: f64) {
+        // Determine the set of nodes to update. If dirty_nodes is empty we
+        // update the whole active tree; otherwise we update only dirty nodes
+        // and their ancestors (ancestors are needed so layout has active roots
+        // and so transforms are set up for rendering).
+        let dirty: Option<std::collections::HashSet<NodeId>> = if self.dirty_nodes.is_empty() {
+            None
+        } else {
+            Some(self.expand_dirty_with_ancestors(&self.dirty_nodes))
+        };
+
         // Pass 1: Mark active nodes and set local time
         let active_roots = self.collect_active_roots(global_time);
 
@@ -390,82 +551,90 @@ impl Director {
         // Pass 2: Parallel node update via Rayon
         self.scene.nodes.par_iter_mut().enumerate().for_each(|(node_id, node_opt)| {
             if let Some(node) = node_opt {
-                if (node.last_visit_time - global_time).abs() < 0.0001 {
-                    if node.element.update(node.local_time) {
-                        node.dirty_style = true;
+                if (node.last_visit_time - global_time).abs() >= 0.0001 {
+                    return;
+                }
+                // Skip nodes that are not in the dirty set during incremental updates.
+                if let Some(ref dirty) = dirty {
+                    if !dirty.contains(&node_id) {
+                        return;
                     }
+                }
+                if node.element.update(node.local_time) {
+                    node.dirty_style = true;
+                }
+                node.update_generation = node.update_generation.wrapping_add(1);
 
-                    // Update Transform Animations
-                    node.transform.scale_x.update(node.local_time);
-                    node.transform.scale_y.update(node.local_time);
-                    node.transform.rotation.update(node.local_time);
-                    node.transform.skew_x.update(node.local_time);
-                    node.transform.skew_y.update(node.local_time);
-                    node.transform.translate_x.update(node.local_time);
-                    node.transform.translate_y.update(node.local_time);
+                // Update Transform Animations
+                node.transform.scale_x.update(node.local_time);
+                node.transform.scale_y.update(node.local_time);
+                node.transform.rotation.update(node.local_time);
+                node.transform.skew_x.update(node.local_time);
+                node.transform.skew_y.update(node.local_time);
+                node.transform.translate_x.update(node.local_time);
+                node.transform.translate_y.update(node.local_time);
 
-                    // Update Path Animation (using cached PathMeasure)
-                    if let Some(path_anim) = &mut node.path_animation {
-                        let effective_time = node.local_time * path_anim.speed as f64;
-                        let loop_dur = path_anim.duration;
-                        let wrapped = if loop_dur > 0.0 && effective_time >= loop_dur {
-                            let elapsed = (effective_time / loop_dur) as i32;
-                            if path_anim.loop_count < 0 || elapsed < path_anim.loop_count {
-                                effective_time % loop_dur
-                            } else {
-                                loop_dur
-                            }
+                // Update Path Animation (using cached PathMeasure)
+                if let Some(path_anim) = &mut node.path_animation {
+                    let effective_time = node.local_time * path_anim.speed as f64;
+                    let loop_dur = path_anim.duration;
+                    let wrapped = if loop_dur > 0.0 && effective_time >= loop_dur {
+                        let elapsed = (effective_time / loop_dur) as i32;
+                        if path_anim.loop_count < 0 || elapsed < path_anim.loop_count {
+                            effective_time % loop_dur
                         } else {
-                            effective_time.min(loop_dur)
-                        };
-                        path_anim.progress.update(wrapped);
-                        let length = path_anim.length();
-                        let dist = path_anim.progress.current_value * length;
-                        if let Some((p, angle)) = path_anim.sample(dist) {
-                            node.transform.translate_x.current_value = p.x;
-                            node.transform.translate_y.current_value = p.y;
-                            // Apply tangent rotation if enabled
-                            if path_anim.follow_tangent {
-                                node.transform.rotation.current_value = angle.to_degrees();
-                            }
+                            loop_dur
+                        }
+                    } else {
+                        effective_time.min(loop_dur)
+                    };
+                    path_anim.progress.update(wrapped);
+                    let length = path_anim.length();
+                    let dist = path_anim.progress.current_value * length;
+                    if let Some((p, angle)) = path_anim.sample(dist) {
+                        node.transform.translate_x.current_value = p.x;
+                        node.transform.translate_y.current_value = p.y;
+                        // Apply tangent rotation if enabled
+                        if path_anim.follow_tangent {
+                            node.transform.rotation.current_value = angle.to_degrees();
                         }
                     }
+                }
 
-                    // Update Path Morph (interpolate between two SVG paths)
-                    // progress controls both position along the path AND the morph blend.
-                    // At 0% -> start of from_path. At 100% -> end of to_path.
-                    if let Some(morph) = &mut node.path_morph {
-                        let effective_time = node.local_time * morph.speed as f64;
-                        let loop_dur = morph.duration;
-                        let wrapped = if loop_dur > 0.0 && effective_time >= loop_dur {
-                            let elapsed = (effective_time / loop_dur) as i32;
-                            if morph.loop_count < 0 || elapsed < morph.loop_count {
-                                effective_time % loop_dur
-                            } else {
-                                loop_dur
-                            }
+                // Update Path Morph (interpolate between two SVG paths)
+                // progress controls both position along the path AND the morph blend.
+                // At 0% -> start of from_path. At 100% -> end of to_path.
+                if let Some(morph) = &mut node.path_morph {
+                    let effective_time = node.local_time * morph.speed as f64;
+                    let loop_dur = morph.duration;
+                    let wrapped = if loop_dur > 0.0 && effective_time >= loop_dur {
+                        let elapsed = (effective_time / loop_dur) as i32;
+                        if morph.loop_count < 0 || elapsed < morph.loop_count {
+                            effective_time % loop_dur
                         } else {
-                            effective_time.min(loop_dur)
-                        };
-                        morph.progress.update(wrapped);
-                        let t = morph.progress.current_value.clamp(0.0, 1.0);
-                        if let Some((p, angle)) = morph.sample_morph(t, t) {
-                            node.transform.translate_x.current_value = p.x;
-                            node.transform.translate_y.current_value = p.y;
-                            if morph.follow_tangent {
-                                node.transform.rotation.current_value = angle.to_degrees();
-                            }
+                            loop_dur
+                        }
+                    } else {
+                        effective_time.min(loop_dur)
+                    };
+                    morph.progress.update(wrapped);
+                    let t = morph.progress.current_value.clamp(0.0, 1.0);
+                    if let Some((p, angle)) = morph.sample_morph(t, t) {
+                        node.transform.translate_x.current_value = p.x;
+                        node.transform.translate_y.current_value = p.y;
+                        if morph.follow_tangent {
+                            node.transform.rotation.current_value = angle.to_degrees();
                         }
                     }
+                }
 
-                    if node.transform.translate_x.current_value > 0.0 {
-                        tracing::debug!(
-                            "Node {} updated: x={}, local_time={}",
-                            node_id,
-                            node.transform.translate_x.current_value,
-                            node.local_time
-                        );
-                    }
+                if node.transform.translate_x.current_value > 0.0 {
+                    tracing::debug!(
+                        "Node {} updated: x={}, local_time={}",
+                        node_id,
+                        node.transform.translate_x.current_value,
+                        node.local_time
+                    );
                 }
             }
         });
@@ -473,9 +642,16 @@ impl Director {
         // Pass 3: Audio Reactive Bindings
         // Process after animations so audio values take priority
         let analyzer = self.audio_analyzer.clone();
-        for node_opt in self.scene.nodes.iter_mut() {
+        for (node_id, node_opt) in self.scene.nodes.iter_mut().enumerate() {
             if let Some(node) = node_opt {
                 if (node.last_visit_time - global_time).abs() < 0.0001 {
+                    // During incremental updates, skip audio bindings for nodes
+                    // that are not dirty.
+                    if let Some(ref dirty) = dirty {
+                        if !dirty.contains(&node_id) {
+                            continue;
+                        }
+                    }
                     for binding in &mut node.audio_bindings {
                         // Get audio samples from the track
                         let energy = if let Some(Some(track)) =
@@ -554,6 +730,33 @@ impl Director {
         }
     }
 
+    /// Expand a dirty set to include all ancestors of dirty nodes.
+    ///
+    /// Ancestors are included because a parent's transform/layout context is
+    /// required to render a dirty child correctly. If a parent is already in the
+    /// set, its ancestors were added by the chain that first inserted it, so
+    /// we can stop walking that branch.
+    pub(crate) fn expand_dirty_with_ancestors(&self, dirty: &std::collections::HashSet<NodeId>) -> std::collections::HashSet<NodeId> {
+        let mut expanded = dirty.clone();
+        for &node_id in dirty {
+            let mut current = node_id;
+            while let Some(node) = self.scene.get_node(current) {
+                if let Some(parent_id) = node.parent {
+                    // If the parent was already in the set, it was processed by
+                    // an earlier chain that walked up to the root, so this
+                    // branch is fully covered.
+                    if !expanded.insert(parent_id) {
+                        break;
+                    }
+                    current = parent_id;
+                } else {
+                    break;
+                }
+            }
+        }
+        expanded
+    }
+
     /// Triggers `post_layout` on all active nodes.
     ///
     /// This is called after the Layout Engine has computed the final boxes, allowing elements
@@ -567,4 +770,419 @@ impl Director {
             }
         }
     }
+
+    /// Build the dependency graph for the current scene graph and run the
+    /// configured `StylePolicy` scorer.
+    ///
+    /// This records dependencies between nodes and their inputs (entities,
+    /// audio tracks, hierarchy, masks) so that future incremental passes can
+    /// invalidate only the affected nodes. The graph is stored in
+    /// `self.compiler` and the dirty node set is reset. Each node's
+    /// `last_input_hash` is updated to reflect its current structural inputs.
+    ///
+    /// After the graph is built, the scene is scored against `style_policy`.
+    /// Any violations are emitted as `tracing` logs (errors/warnings/info)
+    /// and stored in `self.last_policy_score` so callers can inspect them before
+    /// export.
+    pub fn compile(&mut self) {
+        self.compiler.clear();
+        self.dirty_nodes.clear();
+
+        for (node_id, node_opt) in self.scene.nodes.iter_mut().enumerate() {
+            let Some(node) = node_opt else { continue };
+
+            // Entity references.
+            for &entity_id in &node.entity_refs {
+                self.compiler.record(node_id, DependencyInput::Entity(entity_id));
+            }
+
+            // Audio-reactive bindings.
+            for binding in &node.audio_bindings {
+                self.compiler.record(node_id, DependencyInput::AudioTrack(binding.track_id));
+            }
+
+            // Hierarchy: children depend on their parent for transform/layout.
+            // We record only the child→parent edge so that invalidating a child
+            // does not pull in its siblings. This means invalidating a parent
+            // will not currently invalidate its children; add a descendants
+            // expansion when that direction is needed.
+            if let Some(parent_id) = node.parent {
+                self.compiler.record(node_id, DependencyInput::Node(parent_id));
+            }
+
+            // Mask references.
+            if let Some(mask_id) = node.mask_node {
+                self.compiler.record(node_id, DependencyInput::Node(mask_id));
+            }
+
+            // Snapshot the current structural input hash for cache invalidation.
+            let hash = node.compute_input_hash();
+            node.set_input_hash(Some(hash));
+        }
+
+        // Run the style policy scorer over the timeline so violations are
+        // emitted as warnings/errors before export.
+        self.last_policy_score = Some(self.score_style_policy_for_compile());
+    }
+
+    /// Score the scene against `style_policy` over the full timeline duration.
+    ///
+    /// Used internally by `compile()` to surface production-rule violations
+    /// before export. Returns the computed `PolicyScore`.
+    fn score_style_policy_for_compile(&self) -> PolicyScore {
+        let duration_minutes = crate::style_policy::total_duration_minutes(self);
+        let duration = duration_minutes * 60.0;
+        let time_range = if duration > 0.0 { (0.0, duration) } else { (0.0, 1.0) };
+        let score = self.score_style_policy(time_range, 10);
+
+        for violation in &score.violations {
+            let message = format!(
+                "StylePolicy violation [{}]: {}{}",
+                violation.rule,
+                violation.description,
+                match violation.node_id {
+                    Some(id) => format!(" (node {})", id),
+                    None => String::new(),
+                }
+            );
+            match violation.severity {
+                IssueSeverity::Error => tracing::error!("{}", message),
+                IssueSeverity::Warning => tracing::warn!("{}", message),
+                IssueSeverity::Info => tracing::info!("{}", message),
+            }
+        }
+
+        score
+    }
+
+    /// Invalidate nodes affected by the given inputs.
+    ///
+    /// Returns the set of affected node IDs and stores it in
+    /// `self.dirty_nodes`. Only nodes whose current structural input hash
+    /// differs from the hash recorded at the last `compile()` are marked dirty,
+    /// so unchanged nodes are not recomputed.
+    pub fn invalidate(&mut self, inputs: Vec<DependencyInput>) -> std::collections::HashSet<NodeId> {
+        let potentially_affected = self.compiler.affected_nodes(&inputs);
+        let mut dirty: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+
+        for node_id in &potentially_affected {
+            if let Some(Some(node)) = self.scene.nodes.get_mut(*node_id) {
+                let current_hash = node.compute_input_hash();
+                match node.last_input_hash() {
+                    None => {
+                        // Never compiled; treat as dirty and snapshot the hash
+                        // so future invalidations have a baseline.
+                        node.set_input_hash(Some(current_hash));
+                        dirty.insert(*node_id);
+                    }
+                    Some(stored_hash) if stored_hash != current_hash => {
+                        dirty.insert(*node_id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        self.dirty_nodes = dirty.clone();
+        dirty
+    }
+
+    /// Score the current scene against the configured `StylePolicy`.
+    ///
+    /// The scorer samples the scene over `time_range` using `samples` points.
+    /// Results include per-dimension sub-scores and a list of violations.
+    pub fn score_style_policy(
+        &self,
+        time_range: (f64, f64),
+        samples: usize,
+    ) -> PolicyScore {
+        StylePolicyScorer::new().score(self, &self.style_policy, time_range, samples)
+    }
+
+    /// Capture a lightweight layout snapshot at `time` without cloning the
+    /// whole Director.
+    ///
+    /// The snapshot contains only the per-node bounds and kind strings needed
+    /// by verification passes such as static-stretch detection. It runs the
+    /// update and layout passes on `self`, so it mutates the Director's
+    /// internal state (local times, layout rectangles, etc.).
+    pub fn layout_snapshot(&mut self, time: f64) -> LayoutSnapshot {
+        self.update(time);
+
+        let mut layout_engine = LayoutEngine::new();
+        layout_engine.compute_layout(&mut self.scene, self.width, self.height, time);
+
+        let nodes = self
+            .scene
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(id, node_opt)| {
+                let node = node_opt.as_ref()?;
+                let r = node.layout_rect;
+                Some(LayoutNodeSnapshot {
+                    id,
+                    kind: crate::element::element_kind(node.element.as_ref()),
+                    bounds: BoundsRect::new(r.left(), r.top(), r.width(), r.height()),
+                })
+            })
+            .collect();
+
+        LayoutSnapshot {
+            width: self.width,
+            height: self.height,
+            sample_time: time,
+            nodes,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::BoxNode;
+    use crate::video_wrapper::RenderMode;
+    use crate::{DefaultAssetLoader, Director};
+    use std::sync::Arc;
+
+    #[test]
+    fn add_smart_caption_creates_node_and_wires_entities() {
+        use crate::entity::{BoundingBox, EntityKind};
+        use crate::node::caption::{CaptionLine, CaptionWord};
+        use crate::node::smart_caption::SmartCaptionConfig;
+
+        let mut director = Director::new(
+            1080,
+            1920,
+            30,
+            Arc::new(DefaultAssetLoader),
+            RenderMode::Preview,
+            None,
+        );
+
+        let face = director.entities.create(EntityKind::Face, "mara".to_string());
+        director.entities.add_sample(
+            face,
+            0.0,
+            BoundingBox::new(400.0, 1500.0, 200.0, 200.0),
+            1.0,
+        );
+        director.entities.add_sample(
+            face,
+            2.0,
+            BoundingBox::new(400.0, 1500.0, 200.0, 200.0),
+            1.0,
+        );
+
+        let line = CaptionLine {
+            text: "hello".to_string(),
+            words: vec![CaptionWord {
+                text: "hello".to_string(),
+                start_sec: 0.0,
+                end_sec: 2.0,
+                display_line_idx: 0,
+            }],
+            start_sec: 0.0,
+            end_sec: 2.0,
+        };
+
+        let id = director.add_smart_caption_for_shot(
+            vec![line],
+            vec![face],
+            0.0,
+            2.0,
+            SmartCaptionConfig::default(),
+        );
+
+        let node = director.scene.get_node(id).expect("smart caption node exists");
+        assert_eq!(node.entity_refs.len(), 1);
+        assert_eq!(node.entity_refs[0], face);
+        assert!(
+            node.element
+                .as_any()
+                .downcast_ref::<SmartCaptionNode>()
+                .is_some(),
+            "registered element should be a SmartCaptionNode"
+        );
+
+        director.update(0.5);
+        let node = director.scene.get_node(id).unwrap();
+        let smart = node
+            .element
+            .as_any()
+            .downcast_ref::<SmartCaptionNode>()
+            .expect("element is a SmartCaptionNode");
+        assert!(!smart.trajectory.is_empty());
+    }
+
+    #[test]
+    fn add_smart_caption_with_explicit_manifest_wires_entities() {
+        use crate::entity::{BoundingBox, EntityKind};
+        use crate::node::caption::{CaptionLine, CaptionWord};
+        use crate::node::smart_caption::SmartCaptionConfig;
+        use crate::semantic::{SemanticManifest, SolverConfig};
+
+        let mut director = Director::new(
+            1080,
+            1920,
+            30,
+            Arc::new(DefaultAssetLoader),
+            RenderMode::Preview,
+            None,
+        );
+
+        let face = director.entities.create(EntityKind::Face, "mara".to_string());
+        director.entities.add_sample(
+            face,
+            0.0,
+            BoundingBox::new(400.0, 1500.0, 200.0, 200.0),
+            1.0,
+        );
+
+        let line = CaptionLine {
+            text: "hello".to_string(),
+            words: vec![CaptionWord {
+                text: "hello".to_string(),
+                start_sec: 0.0,
+                end_sec: 2.0,
+                display_line_idx: 0,
+            }],
+            start_sec: 0.0,
+            end_sec: 2.0,
+        };
+
+        let manifest = SemanticManifest {
+            entity_refs: vec![face],
+            start_time: 0.0,
+            end_time: 2.0,
+            solver: SolverConfig::default(),
+        };
+
+        let id = director.add_smart_caption(vec![line], manifest, SmartCaptionConfig::default());
+
+        let node = director.scene.get_node(id).expect("smart caption node exists");
+        assert_eq!(node.entity_refs, vec![face]);
+        assert!(node
+            .element
+            .as_any()
+            .downcast_ref::<SmartCaptionNode>()
+            .is_some());
+
+        director.update(0.5);
+        let node = director.scene.get_node(id).unwrap();
+        let smart = node
+            .element
+            .as_any()
+            .downcast_ref::<SmartCaptionNode>()
+            .unwrap();
+        assert!(!smart.trajectory.is_empty());
+    }
+
+    #[test]
+    fn add_smart_caption_continuous_creates_node_and_wires_entities() {
+        use crate::entity::{BoundingBox, EntityKind};
+        use crate::node::caption::{CaptionLine, CaptionWord};
+        use crate::node::smart_caption::SmartCaptionConfig;
+
+        let mut director = Director::new(
+            1080,
+            1920,
+            30,
+            Arc::new(DefaultAssetLoader),
+            RenderMode::Preview,
+            None,
+        );
+
+        let face = director.entities.create(EntityKind::Face, "mara".to_string());
+        director.entities.add_sample(
+            face,
+            0.0,
+            BoundingBox::new(400.0, 1500.0, 200.0, 200.0),
+            1.0,
+        );
+        director.entities.add_sample(
+            face,
+            2.0,
+            BoundingBox::new(400.0, 1500.0, 200.0, 200.0),
+            1.0,
+        );
+
+        let line = CaptionLine {
+            text: "hello".to_string(),
+            words: vec![CaptionWord {
+                text: "hello".to_string(),
+                start_sec: 0.0,
+                end_sec: 2.0,
+                display_line_idx: 0,
+            }],
+            start_sec: 0.0,
+            end_sec: 2.0,
+        };
+
+        let id = director.add_smart_caption_for_shot_continuous(
+            vec![line],
+            vec![face],
+            0.0,
+            2.0,
+            SmartCaptionConfig::default(),
+        );
+
+        let node = director.scene.get_node(id).expect("smart caption node exists");
+        assert_eq!(node.entity_refs.len(), 1);
+        assert_eq!(node.entity_refs[0], face);
+        assert!(
+            node.element
+                .as_any()
+                .downcast_ref::<SmartCaptionNode>()
+                .is_some(),
+            "registered element should be a SmartCaptionNode"
+        );
+
+        director.update(0.5);
+        let node = director.scene.get_node(id).unwrap();
+        let smart = node
+            .element
+            .as_any()
+            .downcast_ref::<SmartCaptionNode>()
+            .expect("element is a SmartCaptionNode");
+        assert!(smart.is_continuous());
+        assert!(!smart.trajectory.is_empty());
+    }
+
+    #[test]
+    fn layout_snapshot_captures_node_bounds() {
+        let mut director = Director::new(
+            1080,
+            1920,
+            30,
+            Arc::new(DefaultAssetLoader),
+            RenderMode::Preview,
+            None,
+        );
+
+        let mut box_node = BoxNode::new();
+        box_node.style.size.width = taffy::style::Dimension::length(1080.0);
+        box_node.style.size.height = taffy::style::Dimension::length(1920.0);
+        let root = director.scene.add_node(Box::new(box_node));
+        director.timeline.push(TimelineItem {
+            scene_root: root,
+            name: Some("main".into()),
+            start_time: 0.0,
+            duration: 2.0,
+            z_index: 0,
+            audio_tracks: vec![],
+        });
+
+        let snapshot = director.layout_snapshot(0.5);
+
+        assert_eq!(snapshot.width, 1080);
+        assert_eq!(snapshot.height, 1920);
+        assert_eq!(snapshot.sample_time, 0.5);
+        assert_eq!(snapshot.nodes.len(), 1);
+        assert_eq!(snapshot.nodes[0].id, root);
+        assert_eq!(snapshot.nodes[0].kind, "box");
+        assert!(snapshot.nodes[0].bounds.w > 0.0);
+        assert!(snapshot.nodes[0].bounds.h > 0.0);
+    }
+
 }

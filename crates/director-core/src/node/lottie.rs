@@ -154,6 +154,10 @@ impl Element for LottieNode {
         self
     }
 
+    fn kind(&self) -> &'static str {
+        "lottie"
+    }
+
     fn layout_style(&self) -> Style {
         self.style.clone()
     }

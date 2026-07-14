@@ -598,3 +598,40 @@ pub struct SafeZone {
     pub right: f32,
     pub aspect_ratio: String,
 }
+
+/// Axis-aligned bounding rectangle used for layout snapshots and manifest bounds.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+pub struct BoundsRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl BoundsRect {
+    /// Create a new bounding rectangle.
+    pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { x, y, w, h }
+    }
+
+    /// Check if this rect overlaps another rect.
+    pub fn overlaps(&self, other: &BoundsRect) -> bool {
+        self.x < other.x + other.w
+            && self.x + self.w > other.x
+            && self.y < other.y + other.h
+            && self.y + self.h > other.y
+    }
+
+    /// Compute the overlap area with another rect.
+    pub fn overlap_area(&self, other: &BoundsRect) -> f32 {
+        let left = self.x.max(other.x);
+        let top = self.y.max(other.y);
+        let right = (self.x + self.w).min(other.x + other.w);
+        let bottom = (self.y + self.h).min(other.y + other.h);
+        if right > left && bottom > top {
+            (right - left) * (bottom - top)
+        } else {
+            0.0
+        }
+    }
+}

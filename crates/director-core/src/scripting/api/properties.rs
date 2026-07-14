@@ -11,7 +11,7 @@
 //! - **Blending**: `set_blend_mode` for compositing modes
 //! - **Safety Guards**: stale-handle checks with script-level errors
 
-use crate::node::{ImageNode, VideoNode};
+use crate::node::{CaptionNode, ImageNode, SmartCaptionNode, VideoNode};
 use rhai::Engine;
 
 use super::super::types::NodeHandle;
@@ -194,6 +194,25 @@ pub fn register(engine: &mut Engine) {
                 n.blend_mode = mode;
             }
             Ok(())
+        },
+    );
+
+    engine.register_fn(
+        "caption_position",
+        |node: &mut NodeHandle| -> Result<String, Box<rhai::EvalAltResult>> {
+            let d = node.lock_director()?;
+            node.ensure_alive(&d)?;
+            let n = d
+                .scene
+                .get_node(node.id)
+                .ok_or_else(|| format!("Node {} not found", node.id))?;
+            if let Some(smart) = n.element.as_any().downcast_ref::<SmartCaptionNode>() {
+                Ok(smart.inner.style.position.as_position_str().to_string())
+            } else if let Some(caption) = n.element.as_any().downcast_ref::<CaptionNode>() {
+                Ok(caption.style.position.as_position_str().to_string())
+            } else {
+                Err("caption_position is only valid for caption or smart caption nodes".into())
+            }
         },
     );
 }

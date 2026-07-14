@@ -1,6 +1,7 @@
 use crate::animation::Animated;
 use crate::tokens::DesignSystem;
 use crate::element::Element;
+use serde::{Deserialize, Serialize};
 use crate::text_direction::{resolve_text_direction, TextDirectionMode};
 use crate::types::Color;
 use skia_safe::{
@@ -19,7 +20,7 @@ use taffy::geometry::Size;
 use taffy::style::{AvailableSpace, Style};
 
 /// A single timed word within a caption cue.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CaptionWord {
     pub text: String,
     pub start_sec: f64,
@@ -33,7 +34,7 @@ pub struct CaptionWord {
 /// A single timed caption cue. All tokens belonging to a single cue share a
 /// block-level slot which is computed once and is stable for the cue's
 /// lifetime. Adding/removing other cues never moves this one's lines.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CaptionLine {
     pub text: String,
     pub words: Vec<CaptionWord>,
@@ -42,19 +43,93 @@ pub struct CaptionLine {
 }
 
 /// Where to position the caption within the layout rect.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CaptionPosition {
     Bottom,
     Top,
     Center,
+    /// Place the caption block along the left edge of the frame.
+    Left,
+    /// Place the caption block along the right edge of the frame.
+    Right,
+    /// Place the caption block in the top-left corner of the frame.
+    TopLeft,
+    /// Place the caption block in the top-right corner of the frame.
+    TopRight,
+    /// Place the caption block in the bottom-left corner of the frame.
+    BottomLeft,
+    /// Place the caption block in the bottom-right corner of the frame.
+    BottomRight,
+    /// Normalized vertical offset `[0, 1]` for the center of the caption block
+    /// relative to the layout rect. `0.0` places the caption at the top of
+    /// the rect, `0.5` at the vertical center, and `1.0` at the bottom.
+    ///
+    /// This is independent of the output canvas size, so it works correctly
+    /// when the caption node is placed inside a smaller container.
+    Free(f32),
+    /// Absolute canvas (x, y) coordinate for the center of the caption block.
+    /// This is used by smart-caption nodes that solve a continuous 2D trajectory.
+    ///
+    /// # Note
+    /// The coordinates are interpreted as absolute coordinates on the output
+    /// canvas. This works correctly when the caption node fills the full
+    /// canvas; for smaller layout rects the coordinate may need adjustment.
+    FreeXY { x: f32, y: f32 },
 }
 
 impl CaptionPosition {
+    /// Return a stable snake_case string for this position.
+    pub fn as_position_str(&self) -> &'static str {
+        match self {
+            Self::Bottom => "bottom",
+            Self::Top => "top",
+            Self::Center => "center",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::TopLeft => "top_left",
+            Self::TopRight => "top_right",
+            Self::BottomLeft => "bottom_left",
+            Self::BottomRight => "bottom_right",
+            Self::Free(_) => "free",
+            Self::FreeXY { .. } => "free_xy",
+        }
+    }
+
     pub fn from_str(s: &str) -> Self {
         match s {
             "top" => Self::Top,
             "center" => Self::Center,
-            _ => Self::Bottom,
+            "bottom" => Self::Bottom,
+            "left" => Self::Left,
+            "right" => Self::Right,
+            "top_left" => Self::TopLeft,
+            "top_right" => Self::TopRight,
+            "bottom_left" => Self::BottomLeft,
+            "bottom_right" => Self::BottomRight,
+            _ => {
+                if let Some(rest) = s.strip_prefix("free(") {
+                    if let Some(num) = rest.strip_suffix(")") {
+                        if let Ok(y) = num.parse::<f32>() {
+                            return Self::Free(y);
+                        }
+                    }
+                    tracing::warn!("malformed CaptionPosition::Free string: {}", s);
+                } else if let Some(rest) = s.strip_prefix("free_xy(") {
+                    if let Some(inner) = rest.strip_suffix(")") {
+                        let parts: Vec<&str> = inner.split(',').collect();
+                        if parts.len() == 2 {
+                            if let (Ok(x), Ok(y)) = (parts[0].trim().parse::<f32>(), parts[1].trim().parse::<f32>()) {
+                                return Self::FreeXY { x, y };
+                            }
+                        }
+                    }
+                    tracing::warn!("malformed CaptionPosition::FreeXY string: {}", s);
+                } else if !s.is_empty() {
+                    tracing::warn!("unknown CaptionPosition string: {}", s);
+                }
+                Self::Bottom
+            }
         }
     }
 }
@@ -66,7 +141,7 @@ impl Default for CaptionPosition {
 }
 
 /// How phrase-broken display lines appear within one cue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PhraseLineMode {
     /// One display line at a time in the same position (Opus/TikTok default).
     Replace,
@@ -74,11 +149,42 @@ pub enum PhraseLineMode {
     Stack,
 }
 
+/// Serde adapter for `skia_safe::textlayout::TextAlign`.
+mod text_align_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use skia_safe::textlayout::TextAlign;
+
+    pub fn serialize<S: Serializer>(v: &TextAlign, s: S) -> Result<S::Ok, S::Error> {
+        let str = match v {
+            TextAlign::Left => "left",
+            TextAlign::Right => "right",
+            TextAlign::Center => "center",
+            TextAlign::Justify => "justify",
+            TextAlign::Start => "start",
+            TextAlign::End => "end",
+        };
+        s.serialize_str(str)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<TextAlign, D::Error> {
+        let s = String::deserialize(d)?;
+        match s.as_str() {
+            "left" => Ok(TextAlign::Left),
+            "right" => Ok(TextAlign::Right),
+            "center" => Ok(TextAlign::Center),
+            "justify" => Ok(TextAlign::Justify),
+            "start" => Ok(TextAlign::Start),
+            "end" => Ok(TextAlign::End),
+            _ => Err(serde::de::Error::custom(format!("unknown TextAlign: {}", s))),
+        }
+    }
+}
+
 /// Caption styling. Defaults target a clean, TikTok/Reels look:
 /// white text, warm yellow active word, restrained shadow only.
 /// Uniform font_size across all token states → glyph metrics never
 /// vary → no neighbor shifting when state changes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CaptionStyle {
     pub font_size: f32,
     pub color: Color,            // future words (default white)
@@ -86,7 +192,11 @@ pub struct CaptionStyle {
     pub spoken_color: Color,     // past words (default dim white)
 
     pub position: CaptionPosition,
+    #[serde(with = "text_align_serde")]
     pub text_align: TextAlign,
+    /// Horizontal margins used by `CaptionPosition::Left` and `Right`.
+    pub left_margin: f32,
+    pub right_margin: f32,
     /// Paragraph direction: auto-detect from cue text, or force LTR/RTL.
     pub text_direction: TextDirectionMode,
     pub font_family: String,
@@ -172,6 +282,8 @@ impl Default for CaptionStyle {
 
             position: CaptionPosition::Bottom,
             text_align: TextAlign::Center,
+            left_margin: 60.0,
+            right_margin: 60.0,
             text_direction: TextDirectionMode::Auto,
             font_family: "Poppins".to_string(),
             font_weight: 700,
@@ -347,6 +459,19 @@ impl CaptionNode {
             .iter()
             .filter(|line| time_sec >= line.start_sec && time_sec < line.end_sec)
             .collect()
+    }
+
+    /// Switch the caption's vertical anchor. This is used by smart caption
+    /// nodes to follow a solved trajectory without re-laying out text.
+    pub fn set_position(&mut self, position: CaptionPosition) {
+        if self.style.position != position {
+            self.style.position = position;
+            // Position only affects render placement and measure margin;
+            // invalidate the cached block layout so measure picks up the new margin.
+            if let Ok(mut guard) = self.block_layout.lock() {
+                *guard = None;
+            }
+        }
     }
 
     /// Re-apply phrase breaks and drop cached layout after style / line edits.
@@ -854,6 +979,70 @@ impl CaptionNode {
 
     /// Returns `(line_index, word_index)` using indices into `CaptionNode::lines`,
     /// not indices into the visible-cue subset.
+    /// Compute the left x-coordinate of a display line for the given caption
+    /// position and layout rect.
+    fn compute_line_left_x(
+        position: &CaptionPosition,
+        rect: Rect,
+        line_width: f32,
+        left_margin: f32,
+        right_margin: f32,
+    ) -> f32 {
+        match position {
+            CaptionPosition::Left
+            | CaptionPosition::TopLeft
+            | CaptionPosition::BottomLeft => rect.left + left_margin,
+            CaptionPosition::Right
+            | CaptionPosition::TopRight
+            | CaptionPosition::BottomRight => {
+                (rect.right - right_margin - line_width).max(rect.left)
+            }
+            CaptionPosition::FreeXY { x, .. } => (x - line_width / 2.0).max(rect.left),
+            // Top, Bottom, Center, and legacy Free(y) all center horizontally.
+            _ => rect.left + (rect.width() - line_width) / 2.0,
+        }
+    }
+
+    /// Compute the top y-coordinate of the caption block for the given
+    /// position, layout rect, and block layout.
+    fn compute_cue_block_top_y(
+        layout_style: &CaptionStyle,
+        rect: Rect,
+        layout: &BlockLayout,
+    ) -> f32 {
+        match layout_style.position {
+            CaptionPosition::Bottom
+            | CaptionPosition::BottomLeft
+            | CaptionPosition::BottomRight => {
+                (rect.bottom - layout_style.bottom_margin - layout.total_height).max(rect.top)
+            }
+            CaptionPosition::Top | CaptionPosition::TopLeft | CaptionPosition::TopRight => {
+                (rect.top + layout_style.top_margin).min(rect.bottom - layout.total_height)
+            }
+            CaptionPosition::Center => {
+                let max_y = (rect.bottom - layout.total_height).max(rect.top);
+                (rect.top + (rect.height() - layout.total_height) / 2.0)
+                    .clamp(rect.top, max_y)
+            }
+            CaptionPosition::Left | CaptionPosition::Right => {
+                // Left/Right anchors are vertically centered within the rect.
+                (rect.top + (rect.height() - layout.total_height) / 2.0)
+                    .clamp(rect.top, rect.bottom - layout.total_height)
+            }
+            CaptionPosition::Free(y) => {
+                // `y` is a normalized [0, 1] offset relative to the layout rect.
+                let t = y.clamp(0.0, 1.0);
+                let center_y = rect.top + t * rect.height();
+                (center_y - layout.total_height / 2.0)
+                    .clamp(rect.top, rect.bottom - layout.total_height)
+            }
+            CaptionPosition::FreeXY { y, .. } => {
+                // Center the caption block at the absolute canvas y.
+                (y - layout.total_height / 2.0).clamp(rect.top, rect.bottom - layout.total_height)
+            }
+        }
+    }
+
     fn find_global_active(visible: &[(usize, &CaptionLine)], time: f64) -> Option<(usize, usize)> {
         let mut latest_start = f64::NEG_INFINITY;
         let mut result: Option<(usize, usize)> = None;
@@ -938,6 +1127,10 @@ impl Element for CaptionNode {
         self
     }
 
+    fn kind(&self) -> &'static str {
+        "caption"
+    }
+
     fn needs_measure(&self) -> bool {
         true
     }
@@ -984,9 +1177,17 @@ impl Element for CaptionNode {
         };
 
         let extra_margin = match layout_style.position {
-            CaptionPosition::Bottom => layout_style.bottom_margin,
-            CaptionPosition::Top => layout_style.top_margin,
+            CaptionPosition::Bottom
+            | CaptionPosition::BottomLeft
+            | CaptionPosition::BottomRight => layout_style.bottom_margin,
+            CaptionPosition::Top
+            | CaptionPosition::TopLeft
+            | CaptionPosition::TopRight => layout_style.top_margin,
             CaptionPosition::Center => 0.0,
+            CaptionPosition::Left => 0.0,
+            CaptionPosition::Right => 0.0,
+            CaptionPosition::Free(_) => 0.0,
+            CaptionPosition::FreeXY { .. } => 0.0,
         };
 
         Size {
@@ -1129,19 +1330,7 @@ impl Element for CaptionNode {
             };
 
             // Block top Y, depending on caption position.
-            let cue_block_top_y = match layout_style.position {
-                CaptionPosition::Bottom => {
-                    (rect.bottom - layout_style.bottom_margin - layout.total_height).max(rect.top)
-                }
-                CaptionPosition::Top => {
-                    (rect.top + layout_style.top_margin).min(rect.bottom - layout.total_height)
-                }
-                CaptionPosition::Center => {
-                    let max_y = (rect.bottom - layout.total_height).max(rect.top);
-                    (rect.top + (rect.height() - layout.total_height) / 2.0)
-                        .clamp(rect.top, max_y)
-                }
-            };
+            let cue_block_top_y = Self::compute_cue_block_top_y(&layout_style, rect, layout);
 
             let phrase_replace =
                 layout_style.phrase_line_mode == PhraseLineMode::Replace;
@@ -1192,11 +1381,17 @@ impl Element for CaptionNode {
                         cue_block_top_y + layout.total_height - display_line.line_height;
                 }
 
-                // ── Center each DISPLAY LINE individually using
-                //    precomputed `line_width` — never use a token
-                //    origin as the line's left edge. ─────────────
+                // ── Position each DISPLAY LINE horizontally based on the
+                //    caption's anchor. Precomputed `line_width` is used to
+                //    avoid relying on a token origin as the line's left edge.
                 let rect_w = rect.width();
-                let line_left_x = rect.left + (rect_w - display_line.line_width) / 2.0;
+                let line_left_x = Self::compute_line_left_x(
+                    &layout_style.position,
+                    rect,
+                    display_line.line_width,
+                    layout_style.left_margin,
+                    layout_style.right_margin,
+                );
 
                 let line_render_alpha = effective_opacity * reveal;
                 let line_needs_layer = reveal < 0.99;
@@ -1687,6 +1882,8 @@ impl CaptionStyle {
         s.pill_padding_h *= dim_scale;
         s.pill_padding_v *= dim_scale;
         s.pill_radius *= dim_scale;
+        s.left_margin *= dim_scale;
+        s.right_margin *= dim_scale;
 
         if let Some(ref preset) = s.safe_area_preset {
             if let Some(zone) = scaled_safe_zone(preset, canvas_h) {
@@ -2252,6 +2449,86 @@ mod tests {
     fn test_legibility_score_high_contrast() {
         assert!(estimate_legibility(0.95, 0.1) > 0.8);
         assert!(estimate_legibility(0.2, 0.8) > 0.8);
+    }
+
+    #[test]
+    fn test_free_position_block_top_is_centered() {
+        let fc = test_font_collection();
+        let mut line = CaptionLine {
+            text: "hello".into(),
+            words: vec![],
+            start_sec: 0.0,
+            end_sec: 2.0,
+        };
+        auto_time_words(&mut line);
+        let mut node = CaptionNode::new(vec![line], fc);
+        node.style.position = CaptionPosition::Free(0.5);
+        let shadow = Color::new(0.0, 0.0, 0.0, 0.85);
+        let layout = node.build_block_layout(688.0, 1920.0, shadow);
+        assert!(layout.total_height > 0.0);
+
+        let rect = Rect::from_xywh(0.0, 0.0, 1080.0, 1920.0);
+        let top = CaptionNode::compute_cue_block_top_y(&node.style, rect, &layout);
+        let expected_top = rect.top + rect.height() * 0.5 - layout.total_height / 2.0;
+        assert!((top - expected_top).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_free_position_normalized_in_non_full_canvas_container() {
+        let fc = test_font_collection();
+        let mut line = CaptionLine {
+            text: "hello".into(),
+            words: vec![],
+            start_sec: 0.0,
+            end_sec: 2.0,
+        };
+        auto_time_words(&mut line);
+        let mut node = CaptionNode::new(vec![line], fc);
+        node.style.position = CaptionPosition::Free(0.25);
+        let shadow = Color::new(0.0, 0.0, 0.0, 0.85);
+        let layout = node.build_block_layout(688.0, 1920.0, shadow);
+        assert!(layout.total_height > 0.0);
+
+        // Container starts at y=200 and is 400 pixels tall.
+        let rect = Rect::from_xywh(0.0, 200.0, 1080.0, 400.0);
+        let top = CaptionNode::compute_cue_block_top_y(&node.style, rect, &layout);
+        let expected_center_y = rect.top + rect.height() * 0.25;
+        let expected_top = expected_center_y - layout.total_height / 2.0;
+        assert!((top - expected_top).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_caption_position_corner_variants_round_trip() {
+        for position in [
+            CaptionPosition::TopLeft,
+            CaptionPosition::TopRight,
+            CaptionPosition::BottomLeft,
+            CaptionPosition::BottomRight,
+        ] {
+            let serialized = serde_json::to_string(&position).expect("serialize");
+            let deserialized: CaptionPosition =
+                serde_json::from_str(&serialized).expect("deserialize");
+            assert_eq!(deserialized, position, "{} round-trips", serialized);
+        }
+    }
+
+    #[test]
+    fn test_free_position_measure_does_not_panic() {
+        let fc = test_font_collection();
+        let mut node = CaptionNode::new(Vec::new(), fc);
+        node.style.position = CaptionPosition::Free(0.5);
+        let measured = node.measure(
+            Size {
+                width: Some(1080.0),
+                height: None,
+            },
+            Size {
+                width: AvailableSpace::Definite(1080.0),
+                height: AvailableSpace::Definite(1920.0),
+            },
+        );
+        assert!(measured.height >= 0.0);
+        assert!(matches!(node.style.position, CaptionPosition::Free(0.5)));
     }
 
     #[test]

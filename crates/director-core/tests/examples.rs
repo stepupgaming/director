@@ -154,6 +154,11 @@ fn example_features_image() {
     validate_script("examples/features/image.rhai");
 }
 
+#[test]
+fn example_features_smart_caption() {
+    validate_script("examples/features/smart_caption.rhai");
+}
+
 fn validate_script(relative_path: &str) {
     let mut engine = Engine::new();
     let loader = Arc::new(DefaultAssetLoader);

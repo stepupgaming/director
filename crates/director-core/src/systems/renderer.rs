@@ -40,6 +40,9 @@ pub type GpuContext = ();
 
 /// Renders a node's element and children to the given canvas. The caller is
 /// responsible for setting up the canvas transform.
+///
+/// If `dirty_nodes` is `Some`, only nodes in the set are rendered; this is
+/// used after `Director::invalidate()` to incrementally re-render changed nodes.
 fn render_node_subtree(
     scene: &SceneGraph,
     assets: &AssetManager,
@@ -48,6 +51,7 @@ fn render_node_subtree(
     canvas: &skia_safe::Canvas,
     parent_opacity: f32,
     depth: usize,
+    dirty_nodes: Option<&std::collections::HashSet<NodeId>>,
 ) -> Result<(), RenderError> {
     let node = match scene.get_node(node_id) {
         Some(n) => n,
@@ -76,6 +80,7 @@ fn render_node_subtree(
                 canvas,
                 parent_opacity,
                 depth + 1,
+                dirty_nodes,
             ) {
                 last_error = Err(e);
             }
@@ -110,7 +115,7 @@ fn render_node_subtree(
 
                 canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&mask_paint));
                 if let Err(e) =
-                    render_recursive(scene, assets, static_cache, mask_id, canvas, 1.0, depth + 1)
+                    render_recursive(scene, assets, static_cache, mask_id, canvas, 1.0, depth + 1, dirty_nodes)
                 {
                     last_error = Err(e);
                 }
@@ -136,6 +141,9 @@ fn render_node_subtree(
 /// caching. When a node is marked `is_static`, its rasterized output is looked
 /// up in `static_cache`; on a miss the subtree is rendered to an offscreen
 /// surface, stored, and then drawn.
+///
+/// If `dirty_nodes` is `Some`, only nodes in the set are rendered. Nodes not
+/// in the set are skipped entirely, including their children.
 pub fn render_recursive(
     scene: &SceneGraph,
     assets: &AssetManager,
@@ -144,6 +152,7 @@ pub fn render_recursive(
     canvas: &skia_safe::Canvas,
     parent_opacity: f32,
     depth: usize,
+    dirty_nodes: Option<&std::collections::HashSet<NodeId>>,
 ) -> Result<(), RenderError> {
     if depth > 100 {
         return Err(RenderError::RecursionLimit);
@@ -194,12 +203,21 @@ pub fn render_recursive(
 
     if is_static {
         // Static cache hit: draw the cached image at the node's position.
+        // This is done regardless of the dirty set so that unchanged static
+        // subtrees still appear during incremental renders.
         if let Some(image) = static_cache.get(&node_id) {
             canvas.save();
             canvas.translate((layout_x + tx, layout_y + ty));
             canvas.draw_image(image, (0, 0), None);
             canvas.restore();
             return Ok(());
+        }
+
+        // Skip re-rendering a static subtree if it is not dirty.
+        if let Some(dirty) = dirty_nodes {
+            if !dirty.contains(&node_id) {
+                return Ok(());
+            }
         }
 
         // Cache miss: render the subtree to an offscreen surface and cache it.
@@ -229,6 +247,7 @@ pub fn render_recursive(
             offscreen,
             parent_opacity,
             depth,
+            dirty_nodes,
         )?;
 
         offscreen.restore();
@@ -273,6 +292,7 @@ pub fn render_recursive(
         canvas,
         parent_opacity,
         depth,
+        dirty_nodes,
     )?;
 
     canvas.restore();
@@ -311,10 +331,13 @@ pub fn draw_debug_overlays(scene: &SceneGraph, canvas: &skia_safe::Canvas) {
 
 /// Renders the scene at the current director state to a canvas.
 /// Assumes `director.update()` and layout have already been called.
+///
+/// If `dirty_nodes` is `Some`, only nodes in the set are rendered.
 fn render_scene_to_canvas(
     director: &mut Director,
     time: f64,
     canvas: &skia_safe::Canvas,
+    dirty_nodes: Option<&std::collections::HashSet<NodeId>>,
 ) -> Result<(), RenderError> {
     let assets = &director.assets;
     canvas.clear(skia_safe::Color::BLACK);
@@ -344,6 +367,7 @@ fn render_scene_to_canvas(
                 canvas,
                 track_opacity * fade_opacity,
                 0,
+                dirty_nodes,
             )?;
         }
     } else {
@@ -365,6 +389,7 @@ fn render_scene_to_canvas(
                 canvas,
                 1.0,
                 0,
+                dirty_nodes,
             )?;
         }
     }
@@ -393,7 +418,7 @@ pub fn render_frame(
         director.update(time);
         layout_engine.compute_layout(&mut director.scene, director.width, director.height, time);
         director.run_post_layout(time);
-        render_scene_to_canvas(director, time, canvas)?;
+        render_scene_to_canvas(director, time, canvas, None)?;
         return Ok(());
     }
 
@@ -432,7 +457,7 @@ pub fn render_frame(
         );
         director.run_post_layout(sample_time);
 
-        render_scene_to_canvas(director, sample_time, scratch_surface.canvas())?;
+        render_scene_to_canvas(director, sample_time, scratch_surface.canvas(), None)?;
 
         // Equal-weight accumulation: each sample contributes 1/n via Plus blend.
         let weight = 1.0 / samples as f32;
@@ -460,9 +485,23 @@ pub fn render_at_time(
     canvas: &skia_safe::Canvas,
     surfaces: &mut Option<(skia_safe::Surface, skia_safe::Surface)>,
 ) -> Result<(), RenderError> {
+    // Build the incremental dirty set if invalidation has been requested.
+    // Ancestors are included so that transforms and layout roots are set up
+    // correctly for the dirty subtree.
+    let dirty: Option<std::collections::HashSet<NodeId>> = if director.dirty_nodes.is_empty() {
+        None
+    } else {
+        let expanded = director.expand_dirty_with_ancestors(&director.dirty_nodes);
+        Some(expanded)
+    };
+
     director.update(time);
     layout_engine.compute_layout(&mut director.scene, director.width, director.height, time);
     director.run_post_layout(time);
+
+    // Consume the dirty set now that the incremental render has been prepared.
+    let dirty = dirty.as_ref();
+    director.dirty_nodes.clear();
 
     let assets_ref = &director.assets;
 
@@ -507,6 +546,7 @@ pub fn render_at_time(
                                 surf_a.canvas(),
                                 1.0,
                                 0,
+                                dirty,
                             )?;
                             render_recursive(
                                 &director.scene,
@@ -516,6 +556,7 @@ pub fn render_at_time(
                                 surf_b.canvas(),
                                 1.0,
                                 0,
+                                dirty,
                             )?;
 
                             let img_a = surf_a.image_snapshot();
@@ -547,6 +588,7 @@ pub fn render_at_time(
                     canvas,
                     1.0,
                     0,
+                    dirty,
                 )?;
             }
         }
@@ -560,6 +602,7 @@ pub fn render_at_time(
                 canvas,
                 1.0,
                 0,
+                dirty,
             )?;
         }
     }
@@ -567,4 +610,248 @@ pub fn render_at_time(
         debug!("[Frame] render complete");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::director::{Director, TimelineItem};
+    use crate::node::BoxNode;
+    use crate::video_wrapper::RenderMode;
+    use std::sync::Arc;
+
+    fn make_director_with_two_boxes() -> Director {
+        let mut director = Director::new(
+            1080,
+            1920,
+            30,
+            Arc::new(crate::DefaultAssetLoader),
+            RenderMode::Preview,
+            None,
+        );
+
+        let root = director.scene.add_node(Box::new(BoxNode::new()));
+        let child_a = director.scene.add_node(Box::new(BoxNode::new()));
+        let child_b = director.scene.add_node(Box::new(BoxNode::new()));
+
+        director.scene.try_add_child(root, child_a);
+        director.scene.try_add_child(root, child_b);
+
+        director.timeline.push(TimelineItem {
+            scene_root: root,
+            name: Some("scene".into()),
+            start_time: 0.0,
+            duration: 5.0,
+            z_index: 0,
+            audio_tracks: vec![],
+        });
+
+        director
+    }
+
+    #[test]
+    fn incremental_render_skips_unchanged_nodes() {
+        let mut director = make_director_with_two_boxes();
+        director.compile();
+
+        let mut layout_engine = LayoutEngine::new();
+        let info = skia_safe::ImageInfo::new(
+            (director.width, director.height),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            Some(skia_safe::ColorSpace::new_srgb()),
+        );
+        let mut surface =
+            skia_safe::surfaces::raster(&info, None, None).expect("failed to create test surface");
+
+        // Full render at t=0.
+        render_at_time(
+            &mut director,
+            &mut layout_engine,
+            0.0,
+            surface.canvas(),
+            &mut None,
+        )
+        .expect("full render should succeed");
+
+        let root_id = director.timeline[0].scene_root;
+        let child_a = director.scene.get_node(root_id).unwrap().children[0];
+        let child_b = director.scene.get_node(root_id).unwrap().children[1];
+
+        let root_gen_after_full = director.scene.get_node(root_id).unwrap().update_generation;
+        let a_gen_after_full = director.scene.get_node(child_a).unwrap().update_generation;
+        let b_gen_after_full = director.scene.get_node(child_b).unwrap().update_generation;
+
+        // Change child_a's structural input so the hash-based invalidation
+        // actually marks it dirty.
+        director.scene.get_node_mut(child_a).unwrap().z_index = 7;
+        director.invalidate(vec![crate::compiler::DependencyInput::Node(child_a)]);
+
+        render_at_time(
+            &mut director,
+            &mut layout_engine,
+            0.5,
+            surface.canvas(),
+            &mut None,
+        )
+        .expect("incremental render should succeed");
+
+        let root_gen_after_inc = director.scene.get_node(root_id).unwrap().update_generation;
+        let a_gen_after_inc = director.scene.get_node(child_a).unwrap().update_generation;
+        let b_gen_after_inc = director.scene.get_node(child_b).unwrap().update_generation;
+
+        // Root and child_a should have been re-evaluated; child_b should not.
+        assert!(root_gen_after_inc > root_gen_after_full, "root should be re-evaluated as ancestor of dirty node");
+        assert!(a_gen_after_inc > a_gen_after_full, "dirty node should be re-evaluated");
+        assert_eq!(b_gen_after_inc, b_gen_after_full, "unchanged sibling should not be re-evaluated");
+    }
+
+    /// A minimal element that tracks how many times it has been rendered.
+    #[derive(Clone, Debug)]
+    struct RenderTracker {
+        render_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl RenderTracker {
+        fn new() -> (Self, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+            let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            (Self { render_count: count.clone() }, count)
+        }
+    }
+
+    impl crate::element::Element for RenderTracker {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+        fn layout_style(&self) -> taffy::style::Style {
+            taffy::style::Style::default()
+        }
+        fn needs_measure(&self) -> bool {
+            true
+        }
+        fn measure(
+            &self,
+            _known_dimensions: taffy::geometry::Size<Option<f32>>,
+            _available_space: taffy::geometry::Size<taffy::style::AvailableSpace>,
+        ) -> taffy::geometry::Size<f32> {
+            taffy::geometry::Size { width: 100.0, height: 100.0 }
+        }
+        fn update(&mut self, _time: f64) -> bool {
+            false
+        }
+        fn render(
+            &self,
+            _canvas: &skia_safe::Canvas,
+            _rect: skia_safe::Rect,
+            _opacity: f32,
+            _draw_children: &mut dyn FnMut(&skia_safe::Canvas),
+        ) -> Result<(), crate::errors::RenderError> {
+            self.render_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        fn animate_property(
+            &mut self,
+            _property: &str,
+            _start: f32,
+            _target: f32,
+            _duration: f64,
+            _easing: &str,
+        ) {
+        }
+    }
+
+    #[test]
+    fn incremental_render_skips_static_subtree() {
+        let mut director = make_director_with_two_boxes();
+        director.compile();
+
+        let mut layout_engine = LayoutEngine::new();
+        let info = skia_safe::ImageInfo::new(
+            (director.width, director.height),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            Some(skia_safe::ColorSpace::new_srgb()),
+        );
+        let mut surface =
+            skia_safe::surfaces::raster(&info, None, None).expect("failed to create test surface");
+
+        // Replace child_b with a tracked static element.
+        let root_id = director.timeline[0].scene_root;
+        let child_b = director.scene.get_node(root_id).unwrap().children[1];
+        let (tracker, count) = RenderTracker::new();
+        director.scene.nodes[child_b] = Some(crate::scene::SceneNode::new(Box::new(tracker)));
+        if let Some(node) = director.scene.nodes[child_b].as_mut() {
+            node.is_static = true;
+            node.parent = Some(root_id);
+            node.layout_rect = skia_safe::Rect::from_wh(100.0, 100.0);
+        }
+
+        // Full render: static subtree is rasterized once.
+        render_at_time(&mut director, &mut layout_engine, 0.0, surface.canvas(), &mut None)
+            .expect("full render should succeed");
+        let count_after_full = count.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(count_after_full, 1, "static subtree should be rendered once");
+
+        // Change child_a's structural input and invalidate it so the
+        // incremental path actually runs.
+        let child_a = director.scene.get_node(root_id).unwrap().children[0];
+        director.scene.get_node_mut(child_a).unwrap().z_index = 7;
+        director.invalidate(vec![crate::compiler::DependencyInput::Node(child_a)]);
+
+        render_at_time(&mut director, &mut layout_engine, 0.5, surface.canvas(), &mut None)
+            .expect("incremental render should succeed");
+        let count_after_inc = count.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(count_after_inc, count_after_full, "static subtree should not be re-rendered when not dirty");
+    }
+
+    #[test]
+    fn full_render_re_evaluates_all_nodes() {
+        let mut director = make_director_with_two_boxes();
+        director.compile();
+
+        let mut layout_engine = LayoutEngine::new();
+        let info = skia_safe::ImageInfo::new(
+            (director.width, director.height),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            Some(skia_safe::ColorSpace::new_srgb()),
+        );
+        let mut surface =
+            skia_safe::surfaces::raster(&info, None, None).expect("failed to create test surface");
+
+        render_at_time(
+            &mut director,
+            &mut layout_engine,
+            0.0,
+            surface.canvas(),
+            &mut None,
+        )
+        .expect("full render should succeed");
+
+        let root_id = director.timeline[0].scene_root;
+        let child_a = director.scene.get_node(root_id).unwrap().children[0];
+        let child_b = director.scene.get_node(root_id).unwrap().children[1];
+
+        let a_gen_first = director.scene.get_node(child_a).unwrap().update_generation;
+        let b_gen_first = director.scene.get_node(child_b).unwrap().update_generation;
+
+        // Without invalidation, a second render should still update all nodes.
+        render_at_time(
+            &mut director,
+            &mut layout_engine,
+            0.5,
+            surface.canvas(),
+            &mut None,
+        )
+        .expect("second full render should succeed");
+
+        let a_gen_second = director.scene.get_node(child_a).unwrap().update_generation;
+        let b_gen_second = director.scene.get_node(child_b).unwrap().update_generation;
+
+        assert!(a_gen_second > a_gen_first, "child_a should be updated during full render");
+        assert!(b_gen_second > b_gen_first, "child_b should be updated during full render");
+    }
 }

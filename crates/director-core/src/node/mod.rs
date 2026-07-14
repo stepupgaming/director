@@ -41,6 +41,12 @@ pub use caption::{
     CaptionPosition, CaptionStyle, CaptionWord, PhraseLineMode, REFERENCE_SHORT_FORM_HEIGHT,
 };
 
+pub mod smart_caption;
+pub use smart_caption::SmartCaptionNode;
+
+pub mod active_speaker_camera;
+pub use active_speaker_camera::{ActiveSpeakerCamera, ActiveSpeakerCameraConfig, ContinuityGroup, Framing};
+
 pub mod effect;
 pub mod effect_shaders;
 pub use effect::{build_effect_filter, EffectNode, EffectType, ShaderUniform};

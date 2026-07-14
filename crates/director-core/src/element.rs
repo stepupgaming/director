@@ -76,6 +76,15 @@ where
 ///
 /// All renderable entities (Box, Text, Video, etc.) must implement this trait.
 pub trait Element: std::fmt::Debug + ElementClone {
+    /// Returns a stable snake_case tag identifying the concrete element type.
+    ///
+    /// Used by manifest and snapshot code to report node kinds without exposing
+    /// the element's internal state. The default implementation returns
+    /// `"unknown"`.
+    fn kind(&self) -> &'static str {
+        "unknown"
+    }
+
     /// Returns self as `Any` for downcasting.
     fn as_any(&self) -> &dyn Any;
     /// Returns mutable self as `Any` for downcasting.
@@ -231,4 +240,13 @@ impl Clone for Box<dyn Element> {
     fn clone(&self) -> Box<dyn Element> {
         self.clone_box()
     }
+}
+
+/// Returns a stable string tag for the concrete element type.
+///
+/// Used by manifest and snapshot code to report node kinds without exposing
+/// the element's internal state. Delegates to [`Element::kind`] so each node
+/// type controls its own tag.
+pub(crate) fn element_kind(element: &dyn Element) -> &'static str {
+    element.kind()
 }

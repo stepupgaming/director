@@ -36,13 +36,14 @@
 //!   speed, source in/out, z_index, audio_tracks).
 use crate::animation::{Animated, EasingType};
 use crate::director::{Director, TimelineItem};
+use crate::entity::{EntityId, EntityTrack};
 use crate::node::text::TextNode;
 use crate::node::BoxNode;
-use crate::node::caption::{CaptionNode, CaptionLine};
-use crate::node::composition::CompositionNode;
-use crate::node::effect::{EffectNode, EffectType};
+use crate::node::caption::CaptionNode;
+use crate::node::effect::EffectNode;
+use crate::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
 use crate::node::image_node::ImageNode;
-use crate::node::video_node::{VideoNode, VideoSource};
+use crate::node::video_node::VideoNode;
 use crate::scripting::utils::{apply_layout_style_json, json_map_to_rhai, style_to_json, text_node_to_json};
 use crate::timeline::{Track, TrackClip};
 use crate::types::{Color, NodeId};
@@ -68,6 +69,9 @@ pub struct Project {
     pub tracks: Vec<TrackData>,
     #[serde(default)]
     pub legacy_timeline: Vec<TimelineItemData>,
+    /// Semantic entity tracks (faces, speakers, objects, caption phrases).
+    #[serde(default)]
+    pub entities: Vec<EntityTrack>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -150,6 +154,9 @@ pub struct NodeData {
     /// (which routes through the canonical Rhai layout parser).
     #[serde(default)]
     pub layout: JsonMap<String, JsonValue>,
+    /// Semantic entity UUIDs referenced by this node.
+    #[serde(default)]
+    pub entity_refs: Vec<EntityId>,
 }
 
 fn default_blend() -> String {
@@ -427,6 +434,44 @@ fn restore_box_props_anims(b: &mut BoxNode, anims: &JsonMap<String, JsonValue>) 
     restore_animated_f32(&mut b.backdrop_blur, anims.get("backdrop_blur"), fb_bbl);
 }
 
+// ---- SmartCaption props ----
+
+fn smart_caption_props_to_json(node: &SmartCaptionNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    p.insert("lines".into(), serde_json::to_value(&node.inner.lines).unwrap_or_default());
+    p.insert("style".into(), serde_json::to_value(&node.inner.style).unwrap_or_default());
+    p.insert("trajectory".into(), serde_json::to_value(&node.trajectory).unwrap_or_default());
+    p.insert("canvas_w".into(), JsonValue::from(node.canvas_w));
+    p.insert("canvas_h".into(), JsonValue::from(node.canvas_h));
+    p.insert("continuous".into(), JsonValue::from(node.is_continuous()));
+    if let Some(manifest) = &node.manifest {
+        p.insert("manifest".into(), serde_json::to_value(manifest).unwrap_or_default());
+    }
+    if let Some(config) = &node.config {
+        p.insert("config".into(), serde_json::to_value(config).unwrap_or_default());
+    }
+    p
+}
+
+fn rebuild_caption_node_from_props(
+    props: &JsonMap<String, JsonValue>,
+    font_collection: std::sync::Arc<std::sync::Mutex<skia_safe::textlayout::FontCollection>>,
+) -> CaptionNode {
+    let lines: Vec<crate::node::caption::CaptionLine> = props
+        .get("lines")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let style: Option<crate::node::caption::CaptionStyle> = props
+        .get("style")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+    let mut node = CaptionNode::new(lines, font_collection);
+    if let Some(style) = style {
+        node.style = style;
+        node.after_style_changed();
+    }
+    node
+}
+
 // ---- Box props ----
 
 fn box_props_to_json(b: &BoxNode) -> JsonMap<String, JsonValue> {
@@ -529,6 +574,9 @@ fn node_kind_name(sn: &crate::scene::SceneNode) -> String {
     if a.is::<crate::node::caption::CaptionNode>() {
         return "Caption".into();
     }
+    if a.is::<crate::node::smart_caption::SmartCaptionNode>() {
+        return "SmartCaption".into();
+    }
     if a.is::<crate::node::composition::CompositionNode>() {
         return "Composition".into();
     }
@@ -553,6 +601,9 @@ fn node_opacity(sn: &crate::scene::SceneNode) -> f32 {
     }
     if let Some(cap) = sn.element.as_any().downcast_ref::<CaptionNode>() {
         return cap.opacity.current_value;
+    }
+    if let Some(smart) = sn.element.as_any().downcast_ref::<crate::node::smart_caption::SmartCaptionNode>() {
+        return smart.inner.opacity.current_value;
     }
     if let Some(eff) = sn.element.as_any().downcast_ref::<EffectNode>() {
         return eff.effects.first().map(|_| 1.0).unwrap_or(1.0);
@@ -592,6 +643,12 @@ pub fn director_to_project(d: &Director) -> Project {
                     .as_any()
                     .downcast_ref::<TextNode>()
                     .map(text_node_to_json)
+                    .unwrap_or_default(),
+                "SmartCaption" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<SmartCaptionNode>()
+                    .map(smart_caption_props_to_json)
                     .unwrap_or_default(),
                 _ => {
                     let mut p = JsonMap::new();
@@ -650,6 +707,7 @@ pub fn director_to_project(d: &Director) -> Project {
                 props,
                 animations,
                 layout,
+                entity_refs: sn.entity_refs.clone(),
             });
         }
     }
@@ -681,6 +739,7 @@ pub fn director_to_project(d: &Director) -> Project {
         nodes,
         tracks,
         legacy_timeline,
+        entities: d.entities.iter().cloned().collect(),
     }
 }
 
@@ -735,6 +794,54 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 );
                 tnode.opacity.current_value = n.opacity;
                 director.scene.add_node(Box::new(tnode))
+            }
+            "SmartCaption" => {
+                let inner = rebuild_caption_node_from_props(
+                    &n.props,
+                    director.assets.font_collection.clone(),
+                );
+                let trajectory: crate::semantic::CaptionTrajectory = n
+                    .props
+                    .get("trajectory")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let canvas_w = n
+                    .props
+                    .get("canvas_w")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as f32)
+                    .unwrap_or(1080.0);
+                let canvas_h = n
+                    .props
+                    .get("canvas_h")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as f32)
+                    .unwrap_or(1920.0);
+                let continuous = n
+                    .props
+                    .get("continuous")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let manifest: Option<crate::semantic::SemanticManifest> = n
+                    .props
+                    .get("manifest")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                let config: Option<SmartCaptionConfig> = n
+                    .props
+                    .get("config")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                let mut node = SmartCaptionNode::from_parts(
+                    inner,
+                    trajectory,
+                    canvas_w,
+                    canvas_h,
+                    continuous,
+                    manifest,
+                    config,
+                );
+                node.inner.opacity.current_value = n.opacity;
+                apply_layout_style_json(&mut node.inner.style_cache, &n.layout);
+                director.scene.add_node(Box::new(node))
             }
             _ => {
                 let mut b = BoxNode::new();
@@ -807,6 +914,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 sn.transform.pivot_y = n.transform.pivot_y;
                 sn.z_index = n.z_index;
                 sn.blend_mode = str_to_blend(&n.blend_mode);
+                sn.entity_refs = n.entity_refs.clone();
 
                 // Property animations. Real Box nodes restore all Box props;
                 // other kinds (reconstructed as Box placeholders) at least
@@ -875,6 +983,11 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
             })
         })
         .collect();
+
+    // Restore semantic entity tracks (UUIDs are stable, no remapping needed).
+    for track in project.entities {
+        director.entities.add_track(track);
+    }
 
     Ok(director)
 }

@@ -4,6 +4,7 @@
 //! to a versioned project JSON, loads it back, and asserts that the
 //! graph topology, node kinds, transforms, opacity, and tracks survive.
 
+use director_core::element::Element;
 use director_core::node::BoxNode;
 use director_core::scripting::register_rhai_api;
 use director_core::scripting::utils::style_to_json;
@@ -314,4 +315,242 @@ fn find_abs_box(d: &director_core::Director) -> Option<director_core::types::Nod
         }
     }
     None
+}
+
+/// Verifies that a SmartCaptionNode round-trips with its caption content,
+/// semantic manifest, and trajectory instead of falling back to a BoxNode
+/// placeholder.
+#[test]
+fn project_roundtrip_preserves_smart_caption() {
+    use director_core::entity::{BoundingBox, EntityKind};
+    use director_core::node::caption::{CaptionLine, CaptionNode, CaptionWord};
+    use director_core::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
+    use director_core::semantic::{SemanticManifest, SolverConfig};
+    use std::sync::{Arc, Mutex};
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(r##"new_director(1080, 1920, 30)"##)
+        .expect("build script must evaluate");
+
+    // Build a SmartCaptionNode directly.
+    let line = CaptionLine {
+        text: "hello world".into(),
+        words: vec![
+            CaptionWord {
+                text: "hello".into(),
+                start_sec: 0.0,
+                end_sec: 1.0,
+                display_line_idx: 0,
+            },
+            CaptionWord {
+                text: "world".into(),
+                start_sec: 1.0,
+                end_sec: 2.0,
+                display_line_idx: 0,
+            },
+        ],
+        start_sec: 0.0,
+        end_sec: 2.0,
+    };
+    let inner = CaptionNode::new(vec![line], Arc::new(Mutex::new(skia_safe::textlayout::FontCollection::new())));
+
+    let mut registry = director_core::entity::EntityRegistry::new();
+    let face = registry.create(EntityKind::Face, "mara".to_string());
+    registry.add_sample(face, 0.0, BoundingBox::new(400.0, 1500.0, 200.0, 200.0), 1.0);
+    registry.add_sample(face, 2.0, BoundingBox::new(400.0, 1500.0, 200.0, 200.0), 1.0);
+
+    let manifest = SemanticManifest {
+        entity_refs: vec![face],
+        start_time: 0.0,
+        end_time: 2.0,
+        solver: SolverConfig::default(),
+    };
+
+    let config = SmartCaptionConfig::default();
+    let mut smart = SmartCaptionNode::from_manifest(inner, &registry, &manifest, config.clone());
+    smart.inner.style.font_size = 64.0;
+    smart.inner.style.position = director_core::node::caption::CaptionPosition::Top;
+    let original_trajectory_len = smart.trajectory.len();
+    assert!(original_trajectory_len > 0);
+    let original_sample = smart.trajectory.sample_at(0.5).expect("sample at 0.5");
+
+    {
+        let mut d = movie.director.lock().unwrap();
+        d.entities = registry;
+        let _node_id = d.scene.add_node(Box::new(smart));
+    }
+
+    // Save + load.
+    let tmp = std::env::temp_dir().join("director_project_smart_caption_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    // Find the loaded SmartCaptionNode.
+    let mut found = false;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if let Some(smart) = sn.element.as_any().downcast_ref::<SmartCaptionNode>() {
+            found = true;
+            assert_eq!(smart.inner.lines.len(), 1);
+            assert_eq!(smart.inner.lines[0].text, "hello world");
+            assert_eq!(smart.trajectory.len(), original_trajectory_len);
+            assert!(smart.manifest.is_some());
+            assert_eq!(smart.manifest.as_ref().unwrap().entity_refs.len(), 1);
+            assert!(smart.config.is_some());
+            assert_eq!(smart.config.as_ref().unwrap().canvas_w, config.canvas_w);
+            assert_eq!(smart.config.as_ref().unwrap().canvas_h, config.canvas_h);
+            assert!(!smart.is_continuous());
+            assert!((smart.inner.style.font_size - 64.0).abs() < 1e-3);
+            assert_eq!(smart.inner.style.position, director_core::node::caption::CaptionPosition::Top);
+            let loaded_sample = smart.trajectory.sample_at(0.5).expect("loaded sample at 0.5");
+            assert!((loaded_sample.0 - original_sample.0).abs() < 1e-3);
+            assert!((loaded_sample.1 - original_sample.1).abs() < 1e-3);
+        }
+    }
+    assert!(found, "loaded project must contain a SmartCaptionNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that a continuous SmartCaptionNode round-trips with its
+/// trajectory and `continuous` flag.
+#[test]
+fn project_roundtrip_preserves_smart_caption_continuous() {
+    use director_core::entity::{BoundingBox, EntityKind};
+    use director_core::node::caption::{CaptionLine, CaptionNode, CaptionWord};
+    use director_core::node::caption::CaptionPosition;
+    use director_core::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
+    use director_core::semantic::{SemanticManifest, SolverConfig};
+    use std::sync::{Arc, Mutex};
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(r##"new_director(1080, 1920, 30)"##)
+        .expect("build script must evaluate");
+
+    let line = CaptionLine {
+        text: "continuous".into(),
+        words: vec![CaptionWord {
+            text: "continuous".into(),
+            start_sec: 0.0,
+            end_sec: 2.0,
+            display_line_idx: 0,
+        }],
+        start_sec: 0.0,
+        end_sec: 2.0,
+    };
+    let inner = CaptionNode::new(vec![line], Arc::new(Mutex::new(skia_safe::textlayout::FontCollection::new())));
+
+    let mut registry = director_core::entity::EntityRegistry::new();
+    let face = registry.create(EntityKind::Face, "mara".to_string());
+    registry.add_sample(face, 0.0, BoundingBox::new(820.0, 1500.0, 200.0, 200.0), 1.0);
+    registry.add_sample(face, 2.0, BoundingBox::new(820.0, 1500.0, 200.0, 200.0), 1.0);
+
+    let manifest = SemanticManifest {
+        entity_refs: vec![face],
+        start_time: 0.0,
+        end_time: 2.0,
+        solver: SolverConfig::default(),
+    };
+
+    let config = SmartCaptionConfig::default();
+    let smart = SmartCaptionNode::from_manifest_continuous(inner, &registry, &manifest, config);
+    let original_sample = smart.trajectory.sample_at(0.5).expect("sample at 0.5");
+
+    {
+        let mut d = movie.director.lock().unwrap();
+        d.entities = registry;
+        let _node_id = d.scene.add_node(Box::new(smart));
+    }
+
+    let tmp = std::env::temp_dir().join("director_project_smart_caption_continuous_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    let mut found = false;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if let Some(smart) = sn.element.as_any().downcast_ref::<SmartCaptionNode>() {
+            found = true;
+            assert!(smart.is_continuous());
+            let loaded_sample = smart.trajectory.sample_at(0.5).expect("loaded sample at 0.5");
+            assert!((loaded_sample.0 - original_sample.0).abs() < 1e-3);
+            assert!((loaded_sample.1 - original_sample.1).abs() < 1e-3);
+            // Position is updated lazily by apply_trajectory; drive it once
+            // to verify the continuous trajectory maps to FreeXY.
+            let mut smart = smart.clone();
+            smart.update(0.5);
+            assert!(matches!(smart.inner.style.position, CaptionPosition::FreeXY { .. }));
+        }
+    }
+    assert!(found, "loaded project must contain a SmartCaptionNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that semantic entity tracks and node entity_refs survive a
+/// save/load round-trip without remapping.
+#[test]
+fn project_roundtrip_preserves_entities() {
+    use director_core::entity::EntityKind;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let build = r##"
+        let movie = new_director(320, 240, 30);
+        let scene = movie.add_scene(2.0);
+        let bg = scene.add_box(#{ width: 320, height: 240, bg_color: "#101018" });
+        let face_id = movie.create_entity("face", "mara");
+        movie.add_entity_sample(face_id, 0.0, 10.0, 10.0, 50.0, 50.0, 1.0);
+        movie.add_entity_sample(face_id, 1.0, 20.0, 10.0, 50.0, 50.0, 1.0);
+        bg.attach_entity(face_id);
+        movie
+    "##;
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(build)
+        .expect("build script must evaluate");
+
+    let tmp = std::env::temp_dir().join("director_project_entities_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    // Entity tracks preserved.
+    assert_eq!(loaded.entities.len(), 1);
+    let track = loaded.entities.iter().next().expect("entity track");
+    assert_eq!(track.kind, EntityKind::Face);
+    assert_eq!(track.label, "mara");
+    assert_eq!(track.samples.len(), 2);
+
+    // Node entity_refs preserved.
+    let bg_id = find_box_with_bg(&loaded, "#101018").expect("bg box");
+    let sn = loaded.scene.get_node(bg_id).expect("bg node");
+    assert_eq!(sn.entity_refs.len(), 1);
+    assert_eq!(sn.entity_refs[0], track.id);
+
+    // Sampling works after round-trip.
+    let sample = loaded.entities.sample_at(track.id, 0.5).expect("sample");
+    assert!((sample.bbox.x - 15.0).abs() < 0.01);
+
+    let _ = std::fs::remove_file(&tmp);
 }

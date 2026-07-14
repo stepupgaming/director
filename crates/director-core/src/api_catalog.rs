@@ -151,6 +151,15 @@ pub const NODE_CATALOG: &[NodeCatalogEntry] = &[
         &["srt_import", "vtt_import", "auto_caption", "text_direction", "rtl"],
         true,
     ),
+    node(
+        "SmartCaption",
+        "smart_caption",
+        "Caption that follows a semantic trajectory to avoid faces/subjects",
+        false,
+        &["opacity", "font_size"],
+        &["semantic_trajectory", "face_avoidance", "temporal_solver", "entity_refs"],
+        false,
+    ),
 ];
 
 pub const EFFECT_CATALOG: &[EffectCatalogEntry] = &[

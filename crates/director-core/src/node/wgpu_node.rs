@@ -327,6 +327,10 @@ impl Element for WgpuNode {
         self
     }
 
+    fn kind(&self) -> &'static str {
+        "wgpu"
+    }
+
     fn layout_style(&self) -> Style {
         self.style.clone()
     }

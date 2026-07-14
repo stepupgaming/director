@@ -600,6 +600,10 @@ impl Element for TextNode {
         self
     }
 
+    fn kind(&self) -> &'static str {
+        "text"
+    }
+
     fn needs_measure(&self) -> bool {
         true
     }

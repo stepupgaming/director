@@ -64,6 +64,10 @@ impl Element for ImageNode {
         self
     }
 
+    fn kind(&self) -> &'static str {
+        "image"
+    }
+
     fn layout_style(&self) -> Style {
         self.style.clone()
     }

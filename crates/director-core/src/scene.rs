@@ -14,7 +14,10 @@
 //! - `NodeId`: A `usize` index into the arena (defined in `types.rs`).
 
 use crate::element::Element;
+use crate::entity::EntityId;
 use crate::types::{FilterConfig, NodeId, PathAnimationState, PathMorphState, Transform};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Runtime binding of an audio analysis value to a node property.
 ///
@@ -82,6 +85,20 @@ pub struct SceneNode {
     /// If true, the subtree rooted at this node is treated as static and may
     /// be rasterized once and reused via the Director's static cache.
     pub is_static: bool,
+    /// Semantic entities this node references (e.g., a caption avoiding faces).
+    pub entity_refs: Vec<EntityId>,
+    /// Incremented each time `Element::update` is called on this node.
+    /// Used by the incremental render tests to verify that unchanged nodes
+    /// are not re-evaluated.
+    pub update_generation: u64,
+    /// Hash of the node's structural inputs (parent, children, mask,
+    /// entity refs, audio bindings, z-index, static flag, blend mode, filter)
+    /// as recorded during the last `compile()` pass.
+    /// `None` before the first compile or after explicit reset.
+    ///
+    /// Only `compile()` and `invalidate()` should mutate this field through
+    /// `set_input_hash()`. External code can read it via `last_input_hash()`.
+    last_input_hash: Option<u64>,
 }
 
 /// SAFETY: SceneNode is Send-safe because all current Element implementations
@@ -111,7 +128,59 @@ impl SceneNode {
             audio_bindings: Vec::new(),
             filter: FilterConfig::default(),
             is_static: false,
+            entity_refs: Vec::new(),
+            update_generation: 0,
+            last_input_hash: None,
         }
+    }
+
+    /// Compute a hash of the structural inputs that this node depends on.
+    ///
+    /// This includes the parent/mask hierarchy, children, referenced semantic
+    /// entities, audio-reactive bindings, and other structural properties that
+    /// affect rendering (z-index, static flag, blend mode, filter).
+    /// Element-specific visual properties are intentionally excluded;
+    /// `Element::update()` already signals visual changes via its return value.
+    ///
+    /// Note: because `children` is part of the hash, adding or removing a
+    /// child changes the parent's hash. There is no `DependencyInput` for
+    /// "children changed", so the parent must be invalidated directly (or
+    /// `compile()` must be rerun) when the hierarchy changes.
+    pub(crate) fn compute_input_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.parent.hash(&mut hasher);
+        self.children.hash(&mut hasher);
+        self.mask_node.hash(&mut hasher);
+        self.entity_refs.hash(&mut hasher);
+        for binding in &self.audio_bindings {
+            binding.track_id.hash(&mut hasher);
+            binding.band.hash(&mut hasher);
+            binding.property.hash(&mut hasher);
+            binding.min_value.to_bits().hash(&mut hasher);
+            binding.max_value.to_bits().hash(&mut hasher);
+            binding.smoothing.to_bits().hash(&mut hasher);
+            // prev_value is runtime state, not an input.
+        }
+        self.z_index.hash(&mut hasher);
+        self.is_static.hash(&mut hasher);
+        self.blend_mode.hash(&mut hasher);
+        self.filter.blur.to_bits().hash(&mut hasher);
+        self.filter.brightness.to_bits().hash(&mut hasher);
+        self.filter.contrast.to_bits().hash(&mut hasher);
+        self.filter.saturation.to_bits().hash(&mut hasher);
+        self.filter.hue_rotate.to_bits().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Read the last input hash recorded by `compile()`.
+    pub fn last_input_hash(&self) -> Option<u64> {
+        self.last_input_hash
+    }
+
+    /// Set the stored input hash. Intended for use only by the compile and
+    /// invalidation passes.
+    pub(crate) fn set_input_hash(&mut self, hash: Option<u64>) {
+        self.last_input_hash = hash;
     }
 }
 

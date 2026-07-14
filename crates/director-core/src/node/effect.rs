@@ -1210,6 +1210,10 @@ impl Element for EffectNode {
         self
     }
 
+    fn kind(&self) -> &'static str {
+        "effect"
+    }
+
     fn layout_style(&self) -> Style {
         self.style.clone()
     }

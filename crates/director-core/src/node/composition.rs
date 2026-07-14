@@ -71,6 +71,10 @@ impl Element for CompositionNode {
         self
     }
 
+    fn kind(&self) -> &'static str {
+        "composition"
+    }
+
     fn layout_style(&self) -> Style {
         self.style.clone()
     }
@@ -172,6 +176,7 @@ impl Element for CompositionNode {
                         c,
                         track_opacity * fade_opacity,
                         0,
+                        None,
                     )?;
                 }
             } else {
@@ -188,7 +193,7 @@ impl Element for CompositionNode {
                 items.sort_by_key(|(_, item)| item.z_index);
 
                 for (_, item) in items {
-                    render_recursive(&d.scene, &d.assets, &mut local_cache, item.scene_root, c, 1.0, 0)?;
+                    render_recursive(&d.scene, &d.assets, &mut local_cache, item.scene_root, c, 1.0, 0, None)?;
                 }
             }
 

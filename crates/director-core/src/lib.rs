@@ -95,6 +95,21 @@ pub mod project;
 /// Layout-time render manifest for agent introspection.
 pub mod render_manifest;
 
+/// Persistent semantic entity registry (faces, speakers, objects, caption phrases).
+pub mod entity;
+
+/// Semantic manifest and temporal constraint solver for smart nodes.
+pub mod semantic;
+
+/// Compile-phase dependency graph and incremental invalidation.
+pub mod compiler;
+
+/// Production style policy schema and scoring for the compiler.
+pub mod style_policy;
+
+/// True IT-R BS.1770 loudness analysis (LUFS, true peak, loudness range).
+pub mod loudness;
+
 pub use director::Director;
 pub use render_manifest::{
     build_render_manifest, render_manifest_json, RenderManifest, RENDER_MANIFEST_VERSION,

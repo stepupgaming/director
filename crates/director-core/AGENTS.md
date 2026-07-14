@@ -214,7 +214,60 @@ rather than relying on host system fonts.
   (assets/fonts/emoji.ttf or DIRECTOR_EMOJI_FONT env var).
 * Do NOT add host-system-font-dependent text paths; new caption/template
   fonts must be added to BUNDLED_FONTS AND downloaded in setup_assets.sh
-  and .github/workflows/ci.yml, then force-kept in .gitignore.
+  and .github/workflows/ci.yml, then force-kept in .gitignore.## Semantic Entity Registry
+
+- `src/entity.rs` — persistent UUID-based identity for faces, speakers, objects, and
+  caption phrases. Each entity stores a temporal bounding-box track and
+  supports linearly interpolated sampling at any time.
+- `Director.entities` owns the registry; `SceneNode.entity_refs` lets nodes
+  declare which entities they track (e.g., a caption avoiding faces).
+- Project save/load round-trips entity tracks and node entity_refs without
+  remapping UUIDs.
+- Rhai API: `create_entity`, `add_entity_sample`, `entity_bbox_at`,
+  `find_entities`, `attach_entity` / `detach_entity`, `entity_bboxes_at`.
+
+## Smart Caption Node
+
+- `src/semantic.rs` — `SemanticManifest`, `SolverConfig`, and `solve_caption_trajectory`.
+  Reads face/subject tracks from the `EntityRegistry`, evaluates top/bottom anchor
+  candidates per sample, and solves a temporal constraint problem (Viterbi DP) to
+  produce a smooth caption trajectory that avoids faces while minimizing motion.
+- `src/node/smart_caption.rs` — `SmartCaptionNode` wraps a `CaptionNode` and a
+  `CaptionTrajectory`. At each `update(time)` it samples the trajectory and switches
+  the inner caption's `CaptionPosition` between `Top` and `Bottom` based on the
+  solved anchor.
+- `add_smart_caption` in `src/scripting/api/nodes.rs` creates a smart caption from
+  Rhai props. Props include `entity_refs` (array of UUID strings), `start_time`,
+  `end_time`, `clearance`, `smoothing_window`, `motion_penalty`,
+  `overlap_penalty`, `safe_zone_penalty`, and `sample_rate`.
+- The solver samples the shot at `sample_rate` Hz, includes both start and end
+  boundaries, and applies a moving-window smoothing pass to the resulting trajectory.
+- The current solver uses two vertical anchors (top and bottom). It chooses the
+  anchor that minimizes face overlap and motion, but it does not yet support
+  continuous positioning, left/right anchors, or multi-face occlusion in both
+  halves of the frame.
+- SmartCaption is catalogued in `api_catalog.rs` as `smart_caption`.
+- Project save/load: `SmartCaptionNode` is currently lossy, just like the regular
+  `CaptionNode`. The kind is not independently round-tripped; reload it from the
+  original script or re-create it programmatically.
+
+## Compile Phase & Dependency Graph
+
+- `src/compiler.rs` — `DependencyGraph` and `DependencyInput` for incremental
+  invalidation. Inputs: `Entity(EntityId)`, `AudioTrack(usize)`, `Node(NodeId)`.
+- `Director.compile()` builds the graph from entity refs, audio bindings,
+  parent-child hierarchy, and mask references. `Director.invalidate(inputs)` returns
+  the transitive set of affected node IDs and stores it in `Director.dirty_nodes`.
+- `render_at_time` uses `Director.dirty_nodes` to drive incremental work:
+  `Director.update()` skips `Element::update` for nodes that are not dirty or
+  ancestors of dirty nodes, and `render_recursive` skips re-rasterizing static
+  subtrees that are not in the dirty set. Ancestors are included so that transform
+  and layout context is still set up correctly for the dirty subtree.
+- `render_export` calls `compile()` before the frame loop so the graph is available
+  during export.
+- Rhai API: `compile(movie)`, `invalidate_entity(movie, uuid)`,
+  `invalidate_audio_track(movie, idx)`, `invalidate_node(movie, id)`,
+  `dirty_nodes(movie)`, `compiler_edge_count(movie)`.
 
 ## Child DOX Index
 

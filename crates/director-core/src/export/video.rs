@@ -73,6 +73,10 @@ pub fn render_export(
     audio_track_path: Option<PathBuf>,
     alpha: bool,
 ) -> Result<()> {
+    // Build the dependency graph before rendering so incremental
+    // invalidation is available during export.
+    director.compile();
+
     let width = director.width;
     let height = director.height;
     let fps = director.fps;

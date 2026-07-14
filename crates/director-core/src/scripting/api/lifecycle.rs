@@ -284,6 +284,14 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     );
 
     // Get encoder diagnostics with warnings
+    engine.register_fn("update", |movie: &mut MovieHandle, time: f64| {
+        let mut d = match movie.lock_director() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        d.update(time);
+    });
+
     engine.register_fn("get_encoder_info", |movie: &mut MovieHandle| -> String {
         let d = match movie.lock_director() {
             Ok(d) => d,

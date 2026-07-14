@@ -12,12 +12,17 @@
 
 pub mod animation;
 pub mod audio;
+pub mod compiler;
 pub mod effects;
+pub mod entities;
 pub mod http;
 pub mod inspect;
 pub mod lifecycle;
+pub mod manifest;
 pub mod nodes;
 pub mod properties;
+pub mod smart_caption;
+pub mod style_policy;
 pub mod templates;
 
 use crate::video_wrapper::RenderMode;
@@ -36,9 +41,14 @@ pub fn register_all_with_default_mode(
     nodes::register(engine, loader.clone());
     animation::register(engine);
     audio::register(engine);
+    compiler::register(engine);
     effects::register(engine);
+    entities::register(engine);
     http::register(engine);
     properties::register(engine);
+    smart_caption::register(engine);
     templates::register(engine);
     inspect::register(engine);
+    manifest::register(engine);
+    style_policy::register(engine);
 }

@@ -16,7 +16,10 @@
 
 use crate::animation::Animated;
 use crate::element::TextFit;
-use crate::node::{BoxNode, BoxShadow, CaptionLine, CaptionNode, CaptionPosition, CaptionWord, CompositionNode, EffectNode, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType, TextNode, VectorNode, VideoNode, VideoSource};
+use crate::node::smart_caption::SmartCaptionConfig;
+use crate::node::{ActiveSpeakerCamera, ActiveSpeakerCameraConfig, BoxNode, BoxShadow, CaptionLine, CaptionNode, CaptionPosition, CaptionWord, CompositionNode, ContinuityGroup, EffectNode, Framing, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType, SmartCaptionNode, TextNode, VectorNode, VideoNode, VideoSource};
+use crate::types::NodeId;
+use crate::semantic::SemanticManifest;
 use crate::types::FilterConfig;
 use crate::AssetLoader;
 use rhai::{Engine, Map};
@@ -565,14 +568,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
             let mode = d.render_mode;
-            let p = std::path::Path::new(path);
-
-            let source = if p.exists() && p.is_file() {
-                VideoSource::Path(p.to_path_buf())
-            } else {
-                let blob = d.assets.load_blob(path).unwrap_or(Arc::new(Vec::new()));
-                VideoSource::Bytes((*blob).clone())
-            };
+            let source = build_video_source(&d, path);
 
             let vid_node = VideoNode::new(source, mode).with_source_path(path);
             let id = d.scene.add_node(Box::new(vid_node));
@@ -601,14 +597,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
             let mode = d.render_mode;
-            let p = std::path::Path::new(path);
-
-            let source = if p.exists() && p.is_file() {
-                VideoSource::Path(p.to_path_buf())
-            } else {
-                let blob = d.assets.load_blob(path).unwrap_or(Arc::new(Vec::new()));
-                VideoSource::Bytes((*blob).clone())
-            };
+            let source = build_video_source(&d, path);
 
             let mut vid_node = VideoNode::new(source, mode).with_source_path(path);
             parse_layout_style(&props, &mut vid_node.style);
@@ -652,14 +641,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |scene: &mut SceneHandle, path: &str| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
             let mode = d.render_mode;
-            let p = std::path::Path::new(path);
-
-            let source = if p.exists() && p.is_file() {
-                VideoSource::Path(p.to_path_buf())
-            } else {
-                let blob = d.assets.load_blob(path).unwrap_or(Arc::new(Vec::new()));
-                VideoSource::Bytes((*blob).clone())
-            };
+            let source = build_video_source(&d, path);
 
             let vid_node = VideoNode::new(source, mode).with_source_path(path);
             let id = d.scene.add_node(Box::new(vid_node));
@@ -689,14 +671,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
             let mode = d.render_mode;
-            let p = std::path::Path::new(path);
-
-            let source = if p.exists() && p.is_file() {
-                VideoSource::Path(p.to_path_buf())
-            } else {
-                let blob = d.assets.load_blob(path).unwrap_or(Arc::new(Vec::new()));
-                VideoSource::Bytes((*blob).clone())
-            };
+            let source = build_video_source(&d, path);
 
             let mut vid_node = VideoNode::new(source, mode).with_source_path(path);
             parse_layout_style(&props, &mut vid_node.style);
@@ -734,6 +709,48 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 director: scene.director.clone(),
                 id,
             })
+        },
+    );
+
+    // ========== ADD_ACTIVE_SPEAKER_CAMERA ==========
+    engine.register_fn(
+        "add_active_speaker_camera",
+        |parent: &mut NodeHandle,
+         path: &str,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = parent.lock_director()?;
+            parent.ensure_alive(&d)?;
+            let (camera, entity_refs) = build_active_speaker_camera(&mut d, path, &props)?;
+            attach_active_speaker_camera_node(
+                &mut d,
+                camera,
+                entity_refs,
+                &props,
+                parent.id,
+                parent.director.clone(),
+                "parent",
+            )
+        },
+    );
+
+    engine.register_fn(
+        "add_active_speaker_camera",
+        |scene: &mut SceneHandle,
+         path: &str,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = scene.lock_director()?;
+            let (camera, entity_refs) = build_active_speaker_camera(&mut d, path, &props)?;
+            attach_active_speaker_camera_node(
+                &mut d,
+                camera,
+                entity_refs,
+                &props,
+                scene.root_id,
+                scene.director.clone(),
+                "scene root",
+            )
         },
     );
 
@@ -898,6 +915,148 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 director: scene.director.clone(),
                 id,
             })
+        },
+    );    // ========== ADD_SMART_CAPTION ==========
+    engine.register_fn(
+        "add_smart_caption",
+        |parent: &mut NodeHandle,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = parent.lock_director()?;
+            parent.ensure_alive(&d)?;
+            let font_collection = d.assets.font_collection.clone();
+            let lines = parse_caption_lines(&d, &props);
+            let mut caption_node = CaptionNode::new(lines, font_collection);
+            parse_layout_style(&props, &mut caption_node.style_cache);
+            apply_caption_props(&mut caption_node, &props);
+
+            let (trajectory, entity_refs) = build_smart_caption_trajectory(&mut d, &caption_node, &props)?;
+            let smart_node = SmartCaptionNode::new(caption_node, trajectory);
+
+
+            let id = d.scene.add_node(Box::new(smart_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.entity_refs = entity_refs;
+            }
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
+            if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
+                if let Some(n) = d.scene.get_node_mut(id) {
+                    n.z_index = z as i32;
+                }
+            }
+            if !d.scene.try_add_child(parent.id, id) {
+                d.scene.destroy_node(id);
+                return Err(
+                    format!("Failed to attach smart caption node {} to parent {}", id, parent.id).into(),
+                );
+            }
+
+            Ok(NodeHandle {
+                director: parent.director.clone(),
+                id,
+            })
+        },
+    );
+
+    engine.register_fn(
+        "add_smart_caption",
+        |scene: &mut SceneHandle,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = scene.lock_director()?;
+            let font_collection = d.assets.font_collection.clone();
+            let lines = parse_caption_lines(&d, &props);
+            let mut caption_node = CaptionNode::new(lines, font_collection);
+            parse_layout_style(&props, &mut caption_node.style_cache);
+            apply_caption_props(&mut caption_node, &props);
+
+            let (trajectory, entity_refs) = build_smart_caption_trajectory(&mut d, &caption_node, &props)?;
+            let smart_node = SmartCaptionNode::new(caption_node, trajectory);
+
+
+            let id = d.scene.add_node(Box::new(smart_node));
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.entity_refs = entity_refs;
+            }
+            if let Some(n) = d.scene.get_node_mut(id) {
+                n.filter = parse_filter_config(&props);
+            }
+            if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
+                if let Some(n) = d.scene.get_node_mut(id) {
+                    n.z_index = z as i32;
+                }
+            }
+            if !d.scene.try_add_child(scene.root_id, id) {
+                d.scene.destroy_node(id);
+                return Err(format!(
+                    "Failed to attach smart caption node {} to scene root {}",
+                    id, scene.root_id
+                )
+                .into());
+            }
+
+            Ok(NodeHandle {
+                director: scene.director.clone(),
+                id,
+            })
+        },
+    );
+
+    // ========== ADD_SMART_CAPTION FROM MANIFEST/CONFIG ==========
+    engine.register_fn(
+        "add_smart_caption",
+        |parent: &mut NodeHandle,
+         manifest: SemanticManifest,
+         config: SmartCaptionConfig,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = parent.lock_director()?;
+            parent.ensure_alive(&d)?;
+            let id = add_smart_caption_from_manifest(&mut d, &manifest, config, &props, false)?;
+            attach_smart_caption_node(&mut d, id, &props, parent.id, parent.director.clone(), "parent")
+        },
+    );
+
+    engine.register_fn(
+        "add_smart_caption",
+        |scene: &mut SceneHandle,
+         manifest: SemanticManifest,
+         config: SmartCaptionConfig,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = scene.lock_director()?;
+            let id = add_smart_caption_from_manifest(&mut d, &manifest, config, &props, false)?;
+            attach_smart_caption_node(&mut d, id, &props, scene.root_id, scene.director.clone(), "scene root")
+        },
+    );
+
+    // ========== ADD_SMART_CAPTION_CONTINUOUS FROM MANIFEST/CONFIG ==========
+    engine.register_fn(
+        "add_smart_caption_continuous",
+        |parent: &mut NodeHandle,
+         manifest: SemanticManifest,
+         config: SmartCaptionConfig,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = parent.lock_director()?;
+            parent.ensure_alive(&d)?;
+            let id = add_smart_caption_from_manifest(&mut d, &manifest, config, &props, true)?;
+            attach_smart_caption_node(&mut d, id, &props, parent.id, parent.director.clone(), "parent")
+        },
+    );
+
+    engine.register_fn(
+        "add_smart_caption_continuous",
+        |scene: &mut SceneHandle,
+         manifest: SemanticManifest,
+         config: SmartCaptionConfig,
+         props: rhai::Map|
+         -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            let mut d = scene.lock_director()?;
+            let id = add_smart_caption_from_manifest(&mut d, &manifest, config, &props, true)?;
+            attach_smart_caption_node(&mut d, id, &props, scene.root_id, scene.director.clone(), "scene root")
         },
     );
 
@@ -1946,6 +2105,329 @@ fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
     {
         text_node.set_text_direction(crate::text_direction::parse_text_direction_mode(&d));
     }
+}
+
+/// Apply common post-creation steps for a smart caption node (filter, z-index)
+/// and attach it to `parent_id`. `parent_desc` is used only for error messages.
+fn attach_smart_caption_node(
+    d: &mut crate::director::Director,
+    id: NodeId,
+    props: &rhai::Map,
+    parent_id: NodeId,
+    director: std::sync::Arc<std::sync::Mutex<crate::director::Director>>,
+    parent_desc: &str,
+) -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+    if let Some(n) = d.scene.get_node_mut(id) {
+        n.filter = parse_filter_config(props);
+    }
+    if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
+        if let Some(n) = d.scene.get_node_mut(id) {
+            n.z_index = z as i32;
+        }
+    }
+    if !d.scene.try_add_child(parent_id, id) {
+        d.scene.destroy_node(id);
+        return Err(format!(
+            "Failed to attach smart caption node {} to {}",
+            id, parent_desc
+        )
+        .into());
+    }
+
+    Ok(NodeHandle { director, id })
+}
+
+/// Build a `SmartCaptionNode` from a `SemanticManifest` and add it to the
+/// scene graph. When `force_continuous` is `true`, the continuous temporal
+/// solver is used regardless of `config.continuous`.
+fn add_smart_caption_from_manifest(
+    d: &mut crate::director::Director,
+    manifest: &SemanticManifest,
+    config: SmartCaptionConfig,
+    props: &rhai::Map,
+    force_continuous: bool,
+) -> Result<NodeId, Box<rhai::EvalAltResult>> {
+    let font_collection = d.assets.font_collection.clone();
+    let lines = parse_caption_lines(d, props);
+    let mut caption_node = CaptionNode::new(lines, font_collection);
+    parse_layout_style(props, &mut caption_node.style_cache);
+    apply_caption_props(&mut caption_node, props);
+
+    let smart_node = if force_continuous || config.continuous {
+        SmartCaptionNode::from_manifest_continuous(caption_node, &d.entities, manifest, config)
+    } else {
+        SmartCaptionNode::from_manifest(caption_node, &d.entities, manifest, config)
+    };
+
+    let id = d.scene.add_node(Box::new(smart_node));
+    if let Some(n) = d.scene.get_node_mut(id) {
+        n.entity_refs = manifest.entity_refs.clone();
+    }
+    Ok(id)
+}
+
+/// Build a `CaptionTrajectory` for a smart caption from Rhai props.
+///
+/// Expected props:
+/// - `entity_refs`: array of entity UUID strings
+/// - `start_time`, `end_time`: shot boundaries (defaults from caption lines)
+/// - `clearance`, `max_velocity`, `smoothing_window`, `motion_penalty`,
+///   `overlap_penalty`, `safe_zone_penalty`: solver tuning
+/// - `sample_rate`: solver samples per second
+fn build_smart_caption_trajectory(
+    d: &mut crate::director::Director,
+    caption_node: &CaptionNode,
+    props: &rhai::Map,
+) -> Result<(crate::semantic::CaptionTrajectory, Vec<uuid::Uuid>), Box<rhai::EvalAltResult>> {
+    use crate::semantic::{solve_caption_trajectory, SemanticManifest, SolverConfig};
+
+    let mut entity_refs = Vec::new();
+    if let Some(arr) = props.get("entity_refs").and_then(|v| v.clone().into_array().ok()) {
+        for item in arr {
+            if let Ok(s) = item.clone().into_string() {
+                let id = uuid::Uuid::parse_str(&s)
+                    .map_err(|e| format!("invalid entity UUID: {}", e))?;
+                entity_refs.push(id);
+            }
+        }
+    }
+
+    let start_time = props
+        .get("start_time")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or_else(|| {
+            caption_node
+                .lines
+                .first()
+                .map(|l| l.start_sec)
+                .unwrap_or(0.0)
+        });
+    let end_time = props
+        .get("end_time")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or_else(|| {
+            caption_node
+                .lines
+                .last()
+                .map(|l| l.end_sec)
+                .unwrap_or(start_time + 1.0)
+        });
+
+    let mut solver = SolverConfig::default();
+    if let Some(v) = props.get("clearance").and_then(|v| v.as_float().ok()) {
+        solver.clearance = v as f32;
+    }
+    if let Some(v) = props.get("smoothing_window").and_then(|v| v.as_int().ok()) {
+        solver.smoothing_window = v as usize;
+    }
+    if let Some(v) = props.get("motion_penalty").and_then(|v| v.as_float().ok()) {
+        solver.motion_penalty = v as f32;
+    }
+    if let Some(v) = props.get("overlap_penalty").and_then(|v| v.as_float().ok()) {
+        solver.overlap_penalty = v as f32;
+    }
+    if let Some(v) = props.get("safe_zone_penalty").and_then(|v| v.as_float().ok()) {
+        solver.safe_zone_penalty = v as f32;
+    }
+
+    let manifest = SemanticManifest {
+        entity_refs,
+        start_time,
+        end_time,
+        solver,
+    };
+
+    let canvas_w = d.width as f32;
+    let canvas_h = d.height as f32;
+    let caption_w = canvas_w * caption_node.style.layout_width_fraction;
+    let caption_h = caption_node.style.font_size * 2.0f32;
+    let safe_top = caption_node.style.top_margin;
+    let safe_bottom = caption_node.style.bottom_margin;
+    let safe_left = caption_node.style.left_margin;
+    let safe_right = caption_node.style.right_margin;
+    let sample_rate = props
+        .get("sample_rate")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(10.0);
+
+    let trajectory = solve_caption_trajectory(
+        &d.entities,
+        &manifest,
+        canvas_w,
+        canvas_h,
+        caption_w,
+        caption_h,
+        safe_top,
+        safe_bottom,
+        safe_left,
+        safe_right,
+        sample_rate,
+    );
+    Ok((trajectory, manifest.entity_refs))
+}
+
+/// Build a `VideoSource` from a path, falling back to loaded bytes when the
+/// file does not exist on disk.
+fn build_video_source(d: &crate::director::Director, path: &str) -> VideoSource {
+    let p = std::path::Path::new(path);
+    if p.exists() && p.is_file() {
+        VideoSource::Path(p.to_path_buf())
+    } else {
+        let blob = d.assets.load_blob(path).unwrap_or(Arc::new(Vec::new()));
+        VideoSource::Bytes((*blob).clone())
+    }
+}
+
+/// Build an `ActiveSpeakerCamera` and its entity references from Rhai props.
+fn build_active_speaker_camera(
+    d: &mut crate::director::Director,
+    path: &str,
+    props: &rhai::Map,
+) -> Result<(ActiveSpeakerCamera, Vec<uuid::Uuid>), Box<rhai::EvalAltResult>> {
+    let mode = d.render_mode;
+    let source = build_video_source(d, path);
+
+    let groups = parse_continuity_groups(props)?;
+    if groups.is_empty() {
+        return Err("add_active_speaker_camera requires at least one continuity group".into());
+    }
+
+    let config = parse_active_speaker_camera_config(props);
+    let mut camera = ActiveSpeakerCamera::from_source(source, mode, &d.entities, groups.clone(), config);
+    if let Some(fit_str) = props
+        .get("object_fit")
+        .and_then(|v| v.clone().into_string().ok())
+    {
+        if let Some(fit) = parse_object_fit(&fit_str) {
+            camera.set_object_fit(fit);
+        }
+    }
+    if let Some(v) = props.get("border_radius").and_then(|v| v.as_float().ok()) {
+        camera.set_border_radius(v as f32);
+    }
+    parse_layout_style(props, &mut camera.inner_mut().style);
+
+    let entity_refs: Vec<uuid::Uuid> = groups.iter().map(|g| g.target_id).collect();
+    Ok((camera, entity_refs))
+}
+
+/// Add a built `ActiveSpeakerCamera` to the scene graph and attach it to a parent.
+fn attach_active_speaker_camera_node(
+    d: &mut crate::director::Director,
+    camera: ActiveSpeakerCamera,
+    entity_refs: Vec<uuid::Uuid>,
+    props: &rhai::Map,
+    parent_id: NodeId,
+    director: std::sync::Arc<std::sync::Mutex<crate::director::Director>>,
+    parent_desc: &str,
+) -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+    let mut unique_refs: Vec<uuid::Uuid> = entity_refs.into_iter().collect::<std::collections::HashSet<_>>().into_iter().collect();
+    unique_refs.sort();
+
+    let id = d.scene.add_node(Box::new(camera));
+    if let Some(n) = d.scene.get_node_mut(id) {
+        n.entity_refs = unique_refs;
+        n.filter = parse_filter_config(props);
+    }
+    if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
+        if let Some(n) = d.scene.get_node_mut(id) {
+            n.z_index = z as i32;
+        }
+    }
+    if !d.scene.try_add_child(parent_id, id) {
+        d.scene.destroy_node(id);
+        return Err(format!(
+            "Failed to attach active speaker camera node {} to {}",
+            id, parent_desc
+        )
+        .into());
+    }
+    Ok(NodeHandle { director, id })
+}
+
+/// Parse a framing preset string into a `Framing` value.
+fn parse_framing(value: &str) -> Framing {
+    match value.to_ascii_lowercase().as_str() {
+        "close_up" | "closeup" => Framing::CloseUp,
+        "medium" => Framing::Medium,
+        "wide" => Framing::Wide,
+        _ => {
+            if let Ok(multiplier) = value.parse::<f32>() {
+                Framing::Custom(multiplier)
+            } else {
+                Framing::Medium
+            }
+        }
+    }
+}
+
+/// Parse an `ActiveSpeakerCameraConfig` from a Rhai props map.
+fn parse_active_speaker_camera_config(props: &rhai::Map) -> ActiveSpeakerCameraConfig {
+    let mut config = ActiveSpeakerCameraConfig::default();
+    if let Some(v) = props.get("canvas_w").and_then(|v| v.as_float().ok()) {
+        config.canvas_w = v as f32;
+    }
+    if let Some(v) = props.get("canvas_h").and_then(|v| v.as_float().ok()) {
+        config.canvas_h = v as f32;
+    }
+    if let Some(v) = props.get("sample_rate").and_then(|v| v.as_float().ok()) {
+        config.sample_rate = v;
+    }
+    if let Some(v) = props.get("smoothing_window").and_then(|v| v.as_int().ok()) {
+        config.smoothing_window = v as usize;
+    }
+    if let Some(v) = props.get("center_offset_y").and_then(|v| v.as_float().ok()) {
+        config.center_offset_y = v as f32;
+    }
+    config
+}
+
+/// Parse continuity groups for an active-speaker camera from a Rhai props map.
+///
+/// Supports either a single group via `entity_id`, `start_time`, `end_time`,
+/// and `framing`, or an array of groups via `groups`.
+fn parse_continuity_groups(props: &rhai::Map) -> Result<Vec<ContinuityGroup>, Box<rhai::EvalAltResult>> {
+    let mut groups = Vec::new();
+
+    if let Some(arr) = props.get("groups").and_then(|v| v.clone().into_array().ok()) {
+        for item in arr {
+            if let Some(map) = item.clone().try_cast::<rhai::Map>() {
+                let entity_id = map
+                    .get("entity_id")
+                    .and_then(|v| v.clone().into_string().ok())
+                    .ok_or_else(|| "continuity group missing entity_id".to_string())?;
+                let target_id = uuid::Uuid::parse_str(&entity_id)
+                    .map_err(|e| format!("invalid entity UUID: {}", e))?;
+                let start_time = map.get("start_time").and_then(|v| v.as_float().ok()).unwrap_or(0.0);
+                let end_time = map
+                    .get("end_time")
+                    .and_then(|v| v.as_float().ok())
+                    .unwrap_or(start_time + 1.0);
+                let framing = map
+                    .get("framing")
+                    .and_then(|v| v.clone().into_string().ok())
+                    .map(|s| parse_framing(&s))
+                    .unwrap_or(Framing::Medium);
+                groups.push(ContinuityGroup::new(start_time, end_time, target_id, framing));
+            }
+        }
+    } else if let Some(entity_id) = props.get("entity_id").and_then(|v| v.clone().into_string().ok()) {
+        let target_id = uuid::Uuid::parse_str(&entity_id)
+            .map_err(|e| format!("invalid entity UUID: {}", e))?;
+        let start_time = props.get("start_time").and_then(|v| v.as_float().ok()).unwrap_or(0.0);
+        let end_time = props
+            .get("end_time")
+            .and_then(|v| v.as_float().ok())
+            .unwrap_or(start_time + 1.0);
+        let framing = props
+            .get("framing")
+            .and_then(|v| v.clone().into_string().ok())
+            .map(|s| parse_framing(&s))
+            .unwrap_or(Framing::Medium);
+        groups.push(ContinuityGroup::new(start_time, end_time, target_id, framing));
+    }
+
+    Ok(groups)
 }
 
 /// Rebuild a `TextNode` from a Rhai props map (the same vocabulary `add_text`
