@@ -289,7 +289,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
             Ok(d) => d,
             Err(_) => return,
         };
-        d.update(time);
+        d.update(time, None);
     });
 
     engine.register_fn("get_encoder_info", |movie: &mut MovieHandle| -> String {

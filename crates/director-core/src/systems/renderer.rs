@@ -415,7 +415,7 @@ pub fn render_frame(
 
     if samples == 1 {
         let mut layout_engine = LayoutEngine::new();
-        director.update(time);
+        director.update(time, None);
         layout_engine.compute_layout(&mut director.scene, director.width, director.height, time);
         director.run_post_layout(time);
         render_scene_to_canvas(director, time, canvas, None)?;
@@ -448,7 +448,7 @@ pub fn render_frame(
         };
         let sample_time = shutter_start_time + t_offset;
 
-        director.update(sample_time);
+        director.update(sample_time, None);
         layout_engine.compute_layout(
             &mut director.scene,
             director.width,
@@ -486,16 +486,15 @@ pub fn render_at_time(
     surfaces: &mut Option<(skia_safe::Surface, skia_safe::Surface)>,
 ) -> Result<(), RenderError> {
     // Build the incremental dirty set if invalidation has been requested.
-    // Ancestors are included so that transforms and layout roots are set up
-    // correctly for the dirty subtree.
+    // Ancestors and descendants are included so that transforms/layout roots
+    // are set up correctly and children of a dirty parent are re-evaluated.
     let dirty: Option<std::collections::HashSet<NodeId>> = if director.dirty_nodes.is_empty() {
         None
     } else {
-        let expanded = director.expand_dirty_with_ancestors(&director.dirty_nodes);
-        Some(expanded)
+        Some(director.expand_dirty_set(&director.dirty_nodes))
     };
 
-    director.update(time);
+    director.update(time, dirty.as_ref());
     layout_engine.compute_layout(&mut director.scene, director.width, director.height, time);
     director.run_post_layout(time);
 
@@ -853,5 +852,62 @@ mod tests {
 
         assert!(a_gen_second > a_gen_first, "child_a should be updated during full render");
         assert!(b_gen_second > b_gen_first, "child_b should be updated during full render");
+    }
+
+    #[test]
+    fn parent_invalidation_re_evaluates_descendants() {
+        let mut director = make_director_with_two_boxes();
+        director.compile();
+
+        let mut layout_engine = LayoutEngine::new();
+        let info = skia_safe::ImageInfo::new(
+            (director.width, director.height),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            Some(skia_safe::ColorSpace::new_srgb()),
+        );
+        let mut surface =
+            skia_safe::surfaces::raster(&info, None, None).expect("failed to create test surface");
+
+        // Full render to establish a baseline.
+        render_at_time(
+            &mut director,
+            &mut layout_engine,
+            0.0,
+            surface.canvas(),
+            &mut None,
+        )
+        .expect("full render should succeed");
+
+        let root_id = director.timeline[0].scene_root;
+        let child_a = director.scene.get_node(root_id).unwrap().children[0];
+        let child_b = director.scene.get_node(root_id).unwrap().children[1];
+
+        let root_gen_first = director.scene.get_node(root_id).unwrap().update_generation;
+        let a_gen_first = director.scene.get_node(child_a).unwrap().update_generation;
+        let b_gen_first = director.scene.get_node(child_b).unwrap().update_generation;
+
+        // Change the root's structural input so hash-based invalidation marks
+        // it dirty, then invalidate the root. The dirty-set expansion should
+        // include the root's descendants.
+        director.scene.get_node_mut(root_id).unwrap().z_index = 7;
+        director.invalidate(vec![crate::compiler::DependencyInput::Node(root_id)]);
+
+        render_at_time(
+            &mut director,
+            &mut layout_engine,
+            0.5,
+            surface.canvas(),
+            &mut None,
+        )
+        .expect("incremental render should succeed");
+
+        let root_gen_second = director.scene.get_node(root_id).unwrap().update_generation;
+        let a_gen_second = director.scene.get_node(child_a).unwrap().update_generation;
+        let b_gen_second = director.scene.get_node(child_b).unwrap().update_generation;
+
+        assert!(root_gen_second > root_gen_first, "root should be re-evaluated");
+        assert!(a_gen_second > a_gen_first, "child_a should be re-evaluated as descendant of dirty parent");
+        assert!(b_gen_second > b_gen_first, "child_b should be re-evaluated as descendant of dirty parent");
     }
 }

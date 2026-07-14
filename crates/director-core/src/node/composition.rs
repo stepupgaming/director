@@ -85,7 +85,7 @@ impl Element for CompositionNode {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
-        d.update(comp_time);
+        d.update(comp_time, None);
 
         let mut layout_engine = LayoutEngine::new();
         let w = d.width;

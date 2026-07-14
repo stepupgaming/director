@@ -156,7 +156,7 @@ pub struct RepairResult {
 
 /// Build a render manifest after layout at `sample_time`.
 pub fn build_render_manifest(director: &mut Director, sample_time: f64) -> RenderManifest {
-    director.update(sample_time);
+    director.update(sample_time, None);
     let mut layout_engine = LayoutEngine::new();
     layout_engine.compute_layout(
         &mut director.scene,

@@ -499,21 +499,13 @@ impl Director {
 
     /// Updates the state of active nodes for the given global time.
     ///
-    /// When `self.dirty_nodes` is empty, every active node is updated as
-    /// before. When it is non-empty, only the dirty nodes and their ancestors
-    /// are updated, allowing incremental re-rendering after `invalidate()`.
+    /// When `dirty` is `None`, every active node is updated as before. When it
+    /// is `Some`, only the nodes in the set are updated, allowing
+    /// incremental re-rendering after `invalidate()`. The caller is responsible
+    /// for expanding the dirty set to include any ancestors or descendants
+    /// required for correct rendering (see [`Director::expand_dirty_set`]).
     #[instrument(level = "debug", skip(self), fields(time = global_time))]
-    pub fn update(&mut self, global_time: f64) {
-        // Determine the set of nodes to update. If dirty_nodes is empty we
-        // update the whole active tree; otherwise we update only dirty nodes
-        // and their ancestors (ancestors are needed so layout has active roots
-        // and so transforms are set up for rendering).
-        let dirty: Option<std::collections::HashSet<NodeId>> = if self.dirty_nodes.is_empty() {
-            None
-        } else {
-            Some(self.expand_dirty_with_ancestors(&self.dirty_nodes))
-        };
-
+    pub fn update(&mut self, global_time: f64, dirty: Option<&std::collections::HashSet<NodeId>>) {
         // Pass 1: Mark active nodes and set local time
         let active_roots = self.collect_active_roots(global_time);
 
@@ -730,14 +722,18 @@ impl Director {
         }
     }
 
-    /// Expand a dirty set to include all ancestors of dirty nodes.
+    /// Expand a dirty set to include all ancestors and descendants of dirty
+    /// nodes.
     ///
     /// Ancestors are included because a parent's transform/layout context is
-    /// required to render a dirty child correctly. If a parent is already in the
-    /// set, its ancestors were added by the chain that first inserted it, so
-    /// we can stop walking that branch.
-    pub(crate) fn expand_dirty_with_ancestors(&self, dirty: &std::collections::HashSet<NodeId>) -> std::collections::HashSet<NodeId> {
+    /// required to render a dirty child correctly. Descendants are included
+    /// because a change to a parent (e.g., a transform or layout change) may
+    /// affect its children. Mask nodes are treated as descendants for the
+    /// same reason.
+    pub(crate) fn expand_dirty_set(&self, dirty: &std::collections::HashSet<NodeId>) -> std::collections::HashSet<NodeId> {
         let mut expanded = dirty.clone();
+
+        // Add ancestors.
         for &node_id in dirty {
             let mut current = node_id;
             while let Some(node) = self.scene.get_node(current) {
@@ -754,6 +750,24 @@ impl Director {
                 }
             }
         }
+
+        // Add descendants (children and mask nodes) recursively.
+        let mut stack: Vec<NodeId> = dirty.iter().copied().collect();
+        while let Some(node_id) = stack.pop() {
+            if let Some(node) = self.scene.get_node(node_id) {
+                for &child_id in &node.children {
+                    if expanded.insert(child_id) {
+                        stack.push(child_id);
+                    }
+                }
+                if let Some(mask_id) = node.mask_node {
+                    if expanded.insert(mask_id) {
+                        stack.push(mask_id);
+                    }
+                }
+            }
+        }
+
         expanded
     }
 
@@ -907,7 +921,7 @@ impl Director {
     /// update and layout passes on `self`, so it mutates the Director's
     /// internal state (local times, layout rectangles, etc.).
     pub fn layout_snapshot(&mut self, time: f64) -> LayoutSnapshot {
-        self.update(time);
+        self.update(time, None);
 
         let mut layout_engine = LayoutEngine::new();
         layout_engine.compute_layout(&mut self.scene, self.width, self.height, time);
@@ -1005,7 +1019,7 @@ mod tests {
             "registered element should be a SmartCaptionNode"
         );
 
-        director.update(0.5);
+        director.update(0.5, None);
         let node = director.scene.get_node(id).unwrap();
         let smart = node
             .element
@@ -1068,7 +1082,7 @@ mod tests {
             .downcast_ref::<SmartCaptionNode>()
             .is_some());
 
-        director.update(0.5);
+        director.update(0.5, None);
         let node = director.scene.get_node(id).unwrap();
         let smart = node
             .element
@@ -1138,7 +1152,7 @@ mod tests {
             "registered element should be a SmartCaptionNode"
         );
 
-        director.update(0.5);
+        director.update(0.5, None);
         let node = director.scene.get_node(id).unwrap();
         let smart = node
             .element

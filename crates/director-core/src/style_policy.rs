@@ -422,7 +422,7 @@ impl StylePolicyScorer {
                 node.last_visit_time = t;
                 node.local_time = t;
             }
-            sampled_director.update(t);
+            sampled_director.update(t, None);
 
             let mut current_state: Vec<(usize, f64, f64, f64, f64, f64)> = Vec::new();
             for (id, node_opt) in sampled_director.scene.nodes.iter().enumerate() {
