@@ -56,7 +56,7 @@ movie
     let mut director = movie.director.lock().unwrap();
 
     // Trigger update to validate traversal
-    director.update(0.5);
+    director.update(0.5, None);
 
     // Verify structure:
     // IDs: 0=root, 1=container, 2=red_box, 3=mask

@@ -40,10 +40,13 @@ use crate::entity::{EntityId, EntityTrack};
 use crate::node::text::TextNode;
 use crate::node::BoxNode;
 use crate::node::caption::CaptionNode;
-use crate::node::effect::EffectNode;
+use crate::node::effect::{EffectNode, EffectType, ShaderUniform};
 use crate::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
 use crate::node::image_node::ImageNode;
 use crate::node::video_node::VideoNode;
+use crate::node::lottie::LottieNode;
+use crate::node::spectrum_visualizer::SpectrumVisualizerNode;
+use crate::node::composition::CompositionNode;
 use crate::scripting::utils::{apply_layout_style_json, json_map_to_rhai, style_to_json, text_node_to_json};
 use crate::timeline::{Track, TrackClip};
 use crate::types::{Color, NodeId};
@@ -52,7 +55,9 @@ use crate::{AssetLoader, DefaultAssetLoader};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use skia_safe::BlendMode;
+use std::collections::HashMap;
 use std::sync::Arc;
+use taffy::style::Style;
 
 /// Current project schema version. Bump on any breaking change to the
 /// serialized shape; `load_project_json` rejects unknown (newer) versions.
@@ -434,6 +439,880 @@ fn restore_box_props_anims(b: &mut BoxNode, anims: &JsonMap<String, JsonValue>) 
     restore_animated_f32(&mut b.backdrop_blur, anims.get("backdrop_blur"), fb_bbl);
 }
 
+// ---- Image props ----
+
+fn image_props_to_json(node: &ImageNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    if let Some(path) = &node.source_path {
+        p.insert("source_path".into(), JsonValue::from(path.clone()));
+    }
+    p.insert(
+        "object_fit".into(),
+        serde_json::to_value(&node.object_fit).unwrap_or_default(),
+    );
+    p.insert(
+        "border_radius".into(),
+        JsonValue::from(node.border_radius.current_value),
+    );
+    p
+}
+
+fn rebuild_image_node_from_props(
+    props: &JsonMap<String, JsonValue>,
+    assets: &crate::systems::assets::AssetManager,
+) -> ImageNode {
+    let source_path = props
+        .get("source_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let image = source_path
+        .as_ref()
+        .and_then(|path| assets.load_image(path))
+        .or_else(|| {
+            // Fallback: try loading from a `path` prop for broader compatibility.
+            props
+                .get("path")
+                .and_then(|v| v.as_str())
+                .and_then(|path| assets.load_image(path))
+        });
+
+    let mut node = ImageNode::from_image_with_path(image, source_path.unwrap_or_default());
+
+    if let Some(fit) = props.get("object_fit").and_then(|v| serde_json::from_value(v.clone()).ok()) {
+        node.object_fit = fit;
+    }
+    if let Some(v) = props.get("border_radius").and_then(|v| v.as_f64()) {
+        node.border_radius = Animated::new(v as f32);
+    }
+    node
+}
+
+// ---- Video props ----
+
+fn video_props_to_json(node: &VideoNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    if let Some(path) = &node.source_path {
+        p.insert("source_path".into(), JsonValue::from(path.clone()));
+    }
+    p.insert(
+        "path".into(),
+        JsonValue::from(node.path.to_string_lossy().to_string()),
+    );
+    p.insert(
+        "object_fit".into(),
+        serde_json::to_value(&node.object_fit).unwrap_or_default(),
+    );
+    p.insert(
+        "border_radius".into(),
+        JsonValue::from(node.border_radius.current_value),
+    );
+    p.insert(
+        "render_mode".into(),
+        JsonValue::from(match node.render_mode {
+            crate::video_wrapper::RenderMode::Preview => "preview",
+            crate::video_wrapper::RenderMode::Export => "export",
+        }),
+    );
+    p
+}
+
+fn rebuild_video_node_from_props(
+    props: &JsonMap<String, JsonValue>,
+    render_mode: RenderMode,
+) -> VideoNode {
+    let source_path = props
+        .get("source_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let path = props
+        .get("path")
+        .and_then(|v| v.as_str())
+        .map(|s| std::path::PathBuf::from(s))
+        .unwrap_or_else(|| {
+            source_path
+                .clone()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default()
+        });
+
+    // Preserve the original path even if the file is not currently available;
+    // VideoLoader will fail gracefully and the node can still round-trip.
+    let source = crate::node::video_node::VideoSource::Path(path.clone());
+
+    let render_mode = props
+        .get("render_mode")
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "export" => crate::video_wrapper::RenderMode::Export,
+            _ => render_mode,
+        })
+        .unwrap_or(render_mode);
+
+    let mut node = VideoNode::new(source, render_mode).with_source_path(
+        source_path.unwrap_or_else(|| path.to_string_lossy().to_string()),
+    );
+
+    if let Some(fit) = props.get("object_fit").and_then(|v| serde_json::from_value(v.clone()).ok()) {
+        node.object_fit = fit;
+    }
+    if let Some(v) = props.get("border_radius").and_then(|v| v.as_f64()) {
+        node.border_radius = Animated::new(v as f32);
+    }
+    node
+}
+
+// ---- Lottie props ----
+
+fn lottie_props_to_json(node: &LottieNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    p.insert("speed".into(), JsonValue::from(node.speed));
+    p.insert("loop_anim".into(), JsonValue::from(node.loop_anim));
+    p.insert("frame".into(), JsonValue::from(node.frame.current_value));
+    p.insert("opacity".into(), JsonValue::from(node.opacity.current_value));
+    if let Ok(model_json) = serde_json::to_value(node.model()) {
+        p.insert("model".into(), model_json);
+    }
+    p
+}
+
+fn rebuild_lottie_node_from_props(
+    props: &JsonMap<String, JsonValue>,
+    assets: &crate::systems::assets::AssetManager,
+) -> Option<LottieNode> {
+    let model: Option<lottie_data::model::LottieJson> = props
+        .get("model")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let data = if let Some(model) = model {
+        serde_json::to_vec(&model).ok()?
+    } else {
+        // Fallback to loading from a persisted source path.
+        let path = props
+            .get("source_path")
+            .or_else(|| props.get("path"))
+            .and_then(|v| v.as_str())?;
+        assets.load_blob(path).ok().map(|arc| (*arc).clone())?
+    };
+
+    let mut node = LottieNode::new(&data, HashMap::new(), assets).ok()?;
+
+    if let Some(speed) = props.get("speed").and_then(|v| v.as_f64()) {
+        node.speed = speed as f32;
+    }
+    if let Some(loop_anim) = props.get("loop_anim").and_then(|v| v.as_bool()) {
+        node.loop_anim = loop_anim;
+    }
+    if let Some(frame) = props.get("frame").and_then(|v| v.as_f64()) {
+        node.frame.current_value = frame as f32;
+    }
+    if let Some(opacity) = props.get("opacity").and_then(|v| v.as_f64()) {
+        node.opacity.current_value = opacity as f32;
+    }
+
+    Some(node)
+}
+
+// ---- Spectrum props ----
+
+fn spectrum_props_to_json(node: &SpectrumVisualizerNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    p.insert("track_id".into(), JsonValue::from(node.track_id));
+    p.insert("bar_count".into(), JsonValue::from(node.bar_count));
+    p.insert(
+        "bar_color".into(),
+        JsonValue::from(color_to_hex(node.bar_color)),
+    );
+    p.insert("bar_gap".into(), JsonValue::from(node.bar_gap));
+    p.insert("smoothing".into(), JsonValue::from(node.smoothing));
+    p.insert("position".into(), JsonValue::from(node.position.clone()));
+    p.insert("min_height".into(), JsonValue::from(node.min_height));
+    p.insert("max_height".into(), JsonValue::from(node.max_height));
+    p.insert(
+        "border_radius".into(),
+        JsonValue::from(node.border_radius),
+    );
+    p
+}
+
+fn rebuild_spectrum_node_from_props(props: &JsonMap<String, JsonValue>) -> SpectrumVisualizerNode {
+    let track_id = props
+        .get("track_id")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(0);
+    let bar_count = props
+        .get("bar_count")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(16);
+    let bar_color = props
+        .get("bar_color")
+        .and_then(|v| v.as_str())
+        .and_then(parse_hex)
+        .unwrap_or(crate::types::Color::new(0.0, 1.0, 0.0, 1.0));
+    let bar_gap = props
+        .get("bar_gap")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(2.0);
+    let smoothing = props
+        .get("smoothing")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(0.8);
+    let position = props
+        .get("position")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "bottom".to_string());
+    let min_height = props
+        .get("min_height")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(0.05);
+    let max_height = props
+        .get("max_height")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(0.9);
+    let border_radius = props
+        .get("border_radius")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(0.0);
+
+    SpectrumVisualizerNode::new(
+        track_id,
+        bar_count,
+        bar_color,
+        bar_gap,
+        smoothing,
+        position,
+        min_height,
+        max_height,
+        border_radius,
+    )
+}
+
+// ---- Composition props ----
+
+fn composition_props_to_json(node: &CompositionNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    p.insert("start_offset".into(), JsonValue::from(node.start_offset));
+    if let Ok(inner) = node.internal_director.lock() {
+        let inner_project = director_to_project(&inner);
+        if let Ok(json) = serde_json::to_value(inner_project) {
+            p.insert("internal_project".into(), json);
+        }
+    }
+    p
+}
+
+fn rebuild_composition_node_from_props(
+    props: &JsonMap<String, JsonValue>,
+) -> Option<CompositionNode> {
+    let start_offset = props
+        .get("start_offset")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let inner_project: Option<Project> = props
+        .get("internal_project")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let inner_director = inner_project.and_then(|p| director_from_project(p).ok())?;
+    let mut node = CompositionNode::new(inner_director);
+    node.start_offset = start_offset;
+    Some(node)
+}
+
+// ---- Effect props ----
+
+fn effect_props_to_json(node: &EffectNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    let effects_json: Vec<JsonValue> = node
+        .effects
+        .iter()
+        .map(effect_type_to_json)
+        .collect();
+    p.insert("effects".into(), JsonValue::Array(effects_json));
+    p
+}
+
+fn effect_type_to_json(effect: &EffectType) -> JsonValue {
+    use serde_json::json;
+    match effect {
+        EffectType::Blur(sigma) => json!({ "type": "Blur", "sigma": sigma.current_value }),
+        EffectType::ColorMatrix(matrix) => json!({ "type": "ColorMatrix", "matrix": matrix }),
+        EffectType::RuntimeShader { sksl, uniforms } => {
+            let uniforms_json: JsonMap<String, JsonValue> = uniforms
+                .iter()
+                .map(|(k, v)| {
+                    let val = match v {
+                        ShaderUniform::Float(anim) => json!({ "kind": "float", "value": anim.current_value }),
+                        ShaderUniform::Vec(anim) => json!({ "kind": "vec", "value": anim.current_value.0 }),
+                    };
+                    (k.clone(), val)
+                })
+                .collect();
+            json!({ "type": "RuntimeShader", "sksl": sksl, "uniforms": uniforms_json })
+        }
+        EffectType::DropShadow { blur, offset_x, offset_y, color } => json!({
+            "type": "DropShadow",
+            "blur": blur.current_value,
+            "offset_x": offset_x.current_value,
+            "offset_y": offset_y.current_value,
+            "color": color.current_value,
+        }),
+        EffectType::DirectionalBlur { strength, angle, samples } => json!({
+            "type": "DirectionalBlur",
+            "strength": strength.current_value,
+            "angle": angle.current_value,
+            "samples": *samples,
+        }),
+        EffectType::FilmGrain { intensity, size } => json!({
+            "type": "FilmGrain",
+            "intensity": intensity.current_value,
+            "size": size.current_value,
+        }),
+        EffectType::Vignette { intensity, radius, feather } => json!({
+            "type": "Vignette",
+            "intensity": intensity.current_value,
+            "radius": radius.current_value,
+            "feather": feather.current_value,
+        }),
+        EffectType::ChromaticAberration(v) => json!({ "type": "ChromaticAberration", "value": v.current_value }),
+        EffectType::Pixelate(v) => json!({ "type": "Pixelate", "value": v.current_value }),
+        EffectType::Sharpen(v) => json!({ "type": "Sharpen", "value": v.current_value }),
+        EffectType::Glow { intensity, threshold } => json!({
+            "type": "Glow",
+            "intensity": intensity.current_value,
+            "threshold": threshold.current_value,
+        }),
+        EffectType::Warp { amplitude, frequency, direction, speed } => json!({
+            "type": "Warp",
+            "amplitude": amplitude.current_value,
+            "frequency": frequency.current_value,
+            "direction": direction.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::Swirl { radius, angle } => json!({
+            "type": "Swirl",
+            "radius": radius.current_value,
+            "angle": angle.current_value,
+        }),
+        EffectType::Ripple { amplitude, frequency, speed } => json!({
+            "type": "Ripple",
+            "amplitude": amplitude.current_value,
+            "frequency": frequency.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::Glass { scale, intensity } => json!({
+            "type": "Glass",
+            "scale": scale.current_value,
+            "intensity": intensity.current_value,
+        }),
+        EffectType::Shake { intensity, speed } => json!({
+            "type": "Shake",
+            "intensity": intensity.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::Duotone { shadow, highlight } => json!({
+            "type": "Duotone",
+            "shadow": shadow,
+            "highlight": highlight,
+        }),
+        EffectType::Posterize(v) => json!({ "type": "Posterize", "value": v.current_value }),
+        EffectType::Threshold(v) => json!({ "type": "Threshold", "value": v.current_value }),
+        EffectType::Scanlines { intensity, count } => json!({
+            "type": "Scanlines",
+            "intensity": intensity.current_value,
+            "count": count.current_value,
+        }),
+        EffectType::Glitch { intensity, speed } => json!({
+            "type": "Glitch",
+            "intensity": intensity.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::EdgeDetect(v) => json!({ "type": "EdgeDetect", "value": v.current_value }),
+        EffectType::ZoomBlur(v) => json!({ "type": "ZoomBlur", "value": v.current_value }),
+        EffectType::Kaleidoscope(v) => json!({ "type": "Kaleidoscope", "value": v.current_value }),
+        EffectType::Thermal => json!({ "type": "Thermal" }),
+        EffectType::Liquid { frequency, amplitude } => json!({
+            "type": "Liquid",
+            "frequency": frequency.current_value,
+            "amplitude": amplitude.current_value,
+        }),
+        EffectType::Acid { color, speed } => json!({
+            "type": "Acid",
+            "color": color,
+            "speed": speed.current_value,
+        }),
+        EffectType::Halftone(v) => json!({ "type": "Halftone", "value": v.current_value }),
+        EffectType::Ascii { scale, color } => json!({
+            "type": "Ascii",
+            "scale": scale.current_value,
+            "color": color,
+        }),
+        EffectType::Sketch(v) => json!({ "type": "Sketch", "value": v.current_value }),
+        EffectType::Mirror => json!({ "type": "Mirror" }),
+        EffectType::TriTone { shadow, mid, highlight, midpoint } => json!({
+            "type": "TriTone",
+            "shadow": shadow,
+            "mid": mid,
+            "highlight": highlight,
+            "midpoint": midpoint.current_value,
+        }),
+        EffectType::Vhs { distortion, scanline } => json!({
+            "type": "Vhs",
+            "distortion": distortion.current_value,
+            "scanline": scanline.current_value,
+        }),
+        EffectType::NeonEdge { glow_color, threshold } => json!({
+            "type": "NeonEdge",
+            "glow_color": glow_color,
+            "threshold": threshold.current_value,
+        }),
+        EffectType::Fisheye(v) => json!({ "type": "Fisheye", "value": v.current_value }),
+        EffectType::Bulge { strength, radius } => json!({
+            "type": "Bulge",
+            "strength": strength.current_value,
+            "radius": radius.current_value,
+        }),
+        EffectType::Barrel(v) => json!({ "type": "Barrel", "value": v.current_value }),
+        EffectType::LensFlare { intensity, color } => json!({
+            "type": "LensFlare",
+            "intensity": intensity.current_value,
+            "color": color,
+        }),
+        EffectType::Noir(v) => json!({ "type": "Noir", "value": v.current_value }),
+        EffectType::Cyberpunk(v) => json!({ "type": "Cyberpunk", "value": v.current_value }),
+        EffectType::Vintage(v) => json!({ "type": "Vintage", "value": v.current_value }),
+        EffectType::Gameboy => json!({ "type": "Gameboy" }),
+        EffectType::BleachBypass(v) => json!({ "type": "BleachBypass", "value": v.current_value }),
+        EffectType::TealOrange(v) => json!({ "type": "TealOrange", "value": v.current_value }),
+        EffectType::Plasma { scale, speed } => json!({
+            "type": "Plasma",
+            "scale": scale.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::Hologram(v) => json!({ "type": "Hologram", "value": v.current_value }),
+        EffectType::Emboss { angle, strength } => json!({
+            "type": "Emboss",
+            "angle": angle.current_value,
+            "strength": strength.current_value,
+        }),
+        EffectType::Toon { levels, edge } => json!({
+            "type": "Toon",
+            "levels": levels.current_value,
+            "edge": edge.current_value,
+        }),
+        EffectType::OilPaint { block_size, levels } => json!({
+            "type": "OilPaint",
+            "block_size": block_size.current_value,
+            "levels": levels.current_value,
+        }),
+        EffectType::LightLeak { intensity, color } => json!({
+            "type": "LightLeak",
+            "intensity": intensity.current_value,
+            "color": color,
+        }),
+        EffectType::Aurora { intensity, speed } => json!({
+            "type": "Aurora",
+            "intensity": intensity.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::SunRays { intensity, angle, speed } => json!({
+            "type": "SunRays",
+            "intensity": intensity.current_value,
+            "angle": angle.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::SkinSmooth { intensity, radius } => json!({
+            "type": "SkinSmooth",
+            "intensity": intensity.current_value,
+            "radius": radius.current_value,
+        }),
+        EffectType::BeautyGlow { intensity, threshold } => json!({
+            "type": "BeautyGlow",
+            "intensity": intensity.current_value,
+            "threshold": threshold.current_value,
+        }),
+        EffectType::SoftFocus { amount } => json!({
+            "type": "SoftFocus",
+            "amount": amount.current_value,
+        }),
+        EffectType::Vibrance { amount } => json!({
+            "type": "Vibrance",
+            "amount": amount.current_value,
+        }),
+        EffectType::Fog { intensity, color } => json!({
+            "type": "Fog",
+            "intensity": intensity.current_value,
+            "color": color,
+        }),
+        EffectType::Mist { intensity, speed } => json!({
+            "type": "Mist",
+            "intensity": intensity.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::Rain { intensity, speed } => json!({
+            "type": "Rain",
+            "intensity": intensity.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::Snow { intensity, speed, size } => json!({
+            "type": "Snow",
+            "intensity": intensity.current_value,
+            "speed": speed.current_value,
+            "size": size.current_value,
+        }),
+        EffectType::Dust { intensity, speed } => json!({
+            "type": "Dust",
+            "intensity": intensity.current_value,
+            "speed": speed.current_value,
+        }),
+        EffectType::BokehDots { intensity, size, color } => json!({
+            "type": "BokehDots",
+            "intensity": intensity.current_value,
+            "size": size.current_value,
+            "color": color,
+        }),
+        EffectType::FilmLook { amount, grain } => json!({
+            "type": "FilmLook",
+            "amount": amount.current_value,
+            "grain": grain.current_value,
+        }),
+        EffectType::OrangeTeal { amount } => json!({
+            "type": "OrangeTeal",
+            "amount": amount.current_value,
+        }),
+        EffectType::CrossProcess { amount } => json!({
+            "type": "CrossProcess",
+            "amount": amount.current_value,
+        }),
+        EffectType::Polaroid { amount } => json!({
+            "type": "Polaroid",
+            "amount": amount.current_value,
+        }),
+        EffectType::FadedFilm { amount } => json!({
+            "type": "FadedFilm",
+            "amount": amount.current_value,
+        }),
+        EffectType::Midnight { amount } => json!({
+            "type": "Midnight",
+            "amount": amount.current_value,
+        }),
+        EffectType::Watercolor { intensity, edge } => json!({
+            "type": "Watercolor",
+            "intensity": intensity.current_value,
+            "edge": edge.current_value,
+        }),
+        EffectType::Crosshatch { intensity, density } => json!({
+            "type": "Crosshatch",
+            "intensity": intensity.current_value,
+            "density": density.current_value,
+        }),
+        EffectType::Pointillism { dot_size, intensity } => json!({
+            "type": "Pointillism",
+            "dot_size": dot_size.current_value,
+            "intensity": intensity.current_value,
+        }),
+        EffectType::Mosaic { tile_size } => json!({
+            "type": "Mosaic",
+            "tile_size": tile_size.current_value,
+        }),
+        EffectType::Ink { threshold, intensity } => json!({
+            "type": "Ink",
+            "threshold": threshold.current_value,
+            "intensity": intensity.current_value,
+        }),
+        EffectType::PencilColor { intensity } => json!({
+            "type": "PencilColor",
+            "intensity": intensity.current_value,
+        }),
+    }
+}
+
+fn rebuild_effect_node_from_props(
+    props: &JsonMap<String, JsonValue>,
+    assets: &crate::systems::assets::AssetManager,
+) -> Option<EffectNode> {
+    use serde_json::json;
+
+    let effects_arr = props.get("effects")?.as_array()?;
+    let mut effects = Vec::new();
+
+    for eff in effects_arr {
+        let ty = eff.get("type")?.as_str()?;
+        let effect = match ty {
+            "Blur" => {
+                let v = eff.get("sigma")?.as_f64()? as f32;
+                EffectType::Blur(Animated::new(v))
+            }
+            "ColorMatrix" => {
+                let matrix: Vec<f32> = serde_json::from_value(eff.get("matrix")?.clone()).ok()?;
+                EffectType::ColorMatrix(matrix)
+            }
+            "RuntimeShader" => {
+                let sksl = eff.get("sksl")?.as_str()?.to_string();
+                let mut uniforms = HashMap::new();
+                if let Some(map) = eff.get("uniforms").and_then(|v| v.as_object()) {
+                    for (k, v) in map {
+                        let kind = v.get("kind")?.as_str()?;
+                        match kind {
+                            "float" => {
+                                let value = v.get("value")?.as_f64()? as f32;
+                                uniforms.insert(k.clone(), ShaderUniform::Float(Animated::new(value)));
+                            }
+                            "vec" => {
+                                let value: Vec<f32> = serde_json::from_value(v.get("value")?.clone()).ok()?;
+                                uniforms.insert(k.clone(), ShaderUniform::Vec(Animated::new(crate::animation::TweenableVector(value))));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                EffectType::RuntimeShader { sksl, uniforms }
+            }
+            "DropShadow" => EffectType::DropShadow {
+                blur: Animated::new(eff.get("blur")?.as_f64()? as f32),
+                offset_x: Animated::new(eff.get("offset_x")?.as_f64()? as f32),
+                offset_y: Animated::new(eff.get("offset_y")?.as_f64()? as f32),
+                color: Animated::new(serde_json::from_value(eff.get("color")?.clone()).ok()?),
+            },
+            "DirectionalBlur" => EffectType::DirectionalBlur {
+                strength: Animated::new(eff.get("strength")?.as_f64()? as f32),
+                angle: Animated::new(eff.get("angle")?.as_f64()? as f32),
+                samples: eff.get("samples")?.as_u64()? as u32,
+            },
+            "FilmGrain" => EffectType::FilmGrain {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                size: Animated::new(eff.get("size")?.as_f64()? as f32),
+            },
+            "Vignette" => EffectType::Vignette {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                radius: Animated::new(eff.get("radius")?.as_f64()? as f32),
+                feather: Animated::new(eff.get("feather")?.as_f64()? as f32),
+            },
+            "ChromaticAberration" => EffectType::ChromaticAberration(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Pixelate" => EffectType::Pixelate(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Sharpen" => EffectType::Sharpen(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Glow" => EffectType::Glow {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                threshold: Animated::new(eff.get("threshold")?.as_f64()? as f32),
+            },
+            "Warp" => EffectType::Warp {
+                amplitude: Animated::new(eff.get("amplitude")?.as_f64()? as f32),
+                frequency: Animated::new(eff.get("frequency")?.as_f64()? as f32),
+                direction: Animated::new(eff.get("direction")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "Swirl" => EffectType::Swirl {
+                radius: Animated::new(eff.get("radius")?.as_f64()? as f32),
+                angle: Animated::new(eff.get("angle")?.as_f64()? as f32),
+            },
+            "Ripple" => EffectType::Ripple {
+                amplitude: Animated::new(eff.get("amplitude")?.as_f64()? as f32),
+                frequency: Animated::new(eff.get("frequency")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "Glass" => EffectType::Glass {
+                scale: Animated::new(eff.get("scale")?.as_f64()? as f32),
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+            },
+            "Shake" => EffectType::Shake {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "Duotone" => EffectType::Duotone {
+                shadow: serde_json::from_value(eff.get("shadow")?.clone()).ok()?,
+                highlight: serde_json::from_value(eff.get("highlight")?.clone()).ok()?,
+            },
+            "Posterize" => EffectType::Posterize(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Threshold" => EffectType::Threshold(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Scanlines" => EffectType::Scanlines {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                count: Animated::new(eff.get("count")?.as_f64()? as f32),
+            },
+            "Glitch" => EffectType::Glitch {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "EdgeDetect" => EffectType::EdgeDetect(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "ZoomBlur" => EffectType::ZoomBlur(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Kaleidoscope" => EffectType::Kaleidoscope(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Thermal" => EffectType::Thermal,
+            "Liquid" => EffectType::Liquid {
+                frequency: Animated::new(eff.get("frequency")?.as_f64()? as f32),
+                amplitude: Animated::new(eff.get("amplitude")?.as_f64()? as f32),
+            },
+            "Acid" => EffectType::Acid {
+                color: serde_json::from_value(eff.get("color")?.clone()).ok()?,
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "Halftone" => EffectType::Halftone(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Ascii" => EffectType::Ascii {
+                scale: Animated::new(eff.get("scale")?.as_f64()? as f32),
+                color: serde_json::from_value(eff.get("color")?.clone()).ok()?,
+            },
+            "Sketch" => EffectType::Sketch(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Mirror" => EffectType::Mirror,
+            "TriTone" => EffectType::TriTone {
+                shadow: serde_json::from_value(eff.get("shadow")?.clone()).ok()?,
+                mid: serde_json::from_value(eff.get("mid")?.clone()).ok()?,
+                highlight: serde_json::from_value(eff.get("highlight")?.clone()).ok()?,
+                midpoint: Animated::new(eff.get("midpoint")?.as_f64()? as f32),
+            },
+            "Vhs" => EffectType::Vhs {
+                distortion: Animated::new(eff.get("distortion")?.as_f64()? as f32),
+                scanline: Animated::new(eff.get("scanline")?.as_f64()? as f32),
+            },
+            "NeonEdge" => EffectType::NeonEdge {
+                glow_color: serde_json::from_value(eff.get("glow_color")?.clone()).ok()?,
+                threshold: Animated::new(eff.get("threshold")?.as_f64()? as f32),
+            },
+            "Fisheye" => EffectType::Fisheye(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Bulge" => EffectType::Bulge {
+                strength: Animated::new(eff.get("strength")?.as_f64()? as f32),
+                radius: Animated::new(eff.get("radius")?.as_f64()? as f32),
+            },
+            "Barrel" => EffectType::Barrel(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "LensFlare" => EffectType::LensFlare {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                color: serde_json::from_value(eff.get("color")?.clone()).ok()?,
+            },
+            "Noir" => EffectType::Noir(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Cyberpunk" => EffectType::Cyberpunk(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Vintage" => EffectType::Vintage(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Gameboy" => EffectType::Gameboy,
+            "BleachBypass" => EffectType::BleachBypass(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "TealOrange" => EffectType::TealOrange(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Plasma" => EffectType::Plasma {
+                scale: Animated::new(eff.get("scale")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "Hologram" => EffectType::Hologram(Animated::new(eff.get("value")?.as_f64()? as f32)),
+            "Emboss" => EffectType::Emboss {
+                angle: Animated::new(eff.get("angle")?.as_f64()? as f32),
+                strength: Animated::new(eff.get("strength")?.as_f64()? as f32),
+            },
+            "Toon" => EffectType::Toon {
+                levels: Animated::new(eff.get("levels")?.as_f64()? as f32),
+                edge: Animated::new(eff.get("edge")?.as_f64()? as f32),
+            },
+            "OilPaint" => EffectType::OilPaint {
+                block_size: Animated::new(eff.get("block_size")?.as_f64()? as f32),
+                levels: Animated::new(eff.get("levels")?.as_f64()? as f32),
+            },
+            "LightLeak" => EffectType::LightLeak {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                color: serde_json::from_value(eff.get("color")?.clone()).ok()?,
+            },
+            "Aurora" => EffectType::Aurora {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "SunRays" => EffectType::SunRays {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                angle: Animated::new(eff.get("angle")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "SkinSmooth" => EffectType::SkinSmooth {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                radius: Animated::new(eff.get("radius")?.as_f64()? as f32),
+            },
+            "BeautyGlow" => EffectType::BeautyGlow {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                threshold: Animated::new(eff.get("threshold")?.as_f64()? as f32),
+            },
+            "SoftFocus" => EffectType::SoftFocus {
+                amount: Animated::new(eff.get("amount")?.as_f64()? as f32),
+            },
+            "Vibrance" => EffectType::Vibrance {
+                amount: Animated::new(eff.get("amount")?.as_f64()? as f32),
+            },
+            "Fog" => EffectType::Fog {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                color: serde_json::from_value(eff.get("color")?.clone()).ok()?,
+            },
+            "Mist" => EffectType::Mist {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "Rain" => EffectType::Rain {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "Snow" => EffectType::Snow {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+                size: Animated::new(eff.get("size")?.as_f64()? as f32),
+            },
+            "Dust" => EffectType::Dust {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                speed: Animated::new(eff.get("speed")?.as_f64()? as f32),
+            },
+            "BokehDots" => EffectType::BokehDots {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                size: Animated::new(eff.get("size")?.as_f64()? as f32),
+                color: serde_json::from_value(eff.get("color")?.clone()).ok()?,
+            },
+            "FilmLook" => EffectType::FilmLook {
+                amount: Animated::new(eff.get("amount")?.as_f64()? as f32),
+                grain: Animated::new(eff.get("grain")?.as_f64()? as f32),
+            },
+            "OrangeTeal" => EffectType::OrangeTeal {
+                amount: Animated::new(eff.get("amount")?.as_f64()? as f32),
+            },
+            "CrossProcess" => EffectType::CrossProcess {
+                amount: Animated::new(eff.get("amount")?.as_f64()? as f32),
+            },
+            "Polaroid" => EffectType::Polaroid {
+                amount: Animated::new(eff.get("amount")?.as_f64()? as f32),
+            },
+            "FadedFilm" => EffectType::FadedFilm {
+                amount: Animated::new(eff.get("amount")?.as_f64()? as f32),
+            },
+            "Midnight" => EffectType::Midnight {
+                amount: Animated::new(eff.get("amount")?.as_f64()? as f32),
+            },
+            "Watercolor" => EffectType::Watercolor {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                edge: Animated::new(eff.get("edge")?.as_f64()? as f32),
+            },
+            "Crosshatch" => EffectType::Crosshatch {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+                density: Animated::new(eff.get("density")?.as_f64()? as f32),
+            },
+            "Pointillism" => EffectType::Pointillism {
+                dot_size: Animated::new(eff.get("dot_size")?.as_f64()? as f32),
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+            },
+            "Mosaic" => EffectType::Mosaic {
+                tile_size: Animated::new(eff.get("tile_size")?.as_f64()? as f32),
+            },
+            "Ink" => EffectType::Ink {
+                threshold: Animated::new(eff.get("threshold")?.as_f64()? as f32),
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+            },
+            "PencilColor" => EffectType::PencilColor {
+                intensity: Animated::new(eff.get("intensity")?.as_f64()? as f32),
+            },
+            _ => continue,
+        };
+        effects.push(effect);
+    }
+
+    Some(EffectNode {
+        effects,
+        style: Style::default(),
+        shader_cache: assets.shader_cache.clone(),
+        current_time: 0.0,
+    })
+}
+
 // ---- SmartCaption props ----
 
 fn smart_caption_props_to_json(node: &SmartCaptionNode) -> JsonMap<String, JsonValue> {
@@ -605,6 +1484,12 @@ fn node_opacity(sn: &crate::scene::SceneNode) -> f32 {
     if let Some(smart) = sn.element.as_any().downcast_ref::<crate::node::smart_caption::SmartCaptionNode>() {
         return smart.inner.opacity.current_value;
     }
+    if let Some(lottie) = sn.element.as_any().downcast_ref::<LottieNode>() {
+        return lottie.opacity.current_value;
+    }
+    if let Some(spectrum) = sn.element.as_any().downcast_ref::<SpectrumVisualizerNode>() {
+        return spectrum.opacity.current_value;
+    }
     if let Some(eff) = sn.element.as_any().downcast_ref::<EffectNode>() {
         return eff.effects.first().map(|_| 1.0).unwrap_or(1.0);
     }
@@ -649,6 +1534,42 @@ pub fn director_to_project(d: &Director) -> Project {
                     .as_any()
                     .downcast_ref::<SmartCaptionNode>()
                     .map(smart_caption_props_to_json)
+                    .unwrap_or_default(),
+                "Image" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<ImageNode>()
+                    .map(image_props_to_json)
+                    .unwrap_or_default(),
+                "Video" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<VideoNode>()
+                    .map(video_props_to_json)
+                    .unwrap_or_default(),
+                "Lottie" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<LottieNode>()
+                    .map(lottie_props_to_json)
+                    .unwrap_or_default(),
+                "Effect" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<EffectNode>()
+                    .map(effect_props_to_json)
+                    .unwrap_or_default(),
+                "Composition" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<CompositionNode>()
+                    .map(composition_props_to_json)
+                    .unwrap_or_default(),
+                "Spectrum" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<SpectrumVisualizerNode>()
+                    .map(spectrum_props_to_json)
                     .unwrap_or_default(),
                 _ => {
                     let mut p = JsonMap::new();
@@ -841,6 +1762,61 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 );
                 node.inner.opacity.current_value = n.opacity;
                 apply_layout_style_json(&mut node.inner.style_cache, &n.layout);
+                director.scene.add_node(Box::new(node))
+            }
+            "Image" => {
+                let mut node = rebuild_image_node_from_props(&n.props, &director.assets);
+                node.opacity.current_value = n.opacity;
+                apply_layout_style_json(&mut node.style, &n.layout);
+                director.scene.add_node(Box::new(node))
+            }
+            "Video" => {
+                let mut node = rebuild_video_node_from_props(&n.props, director.render_mode);
+                node.opacity.current_value = n.opacity;
+                apply_layout_style_json(&mut node.style, &n.layout);
+                director.scene.add_node(Box::new(node))
+            }
+            "Lottie" => {
+                if let Some(mut node) = rebuild_lottie_node_from_props(&n.props, &director.assets) {
+                    node.opacity.current_value = n.opacity;
+                    apply_layout_style_json(&mut node.style, &n.layout);
+                    director.scene.add_node(Box::new(node))
+                } else {
+                    let mut b = BoxNode::new();
+                    b.opacity.current_value = n.opacity;
+                    apply_layout_style_json(&mut b.style, &n.layout);
+                    tracing::warn!("load_project: failed to rebuild Lottie node (id was {})", n.id);
+                    director.scene.add_node(Box::new(b))
+                }
+            }
+            "Effect" => {
+                if let Some(mut node) = rebuild_effect_node_from_props(&n.props, &director.assets) {
+                    apply_layout_style_json(&mut node.style, &n.layout);
+                    director.scene.add_node(Box::new(node))
+                } else {
+                    let mut b = BoxNode::new();
+                    b.opacity.current_value = n.opacity;
+                    apply_layout_style_json(&mut b.style, &n.layout);
+                    tracing::warn!("load_project: failed to rebuild Effect node (id was {})", n.id);
+                    director.scene.add_node(Box::new(b))
+                }
+            }
+            "Composition" => {
+                if let Some(mut node) = rebuild_composition_node_from_props(&n.props) {
+                    apply_layout_style_json(&mut node.style, &n.layout);
+                    director.scene.add_node(Box::new(node))
+                } else {
+                    let mut b = BoxNode::new();
+                    b.opacity.current_value = n.opacity;
+                    apply_layout_style_json(&mut b.style, &n.layout);
+                    tracing::warn!("load_project: failed to rebuild Composition node (id was {})", n.id);
+                    director.scene.add_node(Box::new(b))
+                }
+            }
+            "Spectrum" => {
+                let mut node = rebuild_spectrum_node_from_props(&n.props);
+                node.opacity.current_value = n.opacity;
+                apply_layout_style_json(&mut node.style, &n.layout);
                 director.scene.add_node(Box::new(node))
             }
             _ => {

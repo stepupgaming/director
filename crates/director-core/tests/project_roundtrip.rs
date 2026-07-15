@@ -140,7 +140,7 @@ fn project_roundtrip_preserves_animation() {
     let t = 1.5;
     let (orig_x, orig_op) = {
         let mut d = movie.director.lock().unwrap();
-        d.update(t);
+        d.update(t, None);
         let sn = d.scene.get_node(card_id).expect("card node");
         (
             sn.transform.translate_x.current_value,
@@ -153,7 +153,7 @@ fn project_roundtrip_preserves_animation() {
     {
         let mut d = loaded;
         let t_mid = 0.25;
-        d.update(t_mid);
+        d.update(t_mid, None);
         let lid = find_box_with_bg(&d, "#ff0066").expect("loaded card box must exist");
         loaded_x_mid = d
             .scene
@@ -162,7 +162,7 @@ fn project_roundtrip_preserves_animation() {
             .transform
             .translate_x
             .current_value;
-        d.update(t);
+        d.update(t, None);
         let lid = find_box_with_bg(&d, "#ff0066").expect("loaded card box must exist");
         let sn = d.scene.get_node(lid).expect("loaded card node");
         loaded_x = sn.transform.translate_x.current_value;
@@ -174,7 +174,7 @@ fn project_roundtrip_preserves_animation() {
     let t_mid = 0.25;
     let orig_x_mid = {
         let mut d = movie.director.lock().unwrap();
-        d.update(t_mid);
+        d.update(t_mid, None);
         d.scene
             .get_node(card_id)
             .expect("card node")
@@ -497,6 +497,538 @@ fn project_roundtrip_preserves_smart_caption_continuous() {
         }
     }
     assert!(found, "loaded project must contain a SmartCaptionNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that an ImageNode round-trips with its source path and object
+/// fit instead of becoming a BoxNode placeholder.
+#[test]
+fn project_roundtrip_preserves_image() {
+    use director_core::node::image_node::ImageNode;
+    use director_core::types::ObjectFit;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(r##"new_director(320, 240, 30)"##)
+        .expect("build script must evaluate");
+
+    // Build an ImageNode with a source path and object fit.
+    let mut img = ImageNode::from_image_with_path(None, "assets/photo.png");
+    img.object_fit = ObjectFit::Contain;
+    img.opacity.current_value = 0.8;
+
+    {
+        let mut d = movie.director.lock().unwrap();
+        let _id = d.scene.add_node(Box::new(img));
+    }
+
+    let tmp = std::env::temp_dir().join("director_project_image_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    let mut found = false;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if let Some(img) = sn.element.as_any().downcast_ref::<ImageNode>() {
+            found = true;
+            assert_eq!(img.source_path.as_deref(), Some("assets/photo.png"));
+            assert_eq!(img.object_fit, ObjectFit::Contain);
+            assert!((img.opacity.current_value - 0.8).abs() < 1e-3);
+        }
+    }
+    assert!(found, "loaded project must contain an ImageNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that a VideoNode round-trips with its path, source path, and
+/// object fit instead of becoming a BoxNode placeholder.
+#[test]
+fn project_roundtrip_preserves_video() {
+    use director_core::node::video_node::{VideoNode, VideoSource};
+    use director_core::types::ObjectFit;
+    use director_core::video_wrapper::RenderMode;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(r##"new_director(320, 240, 30)"##)
+        .expect("build script must evaluate");
+
+    // Build a VideoNode from a path.
+    let mut vid = VideoNode::new(
+        VideoSource::Path(std::path::PathBuf::from("assets/clip.mp4")),
+        RenderMode::Preview,
+    )
+    .with_source_path("assets/clip.mp4");
+    vid.object_fit = ObjectFit::Contain;
+    vid.opacity.current_value = 0.75;
+
+    {
+        let mut d = movie.director.lock().unwrap();
+        let _id = d.scene.add_node(Box::new(vid));
+    }
+
+    let tmp = std::env::temp_dir().join("director_project_video_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    let mut found = false;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if let Some(vid) = sn.element.as_any().downcast_ref::<VideoNode>() {
+            found = true;
+            assert_eq!(vid.source_path.as_deref(), Some("assets/clip.mp4"));
+            assert_eq!(vid.path(), &std::path::PathBuf::from("assets/clip.mp4"));
+            assert_eq!(vid.object_fit, ObjectFit::Contain);
+            assert!((vid.opacity.current_value - 0.75).abs() < 1e-3);
+        }
+    }
+    assert!(found, "loaded project must contain a VideoNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that a LottieNode round-trips with its speed, loop flag, and
+/// frame instead of becoming a BoxNode placeholder.
+#[test]
+fn project_roundtrip_preserves_lottie() {
+    use director_core::node::lottie::LottieNode;
+    use std::sync::Arc;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(r##"new_director(320, 240, 30)"##)
+        .expect("build script must evaluate");
+
+    // Minimal valid Lottie JSON.
+    let lottie_json = br##"{
+        "v": "5.5.7",
+        "fr": 30,
+        "ip": 0,
+        "op": 60,
+        "w": 100,
+        "h": 100,
+        "nm": "test",
+        "ddd": 0,
+        "assets": [],
+        "layers": [],
+        "markers": []
+    }"##;
+
+    let assets = {
+        let d = movie.director.lock().unwrap();
+        d.assets.clone()
+    };
+    let mut lottie = LottieNode::new(lottie_json, std::collections::HashMap::new(), &assets)
+        .expect("lottie must parse");
+    lottie.speed = 2.0;
+    lottie.loop_anim = true;
+    lottie.frame.current_value = 12.0;
+    lottie.opacity.current_value = 0.9;
+
+    {
+        let mut d = movie.director.lock().unwrap();
+        let _id = d.scene.add_node(Box::new(lottie));
+    }
+
+    let tmp = std::env::temp_dir().join("director_project_lottie_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    let mut found = false;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if let Some(lottie) = sn.element.as_any().downcast_ref::<LottieNode>() {
+            found = true;
+            assert!((lottie.speed - 2.0).abs() < 1e-3);
+            assert!(lottie.loop_anim);
+            assert!((lottie.frame.current_value - 12.0).abs() < 1e-3);
+            assert!((lottie.opacity.current_value - 0.9).abs() < 1e-3);
+        }
+    }
+    assert!(found, "loaded project must contain a LottieNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that an EffectNode round-trips with its effects instead of
+/// becoming a BoxNode placeholder.
+#[test]
+fn project_roundtrip_preserves_effect() {
+    use director_core::animation::Animated;
+    use director_core::node::effect::{EffectNode, EffectType};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(r##"new_director(320, 240, 30)"##)
+        .expect("build script must evaluate");
+
+    let effect = EffectNode {
+        effects: vec![
+            EffectType::Blur(Animated::new(5.0)),
+            EffectType::Pixelate(Animated::new(8.0)),
+        ],
+        style: taffy::style::Style::default(),
+        shader_cache: Arc::new(Mutex::new(HashMap::new())),
+        current_time: 0.0,
+    };
+
+    {
+        let mut d = movie.director.lock().unwrap();
+        let _id = d.scene.add_node(Box::new(effect));
+    }
+
+    let tmp = std::env::temp_dir().join("director_project_effect_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    let mut found = false;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if let Some(effect) = sn.element.as_any().downcast_ref::<EffectNode>() {
+            found = true;
+            assert_eq!(effect.effects.len(), 2);
+            match &effect.effects[0] {
+                EffectType::Blur(sigma) => assert!((sigma.current_value - 5.0).abs() < 1e-3),
+                _ => panic!("first effect should be Blur"),
+            }
+            match &effect.effects[1] {
+                EffectType::Pixelate(value) => assert!((value.current_value - 8.0).abs() < 1e-3),
+                _ => panic!("second effect should be Pixelate"),
+            }
+        }
+    }
+    assert!(found, "loaded project must contain an EffectNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that a CompositionNode round-trips with its start offset and
+/// internal director settings instead of becoming a BoxNode placeholder.
+#[test]
+fn project_roundtrip_preserves_composition() {
+    use director_core::node::composition::CompositionNode;
+    use director_core::node::BoxNode;
+    use director_core::video_wrapper::RenderMode;
+    use director_core::{AssetLoader, DefaultAssetLoader, Director};
+    use std::sync::Arc;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(r##"new_director(320, 240, 30)"##)
+        .expect("build script must evaluate");
+
+    // Build a nested director with a single box.
+    let loader: Arc<dyn AssetLoader> = Arc::new(DefaultAssetLoader);
+    let mut inner = Director::new(100, 100, 30, loader, RenderMode::Preview, None);
+    let mut box_node = BoxNode::new();
+    box_node.bg_color = Some(director_core::animation::Animated::new(
+        director_core::types::Color::new(1.0, 0.0, 0.0, 1.0),
+    ));
+    inner.scene.add_node(Box::new(box_node));
+
+    let mut composition = CompositionNode::new(inner);
+    composition.start_offset = 1.5;
+
+    {
+        let mut d = movie.director.lock().unwrap();
+        let _id = d.scene.add_node(Box::new(composition));
+    }
+
+    let tmp = std::env::temp_dir().join("director_project_composition_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    let mut found = false;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if let Some(comp) = sn.element.as_any().downcast_ref::<CompositionNode>() {
+            found = true;
+            assert!((comp.start_offset - 1.5).abs() < 1e-3);
+            let inner = comp.internal_director.lock().unwrap();
+            assert_eq!(inner.width, 100);
+            assert_eq!(inner.height, 100);
+        }
+    }
+    assert!(found, "loaded project must contain a CompositionNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that a SpectrumVisualizerNode round-trips with its bar count,
+/// colors, and position instead of becoming a BoxNode placeholder.
+#[test]
+fn project_roundtrip_preserves_spectrum() {
+    use director_core::node::spectrum_visualizer::SpectrumVisualizerNode;
+    use director_core::types::Color;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(r##"new_director(320, 240, 30)"##)
+        .expect("build script must evaluate");
+
+    let mut spectrum = SpectrumVisualizerNode::new(
+        0,
+        32,
+        Color::new(1.0, 0.0, 0.0, 1.0),
+        4.0,
+        0.85,
+        "top".to_string(),
+        0.1,
+        0.95,
+        2.0,
+    );
+    spectrum.opacity.current_value = 0.7;
+
+    {
+        let mut d = movie.director.lock().unwrap();
+        let _id = d.scene.add_node(Box::new(spectrum));
+    }
+
+    let tmp = std::env::temp_dir().join("director_project_spectrum_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    let mut found = false;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if let Some(spectrum) = sn.element.as_any().downcast_ref::<SpectrumVisualizerNode>() {
+            found = true;
+            assert_eq!(spectrum.bar_count, 32);
+            assert!((spectrum.bar_color.r - 1.0).abs() < 1e-3);
+            assert!((spectrum.smoothing - 0.85).abs() < 1e-3);
+            assert_eq!(spectrum.position, "top");
+            assert!((spectrum.opacity.current_value - 0.7).abs() < 1e-3);
+        }
+    }
+    assert!(found, "loaded project must contain a SpectrumVisualizerNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that a SmartCaptionNode created through the Rhai API survives a
+/// project save/load round-trip with its trajectory and entity refs intact.
+#[test]
+fn project_roundtrip_preserves_smart_caption_from_rhai() {
+    use director_core::node::smart_caption::SmartCaptionNode;
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let build = r##"
+        let movie = new_director(1080, 1920, 30);
+        let face = create_entity(movie, "face", "mara");
+        add_entity_sample(movie, face, 0.0, 400.0, 1500.0, 200.0, 200.0, 1.0);
+        add_entity_sample(movie, face, 2.0, 400.0, 1500.0, 200.0, 200.0, 1.0);
+
+        let scene = movie.add_scene(2.0);
+        let caption = scene.add_smart_caption(#{
+            content: [#{ text: "hello world", start: 0.0, end: 2.0 }],
+            entity_refs: [face.to_string()],
+            start_time: 0.0,
+            end_time: 2.0,
+            motion_penalty: 0.1,
+            smoothing_window: 1,
+            sample_rate: 10.0,
+        });
+
+        #{ movie: movie, face: face.to_string() }
+    "##;
+
+    let result = engine
+        .eval::<rhai::Map>(build)
+        .expect("build script must evaluate");
+    let movie = result
+        .get("movie")
+        .cloned()
+        .and_then(|v| v.try_cast::<director_core::scripting::MovieHandle>())
+        .expect("movie handle");
+    let face_uuid = result
+        .get("face")
+        .and_then(|v| v.clone().into_string().ok())
+        .expect("face uuid string");
+
+    let tmp = std::env::temp_dir().join("director_project_smart_caption_rhai_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+
+    let loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    // Find the loaded SmartCaptionNode.
+    let mut found = false;
+    for sn in loaded.scene.nodes.iter().flatten() {
+        if let Some(smart) = sn.element.as_any().downcast_ref::<SmartCaptionNode>() {
+            found = true;
+            assert_eq!(smart.inner.lines.len(), 1);
+            assert_eq!(smart.inner.lines[0].text, "hello world");
+            assert!(!smart.trajectory.is_empty(), "trajectory must survive round-trip");
+            assert_eq!(sn.entity_refs.len(), 1, "entity refs must survive round-trip");
+            assert_eq!(sn.entity_refs[0].to_string(), face_uuid, "entity ref UUID must match");
+            // The trajectory should place the caption away from the bottom face.
+            let (_x, y) = smart.trajectory.sample_at(0.5).expect("sample at 0.5");
+            assert!(y < 960.0, "caption should avoid bottom face, got y={}", y);
+        }
+    }
+    assert!(found, "loaded project must contain a SmartCaptionNode");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Verifies that a loaded SmartCaptionNode's trajectory still avoids the
+/// tracked entities in the restored EntityRegistry, and that a corrupted
+/// trajectory is detected by the post-load verification stage.
+#[test]
+fn loaded_smart_caption_trajectory_avoids_entities() {
+    use director_core::entity::{BoundingBox, EntityKind};
+    use director_core::node::caption::{CaptionLine, CaptionNode, CaptionWord};
+    use director_core::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
+    use director_core::render_manifest::{VerificationConfig, VerificationIssueType};
+    use director_core::semantic::{CaptionTrajectory, SemanticManifest, SolverConfig, TrajectorySample};
+    use std::sync::{Arc, Mutex};
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(r##"new_director(1080, 1920, 30)"##)
+        .expect("build script must evaluate");
+
+    // Build a SmartCaptionNode that avoids a face at the bottom of the frame.
+    let line = CaptionLine {
+        text: "hello world".into(),
+        words: vec![CaptionWord {
+            text: "hello world".into(),
+            start_sec: 0.0,
+            end_sec: 2.0,
+            display_line_idx: 0,
+        }],
+        start_sec: 0.0,
+        end_sec: 2.0,
+    };
+    let inner = CaptionNode::new(vec![line], Arc::new(Mutex::new(skia_safe::textlayout::FontCollection::new())));
+
+    let mut registry = director_core::entity::EntityRegistry::new();
+    let face = registry.create(EntityKind::Face, "mara".to_string());
+    registry.add_sample(face, 0.0, BoundingBox::new(400.0, 1500.0, 200.0, 200.0), 1.0);
+    registry.add_sample(face, 2.0, BoundingBox::new(400.0, 1500.0, 200.0, 200.0), 1.0);
+
+    let manifest = SemanticManifest {
+        entity_refs: vec![face],
+        start_time: 0.0,
+        end_time: 2.0,
+        solver: SolverConfig::default(),
+    };
+
+    let config = SmartCaptionConfig::default();
+    let smart = SmartCaptionNode::from_manifest(inner, &registry, &manifest, config);
+
+    {
+        let mut d = movie.director.lock().unwrap();
+        d.entities = registry;
+        let _node_id = d.scene.add_node(Box::new(smart));
+    }
+
+    // Save + load.
+    let tmp = std::env::temp_dir().join("director_project_smart_caption_verify_roundtrip.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).expect("save_project_json must succeed");
+    }
+    let mut loaded = director_core::Director::load_project_json(&tmp)
+        .expect("load_project_json must succeed");
+
+    // Post-load verification should report no overlap issues.
+    let issues = loaded.verify_smart_caption_trajectories(&VerificationConfig::default());
+    assert!(
+        issues.is_empty(),
+        "loaded SmartCaption trajectory should avoid restored entities, got {:?}",
+        issues
+    );
+
+    // Negative case: corrupt the loaded trajectory so it overlaps the face.
+    let smart_id = loaded
+        .scene
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(i, sn)| {
+            sn.as_ref()
+                .and_then(|n| n.element.as_any().downcast_ref::<SmartCaptionNode>())
+                .map(|_| i as director_core::types::NodeId)
+        })
+        .expect("loaded project must contain a SmartCaptionNode");
+
+    {
+        let sn = loaded.scene.get_node_mut(smart_id).expect("smart caption node");
+        let smart = sn
+            .element
+            .as_any_mut()
+            .downcast_mut::<SmartCaptionNode>()
+            .expect("SmartCaptionNode");
+        smart.trajectory = CaptionTrajectory::new(vec![
+            TrajectorySample {
+                time: 0.0,
+                x: 500.0,
+                y: 1600.0,
+                anchor: None,
+            },
+            TrajectorySample {
+                time: 2.0,
+                x: 500.0,
+                y: 1600.0,
+                anchor: None,
+            },
+        ]);
+    }
+
+    let issues = loaded.verify_smart_caption_trajectories(&VerificationConfig::default());
+    assert!(!issues.is_empty(), "corrupted trajectory should be detected");
+    assert_eq!(issues[0].issue_type, VerificationIssueType::CaptionOverFace);
+    assert_eq!(issues[0].node_ids, vec![smart_id]);
 
     let _ = std::fs::remove_file(&tmp);
 }

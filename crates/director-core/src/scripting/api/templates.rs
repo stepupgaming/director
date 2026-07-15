@@ -197,12 +197,12 @@ fn set_root_z_index(scene: &mut crate::scene::SceneGraph, root_id: usize, props:
 }
 
 fn attach_child(
-    scene: &mut crate::scene::SceneGraph,
+    d: &mut crate::director::Director,
     parent: usize,
     child: usize,
 ) -> Result<(), String> {
-    if !scene.try_add_child(parent, child) {
-        scene.destroy_node(child);
+    if !d.add_child(parent, child) {
+        d.scene.destroy_node(child);
         return Err(format!("Failed to attach node {} to parent {}", child, parent));
     }
     Ok(())
@@ -213,7 +213,7 @@ fn to_eval_err(e: String) -> Box<rhai::EvalAltResult> {
 }
 
 fn attach_image_or_placeholder(
-    scene: &mut crate::scene::SceneGraph,
+    d: &mut crate::director::Director,
     parent_id: usize,
     image: Option<skia_safe::Image>,
     size: Size<Dimension>,
@@ -228,13 +228,13 @@ fn attach_image_or_placeholder(
         if let Some(op) = opacity {
             img.opacity = Animated::new(op);
         }
-        let img_id = scene.add_node(Box::new(img));
-        attach_child(scene, parent_id, img_id)?;
+        let img_id = d.scene.add_node(Box::new(img));
+        attach_child(d, parent_id, img_id)?;
     } else {
         let mut placeholder = make_box_node(Some(fallback_color));
         placeholder.style.size = size;
-        let ph_id = scene.add_node(Box::new(placeholder));
-        attach_child(scene, parent_id, ph_id)?;
+        let ph_id = d.scene.add_node(Box::new(placeholder));
+        attach_child(d, parent_id, ph_id)?;
     }
     Ok(())
 }
@@ -273,7 +273,7 @@ fn build_title_card(
     root.style.gap = Size::zero();
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach title card to scene".into());
     }
@@ -312,7 +312,7 @@ fn build_title_card(
         bottom: LengthPercentageAuto::length(8.0),
     };
     let title_id = d.scene.add_node(Box::new(title_node));
-    attach_child(&mut d.scene, root_id, title_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, title_id).map_err(to_eval_err)?;
 
     if let Some(subtitle_text) = props.get("subtitle").map(|v| v.to_string()) {
         let subtitle_color = props
@@ -342,7 +342,7 @@ fn build_title_card(
             height: Dimension::auto(),
         };
         let sub_id = d.scene.add_node(Box::new(sub_node));
-        attach_child(&mut d.scene, root_id, sub_id).map_err(to_eval_err)?;
+        attach_child(&mut d, root_id, sub_id).map_err(to_eval_err)?;
     }
 
     Ok(NodeHandle {
@@ -404,7 +404,7 @@ fn build_counter(
     root.style.justify_content = Some(JustifyContent::Center);
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach counter to scene".into());
     }
@@ -426,7 +426,7 @@ fn build_counter(
         height: Dimension::auto(),
     };
     let text_id = d.scene.add_node(Box::new(text_node));
-    attach_child(&mut d.scene, root_id, text_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, text_id).map_err(to_eval_err)?;
 
     // Configure counter animation on the text node: per-frame interpolation
     // of the numeric value with the given formatting, easing, and duration.
@@ -522,7 +522,7 @@ fn build_waveform_visualizer(
     };
 
     let root_id = d.scene.add_node(Box::new(visualizer));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach waveform visualizer to scene".into());
     }
@@ -598,7 +598,7 @@ fn build_lower_third(
         .and_then(|s| parse_hex_color(&s));
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach lower third to scene".into());
     }
@@ -617,7 +617,7 @@ fn build_lower_third(
             bottom: LengthPercentageAuto::length(0.0),
         };
         let bar_id = d.scene.add_node(Box::new(bar));
-        attach_child(&mut d.scene, root_id, bar_id).map_err(to_eval_err)?;
+        attach_child(&mut d, root_id, bar_id).map_err(to_eval_err)?;
     }
 
     let font_family = props.get("font_family").and_then(|v| v.clone().into_string().ok());
@@ -625,7 +625,7 @@ fn build_lower_third(
     text_node.fit_mode = TextFit::Shrink;
     text_node.style.flex_grow = 1.0;
     let text_id = d.scene.add_node(Box::new(text_node));
-    attach_child(&mut d.scene, root_id, text_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, text_id).map_err(to_eval_err)?;
 
     Ok(NodeHandle {
         director: scene.director.clone(),
@@ -699,7 +699,7 @@ fn build_split_screen(
     };
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach split screen to scene".into());
     }
@@ -713,13 +713,12 @@ fn build_split_screen(
         height: Dimension::auto(),
     };
     let left_id = d.scene.add_node(Box::new(left_panel));
-    attach_child(&mut d.scene, root_id, left_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, left_id).map_err(to_eval_err)?;
 
     if let Some(path) = left_path {
         let image = d.assets.load_image(&path);
         let fallback_color = left_color.unwrap_or(Color::new(0.2, 0.2, 0.3, 1.0));
-        attach_image_or_placeholder(
-            &mut d.scene,
+        attach_image_or_placeholder(&mut d,
             left_id,
             image,
             Size {
@@ -740,13 +739,12 @@ fn build_split_screen(
         height: Dimension::auto(),
     };
     let right_id = d.scene.add_node(Box::new(right_panel));
-    attach_child(&mut d.scene, root_id, right_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, right_id).map_err(to_eval_err)?;
 
     if let Some(path) = right_path {
         let image = d.assets.load_image(&path);
         let fallback_color = right_color.unwrap_or(Color::new(0.2, 0.2, 0.3, 1.0));
-        attach_image_or_placeholder(
-            &mut d.scene,
+        attach_image_or_placeholder(&mut d,
             right_id,
             image,
             Size {
@@ -820,7 +818,7 @@ fn build_reaction_overlay(
         height: Dimension::percent(1.0),
     };
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach reaction overlay to scene".into());
     }
@@ -828,8 +826,7 @@ fn build_reaction_overlay(
 
     if let Some(path) = main_path {
         let image = d.assets.load_image(&path);
-        attach_image_or_placeholder(
-            &mut d.scene,
+        attach_image_or_placeholder(&mut d,
             root_id,
             image,
             Size {
@@ -848,7 +845,7 @@ fn build_reaction_overlay(
             height: Dimension::percent(1.0),
         };
         let ph_id = d.scene.add_node(Box::new(placeholder));
-        attach_child(&mut d.scene, root_id, ph_id).map_err(to_eval_err)?;
+        attach_child(&mut d, root_id, ph_id).map_err(to_eval_err)?;
     }
 
     let mut facecam_container = make_box_node(None);
@@ -883,12 +880,11 @@ fn build_reaction_overlay(
     }
 
     let fc_id = d.scene.add_node(Box::new(facecam_container));
-    attach_child(&mut d.scene, root_id, fc_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, fc_id).map_err(to_eval_err)?;
 
     if let Some(path) = facecam_path {
         let image = d.assets.load_image(&path);
-        attach_image_or_placeholder(
-            &mut d.scene,
+        attach_image_or_placeholder(&mut d,
             fc_id,
             image,
             Size {
@@ -907,7 +903,7 @@ fn build_reaction_overlay(
             height: Dimension::percent(1.0),
         };
         let ph_id = d.scene.add_node(Box::new(placeholder));
-        attach_child(&mut d.scene, fc_id, ph_id).map_err(to_eval_err)?;
+        attach_child(&mut d, fc_id, ph_id).map_err(to_eval_err)?;
     }
 
     Ok(NodeHandle {
@@ -975,7 +971,7 @@ fn build_bento_grid(
     };
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach bento grid to scene".into());
     }
@@ -1012,13 +1008,11 @@ fn build_bento_grid(
             };
 
             let cell_id = d.scene.add_node(Box::new(cell));
-            attach_child(&mut d.scene, root_id, cell_id).map_err(to_eval_err)?;
+            attach_child(&mut d, root_id, cell_id).map_err(to_eval_err)?;
 
             if let Some(path) = item_image {
                 let image = d.assets.load_image(&path);
-                let fallback_color = item_bg.unwrap_or(Color::new(0.2, 0.2, 0.3, 1.0));
-                attach_image_or_placeholder(
-                    &mut d.scene,
+                let fallback_color = item_bg.unwrap_or(Color::new(0.2, 0.2, 0.3, 1.0));attach_image_or_placeholder(&mut d,
                     cell_id,
                     image,
                     Size {
@@ -1047,7 +1041,7 @@ fn build_bento_grid(
                     height: Dimension::auto(),
                 };
                 let text_id = d.scene.add_node(Box::new(text_node));
-                attach_child(&mut d.scene, cell_id, text_id).map_err(to_eval_err)?;
+                attach_child(&mut d, cell_id, text_id).map_err(to_eval_err)?;
             }
         }
     }
@@ -1142,7 +1136,7 @@ fn build_subscribe_button(
     }
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach subscribe button to scene".into());
     }
@@ -1157,7 +1151,7 @@ fn build_subscribe_button(
         height: Dimension::auto(),
     };
     let info_id = d.scene.add_node(Box::new(info_node));
-    attach_child(&mut d.scene, root_id, info_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, info_id).map_err(to_eval_err)?;
 
     // Button pill
     let mut button = make_box_node(Some(button_color));
@@ -1177,7 +1171,7 @@ fn build_subscribe_button(
     };
     button.border_radius = Animated::new(border_radius * 0.8);
     let btn_id = d.scene.add_node(Box::new(button));
-    attach_child(&mut d.scene, root_id, btn_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, btn_id).map_err(to_eval_err)?;
 
     let mut btn_text = make_text_node(&mut d, &button_text, Some(text_color), 16.0, Some(700), font_family);
     btn_text.style.size = Size {
@@ -1185,7 +1179,7 @@ fn build_subscribe_button(
         height: Dimension::auto(),
     };
     let btn_text_id = d.scene.add_node(Box::new(btn_text));
-    attach_child(&mut d.scene, btn_id, btn_text_id).map_err(to_eval_err)?;
+    attach_child(&mut d, btn_id, btn_text_id).map_err(to_eval_err)?;
 
     Ok(NodeHandle {
         director: scene.director.clone(),
@@ -1261,7 +1255,7 @@ fn build_progress_bar(
     };
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach progress bar to scene".into());
     }
@@ -1276,7 +1270,7 @@ fn build_progress_bar(
             height: Dimension::auto(),
         };
         let label_id = d.scene.add_node(Box::new(label_node));
-        attach_child(&mut d.scene, root_id, label_id).map_err(to_eval_err)?;
+        attach_child(&mut d, root_id, label_id).map_err(to_eval_err)?;
     }
 
     // Bar track
@@ -1288,7 +1282,7 @@ fn build_progress_bar(
     track.border_radius = Animated::new(border_radius);
     track.overflow = "hidden".to_string();
     let track_id = d.scene.add_node(Box::new(track));
-    attach_child(&mut d.scene, root_id, track_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, track_id).map_err(to_eval_err)?;
 
     // Fill
     let mut fill = make_box_node(Some(bar_color));
@@ -1297,7 +1291,7 @@ fn build_progress_bar(
         height: Dimension::percent(1.0),
     };
     let fill_id = d.scene.add_node(Box::new(fill));
-    attach_child(&mut d.scene, track_id, fill_id).map_err(to_eval_err)?;
+    attach_child(&mut d, track_id, fill_id).map_err(to_eval_err)?;
 
     Ok(NodeHandle {
         director: scene.director.clone(),
@@ -1363,7 +1357,7 @@ fn build_countdown_timer(
     };
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach countdown timer to scene".into());
     }
@@ -1376,7 +1370,7 @@ fn build_countdown_timer(
             height: Dimension::auto(),
         };
         let header_id = d.scene.add_node(Box::new(header_node));
-        attach_child(&mut d.scene, root_id, header_id).map_err(to_eval_err)?;
+        attach_child(&mut d, root_id, header_id).map_err(to_eval_err)?;
     }
 
     // Segments container
@@ -1389,7 +1383,7 @@ fn build_countdown_timer(
         height: LengthPercentage::length(0.0),
     };
     let seg_container_id = d.scene.add_node(Box::new(segments));
-    attach_child(&mut d.scene, root_id, seg_container_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, seg_container_id).map_err(to_eval_err)?;
 
     let segments_data = [
         (days, "DAYS"),
@@ -1415,7 +1409,7 @@ fn build_countdown_timer(
             bottom: LengthPercentage::length(8.0),
         };
         let seg_id = d.scene.add_node(Box::new(seg));
-        attach_child(&mut d.scene, seg_container_id, seg_id).map_err(to_eval_err)?;
+        attach_child(&mut d, seg_container_id, seg_id).map_err(to_eval_err)?;
 
         let value_text = format!("{:02}", value);
         let mut num_node = make_text_node(&mut d, &value_text, Some(text_color), 32.0, Some(700), font_family.clone());
@@ -1424,7 +1418,7 @@ fn build_countdown_timer(
             height: Dimension::auto(),
         };
         let num_id = d.scene.add_node(Box::new(num_node));
-        attach_child(&mut d.scene, seg_id, num_id).map_err(to_eval_err)?;
+        attach_child(&mut d, seg_id, num_id).map_err(to_eval_err)?;
 
         let mut lbl_node = make_text_node(&mut d, label, Some(label_color), 14.0, Some(500), font_family.clone());
         lbl_node.style.size = Size {
@@ -1432,7 +1426,7 @@ fn build_countdown_timer(
             height: Dimension::auto(),
         };
         let lbl_id = d.scene.add_node(Box::new(lbl_node));
-        attach_child(&mut d.scene, seg_id, lbl_id).map_err(to_eval_err)?;
+        attach_child(&mut d, seg_id, lbl_id).map_err(to_eval_err)?;
 
         // Separator colon (except for last segment)
         if label != &"SECONDS" {
@@ -1442,7 +1436,7 @@ fn build_countdown_timer(
                 height: Dimension::auto(),
             };
             let colon_id = d.scene.add_node(Box::new(colon));
-            attach_child(&mut d.scene, seg_container_id, colon_id).map_err(to_eval_err)?;
+            attach_child(&mut d, seg_container_id, colon_id).map_err(to_eval_err)?;
         }
     }
 
@@ -1523,7 +1517,7 @@ fn build_quote_card(
     apply_box_shadow(&mut root, props);
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach quote card to scene".into());
     }
@@ -1542,7 +1536,7 @@ fn build_quote_card(
         bottom: LengthPercentageAuto::length(20.0),
     };
     let accent_id = d.scene.add_node(Box::new(accent));
-    attach_child(&mut d.scene, root_id, accent_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, accent_id).map_err(to_eval_err)?;
 
     // Opening quote mark
     let mut quote_mark = make_text_node(&mut d, "\"", Some(accent_color), 64.0, Some(700), font_family.clone());
@@ -1557,7 +1551,7 @@ fn build_quote_card(
         bottom: LengthPercentageAuto::length(8.0),
     };
     let mark_id = d.scene.add_node(Box::new(quote_mark));
-    attach_child(&mut d.scene, root_id, mark_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, mark_id).map_err(to_eval_err)?;
 
     // Quote text
     let mut quote_node = make_text_node(&mut d, &quote, Some(text_color), 28.0, Some(500), font_family.clone());
@@ -1573,7 +1567,7 @@ fn build_quote_card(
         bottom: LengthPercentageAuto::length(20.0),
     };
     let quote_id = d.scene.add_node(Box::new(quote_node));
-    attach_child(&mut d.scene, root_id, quote_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, quote_id).map_err(to_eval_err)?;
 
     // Author line
     let author_text = if let Some(src) = source {
@@ -1588,7 +1582,7 @@ fn build_quote_card(
         height: Dimension::auto(),
     };
     let author_id = d.scene.add_node(Box::new(author_node));
-    attach_child(&mut d.scene, root_id, author_id).map_err(to_eval_err)?;
+    attach_child(&mut d, root_id, author_id).map_err(to_eval_err)?;
 
     Ok(NodeHandle {
         director: scene.director.clone(),
@@ -1678,7 +1672,7 @@ fn build_social_handle_overlay(
     }
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach social handle overlay to scene".into());
     }
@@ -1711,7 +1705,7 @@ fn build_social_handle_overlay(
                 height: LengthPercentage::length(0.0),
             };
             let row_id = d.scene.add_node(Box::new(row));
-            attach_child(&mut d.scene, root_id, row_id).map_err(to_eval_err)?;
+            attach_child(&mut d, root_id, row_id).map_err(to_eval_err)?;
 
             // Icon placeholder (colored circle with first letter)
             let mut icon = make_box_node(Some(plat_color));
@@ -1723,7 +1717,7 @@ fn build_social_handle_overlay(
             icon.style.align_items = Some(AlignItems::Center);
             icon.border_radius = Animated::new(icon_size / 2.0);
             let icon_id = d.scene.add_node(Box::new(icon));
-            attach_child(&mut d.scene, row_id, icon_id).map_err(to_eval_err)?;
+            attach_child(&mut d, row_id, icon_id).map_err(to_eval_err)?;
 
             let first_letter = platform_name.chars().next().unwrap_or('S').to_string();
             let mut icon_text = make_text_node(&mut d, &first_letter, Some(Color::new(1.0, 1.0, 1.0, 1.0)), icon_size * 0.5, Some(700), font_family.clone());
@@ -1732,7 +1726,7 @@ fn build_social_handle_overlay(
                 height: Dimension::auto(),
             };
             let icon_text_id = d.scene.add_node(Box::new(icon_text));
-            attach_child(&mut d.scene, icon_id, icon_text_id).map_err(to_eval_err)?;
+            attach_child(&mut d, icon_id, icon_text_id).map_err(to_eval_err)?;
 
             // Handle text
             let mut handle_node = make_text_node(&mut d, &handle, Some(text_color), 18.0, Some(600), font_family.clone());
@@ -1741,7 +1735,7 @@ fn build_social_handle_overlay(
                 height: Dimension::auto(),
             };
             let handle_id = d.scene.add_node(Box::new(handle_node));
-            attach_child(&mut d.scene, row_id, handle_id).map_err(to_eval_err)?;
+            attach_child(&mut d, row_id, handle_id).map_err(to_eval_err)?;
         }
     }
 
@@ -1803,7 +1797,7 @@ fn build_watermark(
     }
 
     let root_id = d.scene.add_node(Box::new(root));
-    if !d.scene.try_add_child(scene.root_id, root_id) {
+    if !d.add_child(scene.root_id, root_id) {
         d.scene.destroy_node(root_id);
         return Err("Failed to attach watermark to scene".into());
     }
@@ -1815,8 +1809,7 @@ fn build_watermark(
             .get("size")
             .and_then(|v| v.as_float().ok())
             .unwrap_or(48.0) as f32;
-        attach_image_or_placeholder(
-            &mut d.scene,
+        attach_image_or_placeholder(&mut d,
             root_id,
             image,
             Size {
@@ -1844,7 +1837,7 @@ fn build_watermark(
             height: Dimension::auto(),
         };
         let text_id = d.scene.add_node(Box::new(text_node));
-        attach_child(&mut d.scene, root_id, text_id).map_err(to_eval_err)?;
+        attach_child(&mut d, root_id, text_id).map_err(to_eval_err)?;
     }
 
     Ok(NodeHandle {

@@ -211,8 +211,8 @@ fn compile_stores_input_hash_on_each_node() {
 
     d.compile();
 
-    assert!(d.scene.get_node(root).unwrap().last_input_hash().is_some());
-    assert!(d.scene.get_node(child).unwrap().last_input_hash().is_some());
+    assert!(d.input_hashes.contains_key(&root));
+    assert!(d.input_hashes.contains_key(&child));
 }
 
 #[test]
@@ -380,6 +380,84 @@ fn invalidate_marks_dirty_when_structural_property_changes() {
 }
 
 #[test]
+fn invalidating_children_input_marks_parent_dirty_when_child_added() {
+    let mut d = empty_director();
+    let parent = d.scene.add_node(Box::new(BoxNode::new()));
+    let child = d.scene.add_node(Box::new(BoxNode::new()));
+    d.scene.try_add_child(parent, child);
+
+    d.compile();
+
+    // Add another child to the parent after compile.
+    let new_child = d.scene.add_node(Box::new(BoxNode::new()));
+    d.scene.try_add_child(parent, new_child);
+
+    // Invalidating the parent's children collection should mark the parent
+    // dirty because its structural input hash (which includes children) changed.
+    let affected = d.invalidate(vec![DependencyInput::Children(parent)]);
+    assert!(affected.contains(&parent), "parent should be dirty when children change");
+}
+
+#[test]
+fn invalidating_children_input_marks_parent_dirty_when_child_removed() {
+    let mut d = empty_director();
+    let parent = d.scene.add_node(Box::new(BoxNode::new()));
+    let child = d.scene.add_node(Box::new(BoxNode::new()));
+    d.scene.try_add_child(parent, child);
+
+    d.compile();
+
+    // Remove the child from the parent after compile.
+    d.scene.remove_child(parent, child);
+
+    let affected = d.invalidate(vec![DependencyInput::Children(parent)]);
+    assert!(affected.contains(&parent), "parent should be dirty when a child is removed");
+}
+
+#[test]
+fn invalidating_children_input_does_not_mark_parent_dirty_when_unchanged() {
+    let mut d = empty_director();
+    let parent = d.scene.add_node(Box::new(BoxNode::new()));
+    let child = d.scene.add_node(Box::new(BoxNode::new()));
+    d.scene.try_add_child(parent, child);
+
+    d.compile();
+
+    // No hierarchy changes.
+    let affected = d.invalidate(vec![DependencyInput::Children(parent)]);
+    assert!(!affected.contains(&parent), "parent should not be dirty when children are unchanged");
+}
+
+#[test]
+fn director_add_child_invalidates_parent_automatically() {
+    let mut d = empty_director();
+    let parent = d.scene.add_node(Box::new(BoxNode::new()));
+    let child = d.scene.add_node(Box::new(BoxNode::new()));
+
+    d.compile();
+
+    // Adding a child through Director::add_child should automatically
+    // invalidate the parent's children dependency.
+    d.add_child(parent, child);
+    assert!(d.dirty_nodes.contains(&parent), "parent should be dirty after adding a child");
+}
+
+#[test]
+fn director_remove_child_invalidates_parent_automatically() {
+    let mut d = empty_director();
+    let parent = d.scene.add_node(Box::new(BoxNode::new()));
+    let child = d.scene.add_node(Box::new(BoxNode::new()));
+    d.scene.try_add_child(parent, child);
+
+    d.compile();
+
+    // Removing a child through Director::remove_child should automatically
+    // invalidate the parent's children dependency.
+    d.remove_child(parent, child);
+    assert!(d.dirty_nodes.contains(&parent), "parent should be dirty after removing a child");
+}
+
+#[test]
 fn invalidating_parent_does_not_dirty_siblings_with_unchanged_inputs() {
     let mut d = empty_director();
     let parent = d.scene.add_node(Box::new(BoxNode::new()));
@@ -411,7 +489,7 @@ fn invalidate_without_compile_is_no_op() {
     // returns an empty set and does not snapshot a hash.
     let affected = d.invalidate(vec![DependencyInput::Entity(id)]);
     assert!(affected.is_empty());
-    assert!(d.scene.get_node(child).unwrap().last_input_hash().is_none());
+    assert!(!d.input_hashes.contains_key(&child));
 }
 
 #[test]
@@ -598,6 +676,265 @@ fn compile_emits_no_violations_for_empty_scene() {
     let score = d.last_policy_score.as_ref().expect("compile should produce a policy score");
     assert!(score.violations.is_empty(), "empty scene should have no violations");
     assert_eq!(score.total_score, 1.0);
+}
+
+#[test]
+fn rhai_add_child_invalidates_parent_automatically() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let script = r#"
+        let movie = new_director(640, 360, 30);
+        let scene = movie.add_scene(2.5);
+        let root = scene.add_box(#{ width: "100%", height: "100%" });
+        let inner = root.add_box(#{ width: 100.0, height: 100.0 });
+
+        compile(movie);
+        let dirty_before = dirty_nodes(movie);
+
+        let another = root.add_box(#{ width: 50.0, height: 50.0 });
+        let dirty_after = dirty_nodes(movie);
+
+        #{
+            root_id: node_id(root),
+            dirty_before: dirty_before,
+            dirty_after: dirty_after,
+        }
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script).expect("add_child invalidation script must evaluate");
+    let root_id: i64 = result
+        .get("root_id")
+        .and_then(|v| v.as_int().ok())
+        .expect("root_id must be an integer");
+    let dirty_before: rhai::Array = result
+        .get("dirty_before")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("dirty_before must be an array");
+    let dirty_after: rhai::Array = result
+        .get("dirty_after")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("dirty_after must be an array");
+
+    assert!(dirty_before.is_empty(), "dirty_nodes should be empty immediately after compile");
+    assert!(
+        dirty_after.iter().any(|v| v.as_int().ok() == Some(root_id)),
+        "parent should be dirty after Rhai add_child attaches another child"
+    );
+}
+
+#[test]
+fn rhai_destroy_invalidates_parent_automatically() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let script = r#"
+        let movie = new_director(640, 360, 30);
+        let scene = movie.add_scene(2.5);
+        let root = scene.add_box(#{ width: "100%", height: "100%" });
+        let inner = root.add_box(#{ width: 100.0, height: 100.0 });
+
+        compile(movie);
+        let dirty_before = dirty_nodes(movie);
+
+        inner.destroy();
+        let dirty_after = dirty_nodes(movie);
+
+        #{
+            root_id: node_id(root),
+            dirty_before: dirty_before,
+            dirty_after: dirty_after,
+        }
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script).expect("destroy invalidation script must evaluate");
+    let root_id: i64 = result
+        .get("root_id")
+        .and_then(|v| v.as_int().ok())
+        .expect("root_id must be an integer");
+    let dirty_before: rhai::Array = result
+        .get("dirty_before")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("dirty_before must be an array");
+    let dirty_after: rhai::Array = result
+        .get("dirty_after")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("dirty_after must be an array");
+
+    assert!(dirty_before.is_empty(), "dirty_nodes should be empty immediately after compile");
+    assert!(
+        dirty_after.iter().any(|v| v.as_int().ok() == Some(root_id)),
+        "parent should be dirty after Rhai destroy removes a child from its parent"
+    );
+}
+
+#[test]
+fn rhai_remove_child_invalidates_parent_automatically() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let script = r#"
+        let movie = new_director(640, 360, 30);
+        let scene = movie.add_scene(2.5);
+        let root = scene.add_box(#{ width: "100%", height: "100%" });
+        let inner = root.add_box(#{ width: 100.0, height: 100.0 });
+
+        compile(movie);
+        let dirty_before = dirty_nodes(movie);
+
+        root.remove_child(inner);
+        let dirty_after = dirty_nodes(movie);
+
+        #{
+            root_id: node_id(root),
+            dirty_before: dirty_before,
+            dirty_after: dirty_after,
+        }
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script).expect("remove_child invalidation script must evaluate");
+    let root_id: i64 = result
+        .get("root_id")
+        .and_then(|v| v.as_int().ok())
+        .expect("root_id must be an integer");
+    let dirty_before: rhai::Array = result
+        .get("dirty_before")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("dirty_before must be an array");
+    let dirty_after: rhai::Array = result
+        .get("dirty_after")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("dirty_after must be an array");
+
+    assert!(dirty_before.is_empty(), "dirty_nodes should be empty immediately after compile");
+    assert!(
+        dirty_after.iter().any(|v| v.as_int().ok() == Some(root_id)),
+        "parent should be dirty after Rhai remove_child detaches a child"
+    );
+}
+
+#[test]
+fn rhai_compiler_affected_nodes_does_not_dirty() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let script = r#"
+        let movie = new_director(640, 360, 30);
+        let scene = movie.add_scene(2.5);
+        let root = scene.add_box(#{ width: "100%", height: "100%" });
+        let inner = root.add_box(#{ width: 100.0, height: 100.0 });
+
+        compile(movie);
+
+        let affected = compiler_affected_nodes(movie, [
+            #{ type: "node", value: node_id(root) }
+        ]);
+        let dirty = dirty_nodes(movie);
+
+        #{
+            root_id: node_id(root),
+            inner_id: node_id(inner),
+            affected: affected,
+            dirty: dirty,
+        }
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script).expect("affected_nodes script must evaluate");
+    let root_id: i64 = result
+        .get("root_id")
+        .and_then(|v| v.as_int().ok())
+        .expect("root_id must be an integer");
+    let inner_id: i64 = result
+        .get("inner_id")
+        .and_then(|v| v.as_int().ok())
+        .expect("inner_id must be an integer");
+    let affected: rhai::Array = result
+        .get("affected")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("affected must be an array");
+    let dirty: rhai::Array = result
+        .get("dirty")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("dirty must be an array");
+
+    let affected_ids: Vec<i64> = affected.iter().filter_map(|v| v.as_int().ok()).collect();
+    assert!(affected_ids.contains(&inner_id), "inner should be affected by parent node input");
+    assert!(affected_ids.contains(&root_id), "root should be included because the input is the root node itself");
+    assert!(dirty.is_empty(), "compiler_affected_nodes must not mark anything dirty");
+}
+
+#[test]
+fn rhai_compiler_affected_nodes_supports_all_input_types() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let script = r#"
+        let movie = new_director(640, 360, 30);
+        let scene = movie.add_scene(2.5);
+        let root = scene.add_box(#{ width: "100%", height: "100%" });
+        let inner = root.add_box(#{ width: 100.0, height: 100.0 });
+
+        compile(movie);
+
+        let affected = compiler_affected_nodes(movie, [
+            #{ type: "children", value: node_id(root) }
+        ]);
+
+        #{
+            root_id: node_id(root),
+            affected: affected,
+        }
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script).expect("affected_nodes children script must evaluate");
+    let root_id: i64 = result
+        .get("root_id")
+        .and_then(|v| v.as_int().ok())
+        .expect("root_id must be an integer");
+    let affected: rhai::Array = result
+        .get("affected")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("affected must be an array");
+
+    let affected_ids: Vec<i64> = affected.iter().filter_map(|v| v.as_int().ok()).collect();
+    assert!(affected_ids.contains(&root_id), "parent should be affected by its own children input");
+}
+
+#[test]
+fn rhai_compiler_affected_nodes_parses_entity_and_audio_inputs() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let script = r#"
+        let movie = new_director(640, 360, 30);
+        let scene = movie.add_scene(2.5);
+        let root = scene.add_box(#{ width: "100%", height: "100%" });
+
+        compile(movie);
+
+        let affected = compiler_affected_nodes(movie, [
+            #{ type: "entity", value: "550e8400-e29b-41d4-a716-446655440000" },
+            #{ type: "audio_track", value: 0 }
+        ]);
+
+        #{
+            affected: affected,
+        }
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script).expect("entity/audio input parser script must evaluate");
+    let affected: rhai::Array = result
+        .get("affected")
+        .and_then(|v| v.clone().try_cast::<rhai::Array>())
+        .expect("affected must be an array");
+
+    assert!(affected.is_empty(), "no nodes depend on the dummy entity/audio inputs");
 }
 
 #[test]

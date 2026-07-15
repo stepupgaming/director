@@ -15,6 +15,7 @@
 //! - **Safety Guards**: stale-handle checks and parent/child attachment validation
 
 use crate::animation::Animated;
+use crate::compiler::DependencyInput;
 use crate::element::TextFit;
 use crate::node::smart_caption::SmartCaptionConfig;
 use crate::node::{ActiveSpeakerCamera, ActiveSpeakerCameraConfig, BoxNode, BoxShadow, CaptionLine, CaptionNode, CaptionPosition, CaptionWord, CompositionNode, ContinuityGroup, EffectNode, Framing, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType, SmartCaptionNode, TextNode, VectorNode, VideoNode, VideoSource};
@@ -44,7 +45,25 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |node: &mut NodeHandle| -> Result<(), Box<rhai::EvalAltResult>> {
             let mut d = node.lock_director()?;
             node.ensure_alive(&d)?;
+            let parent_id = d.scene.get_node(node.id).and_then(|n| n.parent);
             d.scene.destroy_node(node.id);
+            if let Some(parent) = parent_id {
+                d.invalidate(vec![DependencyInput::Children(parent)]);
+            }
+            Ok(())
+        },
+    );
+
+    engine.register_fn(
+        "remove_child",
+        |parent: &mut NodeHandle, child: NodeHandle| -> Result<(), Box<rhai::EvalAltResult>> {
+            if !Arc::ptr_eq(&parent.director, &child.director) {
+                return Err("Parent and child belong to different directors".into());
+            }
+            let mut d = parent.lock_director()?;
+            parent.ensure_alive(&d)?;
+            child.ensure_alive(&d)?;
+            d.remove_child(parent.id, child.id);
             Ok(())
         },
     );
@@ -94,7 +113,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!("Failed to attach node {} to parent {}", id, parent.id).into());
             }
@@ -125,7 +144,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach node {} to scene root {}",
@@ -154,7 +173,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
 
             let img_node = ImageNode::from_image_with_path(image, path);
             let id = d.scene.add_node(Box::new(img_node));
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach image node {} to parent {}", id, parent.id).into(),
@@ -175,7 +194,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
 
             let img_node = ImageNode::from_image_with_path(image, path);
             let id = d.scene.add_node(Box::new(img_node));
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach image node {} to scene root {}",
@@ -223,7 +242,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach image node {} to scene root {}",
@@ -272,7 +291,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach image node {} to parent {}", id, parent.id).into(),
@@ -299,7 +318,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     if let Some(n) = d.scene.get_node_mut(id) {
                         n.filter = FilterConfig::default();
                     }
-                    if !d.scene.try_add_child(parent.id, id) {
+                    if !d.add_child(parent.id, id) {
                         d.scene.destroy_node(id);
                         return Err(format!(
                             "Failed to attach lottie node {} to parent {}",
@@ -360,7 +379,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                             n.z_index = z as i32;
                         }
                     }
-                    if !d.scene.try_add_child(parent.id, id) {
+                    if !d.add_child(parent.id, id) {
                         d.scene.destroy_node(id);
                         return Err(format!(
                             "Failed to attach lottie node {} to parent {}",
@@ -420,7 +439,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                             n.z_index = z as i32;
                         }
                     }
-                    if !d.scene.try_add_child(scene.root_id, id) {
+                    if !d.add_child(scene.root_id, id) {
                         d.scene.destroy_node(id);
                         return Err(format!(
                             "Failed to attach lottie node {} to scene root {}",
@@ -450,7 +469,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach svg node {} to scene root {}",
@@ -486,7 +505,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach svg node {} to scene root {}",
@@ -513,7 +532,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach svg node {} to parent {}", id, parent.id).into(),
@@ -548,7 +567,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach svg node {} to parent {}", id, parent.id).into(),
@@ -575,7 +594,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach video node {} to parent {}", id, parent.id).into(),
@@ -623,7 +642,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach video node {} to parent {}", id, parent.id).into(),
@@ -648,7 +667,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach video node {} to scene root {}",
@@ -697,7 +716,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach video node {} to scene root {}",
@@ -785,7 +804,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach text node {} to parent {}", id, parent.id).into(),
@@ -828,7 +847,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach text node {} to scene root {}",
@@ -867,7 +886,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach caption node {} to parent {}", id, parent.id).into(),
@@ -902,7 +921,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach caption node {} to scene root {}",
@@ -946,7 +965,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach smart caption node {} to parent {}", id, parent.id).into(),
@@ -988,7 +1007,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach smart caption node {} to scene root {}",
@@ -1092,7 +1111,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach composition node {} to scene root {}",
@@ -1136,7 +1155,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = parse_filter_config(&props);
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach composition node {} to scene root {}",
@@ -1169,7 +1188,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach effect node {} to parent {}", id, parent.id).into(),
@@ -1205,7 +1224,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach effect node {} to parent {}", id, parent.id).into(),
@@ -1233,7 +1252,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach effect node {} to scene root {}",
@@ -1270,7 +1289,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach effect node {} to scene root {}",
@@ -1309,7 +1328,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach shape node {} to parent {}", id, parent.id).into(),
@@ -1344,7 +1363,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach shape node {} to scene root {}",
@@ -1383,7 +1402,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach shape node {} to parent {}", id, parent.id).into(),
@@ -1419,7 +1438,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach shape node {} to scene root {}",
@@ -1455,7 +1474,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(parent.id, id) {
+            if !d.add_child(parent.id, id) {
                 d.scene.destroy_node(id);
                 return Err(
                     format!("Failed to attach shape node {} to parent {}", id, parent.id).into(),
@@ -1488,7 +1507,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     n.z_index = z as i32;
                 }
             }
-            if !d.scene.try_add_child(scene.root_id, id) {
+            if !d.add_child(scene.root_id, id) {
                 d.scene.destroy_node(id);
                 return Err(format!(
                     "Failed to attach shape node {} to scene root {}",
@@ -1516,7 +1535,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 parent.ensure_alive(&d)?;
                 let node = crate::node::WgpuNode::new(vertex_src.to_string(), fragment_src.to_string());
                 let id = d.scene.add_node(Box::new(node));
-                if !d.scene.try_add_child(parent.id, id) {
+                if !d.add_child(parent.id, id) {
                     d.scene.destroy_node(id);
                     return Err(
                         format!("Failed to attach wgpu node {} to parent {}", id, parent.id)
@@ -1536,7 +1555,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                 parent.ensure_alive(&d)?;
                 let node = crate::node::WgpuNode::new_default();
                 let id = d.scene.add_node(Box::new(node));
-                if !d.scene.try_add_child(parent.id, id) {
+                if !d.add_child(parent.id, id) {
                     d.scene.destroy_node(id);
                     return Err(
                         format!("Failed to attach wgpu node {} to parent {}", id, parent.id).into(),
@@ -1858,7 +1877,8 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
         }
     }
     if let Some(p) = props.get("caption_position").and_then(|v| v.clone().into_string().ok()) {
-        node.style.position = CaptionPosition::from_str(&p);
+        let position = CaptionPosition::from_str(&p);
+        node.set_position(position);
     }
     if let Some(a) = props.get("align").and_then(|v| v.clone().into_string().ok()) {
         node.style.text_align = match a.as_str() {
@@ -2011,6 +2031,9 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     if let Some(v) = props.get("uppercase").and_then(|v| v.as_bool().ok()) {
         node.style.uppercase = v;
     }
+    // Rebuild the Taffy style now that all caption props (including margins)
+    // have been applied so the layout rect reflects the chosen position.
+    node.rebuild_layout_style();
     node.after_style_changed();
 }
 
@@ -2125,7 +2148,7 @@ fn attach_smart_caption_node(
             n.z_index = z as i32;
         }
     }
-    if !d.scene.try_add_child(parent_id, id) {
+    if !d.add_child(parent_id, id) {
         d.scene.destroy_node(id);
         return Err(format!(
             "Failed to attach smart caption node {} to {}",
@@ -2179,7 +2202,7 @@ fn build_smart_caption_trajectory(
     caption_node: &CaptionNode,
     props: &rhai::Map,
 ) -> Result<(crate::semantic::CaptionTrajectory, Vec<uuid::Uuid>), Box<rhai::EvalAltResult>> {
-    use crate::semantic::{solve_caption_trajectory, SemanticManifest, SolverConfig};
+    use crate::semantic::{solve_caption_trajectory, SemanticManifest, SolverConfig, SolverParams};
 
     let mut entity_refs = Vec::new();
     if let Some(arr) = props.get("entity_refs").and_then(|v| v.clone().into_array().ok()) {
@@ -2250,9 +2273,7 @@ fn build_smart_caption_trajectory(
         .and_then(|v| v.as_float().ok())
         .unwrap_or(10.0);
 
-    let trajectory = solve_caption_trajectory(
-        &d.entities,
-        &manifest,
+    let params = SolverParams {
         canvas_w,
         canvas_h,
         caption_w,
@@ -2262,7 +2283,8 @@ fn build_smart_caption_trajectory(
         safe_left,
         safe_right,
         sample_rate,
-    );
+    };
+    let trajectory = solve_caption_trajectory(&d.entities, &manifest, &params);
     Ok((trajectory, manifest.entity_refs))
 }
 
@@ -2334,7 +2356,7 @@ fn attach_active_speaker_camera_node(
             n.z_index = z as i32;
         }
     }
-    if !d.scene.try_add_child(parent_id, id) {
+    if !d.add_child(parent_id, id) {
         d.scene.destroy_node(id);
         return Err(format!(
             "Failed to attach active speaker camera node {} to {}",

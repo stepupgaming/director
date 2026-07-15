@@ -18,10 +18,9 @@ use crate::element::Element;
 use crate::entity::EntityRegistry;
 use serde::{Deserialize, Serialize};
 use crate::node::caption::{CaptionNode, CaptionPosition};
-use crate::semantic::intersection_area;
 use crate::semantic::{
-    solve_caption_trajectory, solve_caption_trajectory_continuous, CaptionTrajectory,
-    SemanticManifest,
+    solve_caption_trajectory, solve_caption_trajectory_continuous, Anchor, CaptionTrajectory,
+    SemanticManifest, SolverParams,
 };
 use skia_safe::{Canvas, Rect};
 use std::any::Any;
@@ -68,6 +67,22 @@ impl Default for SmartCaptionConfig {
             safe_right: 60.0,
             sample_rate: 10.0,
             continuous: false,
+        }
+    }
+}
+
+impl From<&SmartCaptionConfig> for SolverParams {
+    fn from(config: &SmartCaptionConfig) -> Self {
+        Self {
+            canvas_w: config.canvas_w,
+            canvas_h: config.canvas_h,
+            caption_w: config.caption_w,
+            caption_h: config.caption_h,
+            safe_top: config.safe_top,
+            safe_bottom: config.safe_bottom,
+            safe_left: config.safe_left,
+            safe_right: config.safe_right,
+            sample_rate: config.sample_rate,
         }
     }
 }
@@ -262,47 +277,44 @@ impl SmartCaptionNode {
         config: &SmartCaptionConfig,
         continuous: bool,
     ) -> CaptionTrajectory {
+        let params = SolverParams::from(config);
         if continuous {
-            solve_caption_trajectory_continuous(
-                registry,
-                manifest,
-                config.canvas_w,
-                config.canvas_h,
-                config.caption_w,
-                config.caption_h,
-                config.safe_top,
-                config.safe_bottom,
-                config.safe_left,
-                config.safe_right,
-                config.sample_rate,
-            )
+            solve_caption_trajectory_continuous(registry, manifest, &params)
         } else {
-            solve_caption_trajectory(
-                registry,
-                manifest,
-                config.canvas_w,
-                config.canvas_h,
-                config.caption_w,
-                config.caption_h,
-                config.safe_top,
-                config.safe_bottom,
-                config.safe_left,
-                config.safe_right,
-                config.sample_rate,
-            )
+            solve_caption_trajectory(registry, manifest, &params)
         }
     }
 
     /// Update the inner caption's position based on the trajectory sample at `time`.
     fn apply_trajectory(&mut self, time: f64) {
-        if let Some((x, y)) = self.trajectory.sample_at(time) {
+        if let Some((x, y, anchor)) = self.trajectory.sample_at_with_anchor(time) {
             if self.continuous {
                 self.inner.set_position(CaptionPosition::FreeXY { x, y });
+                return;
+            }
+
+            // Prefer the anchor chosen by the discrete solver. If the trajectory
+            // was built before anchors were stored, fall back to the heuristic.
+            if let Some(anchor) = anchor {
+                self.inner.set_position(Self::caption_position_for_anchor(anchor));
             } else {
-                // Map the solved anchor position to the nearest discrete anchor.
                 let position = Self::anchor_from_position(x, y, self.canvas_w, self.canvas_h);
                 self.inner.set_position(position);
             }
+        }
+    }
+
+    /// Map a discrete solver anchor to the corresponding caption position.
+    fn caption_position_for_anchor(anchor: Anchor) -> CaptionPosition {
+        match anchor {
+            Anchor::TopLeft => CaptionPosition::TopLeft,
+            Anchor::TopCenter => CaptionPosition::Top,
+            Anchor::TopRight => CaptionPosition::TopRight,
+            Anchor::BottomLeft => CaptionPosition::BottomLeft,
+            Anchor::BottomCenter => CaptionPosition::Bottom,
+            Anchor::BottomRight => CaptionPosition::BottomRight,
+            Anchor::Left => CaptionPosition::Left,
+            Anchor::Right => CaptionPosition::Right,
         }
     }
 
@@ -430,7 +442,7 @@ impl Element for SmartCaptionNode {
 mod tests {
     use super::*;
     use crate::node::caption::{CaptionLine, CaptionNode, CaptionPosition, CaptionWord};
-    use crate::semantic::{CaptionTrajectory, TrajectorySample};
+    use crate::semantic::{intersection_area, CaptionTrajectory, TrajectorySample};
     use skia_safe::textlayout::FontCollection;
     use std::sync::{Arc, Mutex};
 
@@ -457,8 +469,8 @@ mod tests {
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
         let inner = CaptionNode::new(lines, empty_font_collection());
         let trajectory = CaptionTrajectory::new(vec![
-            TrajectorySample { time: 0.0, x: 540.0, y: 100.0 },
-            TrajectorySample { time: 2.0, x: 540.0, y: 100.0 },
+            TrajectorySample { time: 0.0, x: 540.0, y: 100.0, anchor: Some(Anchor::TopCenter) },
+            TrajectorySample { time: 2.0, x: 540.0, y: 100.0, anchor: Some(Anchor::TopCenter) },
         ]);
         let mut node = SmartCaptionNode::new(inner, trajectory);
         node.update(0.5);
@@ -470,8 +482,8 @@ mod tests {
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
         let inner = CaptionNode::new(lines, empty_font_collection());
         let trajectory = CaptionTrajectory::new(vec![
-            TrajectorySample { time: 0.0, x: 540.0, y: 1700.0 },
-            TrajectorySample { time: 2.0, x: 540.0, y: 1700.0 },
+            TrajectorySample { time: 0.0, x: 540.0, y: 1700.0, anchor: Some(Anchor::BottomCenter) },
+            TrajectorySample { time: 2.0, x: 540.0, y: 1700.0, anchor: Some(Anchor::BottomCenter) },
         ]);
         let mut node = SmartCaptionNode::new(inner, trajectory);
         node.update(0.5);
@@ -483,9 +495,9 @@ mod tests {
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
         let inner = CaptionNode::new(lines, empty_font_collection());
         let trajectory = CaptionTrajectory::new(vec![
-            TrajectorySample { time: 0.0, x: 540.0, y: 100.0 },
-            TrajectorySample { time: 1.0, x: 540.0, y: 1700.0 },
-            TrajectorySample { time: 2.0, x: 540.0, y: 1700.0 },
+            TrajectorySample { time: 0.0, x: 540.0, y: 100.0, anchor: Some(Anchor::TopCenter) },
+            TrajectorySample { time: 1.0, x: 540.0, y: 1700.0, anchor: Some(Anchor::BottomCenter) },
+            TrajectorySample { time: 2.0, x: 540.0, y: 1700.0, anchor: Some(Anchor::BottomCenter) },
         ]);
         let mut node = SmartCaptionNode::new(inner, trajectory);
         node.update(0.2);

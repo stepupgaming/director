@@ -144,6 +144,11 @@ impl LottieNode {
             cache: Mutex::new(None),
         })
     }
+
+    /// Returns a reference to the underlying Lottie model.
+    pub fn model(&self) -> &LottieJson {
+        &self.asset.model
+    }
 }
 
 impl Element for LottieNode {

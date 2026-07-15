@@ -15,7 +15,7 @@
 //! - `caption_face_overlap_threshold`: minimum overlap area (px²) to flag a caption-over-face issue.
 
 use crate::render_manifest::{
-    RepairResult, VerificationConfig, VerificationIssue,
+    IssueSeverity, RepairResult, VerificationConfig, VerificationIssue,
     VerificationIssueType, build_render_manifest,
 };
 use crate::scripting::types::{MovieHandle, RenderManifestHandle};
@@ -86,6 +86,35 @@ pub fn register(engine: &mut Engine) {
             repair_with_config(manifest, parse_verification_config(&config_map))
         },
     );
+
+    engine.register_fn(
+        "repair",
+        |manifest: &mut RenderManifestHandle, issues: Array|
+         -> Result<Map, Box<rhai::EvalAltResult>> {
+            repair_with_issues(manifest, issues, None)
+        },
+    );
+
+    engine.register_fn(
+        "repair",
+        |manifest: &mut RenderManifestHandle, issues: Array, config_map: Map|
+         -> Result<Map, Box<rhai::EvalAltResult>> {
+            repair_with_issues(manifest, issues, Some(parse_verification_config(&config_map)))
+        },
+    );
+
+    engine.register_fn(
+        "to_json",
+        |manifest: &mut RenderManifestHandle|
+         -> Result<String, Box<rhai::EvalAltResult>> {
+            let m = manifest
+                .manifest
+                .lock()
+                .map_err(|_| "manifest lock poisoned")?;
+            serde_json::to_string_pretty(&*m)
+                .map_err(|e| format!("failed to serialize manifest: {}", e).into())
+        },
+    );
 }
 
 fn verify_with_config(
@@ -115,6 +144,54 @@ fn repair_with_config(
     let result = m.repair(&mut d, &issues);
     drop(m);
     Ok(repair_result_to_map(result))
+}
+
+fn repair_with_issues(
+    manifest: &mut RenderManifestHandle,
+    issues: Array,
+    config: Option<VerificationConfig>,
+) -> Result<Map, Box<rhai::EvalAltResult>> {
+    let parsed_issues: Vec<VerificationIssue> = issues
+        .into_iter()
+        .map(|issue| {
+            let map = issue
+                .try_cast::<Map>()
+                .ok_or_else(|| "expected issue map".to_string())?;
+            verification_issue_from_map(&map)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut d = manifest.lock_director()?;
+    let m = manifest
+        .manifest
+        .lock()
+        .map_err(|_| "manifest lock poisoned")?;
+
+    // When a config is supplied, re-verify the manifest under that config and
+    // only repair issues that are still detected. This lets callers pass a
+    // subset of issues while still honoring custom thresholds. Note that
+    // re-verification mutates the Director's update/layout state, consistent
+    // with the behavior of `verify()`.
+    let filtered: Vec<VerificationIssue> = if let Some(config) = config {
+        let verified = m.verify(&mut d, &config);
+        parsed_issues
+            .into_iter()
+            .filter(|issue| verified.iter().any(|v| issues_match(v, issue)))
+            .collect()
+    } else {
+        parsed_issues
+    };
+
+    let result = m.repair(&mut d, &filtered);
+    drop(m);
+    Ok(repair_result_to_map(result))
+}
+
+fn issues_match(a: &VerificationIssue, b: &VerificationIssue) -> bool {
+    a.issue_type == b.issue_type
+        && a.start_time == b.start_time
+        && a.end_time == b.end_time
+        && a.node_ids == b.node_ids
 }
 
 fn issue_type_str(ty: VerificationIssueType) -> &'static str {
@@ -152,6 +229,109 @@ fn verification_issue_to_map(issue: VerificationIssue) -> rhai::Dynamic {
     region.insert("h".into(), (issue.region.h as f64).into());
     map.insert("region".into(), region.into());
     rhai::Dynamic::from_map(map)
+}
+
+fn issue_type_from_str(s: &str) -> Result<VerificationIssueType, Box<rhai::EvalAltResult>> {
+    match s {
+        "caption_over_face" => Ok(VerificationIssueType::CaptionOverFace),
+        "safe_zone_violation" => Ok(VerificationIssueType::SafeZoneViolation),
+        "static_stretch" => Ok(VerificationIssueType::StaticStretch),
+        "subject_out_of_frame" => Ok(VerificationIssueType::SubjectOutOfFrame),
+        _ => Err(format!("unknown issue type: {}", s).into()),
+    }
+}
+
+fn severity_from_str(s: &str) -> Result<IssueSeverity, Box<rhai::EvalAltResult>> {
+    match s {
+        "error" => Ok(IssueSeverity::Error),
+        "warning" => Ok(IssueSeverity::Warning),
+        "info" => Ok(IssueSeverity::Info),
+        _ => Err(format!("unknown issue severity: {}", s).into()),
+    }
+}
+
+fn verification_issue_from_map(map: &Map) -> Result<VerificationIssue, Box<rhai::EvalAltResult>> {
+    let issue_type_str = map
+        .get("issue_type")
+        .and_then(|v| v.clone().into_string().ok())
+        .ok_or_else(|| "issue_type is required".to_string())?;
+    let issue_type = issue_type_from_str(&issue_type_str)?;
+    let severity_str = map
+        .get("severity")
+        .and_then(|v| v.clone().into_string().ok())
+        .ok_or_else(|| "severity is required".to_string())?;
+    let severity = severity_from_str(&severity_str)?;
+    let start_time = map
+        .get("start_time")
+        .and_then(|v| v.as_float().ok())
+        .ok_or_else(|| "start_time is required".to_string())?;
+    let end_time = map
+        .get("end_time")
+        .and_then(|v| v.as_float().ok())
+        .ok_or_else(|| "end_time is required".to_string())?;
+    let node_ids = map
+        .get("node_ids")
+        .and_then(|v| v.clone().try_cast::<Array>())
+        .map(|arr| {
+            arr.iter()
+                .map(|v| {
+                    let id = v.as_int()?;
+                    if id < 0 {
+                        return Err(Box::<rhai::EvalAltResult>::from(format!(
+                            "node_id must be non-negative, got {}",
+                            id
+                        )));
+                    }
+                    Ok(id as usize)
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .ok_or_else(|| "node_ids is required".to_string())??;
+    let description = map
+        .get("description")
+        .and_then(|v| v.clone().into_string().ok())
+        .ok_or_else(|| "description is required".to_string())?;
+    let suggested_fix = map
+        .get("suggested_fix")
+        .and_then(|v| v.clone().into_string().ok());
+    let region = map
+        .get("region")
+        .and_then(|v| v.clone().try_cast::<Map>())
+        .map(|region_map| bounds_rect_from_map(&region_map))
+        .ok_or_else(|| "region is required".to_string())??;
+
+    Ok(VerificationIssue {
+        issue_type,
+        severity,
+        start_time,
+        end_time,
+        node_ids,
+        description,
+        suggested_fix,
+        region,
+    })
+}
+
+fn bounds_rect_from_map(
+    region_map: &Map,
+) -> Result<crate::types::BoundsRect, Box<rhai::EvalAltResult>> {
+    let x = region_map
+        .get("x")
+        .and_then(|v| v.as_float().ok())
+        .ok_or_else(|| "region.x is required".to_string())? as f32;
+    let y = region_map
+        .get("y")
+        .and_then(|v| v.as_float().ok())
+        .ok_or_else(|| "region.y is required".to_string())? as f32;
+    let w = region_map
+        .get("w")
+        .and_then(|v| v.as_float().ok())
+        .ok_or_else(|| "region.w is required".to_string())? as f32;
+    let h = region_map
+        .get("h")
+        .and_then(|v| v.as_float().ok())
+        .ok_or_else(|| "region.h is required".to_string())? as f32;
+    Ok(crate::types::BoundsRect { x, y, w, h })
 }
 
 fn repair_result_to_map(result: RepairResult) -> Map {

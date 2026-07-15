@@ -699,7 +699,7 @@ pub fn register(engine: &mut Engine) {
 
     // ========== ADVANCED EASING / LOOPING PRIMITIVES ==========
 
-    /// `animate_bezier(prop, start, end, dur, x1, y1, x2, y2)` — cubic bezier easing.
+    // `animate_bezier(prop, start, end, dur, x1, y1, x2, y2)` — cubic bezier easing.
     engine.register_fn(
         "animate_bezier",
         |node: &mut NodeHandle,
@@ -722,7 +722,7 @@ pub fn register(engine: &mut Engine) {
         },
     );
 
-    /// `animate_hold(prop, start, end, dur)` — hold at start then jump to end.
+    // `animate_hold(prop, start, end, dur)` — hold at start then jump to end.
     engine.register_fn(
         "animate_hold",
         |node: &mut NodeHandle, prop: &str, start: f64, end: f64, dur: f64| {
@@ -737,7 +737,7 @@ pub fn register(engine: &mut Engine) {
         },
     );
 
-    /// `animate_expression(prop, expr, duration)` — bake a math expression into keyframes.
+    // `animate_expression(prop, expr, duration)` — bake a math expression into keyframes.
     engine.register_fn(
         "animate_expression",
         |node: &mut NodeHandle, prop: &str, expr: &str, duration: f64| {
@@ -752,7 +752,7 @@ pub fn register(engine: &mut Engine) {
         },
     );
 
-    /// `reverse_animation(prop)` — reverse existing keyframes on a channel.
+    // `reverse_animation(prop)` — reverse existing keyframes on a channel.
     engine.register_fn("reverse_animation", |node: &mut NodeHandle, prop: &str| {
         let mut d = match node.lock_director() {
             Ok(d) => d,
@@ -763,7 +763,7 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
-    /// `yoyo_animation(prop)` — append a reversed copy of the channel (ping-pong).
+    // `yoyo_animation(prop)` — append a reversed copy of the channel (ping-pong).
     engine.register_fn("yoyo_animation", |node: &mut NodeHandle, prop: &str| {
         let mut d = match node.lock_director() {
             Ok(d) => d,
@@ -774,7 +774,7 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
-    /// `loop_animation(prop, count)` — repeat the channel `count` times.
+    // `loop_animation(prop, count)` — repeat the channel `count` times.
     engine.register_fn("loop_animation", |node: &mut NodeHandle, prop: &str, count: i64| {
         let mut d = match node.lock_director() {
             Ok(d) => d,

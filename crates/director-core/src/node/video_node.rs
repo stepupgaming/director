@@ -36,13 +36,13 @@ pub struct VideoNode {
     current_frame: Mutex<Option<(f64, Image)>>,
 
     loader: Option<VideoLoader>,
-    render_mode: RenderMode,
+    pub(crate) render_mode: RenderMode,
 
     // Keep temp file alive
     #[allow(dead_code)]
     temp_file: Option<Arc<NamedTempFile>>,
     // Also keep path for cloning if it was a file path
-    path: PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 impl Clone for VideoNode {
@@ -106,6 +106,11 @@ impl VideoNode {
     pub fn with_source_path(mut self, path: impl Into<String>) -> Self {
         self.source_path = Some(path.into());
         self
+    }
+
+    /// Returns the resolved path for this video node.
+    pub fn path(&self) -> &std::path::PathBuf {
+        &self.path
     }
 
     /// Returns the currently buffered video frame, if any.

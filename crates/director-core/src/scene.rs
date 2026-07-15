@@ -91,14 +91,6 @@ pub struct SceneNode {
     /// Used by the incremental render tests to verify that unchanged nodes
     /// are not re-evaluated.
     pub update_generation: u64,
-    /// Hash of the node's structural inputs (parent, children, mask,
-    /// entity refs, audio bindings, z-index, static flag, blend mode, filter)
-    /// as recorded during the last `compile()` pass.
-    /// `None` before the first compile or after explicit reset.
-    ///
-    /// Only `compile()` and `invalidate()` should mutate this field through
-    /// `set_input_hash()`. External code can read it via `last_input_hash()`.
-    last_input_hash: Option<u64>,
 }
 
 /// SAFETY: SceneNode is Send-safe because all current Element implementations
@@ -130,7 +122,6 @@ impl SceneNode {
             is_static: false,
             entity_refs: Vec::new(),
             update_generation: 0,
-            last_input_hash: None,
         }
     }
 
@@ -172,16 +163,6 @@ impl SceneNode {
         hasher.finish()
     }
 
-    /// Read the last input hash recorded by `compile()`.
-    pub fn last_input_hash(&self) -> Option<u64> {
-        self.last_input_hash
-    }
-
-    /// Set the stored input hash. Intended for use only by the compile and
-    /// invalidation passes.
-    pub(crate) fn set_input_hash(&mut self, hash: Option<u64>) {
-        self.last_input_hash = hash;
-    }
 }
 
 /// The Scene Graph data structure.

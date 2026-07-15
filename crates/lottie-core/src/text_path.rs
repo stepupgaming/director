@@ -9,7 +9,7 @@
 //! - Reverse path direction
 //! - Path-based justification (left/center/right/force)
 
-use glam::{Vec2, Vec3};
+use glam::Vec2;
 use kurbo::{BezPath, PathEl, Point};
 use std::f32::consts::PI;
 
@@ -541,15 +541,13 @@ pub mod utils {
     /// Reverse a path for text-on-path rendering
     pub fn reverse_path(path: &BezPath) -> BezPath {
         let mut reversed = BezPath::new();
-        let elements: Vec<_> = path.elements().iter().cloned().collect();
+        let elements: Vec<_> = path.elements().to_vec();
 
         // Build reversed path
         // Note: This is a simplified reversal - for complex paths with curves,
         // control points would need to be recalculated
-        if let Some(first) = elements.first() {
-            if let PathEl::MoveTo(p) = first {
-                reversed.move_to(*p);
-            }
+        if let Some(PathEl::MoveTo(p)) = elements.first() {
+            reversed.move_to(*p);
         }
 
         // Process in reverse order
@@ -593,7 +591,7 @@ pub mod utils {
     pub fn handle_overflow(
         positions: &mut [Vec2],
         rotations: &mut [f32],
-        path_length: f32,
+        _path_length: f32,
         overflow_mode: OverflowMode,
     ) {
         match overflow_mode {
@@ -660,7 +658,7 @@ mod tests {
         let measure = PathMeasure::new(&path);
         assert!(measure.length() > 0.0);
 
-        let (pos, tangent) = measure.get_pos_tan(0.0);
+        let (pos, _tangent) = measure.get_pos_tan(0.0);
         assert!(pos.x.abs() < 0.01);
         assert!(pos.y.abs() < 0.01);
     }
@@ -772,7 +770,7 @@ mod tests {
                                              // Last glyph center should be at ~90px
         let last_pos = layout.positions.last().unwrap().x;
         assert!(
-            last_pos >= 85.0 && last_pos <= 95.0,
+            (85.0..=95.0).contains(&last_pos),
             "Last glyph at {}px, expected ~90px",
             last_pos
         );

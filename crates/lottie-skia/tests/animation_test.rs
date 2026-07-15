@@ -137,7 +137,7 @@ fn test_heart_eyes_animation_progression() {
 
     for (frame, label) in &test_frames {
         let rendered = render_lottie_frame(&mut player, *frame, 500, 500)
-            .expect(&format!("Failed to render frame {}", frame));
+            .unwrap_or_else(|_| panic!("Failed to render frame {}", frame));
         renders.push((*frame, *label, rendered));
 
         // Save for debugging

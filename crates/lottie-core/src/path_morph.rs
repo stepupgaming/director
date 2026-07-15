@@ -471,8 +471,6 @@ fn estimate_cubic_bezier_length(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> f32 {
     for i in 0..4 {
         let t0 = T[i];
         let t1 = T[i + 1];
-        let dt = t1 - t0;
-
         // Sample points at t0 and t1
         let pt0 = sample_cubic_bezier(p0, p1, p2, p3, t0);
         let pt1 = sample_cubic_bezier(p0, p1, p2, p3, t1);
@@ -529,7 +527,7 @@ fn interpolate_cubic_bezier_with_tangents(
     (pos, tangent_out, tangent_in)
 }
 
-/// Thread-local cache for performance
+// Thread-local cache for performance
 thread_local! {
     static MORPH_CACHE: std::cell::RefCell<PathMorphCache> = std::cell::RefCell::new(PathMorphCache::new());
 }

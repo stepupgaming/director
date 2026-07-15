@@ -828,7 +828,7 @@ mod matte_modes {
 
     #[test]
     fn test_all_matte_modes_present() {
-        let modes = vec![
+        let modes = [
             MatteMode::Alpha,
             MatteMode::AlphaInverted,
             MatteMode::Luma,
@@ -880,7 +880,7 @@ mod masks {
 
     #[test]
     fn test_all_mask_modes_present() {
-        let modes = vec![
+        let modes = [
             MaskMode::None,
             MaskMode::Add,
             MaskMode::Subtract,

@@ -234,7 +234,7 @@ fn draw_stroke_effects(canvas: &Canvas, node: &RenderNode, alpha: f32) {
 /// Returns (start, end) normalized to 0.0-1.0 range with proper wrap handling
 fn apply_trim_offset(start: f32, end: f32, offset: f32) -> (f32, f32) {
     // Apply offset and normalize to 0.0-1.0 range
-    let mut effective_start = (start + offset).rem_euclid(1.0);
+    let effective_start = (start + offset).rem_euclid(1.0);
     let mut effective_end = (end + offset).rem_euclid(1.0);
 
     // Handle case where trim wraps around the 0/1 boundary
@@ -296,7 +296,7 @@ fn draw_content(canvas: &Canvas, content: &NodeContent, alpha: f32, ctx: &dyn Lo
                 let mut path_effect = None;
                 if let Some(dash) = &stroke.dash {
                     let mut array: Vec<f32> = dash.array.iter().map(|&v| sanitize(v)).collect();
-                    if array.len() % 2 != 0 {
+                    if !array.len().is_multiple_of(2) {
                         let clone = array.clone();
                         array.extend(clone);
                     }

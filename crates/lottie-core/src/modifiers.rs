@@ -88,7 +88,7 @@ impl GeometryModifier for ZigZagModifier {
             // Flatten/Walk
             let mut walker = PathWalker::new(&sub);
             for i in 0..=(self.ridges as usize) {
-                let t_dist = (i as f64 * step as f64).min(len);
+                let t_dist = (i as f64 * step).min(len);
                 if let Some((pos, tangent)) = walker.sample(t_dist) {
                     // Normal is (-tangent.y, tangent.x)
                     let normal = Vec2::new(-tangent.y, tangent.x);
@@ -401,7 +401,7 @@ impl GeometryModifier for WiggleModifier {
             let t_f = input - t_i;
 
             // Hash function
-            let h = |k: f32| -> f32 { ((k * 12.9898 + self.seed).sin() * 43758.5453).fract() };
+            let h = |k: f32| -> f32 { ((k * 12.9898 + self.seed).sin() * 43_758.547).fract() };
 
             let n1 = h(t_i);
             let n2 = h(t_i + 1.0);
@@ -413,10 +413,10 @@ impl GeometryModifier for WiggleModifier {
             // We need 2D displacement.
             // Use different seeds for X and Y.
             let hx = |k: f32| -> f32 {
-                ((k * 12.9898 + self.seed + (idx as f32) * 1.1).sin() * 43758.5453).fract()
+                ((k * 12.9898 + self.seed + (idx as f32) * 1.1).sin() * 43_758.547).fract()
             };
             let hy = |k: f32| -> f32 {
-                ((k * 78.233 + self.seed + (idx as f32) * 1.7).sin() * 43758.5453).fract()
+                ((k * 78.233 + self.seed + (idx as f32) * 1.7).sin() * 43_758.547).fract()
             };
 
             let rx = hx(t_i) + (hx(t_i + 1.0) - hx(t_i)) * t_f;
@@ -517,7 +517,7 @@ impl GeometryModifier for OffsetPathModifier {
                     // Don't add to current_subpath yet, wait for first segment
                 }
                 PathEl::LineTo(p) => {
-                    let tangent = (*p - last_point);
+                    let tangent = *p - last_point;
                     if vec2_length_squared(tangent) > 1e-10 {
                         let norm_tangent = vec2_normalize(tangent);
                         let normal = Vec2::new(-norm_tangent.y, norm_tangent.x);
@@ -546,9 +546,7 @@ impl GeometryModifier for OffsetPathModifier {
                             let tangent = vec2_normalize(deriv_vec);
                             let normal = Vec2::new(-tangent.y, tangent.x);
 
-                            if current_subpath.is_empty() && i == 0 {
-                                current_subpath.push((pos, normal));
-                            } else if i > 0 {
+                            if (current_subpath.is_empty() && i == 0) || i > 0 {
                                 current_subpath.push((pos, normal));
                             }
                         }
@@ -570,9 +568,7 @@ impl GeometryModifier for OffsetPathModifier {
                             let tangent = vec2_normalize(deriv_vec);
                             let normal = Vec2::new(-tangent.y, tangent.x);
 
-                            if current_subpath.is_empty() && i == 0 {
-                                current_subpath.push((pos, normal));
-                            } else if i > 0 {
+                            if (current_subpath.is_empty() && i == 0) || i > 0 {
                                 current_subpath.push((pos, normal));
                             }
                         }
@@ -582,8 +578,8 @@ impl GeometryModifier for OffsetPathModifier {
                 PathEl::ClosePath => {
                     if !current_subpath.is_empty() {
                         // Connect back to start
-                        if let Some((first_pos, _)) = current_subpath.first() {
-                            let tangent = (start_point - last_point);
+                        if !current_subpath.is_empty() {
+                            let tangent = start_point - last_point;
                             if vec2_length_squared(tangent) > 1e-10 {
                                 let norm_tangent = vec2_normalize(tangent);
                                 let normal = Vec2::new(-norm_tangent.y, norm_tangent.x);
@@ -714,10 +710,9 @@ fn build_offset_subpath(
 
     // For closed paths, handle final join back to start
     if closed && points.len() > 2 {
-        let (last_pos, last_normal) = points[points.len() - 1];
+        let (_last_pos, _last_normal) = points[points.len() - 1];
         let (first_pos, first_normal) = points[0];
 
-        let last_offset = last_pos + last_normal * offset_dist;
         let first_offset_calc = first_pos + first_normal * offset_dist;
 
         // Just close with line for now

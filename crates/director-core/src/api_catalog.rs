@@ -54,6 +54,7 @@ pub struct EasingCatalogEntry {
 pub struct RhaiFunctionEntry {
     pub name: &'static str,
     pub description: &'static str,
+    pub params: &'static [(&'static str, &'static str)],
 }
 
 pub const NODE_CATALOG: &[NodeCatalogEntry] = &[
@@ -671,26 +672,57 @@ pub const EASING_CATALOG: &[EasingCatalogEntry] = &[
 
 /// Rhai lifecycle / authoring helpers not represented as scene-graph nodes.
 pub const RHAI_FUNCTION_CATALOG: &[RhaiFunctionEntry] = &[
-    RhaiFunctionEntry {
-        name: "add_loop",
-        description: "Loop a scene N times on the movie timeline (JSON: Scene.loop_count)",
-    },
-    RhaiFunctionEntry {
-        name: "add_freeze",
-        description: "Hold a scene frame for an extra duration (JSON: Scene.post_hold)",
-    },
-    RhaiFunctionEntry {
-        name: "save_project",
-        description: "Serialize the live Director graph to versioned JSON",
-    },
-    RhaiFunctionEntry {
-        name: "load_project",
-        description: "Load a versioned project JSON into a MovieHandle",
-    },
-    RhaiFunctionEntry {
-        name: "apply_effect",
-        description: "Attach a visual effect to a node by catalog name",
-    },
+    rhai_fn("add_loop", "Loop a scene N times on the movie timeline (JSON: Scene.loop_count)", &[]),
+    rhai_fn("add_freeze", "Hold a scene frame for an extra duration (JSON: Scene.post_hold)", &[]),
+    rhai_fn("save_project", "Serialize the live Director graph to versioned JSON", &[]),
+    rhai_fn("load_project", "Load a versioned project JSON into a MovieHandle", &[]),
+    rhai_fn(
+        "apply_effect",
+        "Attach a visual effect to a node by catalog name (method on NodeHandle; optional second argument is a value or parameter map)",
+        &[("name", "String"), ("args", "ValueOrMap")],
+    ),
+    rhai_fn("compile", "Build the dependency graph before export", &[]),
+    rhai_fn(
+        "invalidate_entity",
+        "Mark nodes depending on an entity as dirty and return affected node IDs",
+        &[("entity_id", "String")],
+    ),
+    rhai_fn(
+        "invalidate_audio_track",
+        "Mark nodes depending on an audio track as dirty and return affected node IDs",
+        &[("track_id", "Integer")],
+    ),
+    rhai_fn(
+        "invalidate_node",
+        "Mark nodes depending on a node as dirty and return affected node IDs",
+        &[("node_id", "Integer")],
+    ),
+    rhai_fn(
+        "compiler_inputs_for_node",
+        "List the dependency inputs declared by a node",
+        &[("node_id", "Integer")],
+    ),
+    rhai_fn(
+        "compiler_dependents_of_entity",
+        "List node IDs that depend on the given entity",
+        &[("entity_id", "String")],
+    ),
+    rhai_fn(
+        "compiler_dependents_of_audio_track",
+        "List node IDs that depend on the given audio track",
+        &[("track_id", "Integer")],
+    ),
+    rhai_fn(
+        "compiler_dependents_of_node",
+        "List node IDs that depend on the given node",
+        &[("node_id", "Integer")],
+    ),
+    rhai_fn("compiler_graph_json", "Dump the full dependency graph as a JSON string for debugging", &[]),
+    rhai_fn(
+        "compiler_affected_nodes",
+        "Return the transitive set of node IDs affected by the given dependency inputs without marking anything dirty",
+        &[("inputs", "Array")],
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -796,4 +828,12 @@ const fn t(
 
 const fn ease(name: &'static str, description: &'static str) -> EasingCatalogEntry {
     EasingCatalogEntry { name, description }
+}
+
+const fn rhai_fn(
+    name: &'static str,
+    description: &'static str,
+    params: &'static [(&'static str, &'static str)],
+) -> RhaiFunctionEntry {
+    RhaiFunctionEntry { name, description, params }
 }

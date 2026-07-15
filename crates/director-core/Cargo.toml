@@ -50,12 +50,17 @@ tracing = "0.1.43"
 [dev-dependencies]
 hound = "3.5"
 tracing-subscriber = "0.3.22"
+criterion = "0.5"
 
 [features]
 default = []
 mock_video = []
 vulkan = ["skia-safe/vulkan"]
 wgpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
+
+[[bench]]
+name = "layout_snapshot_bench"
+harness = false
 
 [package.metadata.docs.rs]
 no-default-features = true

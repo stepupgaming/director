@@ -62,7 +62,7 @@ fn video_export_mode_blocks() {
 
     let start = Instant::now();
     for i in 0..10 {
-        director.update(i as f64 * 0.1);
+        director.update(i as f64 * 0.1, None);
     }
     let duration = start.elapsed();
 
@@ -93,5 +93,5 @@ fn video_bytes_source() {
     });
 
     // Should not panic
-    director.update(0.0);
+    director.update(0.0, None);
 }

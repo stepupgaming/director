@@ -22,6 +22,23 @@ pub struct ExpressionContext {
 #[cfg(not(feature = "expressions"))]
 pub struct ExpressionContext;
 
+impl Default for ExpressionContext {
+    fn default() -> Self {
+        #[cfg(feature = "expressions")]
+        {
+            Self {
+                layer: None,
+                comp: None,
+                effects: Vec::new(),
+            }
+        }
+        #[cfg(not(feature = "expressions"))]
+        {
+            Self
+        }
+    }
+}
+
 impl ExpressionContext {
     /// Create a new expression context with layer data
     #[cfg(feature = "expressions")]
@@ -57,20 +74,9 @@ impl ExpressionContext {
         }
     }
 
-    /// Create a default expression context without layer or composition data
-    pub fn default() -> Self {
-        #[cfg(feature = "expressions")]
-        {
-            Self {
-                layer: None,
-                comp: None,
-                effects: Vec::new(),
-            }
-        }
-        #[cfg(not(feature = "expressions"))]
-        {
-            Self
-        }
+    /// Create a new expression context without layer or composition data
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -796,15 +802,15 @@ impl Animator {
                 let start_val = kf_start
                     .s
                     .as_ref()
-                    .map(|v| converter(v))
+                    .map(converter)
                     .unwrap_or(default.clone());
 
                 // End value logic
                 let end_val = kf_start
                     .e
                     .as_ref()
-                    .map(|v| converter(v))
-                    .or_else(|| kf_end.s.as_ref().map(|v| converter(v)))
+                    .map(converter)
+                    .or_else(|| kf_end.s.as_ref().map(converter))
                     .unwrap_or(start_val.clone());
 
                 let duration = kf_end.t - kf_start.t;

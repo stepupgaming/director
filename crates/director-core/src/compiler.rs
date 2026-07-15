@@ -33,6 +33,10 @@ pub enum DependencyInput {
     AudioTrack(usize),
     /// Another scene node (e.g., parent, child, mask target).
     Node(NodeId),
+    /// The children collection of a node. Invalidating this input marks the
+    /// parent node as potentially affected, so adding/removing a child can
+    /// automatically invalidate the parent without a manual recompile.
+    Children(NodeId),
 }
 
 /// Dependency graph mapping inputs to the nodes that depend on them.

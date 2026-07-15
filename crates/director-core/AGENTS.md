@@ -225,6 +225,10 @@ rather than relying on host system fonts.
   remapping UUIDs.
 - Rhai API: `create_entity`, `add_entity_sample`, `entity_bbox_at`,
   `find_entities`, `attach_entity` / `detach_entity`, `entity_bboxes_at`.
+- Post-load verification: `Director::verify_smart_caption_trajectories` checks
+  that every loaded `SmartCaptionNode` trajectory still avoids the tracked
+  entities in the restored registry and emits `CaptionOverFace` issues when it
+  does not.
 
 ## Smart Caption Node
 
@@ -247,9 +251,29 @@ rather than relying on host system fonts.
   continuous positioning, left/right anchors, or multi-face occlusion in both
   halves of the frame.
 - SmartCaption is catalogued in `api_catalog.rs` as `smart_caption`.
-- Project save/load: `SmartCaptionNode` is currently lossy, just like the regular
-  `CaptionNode`. The kind is not independently round-tripped; reload it from the
-  original script or re-create it programmatically.
+- Project save/load: `SmartCaptionNode` round-trips its caption lines, style,
+  trajectory, semantic manifest, config, and continuous flag.
+
+## Project Save/Load Round-trip
+
+- `src/project.rs` — versioned JSON serialization for `Director`. Round-trips
+  director settings, scene graph topology, transforms, layout, animated channels,
+  tracks, timeline, entity tracks, and node-specific props.
+- Fully round-tripped node kinds: `Box`, `Text`, `SmartCaption`, `Image`,
+  `Video`, `Lottie`, `Effect`, `Composition`, and `SpectrumVisualizer`.
+- `Image`/`Video` preserve source path, object fit, border radius, opacity, and
+  render mode; media is reloaded from disk on load when available.
+- `Lottie` embeds the parsed model JSON and restores speed, loop flag, frame,
+  and opacity.
+- `Effect` serializes every `EffectType` variant to JSON and rebuilds the
+  effect stack, sharing the director's shader cache.
+- `Composition` recursively serializes its internal `Director` project.
+- `SpectrumVisualizer` preserves bar count, colors, position, smoothing, and
+  all layout parameters.
+- Any node that fails to rebuild falls back to a `BoxNode` placeholder so the
+  scene graph remains loadable and renderable.
+- Tests: `crates/director-core/tests/project_roundtrip.rs` covers each
+  round-tripped node kind.
 
 ## Compile Phase & Dependency Graph
 

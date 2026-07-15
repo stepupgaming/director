@@ -127,7 +127,7 @@ fn layout_structure_snapshot() {
     {
         let mut d = director_arc.lock().unwrap();
         let mut layout_engine = director_core::systems::layout::LayoutEngine::new();
-        d.update(0.0);
+        d.update(0.0, None);
         let width = d.width;
         let height = d.height;
         layout_engine.compute_layout(&mut d.scene, width, height, 0.0);
@@ -237,7 +237,7 @@ fn grid_layout_basic() {
     d.scene.add_child(grid_id, id2);
 
     let mut layout_engine = director_core::systems::layout::LayoutEngine::new();
-    d.update(0.0);
+    d.update(0.0, None);
     layout_engine.compute_layout(&mut d.scene, 1000, 1000, 0.0);
 
     // Verify positions

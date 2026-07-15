@@ -217,7 +217,7 @@ fn audio_binding_uses_track_relative_time_and_duration_window() {
     }
 
     // Before track start: no energy contribution.
-    director.update(1.5);
+    director.update(1.5, None);
     let before_start = director
         .scene
         .get_node(root_id)
@@ -232,7 +232,7 @@ fn audio_binding_uses_track_relative_time_and_duration_window() {
     );
 
     // During active window: reactive value should move above min.
-    director.update(2.1);
+    director.update(2.1, None);
     let during_active = director
         .scene
         .get_node(root_id)
@@ -247,7 +247,7 @@ fn audio_binding_uses_track_relative_time_and_duration_window() {
     );
 
     // After track duration ends: returns to min.
-    director.update(3.2);
+    director.update(3.2, None);
     let after_end = director
         .scene
         .get_node(root_id)

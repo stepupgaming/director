@@ -88,6 +88,50 @@ struct CaptionCostConfig<'a> {
     solver: &'a SolverConfig,
 }
 
+/// Parameters that control how the caption trajectory solver places a caption.
+///
+/// This struct replaces the long positional argument list of
+/// `solve_caption_trajectory` and `solve_caption_trajectory_continuous` with
+/// a single named bundle. It is intentionally separate from `EntityRegistry`
+/// and `SemanticManifest`, which are the data sources the solver operates on.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SolverParams {
+    /// Output canvas width in pixels.
+    pub canvas_w: f32,
+    /// Output canvas height in pixels.
+    pub canvas_h: f32,
+    /// Expected caption block width in pixels.
+    pub caption_w: f32,
+    /// Expected caption block height in pixels.
+    pub caption_h: f32,
+    /// Safe-zone margin from the top of the frame.
+    pub safe_top: f32,
+    /// Safe-zone margin from the bottom of the frame.
+    pub safe_bottom: f32,
+    /// Safe-zone margin from the left of the frame.
+    pub safe_left: f32,
+    /// Safe-zone margin from the right of the frame.
+    pub safe_right: f32,
+    /// Trajectory sampling rate in samples per second.
+    pub sample_rate: f64,
+}
+
+impl Default for SolverParams {
+    fn default() -> Self {
+        Self {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
+            caption_w: 800.0,
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        }
+    }
+}
+
 
 
 /// A sampled 2D position at a point in time.
@@ -96,6 +140,14 @@ pub struct TrajectorySample {
     pub time: f64,
     pub x: f32,
     pub y: f32,
+    /// The discrete anchor chosen by the solver, if any. The continuous solver
+    /// does not use anchors, so this field is `None` for continuous trajectories.
+    ///
+    /// When smoothing averages `x`/`y` over a window, the anchor is kept from
+    /// the center sample of that window. It therefore reflects the solver's
+    /// original discrete decision, not a recomputation from the smoothed
+    /// coordinates.
+    pub anchor: Option<Anchor>,
 }
 
 /// A caption trajectory: a list of sampled anchor positions over time.
@@ -134,13 +186,24 @@ impl CaptionTrajectory {
 
     /// Sample the trajectory at a given time using linear interpolation.
     pub fn sample_at(&self, time: f64) -> Option<(f32, f32)> {
+        self.sample_at_with_anchor(time).map(|(x, y, _)| (x, y))
+    }
+
+    /// Sample the trajectory at a given time, returning the interpolated
+    /// position and the anchor chosen by the discrete solver (if any).
+    ///
+    /// The anchor is taken from the previous surrounding sample, so the
+    /// solver's discrete decision is preserved exactly rather than blended.
+    /// For trajectories produced by the continuous solver, the anchor is
+    /// always `None`.
+    pub fn sample_at_with_anchor(&self, time: f64) -> Option<(f32, f32, Option<Anchor>)> {
         let first = self.samples.first()?;
         let last = self.samples.last()?;
         if time <= first.time {
-            return Some((first.x, first.y));
+            return Some((first.x, first.y, first.anchor));
         }
         if time >= last.time {
-            return Some((last.x, last.y));
+            return Some((last.x, last.y, last.anchor));
         }
         let idx = self.samples.partition_point(|s| s.time < time);
         let prev = &self.samples[idx - 1];
@@ -152,13 +215,15 @@ impl CaptionTrajectory {
         };
         let x = prev.x + (next.x - prev.x) * t;
         let y = prev.y + (next.y - prev.y) * t;
-        Some((x, y))
+        // Anchor is taken from the previous sample. This preserves the
+        // solver's discrete decision rather than blending between anchors.
+        Some((x, y, prev.anchor))
     }
 }
 
 /// Candidate anchor for the caption.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Anchor {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Anchor {
     TopLeft,
     TopCenter,
     TopRight,
@@ -174,33 +239,21 @@ enum Anchor {
 /// # Arguments
 /// * `registry` - Entity registry containing face/subject tracks.
 /// * `manifest` - Semantic manifest with entity refs and solver config.
-/// * `canvas_w`, `canvas_h` - Output dimensions.
-/// * `caption_w`, `caption_h` - Caption block dimensions.
-/// * `safe_top`, `safe_bottom` - Safe zone margins from top/bottom of frame.
-/// * `safe_left`, `safe_right` - Safe zone margins from left/right of frame.
-/// * `sample_rate` - Number of samples per second.
-#[allow(clippy::too_many_arguments)]
+/// * `params` - Placement parameters (canvas size, caption size, safe margins,
+///   sample rate).
 pub fn solve_caption_trajectory(
     registry: &EntityRegistry,
     manifest: &SemanticManifest,
-    canvas_w: f32,
-    canvas_h: f32,
-    caption_w: f32,
-    caption_h: f32,
-    safe_top: f32,
-    safe_bottom: f32,
-    safe_left: f32,
-    safe_right: f32,
-    sample_rate: f64,
+    params: &SolverParams,
 ) -> CaptionTrajectory {
     let duration = (manifest.end_time - manifest.start_time).max(0.0);
-    if duration <= 0.0 || sample_rate <= 0.0 {
+    if duration <= 0.0 || params.sample_rate <= 0.0 {
         return CaptionTrajectory::default();
     }
 
-    let num_samples = (duration * sample_rate).ceil().max(1.0) as usize + 1;
-    let center_x = canvas_w / 2.0;
-    let center_y = canvas_h / 2.0;
+    let num_samples = (duration * params.sample_rate).ceil().max(1.0) as usize + 1;
+    let center_x = params.canvas_w / 2.0;
+    let center_y = params.canvas_h / 2.0;
 
     // Candidate anchors: top/bottom with left/center/right horizontal
     // variants, plus side anchors. Center variants are listed first so the
@@ -219,18 +272,18 @@ pub fn solve_caption_trajectory(
     ];
 
     // Precompute face bboxes per sample.
-    let per_sample_faces = sample_faces_per_time(registry, manifest, num_samples, sample_rate);
+    let per_sample_faces = sample_faces_per_time(registry, manifest, num_samples, params.sample_rate);
 
     // Static cost configuration shared across all samples.
     let cost_config = CaptionCostConfig {
-        caption_w,
-        caption_h,
-        canvas_w,
-        canvas_h,
-        safe_top,
-        safe_bottom,
-        safe_left,
-        safe_right,
+        caption_w: params.caption_w,
+        caption_h: params.caption_h,
+        canvas_w: params.canvas_w,
+        canvas_h: params.canvas_h,
+        safe_top: params.safe_top,
+        safe_bottom: params.safe_bottom,
+        safe_left: params.safe_left,
+        safe_right: params.safe_right,
         solver: &manifest.solver,
     };
 
@@ -240,14 +293,14 @@ pub fn solve_caption_trajectory(
         let mut positions = Vec::new();
         for anchor in &anchors {
             let (x, y) = match anchor {
-                Anchor::TopLeft => (safe_left + caption_w / 2.0, safe_top + caption_h / 2.0),
-                Anchor::TopCenter => (center_x, safe_top + caption_h / 2.0),
-                Anchor::TopRight => (canvas_w - safe_right - caption_w / 2.0, safe_top + caption_h / 2.0),
-                Anchor::BottomLeft => (safe_left + caption_w / 2.0, canvas_h - safe_bottom - caption_h / 2.0),
-                Anchor::BottomCenter => (center_x, canvas_h - safe_bottom - caption_h / 2.0),
-                Anchor::BottomRight => (canvas_w - safe_right - caption_w / 2.0, canvas_h - safe_bottom - caption_h / 2.0),
-                Anchor::Left => (safe_left + caption_w / 2.0, center_y),
-                Anchor::Right => (canvas_w - safe_right - caption_w / 2.0, center_y),
+                Anchor::TopLeft => (params.safe_left + params.caption_w / 2.0, params.safe_top + params.caption_h / 2.0),
+                Anchor::TopCenter => (center_x, params.safe_top + params.caption_h / 2.0),
+                Anchor::TopRight => (params.canvas_w - params.safe_right - params.caption_w / 2.0, params.safe_top + params.caption_h / 2.0),
+                Anchor::BottomLeft => (params.safe_left + params.caption_w / 2.0, params.canvas_h - params.safe_bottom - params.caption_h / 2.0),
+                Anchor::BottomCenter => (center_x, params.canvas_h - params.safe_bottom - params.caption_h / 2.0),
+                Anchor::BottomRight => (params.canvas_w - params.safe_right - params.caption_w / 2.0, params.canvas_h - params.safe_bottom - params.caption_h / 2.0),
+                Anchor::Left => (params.safe_left + params.caption_w / 2.0, center_y),
+                Anchor::Right => (params.canvas_w - params.safe_right - params.caption_w / 2.0, center_y),
             };
             positions.push((*anchor, x, y));
         }
@@ -265,8 +318,8 @@ pub fn solve_caption_trajectory(
         let mut sample_dp = Vec::with_capacity(anchors.len());
         let mut sample_prev = Vec::with_capacity(anchors.len());
 
-        for (anchor, x, y) in &candidate_positions[i] {
-            let mut cost = candidate_cost(*x, *y, faces, &cost_config);
+        for (_anchor, x, y) in &candidate_positions[i] {
+            let cost = candidate_cost(*x, *y, faces, &cost_config);
 
             if i == 0 {
                 sample_dp.push(cost);
@@ -324,9 +377,10 @@ pub fn solve_caption_trajectory(
         let anchor_idx = best_sequence.get(i).copied().unwrap_or(0);
         let pos = &pos[anchor_idx];
         samples.push(TrajectorySample {
-            time: manifest.start_time + i as f64 / sample_rate,
+            time: manifest.start_time + i as f64 / params.sample_rate,
             x: pos.1,
             y: pos.2,
+            anchor: Some(pos.0),
         });
     }
 
@@ -445,6 +499,7 @@ fn smooth_trajectory(samples: Vec<TrajectorySample>, window: usize) -> Vec<Traje
             time: samples[i].time,
             x: sum_x / count as f32,
             y: sum_y / count as f32,
+            anchor: samples[i].anchor,
         });
     }
     smoothed
@@ -470,33 +525,24 @@ fn smooth_trajectory(samples: Vec<TrajectorySample>, window: usize) -> Vec<Traje
 /// Runtime is `O(T * N^2)` where `T` is the number of samples and `N` is the
 /// number of grid steps per axis. For typical short-form video this is well
 /// under a millisecond.
-#[allow(clippy::too_many_arguments)]
 pub fn solve_caption_trajectory_continuous(
     registry: &EntityRegistry,
     manifest: &SemanticManifest,
-    canvas_w: f32,
-    canvas_h: f32,
-    caption_w: f32,
-    caption_h: f32,
-    safe_top: f32,
-    safe_bottom: f32,
-    safe_left: f32,
-    safe_right: f32,
-    sample_rate: f64,
+    params: &SolverParams,
 ) -> CaptionTrajectory {
     let duration = (manifest.end_time - manifest.start_time).max(0.0);
-    if duration <= 0.0 || sample_rate <= 0.0 {
+    if duration <= 0.0 || params.sample_rate <= 0.0 {
         return CaptionTrajectory::default();
     }
 
-    let num_samples = (duration * sample_rate).ceil().max(1.0) as usize + 1;
+    let num_samples = (duration * params.sample_rate).ceil().max(1.0) as usize + 1;
     let grid_steps = manifest.solver.grid_steps.max(2);
 
     // 2D ranges for the caption center.
-    let min_y = safe_top + caption_h / 2.0;
-    let max_y = canvas_h - safe_bottom - caption_h / 2.0;
-    let min_x = safe_left + caption_w / 2.0;
-    let max_x = canvas_w - safe_right - caption_w / 2.0;
+    let min_y = params.safe_top + params.caption_h / 2.0;
+    let max_y = params.canvas_h - params.safe_bottom - params.caption_h / 2.0;
+    let min_x = params.safe_left + params.caption_w / 2.0;
+    let max_x = params.canvas_w - params.safe_right - params.caption_w / 2.0;
     if max_y <= min_y || max_x <= min_x {
         return CaptionTrajectory::default();
     }
@@ -515,18 +561,18 @@ pub fn solve_caption_trajectory_continuous(
     let num_states = positions.len();
 
     // Precompute face bboxes per sample.
-    let per_sample_faces = sample_faces_per_time(registry, manifest, num_samples, sample_rate);
+    let per_sample_faces = sample_faces_per_time(registry, manifest, num_samples, params.sample_rate);
 
     // Static cost configuration shared across all samples.
     let cost_config = CaptionCostConfig {
-        caption_w,
-        caption_h,
-        canvas_w,
-        canvas_h,
-        safe_top,
-        safe_bottom,
-        safe_left,
-        safe_right,
+        caption_w: params.caption_w,
+        caption_h: params.caption_h,
+        canvas_w: params.canvas_w,
+        canvas_h: params.canvas_h,
+        safe_top: params.safe_top,
+        safe_bottom: params.safe_bottom,
+        safe_left: params.safe_left,
+        safe_right: params.safe_right,
         solver: &manifest.solver,
     };
 
@@ -605,9 +651,10 @@ pub fn solve_caption_trajectory_continuous(
         let state_idx = best_sequence.get(i).copied().unwrap_or(0);
         let (x, y) = positions[state_idx];
         samples.push(TrajectorySample {
-            time: manifest.start_time + i as f64 / sample_rate,
+            time: manifest.start_time + i as f64 / params.sample_rate,
             x,
             y,
+            anchor: None,
         });
     }
 
@@ -696,19 +743,18 @@ mod tests {
             solver: SolverConfig::default(),
         };
 
-        let trajectory = solve_caption_trajectory(
-            &registry,
-            &manifest,
-            1080.0,
-            1920.0,
-            800.0,
-            100.0,
-            60.0,
-            110.0,
-            60.0,
-            60.0,
-            10.0,
-        );
+        let params = SolverParams {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
+            caption_w: 800.0,
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        };
+        let trajectory = solve_caption_trajectory(&registry, &manifest, &params);
 
         assert!(!trajectory.as_slice().is_empty());
         for sample in trajectory.as_slice() {
@@ -720,8 +766,8 @@ mod tests {
     #[test]
     fn trajectory_sample_at_interpolates() {
         let trajectory = CaptionTrajectory::new(vec![
-            TrajectorySample { time: 0.0, x: 0.0, y: 0.0 },
-            TrajectorySample { time: 1.0, x: 100.0, y: 200.0 },
+            TrajectorySample { time: 0.0, x: 0.0, y: 0.0, anchor: None },
+            TrajectorySample { time: 1.0, x: 100.0, y: 200.0, anchor: None },
         ]);
         let (x, y) = trajectory.sample_at(0.5).unwrap();
         assert!((x - 50.0).abs() < f32::EPSILON);
@@ -731,8 +777,8 @@ mod tests {
     #[test]
     fn trajectory_sample_at_clamps_out_of_range() {
         let trajectory = CaptionTrajectory::new(vec![
-            TrajectorySample { time: 0.0, x: 0.0, y: 0.0 },
-            TrajectorySample { time: 1.0, x: 100.0, y: 200.0 },
+            TrajectorySample { time: 0.0, x: 0.0, y: 0.0, anchor: None },
+            TrajectorySample { time: 1.0, x: 100.0, y: 200.0, anchor: None },
         ]);
         let (x, y) = trajectory.sample_at(-1.0).unwrap();
         assert!((x - 0.0).abs() < f32::EPSILON);
@@ -745,9 +791,9 @@ mod tests {
     #[test]
     fn trajectory_constructor_sorts_unsorted_samples() {
         let trajectory = CaptionTrajectory::new(vec![
-            TrajectorySample { time: 2.0, x: 200.0, y: 200.0 },
-            TrajectorySample { time: 0.0, x: 0.0, y: 0.0 },
-            TrajectorySample { time: 1.0, x: 100.0, y: 100.0 },
+            TrajectorySample { time: 2.0, x: 200.0, y: 200.0, anchor: None },
+            TrajectorySample { time: 0.0, x: 0.0, y: 0.0, anchor: None },
+            TrajectorySample { time: 1.0, x: 100.0, y: 100.0, anchor: None },
         ]);
 
         assert_eq!(trajectory.as_slice()[0].time, 0.0);
@@ -764,9 +810,9 @@ mod tests {
         // NaN times are not expected, but the constructor should not panic and
         // should still allow sampling to return a value.
         let trajectory = CaptionTrajectory::new(vec![
-            TrajectorySample { time: 0.0, x: 0.0, y: 0.0 },
-            TrajectorySample { time: f64::NAN, x: 50.0, y: 50.0 },
-            TrajectorySample { time: 1.0, x: 100.0, y: 100.0 },
+            TrajectorySample { time: 0.0, x: 0.0, y: 0.0, anchor: None },
+            TrajectorySample { time: f64::NAN, x: 50.0, y: 50.0, anchor: None },
+            TrajectorySample { time: 1.0, x: 100.0, y: 100.0, anchor: None },
         ]);
 
         // The constructor sorts; NaN comparisons return None, so the NaN
@@ -810,19 +856,18 @@ mod tests {
             solver: SolverConfig::default(),
         };
 
-        let trajectory = solve_caption_trajectory(
-            &registry,
-            &manifest,
-            1080.0,
-            1920.0,
-            800.0,
-            100.0,
-            60.0,
-            110.0,
-            60.0,
-            60.0,
-            10.0,
-        );
+        let params = SolverParams {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
+            caption_w: 800.0,
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        };
+        let trajectory = solve_caption_trajectory(&registry, &manifest, &params);
 
         assert!(!trajectory.as_slice().is_empty());
         for sample in trajectory.as_slice() {
@@ -846,19 +891,18 @@ mod tests {
             solver: SolverConfig::default(),
         };
 
-        let trajectory = solve_caption_trajectory(
-            &registry,
-            &manifest,
-            1080.0,
-            1920.0,
-            800.0,
-            100.0,
-            60.0,
-            110.0,
-            60.0,
-            60.0,
-            10.0,
-        );
+        let params = SolverParams {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
+            caption_w: 800.0,
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        };
+        let trajectory = solve_caption_trajectory(&registry, &manifest, &params);
 
         assert!(trajectory.as_slice().len() >= 3);
         let mut max_jump = 0.0f32;
@@ -887,19 +931,18 @@ mod tests {
             solver: SolverConfig::default(),
         };
 
-        let trajectory = solve_caption_trajectory_continuous(
-            &registry,
-            &manifest,
-            1080.0,
-            1920.0,
-            800.0,
-            100.0,
-            60.0,
-            110.0,
-            60.0,
-            60.0,
-            10.0,
-        );
+        let params = SolverParams {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
+            caption_w: 800.0,
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        };
+        let trajectory = solve_caption_trajectory_continuous(&registry, &manifest, &params);
 
         assert!(!trajectory.as_slice().is_empty());
         for sample in trajectory.as_slice() {
@@ -940,19 +983,18 @@ mod tests {
         };
 
         // Use a narrower caption so left/right variants do not overlap the face.
-        let trajectory = solve_caption_trajectory(
-            &registry,
-            &manifest,
-            1080.0,
-            1920.0,
+        let params = SolverParams {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
             caption_w,
-            100.0,
-            60.0,
-            110.0,
-            60.0,
-            60.0,
-            10.0,
-        );
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        };
+        let trajectory = solve_caption_trajectory(&registry, &manifest, &params);
 
         assert!(!trajectory.as_slice().is_empty());
         for sample in trajectory.as_slice() {
@@ -995,19 +1037,18 @@ mod tests {
             solver: SolverConfig::default(),
         };
 
-        let trajectory = solve_caption_trajectory(
-            &registry,
-            &manifest,
-            1080.0,
-            1920.0,
-            800.0,
-            100.0,
-            60.0,
-            110.0,
-            60.0,
-            60.0,
-            10.0,
-        );
+        let params = SolverParams {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
+            caption_w: 800.0,
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        };
+        let trajectory = solve_caption_trajectory(&registry, &manifest, &params);
 
         assert!(!trajectory.as_slice().is_empty());
         for sample in trajectory.as_slice() {
@@ -1036,19 +1077,18 @@ mod tests {
             solver: SolverConfig::default(),
         };
 
-        let trajectory = solve_caption_trajectory(
-            &registry,
-            &manifest,
-            1080.0,
-            1920.0,
-            800.0,
-            100.0,
-            60.0,
-            110.0,
-            60.0,
-            60.0,
-            10.0,
-        );
+        let params = SolverParams {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
+            caption_w: 800.0,
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        };
+        let trajectory = solve_caption_trajectory(&registry, &manifest, &params);
 
         assert!(!trajectory.as_slice().is_empty());
         for sample in trajectory.as_slice() {
@@ -1071,19 +1111,18 @@ mod tests {
             solver: SolverConfig::default(),
         };
 
-        let trajectory = solve_caption_trajectory_continuous(
-            &registry,
-            &manifest,
-            1080.0,
-            1920.0,
-            800.0,
-            100.0,
-            60.0,
-            110.0,
-            60.0,
-            60.0,
-            10.0,
-        );
+        let params = SolverParams {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
+            caption_w: 800.0,
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        };
+        let trajectory = solve_caption_trajectory_continuous(&registry, &manifest, &params);
 
         assert!(!trajectory.as_slice().is_empty());
         for sample in trajectory.as_slice() {
@@ -1111,19 +1150,18 @@ mod tests {
             solver: SolverConfig::default(),
         };
 
-        let trajectory = solve_caption_trajectory_continuous(
-            &registry,
-            &manifest,
-            1080.0,
-            1920.0,
-            800.0,
-            100.0,
-            60.0,
-            110.0,
-            60.0,
-            60.0,
-            10.0,
-        );
+        let params = SolverParams {
+            canvas_w: 1080.0,
+            canvas_h: 1920.0,
+            caption_w: 800.0,
+            caption_h: 100.0,
+            safe_top: 60.0,
+            safe_bottom: 110.0,
+            safe_left: 60.0,
+            safe_right: 60.0,
+            sample_rate: 10.0,
+        };
+        let trajectory = solve_caption_trajectory_continuous(&registry, &manifest, &params);
 
         assert!(!trajectory.as_slice().is_empty());
         for sample in trajectory.as_slice() {

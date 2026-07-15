@@ -147,7 +147,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     // sequential scene building without manual start-time bookkeeping.
 
     /// `add_sequence(movie, duration)` — creates a scene and returns a SequenceHandle.
-    /// Use `sequence.next(duration)` to chain scenes back-to-back.
+    // Use `sequence.next(duration)` to chain scenes back-to-back.
     engine.register_type_with_name::<super::super::types::SequenceHandle>("Sequence");
 
     engine.register_fn(
@@ -161,7 +161,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     );
 
     /// `sequence.next(duration)` — adds a scene at the current sequence time,
-    /// then advances the cursor by `duration`. Returns a SceneHandle.
+    // then advances the cursor by `duration`. Returns a SceneHandle.
     engine.register_fn(
         "next",
         |seq: &mut super::super::types::SequenceHandle,
@@ -174,7 +174,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     );
 
     /// `sequence.next_with_overlap(duration, overlap)` — adds a scene but
-    /// only advances the cursor by `duration - overlap` (for transitions).
+    // only advances the cursor by `duration - overlap` (for transitions).
     engine.register_fn(
         "next_with_overlap",
         |seq: &mut super::super::types::SequenceHandle,
@@ -188,7 +188,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     );
 
     /// `sequence.skip(duration)` — advances the cursor without adding a scene
-    /// (creates a gap/blank period in the timeline).
+    // (creates a gap/blank period in the timeline).
     engine.register_fn(
         "skip",
         |seq: &mut super::super::types::SequenceHandle, duration: f64| {
@@ -196,7 +196,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
         },
     );
 
-    /// `sequence.current_time()` — returns the current cursor position.
+    // `sequence.current_time()` — returns the current cursor position.
     engine.register_fn(
         "current_time",
         |seq: &mut super::super::types::SequenceHandle| -> f64 {

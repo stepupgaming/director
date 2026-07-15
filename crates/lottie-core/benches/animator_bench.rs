@@ -29,7 +29,7 @@ fn bench_animator_resolve(c: &mut Criterion) {
     };
 
     let converter = |v: &f32| *v;
-    let ctx = ExpressionContext::default();
+    let ctx = ExpressionContext;
 
     // Test early, middle, late frames
     for &frame in &[100.0, 5000.0, 9990.0] {

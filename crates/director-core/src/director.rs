@@ -24,8 +24,7 @@ use crate::render_manifest::IssueSeverity;
 use crate::semantic::{SemanticManifest, SolverConfig};
 use crate::scene::SceneGraph;
 use crate::style_policy::{StylePolicy, StylePolicyScorer, PolicyScore};
-use crate::systems::layout::LayoutEngine;
-use crate::types::BoundsRect;
+
 use crate::systems::assets::AssetManager;
 use crate::systems::transitions::Transition;
 use crate::timeline::Track;
@@ -42,27 +41,6 @@ use tracing::instrument;
 #[derive(Clone)]
 pub struct DirectorContext {
     pub assets: AssetManager,
-}
-
-/// Lightweight snapshot of node bounds at a specific time.
-///
-/// This is cheaper than cloning the whole [`Director`] and is intended for
-/// verification passes (e.g. static-stretch detection) that only need to
-/// compare per-node layout rectangles across time.
-#[derive(Debug, Clone)]
-pub struct LayoutSnapshot {
-    pub width: i32,
-    pub height: i32,
-    pub sample_time: f64,
-    pub nodes: Vec<LayoutNodeSnapshot>,
-}
-
-/// A single node's bounds inside a [`LayoutSnapshot`].
-#[derive(Debug, Clone)]
-pub struct LayoutNodeSnapshot {
-    pub id: usize,
-    pub kind: &'static str,
-    pub bounds: BoundsRect,
 }
 
 /// Represents a scene (or clip) on the timeline.
@@ -128,6 +106,10 @@ pub struct Director {
     pub compiler: DependencyGraph,
     /// Nodes marked dirty by the last `invalidate()` call.
     pub dirty_nodes: std::collections::HashSet<NodeId>,
+    /// Last known input hash for each node, recorded by `compile()` and used
+    /// by `invalidate()` to detect structural changes. Owned by `Director` so
+    /// only the compile/invalidation passes can mutate it.
+    pub input_hashes: std::collections::HashMap<NodeId, u64>,
     /// Production style policy used by the compiler to score the scene.
     pub style_policy: StylePolicy,
     /// Most recent style-policy score produced by `compile()`, including any
@@ -308,6 +290,7 @@ impl Director {
             entities: EntityRegistry::new(),
             compiler: DependencyGraph::new(),
             dirty_nodes: std::collections::HashSet::new(),
+            input_hashes: std::collections::HashMap::new(),
             style_policy: StylePolicy::default(),
             last_policy_score: None,
         }
@@ -722,6 +705,40 @@ impl Director {
         }
     }
 
+    /// Add a child to a parent node and invalidate the parent's children
+    /// dependency so that hierarchy changes automatically mark the parent as
+    /// potentially affected.
+    ///
+    /// This is a convenience wrapper around [`SceneGraph::try_add_child`] that
+    /// also emits a [`DependencyInput::Children`] invalidation for the parent.
+    pub fn add_child(&mut self, parent: NodeId, child: NodeId) -> bool {
+        let ok = self.scene.try_add_child(parent, child);
+        if ok {
+            self.invalidate(vec![DependencyInput::Children(parent)]);
+        }
+        ok
+    }
+
+    /// Remove a child from a parent node and invalidate the parent's children
+    /// dependency so that hierarchy changes automatically mark the parent as
+    /// potentially affected.
+    ///
+    /// This is a convenience wrapper around [`SceneGraph::remove_child`] that
+    /// also emits a [`DependencyInput::Children`] invalidation for the parent.
+    /// Invalidation only happens if the child was actually attached to the
+    /// parent, so no-op removals do not dirty the parent.
+    pub fn remove_child(&mut self, parent: NodeId, child: NodeId) {
+        let was_attached = self
+            .scene
+            .get_node(child)
+            .map(|n| n.parent == Some(parent))
+            .unwrap_or(false);
+        self.scene.remove_child(parent, child);
+        if was_attached {
+            self.invalidate(vec![DependencyInput::Children(parent)]);
+        }
+    }
+
     /// Expand a dirty set to include all ancestors and descendants of dirty
     /// nodes.
     ///
@@ -792,7 +809,7 @@ impl Director {
     /// audio tracks, hierarchy, masks) so that future incremental passes can
     /// invalidate only the affected nodes. The graph is stored in
     /// `self.compiler` and the dirty node set is reset. Each node's
-    /// `last_input_hash` is updated to reflect its current structural inputs.
+    /// `input_hashes` is updated to reflect each node's current structural inputs.
     ///
     /// After the graph is built, the scene is scored against `style_policy`.
     /// Any violations are emitted as `tracing` logs (errors/warnings/info)
@@ -802,7 +819,7 @@ impl Director {
         self.compiler.clear();
         self.dirty_nodes.clear();
 
-        for (node_id, node_opt) in self.scene.nodes.iter_mut().enumerate() {
+        for (node_id, node_opt) in self.scene.nodes.iter().enumerate() {
             let Some(node) = node_opt else { continue };
 
             // Entity references.
@@ -829,10 +846,20 @@ impl Director {
                 self.compiler.record(node_id, DependencyInput::Node(mask_id));
             }
 
+            // Children collection: the parent depends on its children so that
+            // adding/removing a child can invalidate the parent without a manual
+            // recompile. Record this for every node so that a childless parent
+            // still gets marked dirty when its first child is added.
+            self.compiler.record(node_id, DependencyInput::Children(node_id));
+
             // Snapshot the current structural input hash for cache invalidation.
             let hash = node.compute_input_hash();
-            node.set_input_hash(Some(hash));
+            self.input_hashes.insert(node_id, hash);
         }
+
+        // Prune hashes for destroyed nodes so the map does not grow without
+        // bound as node IDs are reused.
+        self.input_hashes.retain(|&id, _| self.scene.get_node(id).is_some());
 
         // Run the style policy scorer over the timeline so violations are
         // emitted as warnings/errors before export.
@@ -869,6 +896,17 @@ impl Director {
         score
     }
 
+    /// Compute the transitive set of nodes affected by the given inputs
+    /// without marking anything dirty.
+    ///
+    /// This mirrors the dependency traversal performed by [`invalidate`] but
+    /// does not compare input hashes or store a dirty set. It is useful for
+    /// introspection and for previewing which nodes would be recomputed before
+    /// committing to an an invalidation.
+    pub fn affected_nodes(&self, inputs: Vec<DependencyInput>) -> std::collections::HashSet<NodeId> {
+        self.compiler.affected_nodes(&inputs)
+    }
+
     /// Invalidate nodes affected by the given inputs.
     ///
     /// Returns the set of affected node IDs and stores it in
@@ -880,13 +918,13 @@ impl Director {
         let mut dirty: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
 
         for node_id in &potentially_affected {
-            if let Some(Some(node)) = self.scene.nodes.get_mut(*node_id) {
+            if let Some(node) = self.scene.get_node(*node_id) {
                 let current_hash = node.compute_input_hash();
-                match node.last_input_hash() {
+                match self.input_hashes.get(node_id).copied() {
                     None => {
                         // Never compiled; treat as dirty and snapshot the hash
                         // so future invalidations have a baseline.
-                        node.set_input_hash(Some(current_hash));
+                        self.input_hashes.insert(*node_id, current_hash);
                         dirty.insert(*node_id);
                     }
                     Some(stored_hash) if stored_hash != current_hash => {
@@ -913,42 +951,6 @@ impl Director {
         StylePolicyScorer::new().score(self, &self.style_policy, time_range, samples)
     }
 
-    /// Capture a lightweight layout snapshot at `time` without cloning the
-    /// whole Director.
-    ///
-    /// The snapshot contains only the per-node bounds and kind strings needed
-    /// by verification passes such as static-stretch detection. It runs the
-    /// update and layout passes on `self`, so it mutates the Director's
-    /// internal state (local times, layout rectangles, etc.).
-    pub fn layout_snapshot(&mut self, time: f64) -> LayoutSnapshot {
-        self.update(time, None);
-
-        let mut layout_engine = LayoutEngine::new();
-        layout_engine.compute_layout(&mut self.scene, self.width, self.height, time);
-
-        let nodes = self
-            .scene
-            .nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(id, node_opt)| {
-                let node = node_opt.as_ref()?;
-                let r = node.layout_rect;
-                Some(LayoutNodeSnapshot {
-                    id,
-                    kind: crate::element::element_kind(node.element.as_ref()),
-                    bounds: BoundsRect::new(r.left(), r.top(), r.width(), r.height()),
-                })
-            })
-            .collect();
-
-        LayoutSnapshot {
-            width: self.width,
-            height: self.height,
-            sample_time: time,
-            nodes,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1187,7 +1189,7 @@ mod tests {
             audio_tracks: vec![],
         });
 
-        let snapshot = director.layout_snapshot(0.5);
+        let snapshot = crate::render_manifest::layout_snapshot(&mut director, 0.5);
 
         assert_eq!(snapshot.width, 1080);
         assert_eq!(snapshot.height, 1920);

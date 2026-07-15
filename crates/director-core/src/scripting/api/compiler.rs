@@ -166,6 +166,71 @@ pub fn register(engine: &mut Engine) {
                 .map_err(|e| format!("failed to serialize dependency graph: {}", e).into())
         },
     );
+
+    // `compiler_affected_nodes(movie, inputs)` — return the transitive set of
+    // node IDs that would be affected by the given dependency inputs, without
+    // marking anything dirty. Each input is a map with `type` and `value` keys
+    // matching the format produced by `compiler_inputs_for_node`.
+    engine.register_fn(
+        "compiler_affected_nodes",
+        |movie: &mut MovieHandle, inputs: rhai::Array| -> Result<rhai::Array, Box<rhai::EvalAltResult>> {
+            let mut parsed = Vec::with_capacity(inputs.len());
+            for item in inputs {
+                let map = item
+                    .try_cast::<rhai::Map>()
+                    .ok_or_else(|| "expected array of dependency input maps".to_string())?;
+                parsed.push(dependency_input_from_rhai_map(&map)?);
+            }
+
+            let d = movie.lock_director()?;
+            let affected = d.affected_nodes(parsed);
+            Ok(affected
+                .into_iter()
+                .map(|id| rhai::Dynamic::from_int(id as i64))
+                .collect())
+        },
+    );
+}
+
+fn dependency_input_from_rhai_map(map: &rhai::Map) -> Result<DependencyInput, String> {
+    let ty = map
+        .get("type")
+        .and_then(|v| v.clone().try_cast::<String>())
+        .ok_or_else(|| "dependency input map missing 'type' string".to_string())?;
+    let value = map
+        .get("value")
+        .ok_or_else(|| "dependency input map missing 'value'".to_string())?;
+
+    match ty.as_str() {
+        "entity" => {
+            let s = value
+                .clone()
+                .try_cast::<String>()
+                .ok_or_else(|| "entity input value must be a string UUID".to_string())?;
+            let id = uuid::Uuid::parse_str(&s)
+                .map_err(|e| format!("invalid entity UUID: {}", e))?;
+            Ok(DependencyInput::Entity(id))
+        }
+        "audio_track" => {
+            let id = value
+                .as_int()
+                .map_err(|_| "audio_track input value must be an integer".to_string())?;
+            Ok(DependencyInput::AudioTrack(id as usize))
+        }
+        "node" => {
+            let id = value
+                .as_int()
+                .map_err(|_| "node input value must be an integer".to_string())?;
+            Ok(DependencyInput::Node(id as usize))
+        }
+        "children" => {
+            let id = value
+                .as_int()
+                .map_err(|_| "children input value must be an integer".to_string())?;
+            Ok(DependencyInput::Children(id as usize))
+        }
+        _ => Err(format!("unknown dependency input type: {}", ty)),
+    }
 }
 
 fn dependency_input_to_rhai_map(input: DependencyInput) -> rhai::Dynamic {
@@ -181,6 +246,10 @@ fn dependency_input_to_rhai_map(input: DependencyInput) -> rhai::Dynamic {
         }
         DependencyInput::Node(id) => {
             map.insert("type".into(), "node".into());
+            map.insert("value".into(), (id as i64).into());
+        }
+        DependencyInput::Children(id) => {
+            map.insert("type".into(), "children".into());
             map.insert("value".into(), (id as i64).into());
         }
     }

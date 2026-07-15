@@ -63,19 +63,18 @@ fn smart_caption_avoids_bottom_face() {
         solver,
     };
 
-    let trajectory = solve_caption_trajectory(
-        &director.entities,
-        &manifest,
-        1080.0,
-        1920.0,
-        800.0,
-        100.0,
-        60.0,
-        110.0,
-        60.0,
-        60.0,
-        10.0,
-    );
+    let params = director_core::semantic::SolverParams {
+        canvas_w: 1080.0,
+        canvas_h: 1920.0,
+        caption_w: 800.0,
+        caption_h: 100.0,
+        safe_top: 60.0,
+        safe_bottom: 110.0,
+        safe_left: 60.0,
+        safe_right: 60.0,
+        sample_rate: 10.0,
+    };
+    let trajectory = solve_caption_trajectory(&director.entities, &manifest, &params);
 
     let lines = vec![single_word_line("hello", 0.0, 2.0)];
     let inner = CaptionNode::new(lines, empty_font_collection());
@@ -149,19 +148,18 @@ fn smart_caption_switches_when_face_moves() {
         solver,
     };
 
-    let trajectory = solve_caption_trajectory(
-        &director.entities,
-        &manifest,
-        1080.0,
-        1920.0,
-        800.0,
-        100.0,
-        60.0,
-        110.0,
-        60.0,
-        60.0,
-        10.0,
-    );
+    let params = director_core::semantic::SolverParams {
+        canvas_w: 1080.0,
+        canvas_h: 1920.0,
+        caption_w: 800.0,
+        caption_h: 100.0,
+        safe_top: 60.0,
+        safe_bottom: 110.0,
+        safe_left: 60.0,
+        safe_right: 60.0,
+        sample_rate: 10.0,
+    };
+    let trajectory = solve_caption_trajectory(&director.entities, &manifest, &params);
 
     let lines = vec![single_word_line("hello", 0.0, 2.0)];
     let inner = CaptionNode::new(lines, empty_font_collection());
@@ -281,19 +279,18 @@ fn smart_caption_uses_left_anchor_when_right_top_and_bottom_are_blocked() {
         solver,
     };
 
-    let trajectory = solve_caption_trajectory(
-        &director.entities,
-        &manifest,
-        1080.0,
-        1920.0,
-        800.0,
-        100.0,
-        60.0,
-        110.0,
-        60.0,
-        60.0,
-        10.0,
-    );
+    let params = director_core::semantic::SolverParams {
+        canvas_w: 1080.0,
+        canvas_h: 1920.0,
+        caption_w: 800.0,
+        caption_h: 100.0,
+        safe_top: 60.0,
+        safe_bottom: 110.0,
+        safe_left: 60.0,
+        safe_right: 60.0,
+        sample_rate: 10.0,
+    };
+    let trajectory = solve_caption_trajectory(&director.entities, &manifest, &params);
 
     let lines = vec![single_word_line("hello", 0.0, 2.0)];
     let inner = CaptionNode::new(lines, empty_font_collection());
@@ -365,19 +362,18 @@ fn smart_caption_uses_right_anchor_when_left_top_and_bottom_are_blocked() {
         solver,
     };
 
-    let trajectory = solve_caption_trajectory(
-        &director.entities,
-        &manifest,
-        1080.0,
-        1920.0,
-        800.0,
-        100.0,
-        60.0,
-        110.0,
-        60.0,
-        60.0,
-        10.0,
-    );
+    let params = director_core::semantic::SolverParams {
+        canvas_w: 1080.0,
+        canvas_h: 1920.0,
+        caption_w: 800.0,
+        caption_h: 100.0,
+        safe_top: 60.0,
+        safe_bottom: 110.0,
+        safe_left: 60.0,
+        safe_right: 60.0,
+        sample_rate: 10.0,
+    };
+    let trajectory = solve_caption_trajectory(&director.entities, &manifest, &params);
 
     let lines = vec![single_word_line("hello", 0.0, 2.0)];
     let inner = CaptionNode::new(lines, empty_font_collection());
@@ -439,7 +435,8 @@ fn smart_caption_continuous_uses_free_xy_position() {
 
 #[test]
 fn project_roundtrip_smart_caption_preserves_entity_refs() {
-    use director_core::project::{director_to_project, director_from_project};
+    use director_core::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
+    use director_core::project::{director_from_project, director_to_project};
 
     let mut director = Director::new(
         1080,
@@ -474,23 +471,26 @@ fn project_roundtrip_smart_caption_preserves_entity_refs() {
         solver,
     };
 
-    let trajectory = solve_caption_trajectory(
-        &director.entities,
-        &manifest,
-        1080.0,
-        1920.0,
-        800.0,
-        100.0,
-        60.0,
-        110.0,
-        60.0,
-        60.0,
-        10.0,
-    );
+    let config = SmartCaptionConfig {
+        canvas_w: 1080.0,
+        canvas_h: 1920.0,
+        caption_w: 800.0,
+        caption_h: 100.0,
+        safe_top: 60.0,
+        safe_bottom: 110.0,
+        safe_left: 60.0,
+        safe_right: 60.0,
+        sample_rate: 10.0,
+        continuous: false,
+    };
 
     let lines = vec![single_word_line("hello", 0.0, 2.0)];
     let inner = CaptionNode::new(lines, empty_font_collection());
-    let smart = SmartCaptionNode::new(inner, trajectory);
+    // Build via from_manifest so manifest/config are populated and the node
+    // can be fully reconstructed after save/load.
+    let smart = SmartCaptionNode::from_manifest(inner, &director.entities, &manifest, config.clone());
+    let original_sample = smart.trajectory.sample_at(0.5).expect("original sample");
+
     let id = director.scene.add_node(Box::new(smart));
     if let Some(n) = director.scene.get_node_mut(id) {
         n.entity_refs = vec![face];
@@ -498,20 +498,74 @@ fn project_roundtrip_smart_caption_preserves_entity_refs() {
 
     let project = director_to_project(&director);
     let loaded = director_from_project(project);
-    assert!(loaded.is_ok(), "loading a project with a SmartCaptionNode must not panic");
+    assert!(
+        loaded.is_ok(),
+        "loading a project with a SmartCaptionNode must not panic"
+    );
     let loaded = loaded.unwrap();
-    if let Some(sn) = loaded.scene.get_node(id) {
-        assert_eq!(sn.entity_refs.len(), 1, "loaded node must preserve entity ref count");
-        // SmartCaptionNode is now fully round-tripped; verify it is reconstructed
-        // as a SmartCaptionNode rather than falling back to a BoxNode placeholder.
-        let smart = sn
-            .element
-            .as_any()
-            .downcast_ref::<director_core::node::smart_caption::SmartCaptionNode>()
-            .expect("loaded node should be a SmartCaptionNode");
-        assert!(
-            !smart.trajectory.is_empty(),
-            "SmartCaptionNode trajectory should survive the round-trip"
-        );
-    }
+
+    let sn = loaded
+        .scene
+        .get_node(id)
+        .expect("loaded node must exist at same id");
+    assert_eq!(
+        sn.entity_refs.len(),
+        1,
+        "loaded node must preserve entity ref count"
+    );
+    assert_eq!(
+        sn.entity_refs[0], face,
+        "loaded node must preserve entity ref UUID"
+    );
+
+    // SmartCaptionNode is now fully round-tripped; verify it is reconstructed
+    // as a SmartCaptionNode rather than falling back to a BoxNode placeholder.
+    let smart = sn
+        .element
+        .as_any()
+        .downcast_ref::<SmartCaptionNode>()
+        .expect("loaded node should be a SmartCaptionNode");
+    assert!(
+        !smart.trajectory.is_empty(),
+        "SmartCaptionNode trajectory should survive the round-trip"
+    );
+
+    // Verify full fidelity of the round-tripped data.
+    let loaded_sample = smart
+        .trajectory
+        .sample_at(0.5)
+        .expect("loaded sample at 0.5");
+    assert!(
+        (loaded_sample.0 - original_sample.0).abs() < 1e-3,
+        "trajectory x should round-trip"
+    );
+    assert!(
+        (loaded_sample.1 - original_sample.1).abs() < 1e-3,
+        "trajectory y should round-trip"
+    );
+    assert_eq!(smart.inner.lines.len(), 1, "caption lines should round-trip");
+    assert_eq!(
+        smart.inner.lines[0].text, "hello",
+        "caption text should round-trip"
+    );
+    assert!(smart.manifest.is_some(), "manifest should round-trip");
+    assert_eq!(
+        smart.manifest.as_ref().unwrap().entity_refs,
+        vec![face],
+        "manifest entity refs should round-trip"
+    );
+    assert!(smart.config.is_some(), "config should round-trip");
+    assert_eq!(
+        smart.config.as_ref().unwrap().canvas_w, config.canvas_w,
+        "config canvas_w should round-trip"
+    );
+    assert_eq!(
+        smart.config.as_ref().unwrap().canvas_h, config.canvas_h,
+        "config canvas_h should round-trip"
+    );
+    assert_eq!(
+        smart.config.as_ref().unwrap().sample_rate, config.sample_rate,
+        "config sample_rate should round-trip"
+    );
+    assert!(!smart.is_continuous(), "continuous flag should round-trip");
 }

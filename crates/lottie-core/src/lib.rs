@@ -1,3 +1,4 @@
+#![allow(clippy::needless_option_as_deref)]
 pub mod animatable;
 #[cfg(feature = "expressions")]
 pub mod expressions;
@@ -202,10 +203,7 @@ fn load_asset_bytes(asset: &data::Asset) -> Option<Vec<u8>> {
         if p.starts_with("data:") && p.contains(";base64,") {
             let split: Vec<&str> = p.splitn(2, ',').collect();
             if split.len() > 1 {
-                match BASE64_STANDARD.decode(split[1]) {
-                    Ok(bytes) => Some(bytes),
-                    Err(_) => None,
-                }
+                BASE64_STANDARD.decode(split[1]).ok()
             } else {
                 None
             }
@@ -219,13 +217,9 @@ fn load_asset_bytes(asset: &data::Asset) -> Option<Vec<u8>> {
             } else {
                 p.clone()
             };
-            if let Ok(bytes) = std::fs::read(&preferred) {
-                Some(bytes)
-            } else if let Ok(bytes) = std::fs::read(p) {
-                Some(bytes)
-            } else {
-                None
-            }
+            std::fs::read(&preferred)
+                .ok()
+                .or_else(|| std::fs::read(p).ok())
         }
     } else {
         None
@@ -406,8 +400,8 @@ pub struct LottiePlayer {
     pub expression_evaluator: Option<ExpressionEvaluator>,
 }
 
-impl LottiePlayer {
-    pub fn new() -> Self {
+impl Default for LottiePlayer {
+    fn default() -> Self {
         #[cfg(feature = "expressions")]
         let expression_evaluator = Some(ExpressionEvaluator::new());
         Self {
@@ -416,6 +410,12 @@ impl LottiePlayer {
             #[cfg(feature = "expressions")]
             expression_evaluator,
         }
+    }
+}
+
+impl LottiePlayer {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn load(&mut self, asset: Arc<LottieAsset>) {
@@ -734,11 +734,7 @@ impl<'a> SceneGraphBuilder<'a> {
             );
 
             let base_fill_color = Vec4::new(doc.fc[0], doc.fc[1], doc.fc[2], 1.0);
-            let base_stroke_color = if let Some(sc) = &doc.sc {
-                Some(Vec4::new(sc[0], sc[1], sc[2], 1.0))
-            } else {
-                None
-            };
+            let base_stroke_color = doc.sc.as_ref().map(|sc| Vec4::new(sc[0], sc[1], sc[2], 1.0));
 
             let chars: Vec<char> = doc.t.chars().collect();
             let char_count = chars.len();
@@ -886,7 +882,7 @@ impl<'a> SceneGraphBuilder<'a> {
                         let overlap_start = idx.max(effective_start);
                         let overlap_end = (idx + 1.0).min(effective_end);
 
-                        let factor = (overlap_end - overlap_start).max(0.0).min(1.0);
+                        let factor = (overlap_end - overlap_start).clamp(0.0, 1.0);
 
                         if factor > 0.0 {
                             glyph.pos += p_delta * factor;
@@ -1014,7 +1010,7 @@ impl<'a> SceneGraphBuilder<'a> {
 
                                 // Apply layout to glyphs
                                 let mut layout_idx = 0;
-                                for (i, g) in glyphs.iter_mut().enumerate() {
+                                for g in glyphs.iter_mut() {
                                     if g.character != '\n' && layout_idx < layout.positions.len() {
                                         g.pos = Vec3::new(
                                             layout.positions[layout_idx].x,
@@ -1428,10 +1424,8 @@ impl<'a> SceneGraphBuilder<'a> {
                     }
                 }
 
-                if kind.is_none() {
-                    if ty == 3 || ty == 8 {
-                        kind = Some("Stroke");
-                    }
+                if kind.is_none() && (ty == 3 || ty == 8) {
+                    kind = Some("Stroke");
                 }
 
                 if let Some(k) = kind {
@@ -2353,7 +2347,7 @@ impl<'a> SceneGraphBuilder<'a> {
                 if let Some(n) = v.as_f64() {
                     n as f32
                 } else if let Some(arr) = v.as_array() {
-                    arr.get(0).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32
+                    arr.first().and_then(|x| x.as_f64()).unwrap_or(0.0) as f32
                 } else {
                     0.0
                 }
@@ -2376,7 +2370,7 @@ impl<'a> SceneGraphBuilder<'a> {
             frame,
             |v| {
                 if let Some(arr) = v.as_array() {
-                    let r = arr.get(0).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+                    let r = arr.first().and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
                     let g = arr.get(1).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
                     let b = arr.get(2).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
                     let a = arr.get(3).and_then(|x| x.as_f64()).unwrap_or(1.0) as f32;
@@ -2835,8 +2829,7 @@ impl<'a> SceneGraphBuilder<'a> {
         }
 
         // Calculate angle from tangent (2D projection on XY plane)
-        let angle = tangent.y.atan2(tangent.x);
-        angle
+        tangent.y.atan2(tangent.x)
     }
 
     // Shapes logic must remain 2D (Mat3)
@@ -3494,7 +3487,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                     rule: FillRule::NonZero,
                                 }),
                                 stroke: None,
-                                trim: trim.clone(),
+                                trim,
                             }),
                             masks: vec![],
                             styles: vec![],
@@ -3562,7 +3555,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                     rule: FillRule::NonZero,
                                 }),
                                 stroke: None,
-                                trim: trim.clone(),
+                                trim,
                             }),
                             masks: vec![],
                             styles: vec![],
@@ -3651,7 +3644,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                     miter_limit: gs.ml,
                                     dash: dash.clone(),
                                 }),
-                                trim: trim.clone(),
+                                trim,
                             }),
                             masks: vec![],
                             styles: vec![],
@@ -3713,7 +3706,7 @@ impl<'a> SceneGraphBuilder<'a> {
                                     miter_limit: s.ml,
                                     dash: dash.clone(),
                                 }),
-                                trim: trim.clone(),
+                                trim,
                             }),
                             masks: vec![],
                             styles: vec![],
@@ -3728,7 +3721,7 @@ impl<'a> SceneGraphBuilder<'a> {
                         &g.it,
                         frame,
                         evaluator.as_deref_mut(),
-                        trim.clone(),
+                        trim,
                         blend_mode,
                     );
                     processed_nodes.push(RenderNode {
@@ -3801,6 +3794,7 @@ impl<'a> SceneGraphBuilder<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_repeater(
         &self,
         copies: f32,
@@ -3855,8 +3849,8 @@ impl<'a> SceneGraphBuilder<'a> {
             let mut copy_transform = Mat3::IDENTITY;
             let mut copy_transform4 = Mat4::IDENTITY;
             for _ in 0..i {
-                copy_transform = copy_transform * step_transform;
-                copy_transform4 = copy_transform4 * step_transform4;
+                copy_transform *= step_transform;
+                copy_transform4 *= step_transform4;
             }
 
             for geom in &original_geoms {
@@ -3876,7 +3870,7 @@ impl<'a> SceneGraphBuilder<'a> {
 
     fn apply_modifier_to_active(
         &self,
-        active: &mut Vec<PendingGeometry>,
+        active: &mut [PendingGeometry],
         modifier: &impl GeometryModifier,
     ) {
         for geom in active.iter_mut() {

@@ -16,7 +16,7 @@ use crate::entity::{BoundingBox, EntityKind};
 use crate::node::active_speaker_camera::ActiveSpeakerCamera;
 use crate::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
 use crate::node::caption::scaled_safe_zone;
-use crate::semantic::{CaptionTrajectory, SemanticManifest, SolverConfig, TrajectorySample};
+use crate::semantic::{intersection_area, CaptionTrajectory, SemanticManifest, SolverConfig, SolverParams, TrajectorySample};
 use crate::element::element_kind;
 use crate::systems::layout::LayoutEngine;
 use crate::types::BoundsRect;
@@ -24,6 +24,27 @@ use crate::Element;
 use serde::{Deserialize, Serialize};
 
 pub const RENDER_MANIFEST_VERSION: u32 = 1;
+
+/// Lightweight snapshot of node bounds at a specific time.
+///
+/// This is cheaper than cloning the whole [`Director`] and is intended for
+/// verification passes (e.g. static-stretch detection) that only need to
+/// compare per-node layout rectangles across time.
+#[derive(Debug, Clone)]
+pub struct LayoutSnapshot {
+    pub width: i32,
+    pub height: i32,
+    pub sample_time: f64,
+    pub nodes: Vec<LayoutNodeSnapshot>,
+}
+
+/// A single node's bounds inside a [`LayoutSnapshot`].
+#[derive(Debug, Clone)]
+pub struct LayoutNodeSnapshot {
+    pub id: usize,
+    pub kind: &'static str,
+    pub bounds: BoundsRect,
+}
 
 #[derive(Serialize, Debug, Clone)]
 pub struct RenderManifest {
@@ -118,7 +139,7 @@ pub struct VerificationIssue {
 }
 
 /// Configuration for manifest verification.
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct VerificationConfig {
     /// Platform safe-zone preset to validate against.
     pub safe_zone_preset: String,
@@ -423,7 +444,7 @@ impl RenderManifest {
 
         // Sample the layout at the end of the window without cloning the
         // whole Director. `self` already represents the layout at `start`.
-        let snapshot_end = director.layout_snapshot(end);
+        let snapshot_end = layout_snapshot(director, end);
 
         let motion = total_motion_energy(self, &snapshot_end);
         if motion < config.static_stretch_threshold {
@@ -497,7 +518,7 @@ fn bbox_to_bounds_rect(bbox: &BoundingBox) -> BoundsRect {
     }
 }
 
-fn total_motion_energy(a: &RenderManifest, b: &crate::director::LayoutSnapshot) -> f32 {
+fn total_motion_energy(a: &RenderManifest, b: &LayoutSnapshot) -> f32 {
     let mut total = 0.0f32;
     for node_a in &a.nodes {
         let Some(node_b) = b.nodes.iter().find(|n| n.id == node_a.id) else {
@@ -510,6 +531,101 @@ fn total_motion_energy(a: &RenderManifest, b: &crate::director::LayoutSnapshot) 
         total += (dx * dx + dy * dy + dw * dw + dh * dh).sqrt();
     }
     total
+}
+
+/// Verify that every `SmartCaptionNode` trajectory in the Director still
+/// avoids the tracked entities referenced by its stored semantic manifest.
+///
+/// This is intended as a post-load verification stage: after a project is
+/// restored, sample each stored trajectory at its knot times and check for
+/// overlap with the restored entity tracks. Any overlap above the configured
+/// threshold is emitted as a `CaptionOverFace` issue.
+pub fn verify_smart_caption_trajectories(
+    director: &Director,
+    config: &VerificationConfig,
+) -> Vec<VerificationIssue> {
+    let mut issues = Vec::new();
+    for (id, slot) in director.scene.nodes.iter().enumerate() {
+        let Some(node) = slot else { continue };
+        let Some(smart) = node.element.as_any().downcast_ref::<SmartCaptionNode>() else {
+            continue;
+        };
+        issues.extend(verify_smart_caption_node(id, smart, director, config));
+    }
+    issues
+}
+
+fn verify_smart_caption_node(
+    node_id: usize,
+    smart: &SmartCaptionNode,
+    director: &Director,
+    config: &VerificationConfig,
+) -> Vec<VerificationIssue> {
+    let mut issues = Vec::new();
+    let Some(manifest) = &smart.manifest else { return issues };
+
+    let params = smart
+        .config
+        .as_ref()
+        .map(SolverParams::from)
+        .unwrap_or_default();
+    let caption_w = params.caption_w;
+    let caption_h = params.caption_h;
+    let half_w = caption_w / 2.0;
+    let half_h = caption_h / 2.0;
+
+    for sample in smart.trajectory.as_slice() {
+        let caption_bbox = BoundingBox::new(
+            sample.x - half_w,
+            sample.y - half_h,
+            caption_w,
+            caption_h,
+        );
+
+        let mut total_overlap = 0.0f32;
+        let mut overlapping_entities = 0usize;
+        for &entity_id in &manifest.entity_refs {
+            let Some(entity_sample) = director.entities.sample_at(entity_id, sample.time) else {
+                continue;
+            };
+            let overlap = intersection_area(&caption_bbox, &entity_sample.bbox);
+            if overlap >= config.caption_face_overlap_threshold {
+                total_overlap += overlap;
+                overlapping_entities += 1;
+            }
+        }
+
+        if overlapping_entities > 0 {
+            issues.push(VerificationIssue {
+                issue_type: VerificationIssueType::CaptionOverFace,
+                severity: IssueSeverity::Error,
+                start_time: sample.time,
+                end_time: sample.time,
+                node_ids: vec![node_id],
+                description: format!(
+                    "Loaded SmartCaptionNode {} trajectory overlaps {} tracked entity/entities by {:.1} px² at t={:.2}s",
+                    node_id, overlapping_entities, total_overlap, sample.time
+                ),
+                suggested_fix: Some("Re-solve the SmartCaptionNode trajectory against the restored entity tracks".to_string()),
+                region: BoundsRect {
+                    x: caption_bbox.x,
+                    y: caption_bbox.y,
+                    w: caption_bbox.width,
+                    h: caption_bbox.height,
+                },
+            });
+        }
+    }
+
+    issues
+}
+
+impl Director {
+    /// Verify that every `SmartCaptionNode` trajectory in the scene still
+    /// avoids the tracked entities in the restored registry.
+    pub fn verify_smart_caption_trajectories(&self, config: &VerificationConfig) -> Vec<VerificationIssue> {
+        verify_smart_caption_trajectories(self, config)
+    }
 }
 
 fn collect_timeline(director: &Director) -> Vec<TimelineItem> {
@@ -527,6 +643,43 @@ fn collect_timeline(director: &Director) -> Vec<TimelineItem> {
         }
     }
     items
+}
+
+/// Capture a lightweight layout snapshot at `time` without cloning the
+/// whole Director.
+///
+/// The snapshot contains only the per-node bounds and kind strings needed
+/// by verification passes such as static-stretch detection. It runs the
+/// update and layout passes on `director`, so it mutates the Director's
+/// internal state (local times, layout rectangles, etc.).
+pub fn layout_snapshot(director: &mut Director, time: f64) -> LayoutSnapshot {
+    director.update(time, None);
+
+    let mut layout_engine = LayoutEngine::new();
+    layout_engine.compute_layout(&mut director.scene, director.width, director.height, time);
+
+    let nodes = director
+        .scene
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(id, node_opt)| {
+            let node = node_opt.as_ref()?;
+            let r = node.layout_rect;
+            Some(LayoutNodeSnapshot {
+                id,
+                kind: element_kind(node.element.as_ref()),
+                bounds: BoundsRect::new(r.left(), r.top(), r.width(), r.height()),
+            })
+        })
+        .collect();
+
+    LayoutSnapshot {
+        width: director.width,
+        height: director.height,
+        sample_time: time,
+        nodes,
+    }
 }
 
 fn total_duration(director: &Director) -> f64 {
@@ -677,7 +830,7 @@ mod tests {
 
         // Place a caption node that overlaps the face.
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
-        let caption = CaptionNode::new(lines, empty_font_collection());
+        let caption = CaptionNode::new(lines, director.assets.font_collection.clone());
         let caption_id = director.scene.add_node(Box::new(caption));
         director.timeline.push(TimelineItem {
             scene_root: caption_id,
@@ -732,7 +885,7 @@ mod tests {
             solver: SolverConfig::default(),
         };
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
-        let inner = CaptionNode::new(lines, empty_font_collection());
+        let inner = CaptionNode::new(lines, director.assets.font_collection.clone());
         let mut smart = SmartCaptionNode::from_manifest(
             inner,
             &director.entities,
@@ -740,8 +893,8 @@ mod tests {
             SmartCaptionConfig::default(),
         );
         smart.trajectory = CaptionTrajectory::new(vec![
-            TrajectorySample { time: 0.0, x: 540.0, y: 160.0 },
-            TrajectorySample { time: 2.0, x: 540.0, y: 160.0 },
+            TrajectorySample { time: 0.0, x: 540.0, y: 160.0, anchor: None },
+            TrajectorySample { time: 2.0, x: 540.0, y: 160.0, anchor: None },
         ]);
 
         let smart_id = director.scene.add_node(Box::new(smart));
@@ -914,7 +1067,7 @@ mod tests {
         );
 
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
-        let caption = CaptionNode::new(lines, empty_font_collection());
+        let caption = CaptionNode::new(lines, director.assets.font_collection.clone());
         let caption_id = director.scene.add_node(Box::new(caption));
         director.timeline.push(TimelineItem {
             scene_root: caption_id,
@@ -966,7 +1119,7 @@ mod tests {
             solver: SolverConfig::default(),
         };
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
-        let inner = CaptionNode::new(lines, empty_font_collection());
+        let inner = CaptionNode::new(lines, director.assets.font_collection.clone());
         let config = SmartCaptionConfig {
             canvas_w: 1080.0,
             canvas_h: 1920.0,
@@ -982,8 +1135,8 @@ mod tests {
         let mut smart = SmartCaptionNode::from_manifest(inner, &director.entities, &manifest, config);
         // Force the trajectory to the top so it overlaps the face.
         smart.trajectory = CaptionTrajectory::new(vec![
-            TrajectorySample { time: 0.0, x: 540.0, y: 160.0 },
-            TrajectorySample { time: 2.0, x: 540.0, y: 160.0 },
+            TrajectorySample { time: 0.0, x: 540.0, y: 160.0, anchor: None },
+            TrajectorySample { time: 2.0, x: 540.0, y: 160.0, anchor: None },
         ]);
 
         let smart_id = director.scene.add_node(Box::new(smart));
@@ -1222,5 +1375,66 @@ mod tests {
         assert!(!result.affected_regions.is_empty());
         assert_eq!(result.queued_issue_count, issues.len());
         assert!(director.dirty_nodes.contains(&caption_id));
+    }
+
+    #[test]
+    fn repair_marks_plain_caption_dirty_when_caption_over_face() {
+        let mut director = Director::new(
+            1080,
+            1920,
+            30,
+            Arc::new(DefaultAssetLoader),
+            RenderMode::Preview,
+            None,
+        );
+
+        // Place a face in the top-center where the default caption block
+        // is anchored, guaranteeing a caption-over-face overlap.
+        let face = director.entities.create(EntityKind::Face, "mara".to_string());
+        director.entities.add_sample(
+            face,
+            0.0,
+            BoundingBox::new(400.0, 0.0, 200.0, 100.0),
+            1.0,
+        );
+
+        let lines = vec![single_word_line("hello", 0.0, 2.0)];
+        let caption = CaptionNode::new(lines, director.assets.font_collection.clone());
+        let caption_id = director.scene.add_node(Box::new(caption));
+        director.timeline.push(TimelineItem {
+            scene_root: caption_id,
+            name: Some("caption".into()),
+            start_time: 0.0,
+            duration: 2.0,
+            z_index: 0,
+            audio_tracks: vec![],
+        });
+
+        let manifest = build_render_manifest(&mut director, 0.5);
+        let config = VerificationConfig::default();
+        let issues = manifest.verify(&mut director, &config);
+
+        // Confirm the issue is specifically a caption-over-face problem for the
+        // plain CaptionNode (not a SmartCaptionNode).
+        let caption_over_face: Vec<_> = issues
+            .iter()
+            .filter(|i| i.issue_type == VerificationIssueType::CaptionOverFace)
+            .collect();
+        assert!(
+            !caption_over_face.is_empty(),
+            "plain CaptionNode should overlap the face"
+        );
+        assert!(caption_over_face.iter().any(|i| i.node_ids == vec![caption_id]));
+
+        // Repair should mark the plain caption node dirty.
+        let result = manifest.repair(&mut director, &issues);
+        assert!(
+            result.affected_nodes.contains(&caption_id),
+            "repair should include the plain caption node in affected nodes"
+        );
+        assert!(
+            director.dirty_nodes.contains(&caption_id),
+            "repair should mark the plain caption node dirty"
+        );
     }
 }

@@ -211,5 +211,42 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).expect("manifest json");
         assert_eq!(v["version"], API_MANIFEST_VERSION);
         assert!(v["effects"].as_array().unwrap().len() >= 30);
+
+        // rhai_functions entries should include the params array in the JSON output.
+        let rhai_functions = v["rhai_functions"].as_array().expect("rhai_functions array");
+        let compiler_fn = rhai_functions
+            .iter()
+            .find(|f| f["name"] == "compiler_affected_nodes")
+            .expect("compiler_affected_nodes in manifest");
+        let params = compiler_fn["params"].as_array().expect("params array");
+        assert!(!params.is_empty(), "compiler_affected_nodes params should be serialized");
+        let first_param = params[0].as_array().expect("param tuple as array");
+        assert_eq!(first_param[0], "inputs");
+        assert_eq!(first_param[1], "Array");
+    }
+
+    #[test]
+    fn test_api_manifest_includes_compiler_introspection_functions() {
+        let manifest = api_manifest();
+        let by_name: std::collections::HashMap<_, _> =
+            manifest.rhai_functions.iter().map(|f| (f.name, f)).collect();
+
+        assert!(by_name.contains_key("compiler_inputs_for_node"));
+        assert!(by_name.contains_key("compiler_dependents_of_entity"));
+        assert!(by_name.contains_key("compiler_dependents_of_audio_track"));
+        assert!(by_name.contains_key("compiler_dependents_of_node"));
+        assert!(by_name.contains_key("compiler_graph_json"));
+        assert!(by_name.contains_key("compiler_affected_nodes"));
+
+        // Functions that take parameters should report them in the manifest.
+        assert_eq!(by_name["compiler_inputs_for_node"].params, &[("node_id", "Integer")]);
+        assert_eq!(by_name["compiler_dependents_of_entity"].params, &[("entity_id", "String")]);
+        assert_eq!(
+            by_name["compiler_dependents_of_audio_track"].params,
+            &[("track_id", "Integer")]
+        );
+        assert_eq!(by_name["compiler_dependents_of_node"].params, &[("node_id", "Integer")]);
+        assert!(by_name["compiler_graph_json"].params.is_empty());
+        assert_eq!(by_name["compiler_affected_nodes"].params, &[("inputs", "Array")]);
     }
 }

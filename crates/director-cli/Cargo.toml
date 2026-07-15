@@ -42,3 +42,7 @@ path = "src/bin/preview_frame.rs"
 [[bin]]
 name = "director-manifest"
 path = "src/bin/director_manifest.rs"
+
+[[bin]]
+name = "director-cli"
+path = "src/bin/director_cli.rs"

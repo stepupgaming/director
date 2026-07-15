@@ -43,8 +43,7 @@ pub struct CaptionLine {
 }
 
 /// Where to position the caption within the layout rect.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CaptionPosition {
     Bottom,
     Top,
@@ -96,39 +95,65 @@ impl CaptionPosition {
         }
     }
 
+    /// Serialize the position to a string that round-trips through
+    /// `CaptionPosition::from_str`.
+    pub fn to_position_string(&self) -> String {
+        match self {
+            Self::Free(y) => format!("free({})", y),
+            Self::FreeXY { x, y } => format!("free_xy({}, {})", x, y),
+            _ => self.as_position_str().to_string(),
+        }
+    }
+
+    /// Parse a `CaptionPosition` from its string representation.
+    ///
+    /// Unknown or malformed strings fall back to `CaptionPosition::Bottom`
+    /// after logging a warning. Use [`CaptionPosition::try_from_str`] if you
+    /// need to surface parse errors.
     pub fn from_str(s: &str) -> Self {
+        Self::try_from_str(s).unwrap_or_else(|e| {
+            tracing::warn!("{}", e);
+            Self::Bottom
+        })
+    }
+
+    /// Parse a `CaptionPosition` from its string representation, returning
+    /// an error for unknown or malformed inputs.
+    pub fn try_from_str(s: &str) -> Result<Self, String> {
         match s {
-            "top" => Self::Top,
-            "center" => Self::Center,
-            "bottom" => Self::Bottom,
-            "left" => Self::Left,
-            "right" => Self::Right,
-            "top_left" => Self::TopLeft,
-            "top_right" => Self::TopRight,
-            "bottom_left" => Self::BottomLeft,
-            "bottom_right" => Self::BottomRight,
+            "top" => Ok(Self::Top),
+            "center" => Ok(Self::Center),
+            "bottom" => Ok(Self::Bottom),
+            "left" => Ok(Self::Left),
+            "right" => Ok(Self::Right),
+            "top_left" => Ok(Self::TopLeft),
+            "top_right" => Ok(Self::TopRight),
+            "bottom_left" => Ok(Self::BottomLeft),
+            "bottom_right" => Ok(Self::BottomRight),
             _ => {
                 if let Some(rest) = s.strip_prefix("free(") {
                     if let Some(num) = rest.strip_suffix(")") {
                         if let Ok(y) = num.parse::<f32>() {
-                            return Self::Free(y);
+                            return Ok(Self::Free(y));
                         }
                     }
-                    tracing::warn!("malformed CaptionPosition::Free string: {}", s);
-                } else if let Some(rest) = s.strip_prefix("free_xy(") {
+                    return Err(format!("malformed CaptionPosition::Free string: {}", s));
+                }
+                if let Some(rest) = s.strip_prefix("free_xy(") {
                     if let Some(inner) = rest.strip_suffix(")") {
                         let parts: Vec<&str> = inner.split(',').collect();
                         if parts.len() == 2 {
                             if let (Ok(x), Ok(y)) = (parts[0].trim().parse::<f32>(), parts[1].trim().parse::<f32>()) {
-                                return Self::FreeXY { x, y };
+                                return Ok(Self::FreeXY { x, y });
                             }
                         }
                     }
-                    tracing::warn!("malformed CaptionPosition::FreeXY string: {}", s);
-                } else if !s.is_empty() {
-                    tracing::warn!("unknown CaptionPosition string: {}", s);
+                    return Err(format!("malformed CaptionPosition::FreeXY string: {}", s));
                 }
-                Self::Bottom
+                if s.is_empty() {
+                    return Err("empty CaptionPosition string".to_string());
+                }
+                Err(format!("unknown CaptionPosition string: {}", s))
             }
         }
     }
@@ -137,6 +162,25 @@ impl CaptionPosition {
 impl Default for CaptionPosition {
     fn default() -> Self {
         Self::Bottom
+    }
+}
+
+impl serde::Serialize for CaptionPosition {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_position_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CaptionPosition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        CaptionPosition::try_from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -151,7 +195,7 @@ pub enum PhraseLineMode {
 
 /// Serde adapter for `skia_safe::textlayout::TextAlign`.
 mod text_align_serde {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
     use skia_safe::textlayout::TextAlign;
 
     pub fn serialize<S: Serializer>(v: &TextAlign, s: S) -> Result<S::Ok, S::Error> {
@@ -443,7 +487,7 @@ impl CaptionNode {
     pub fn new(mut lines: Vec<CaptionLine>, font_collection: Arc<Mutex<FontCollection>>) -> Self {
         let style = CaptionStyle::default();
         refresh_caption_lines(&mut lines, &style);
-        Self {
+        let mut node = Self {
             lines,
             style,
             opacity: Animated::new(1.0),
@@ -451,7 +495,9 @@ impl CaptionNode {
             style_cache: Style::default(),
             cached_time: Mutex::new(0.0),
             block_layout: Mutex::new(None),
-        }
+        };
+        node.rebuild_layout_style();
+        node
     }
 
     pub fn active_lines(&self, time_sec: f64) -> Vec<&CaptionLine> {
@@ -466,10 +512,78 @@ impl CaptionNode {
     pub fn set_position(&mut self, position: CaptionPosition) {
         if self.style.position != position {
             self.style.position = position;
+            self.rebuild_layout_style();
             // Position only affects render placement and measure margin;
             // invalidate the cached block layout so measure picks up the new margin.
             if let Ok(mut guard) = self.block_layout.lock() {
                 *guard = None;
+            }
+        }
+    }
+
+    /// Rebuild the Taffy `Style` cache from the current `CaptionPosition` so
+    /// that the layout engine positions the node's rect at the actual render
+    /// location (top/bottom/center/etc.) instead of always defaulting to y=0.
+    pub fn rebuild_layout_style(&mut self) {
+        use taffy::style::{LengthPercentageAuto, Position};
+
+        let style = &self.style;
+        let s = &mut self.style_cache;
+
+        s.position = Position::Absolute;
+        s.inset = taffy::geometry::Rect {
+            left: LengthPercentageAuto::auto(),
+            right: LengthPercentageAuto::auto(),
+            top: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        };
+        s.align_self = None;
+
+        match &style.position {
+            CaptionPosition::Top => {
+                s.inset.top = LengthPercentageAuto::length(style.top_margin);
+            }
+            CaptionPosition::Bottom => {
+                s.inset.bottom = LengthPercentageAuto::length(style.bottom_margin);
+            }
+            CaptionPosition::TopLeft => {
+                s.inset.top = LengthPercentageAuto::length(style.top_margin);
+                s.inset.left = LengthPercentageAuto::length(style.left_margin);
+            }
+            CaptionPosition::TopRight => {
+                s.inset.top = LengthPercentageAuto::length(style.top_margin);
+                s.inset.right = LengthPercentageAuto::length(style.right_margin);
+            }
+            CaptionPosition::BottomLeft => {
+                s.inset.bottom = LengthPercentageAuto::length(style.bottom_margin);
+                s.inset.left = LengthPercentageAuto::length(style.left_margin);
+            }
+            CaptionPosition::BottomRight => {
+                s.inset.bottom = LengthPercentageAuto::length(style.bottom_margin);
+                s.inset.right = LengthPercentageAuto::length(style.right_margin);
+            }
+            CaptionPosition::Left => {
+                s.inset.left = LengthPercentageAuto::length(style.left_margin);
+                s.align_self = Some(taffy::style::AlignItems::Center);
+            }
+            CaptionPosition::Right => {
+                s.inset.right = LengthPercentageAuto::length(style.right_margin);
+                s.align_self = Some(taffy::style::AlignItems::Center);
+            }
+            CaptionPosition::Center => {
+                s.align_self = Some(taffy::style::AlignItems::Center);
+            }
+            CaptionPosition::Free(_) | CaptionPosition::FreeXY { .. } => {
+                // Free/FreeXY positions are resolved at render time from the
+                // supplied rect, so make the layout rect fill the parent. The
+                // render code then computes the caption's actual offset
+                // within this full-parent rect.
+                s.inset = taffy::geometry::Rect {
+                    left: LengthPercentageAuto::length(0.0),
+                    right: LengthPercentageAuto::length(0.0),
+                    top: LengthPercentageAuto::length(0.0),
+                    bottom: LengthPercentageAuto::length(0.0),
+                };
             }
         }
     }
@@ -1005,30 +1119,28 @@ impl CaptionNode {
 
     /// Compute the top y-coordinate of the caption block for the given
     /// position, layout rect, and block layout.
+    ///
+    /// For anchors that are encoded into the Taffy style (Top, Bottom, corners,
+    /// Left, Right, Center), Taffy has already positioned the layout rect at the
+    /// render location, so we just use `rect.top`. For Free/FreeXY the position
+    /// is resolved at render time within the supplied rect.
     fn compute_cue_block_top_y(
         layout_style: &CaptionStyle,
         rect: Rect,
         layout: &BlockLayout,
     ) -> f32 {
         match layout_style.position {
-            CaptionPosition::Bottom
+            // Anchors whose positioning is delegated to Taffy via
+            // `rebuild_layout_style`.
+            CaptionPosition::Top
+            | CaptionPosition::Bottom
+            | CaptionPosition::TopLeft
+            | CaptionPosition::TopRight
             | CaptionPosition::BottomLeft
-            | CaptionPosition::BottomRight => {
-                (rect.bottom - layout_style.bottom_margin - layout.total_height).max(rect.top)
-            }
-            CaptionPosition::Top | CaptionPosition::TopLeft | CaptionPosition::TopRight => {
-                (rect.top + layout_style.top_margin).min(rect.bottom - layout.total_height)
-            }
-            CaptionPosition::Center => {
-                let max_y = (rect.bottom - layout.total_height).max(rect.top);
-                (rect.top + (rect.height() - layout.total_height) / 2.0)
-                    .clamp(rect.top, max_y)
-            }
-            CaptionPosition::Left | CaptionPosition::Right => {
-                // Left/Right anchors are vertically centered within the rect.
-                (rect.top + (rect.height() - layout.total_height) / 2.0)
-                    .clamp(rect.top, rect.bottom - layout.total_height)
-            }
+            | CaptionPosition::BottomRight
+            | CaptionPosition::Left
+            | CaptionPosition::Right
+            | CaptionPosition::Center => rect.top,
             CaptionPosition::Free(y) => {
                 // `y` is a normalized [0, 1] offset relative to the layout rect.
                 let t = y.clamp(0.0, 1.0);
@@ -1176,23 +1288,15 @@ impl Element for CaptionNode {
             guard.as_ref().map(|l| l.total_height).unwrap_or(0.0)
         };
 
-        let extra_margin = match layout_style.position {
-            CaptionPosition::Bottom
-            | CaptionPosition::BottomLeft
-            | CaptionPosition::BottomRight => layout_style.bottom_margin,
-            CaptionPosition::Top
-            | CaptionPosition::TopLeft
-            | CaptionPosition::TopRight => layout_style.top_margin,
-            CaptionPosition::Center => 0.0,
-            CaptionPosition::Left => 0.0,
-            CaptionPosition::Right => 0.0,
-            CaptionPosition::Free(_) => 0.0,
-            CaptionPosition::FreeXY { .. } => 0.0,
-        };
+        // Margins are now encoded in the Taffy style insets (via
+        // `rebuild_layout_style`), so the measured size is just the caption
+        // block height. This lets Taffy position the actual render rect at
+        // top/bottom/center instead of always at y=0.
+        let _ = layout_style.position;
 
         Size {
             width: layout_width,
-            height: stack_h + extra_margin,
+            height: stack_h,
         }
     }
 
@@ -2510,6 +2614,24 @@ mod tests {
                 serde_json::from_str(&serialized).expect("deserialize");
             assert_eq!(deserialized, position, "{} round-trips", serialized);
         }
+    }
+
+    #[test]
+    fn test_caption_position_free_round_trips() {
+        let position = CaptionPosition::Free(0.5);
+        let serialized = serde_json::to_string(&position).expect("serialize");
+        assert_eq!(serialized, "\"free(0.5)\"");
+        let deserialized: CaptionPosition = serde_json::from_str(&serialized).expect("deserialize");
+        assert_eq!(deserialized, position);
+    }
+
+    #[test]
+    fn test_caption_position_free_xy_round_trips() {
+        let position = CaptionPosition::FreeXY { x: 120.0, y: 340.0 };
+        let serialized = serde_json::to_string(&position).expect("serialize");
+        assert_eq!(serialized, "\"free_xy(120, 340)\"");
+        let deserialized: CaptionPosition = serde_json::from_str(&serialized).expect("deserialize");
+        assert_eq!(deserialized, position);
     }
 
     #[test]
