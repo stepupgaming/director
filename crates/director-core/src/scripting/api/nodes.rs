@@ -1578,6 +1578,8 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 n.is_static = enabled;
             }
+            // Toggling static mode must not leave a stale cache entry.
+            d.note_node_mutation(node.id);
             Ok(enabled)
         },
     );

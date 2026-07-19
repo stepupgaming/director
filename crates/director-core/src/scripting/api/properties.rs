@@ -139,6 +139,7 @@ pub fn register(engine: &mut Engine) {
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 n.mask_node = Some(mask.id);
             }
+            d.note_mutation([node.id, mask.id]);
             Ok(())
         },
     );
@@ -154,6 +155,7 @@ pub fn register(engine: &mut Engine) {
                     .get_node_mut(node.id)
                     .ok_or_else(|| format!("Node {} not found", node.id))?;
                 n.element.set_color(color);
+                d.note_node_mutation(node.id);
             }
             Ok(())
         },

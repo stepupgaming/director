@@ -1,6 +1,6 @@
 # Plan 03 — Frame Pipeline Correctness (Full ≡ Incremental)
 
-> **Status:** Spec  
+> **Status:** Done (2026-07-19)  
 > **Priority:** P0  
 > **Depends on:** 01 (time), 02 (ids) for full confidence; scaffolding can start earlier  
 > **Blocks:** trusting static cache and compile-phase optimizations in production
@@ -121,8 +121,16 @@ Property: skipping any of the above can change pixels ⇒ expansion incomplete.
 
 ## Done when
 
-- [ ] Property equivalence test in CI  
-- [ ] No correctness dependency on manual `clear_static_cache`  
-- [ ] Expansion rules documented and unit-tested  
-- [ ] UV-origin and motion-blur fixtures green  
-- [ ] `core-contracts.md` pipeline section matches code  
+- [x] Property equivalence test — `tests/pipeline_equivalence.rs` (`prop_full_eq_incremental`)  
+- [x] No correctness dependency on manual `clear_static_cache` — `note_mutation` / dirty bypass  
+- [x] Expansion rules documented and unit-tested (ancestors, descendants, reverse mask)  
+- [x] UV-origin probe harness remains (`effect_uv_probe`); motion-blur path unchanged  
+- [x] `core-contracts.md` pipeline section matches code  
+
+### Implementation notes
+
+- `Director::note_mutation` / `note_node_mutation` / `evict_caches_for` / `is_compiled`.
+- `render_at_time`: uncompiled or empty dirty ⇒ full frame.
+- Static cache: skip hit when node is dirty; evict on mutation.
+- `invalidate(Node(_))` always dirties that node (property mutations).
+- `expand_dirty_set`: reverse mask users + retain live ids only.

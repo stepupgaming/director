@@ -232,6 +232,11 @@ rewrite returns wrapper id (attach-in-place when target is already
 `EffectNode`). `set_mask` keeps mask id under exclusive ownership. Nested
 composition ids are arena-local to the inner director.
 
+Frame pipeline (plan 03): `note_mutation` auto-evicts static/comp caches;
+`render_at_time` falls back to full when uncompiled; dirty static nodes
+never serve cache hits; `expand_dirty_set` includes reverse mask users.
+Acceptance: `tests/pipeline_equivalence.rs`.
+
 ## Semantic Entity Registry
 
 - `src/entity.rs` — persistent UUID-based identity for faces, speakers, objects, and

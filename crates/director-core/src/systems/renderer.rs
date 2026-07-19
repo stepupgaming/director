@@ -202,25 +202,27 @@ pub fn render_recursive(
     let tan_skew_y = skew_y.to_radians().tan();
 
     if is_static {
-        // Static cache hit: draw the cached image at the node's position.
-        // This is done regardless of the dirty set so that unchanged static
-        // subtrees still appear during incremental renders.
-        if let Some(image) = static_cache.get(&node_id) {
-            canvas.save();
-            canvas.translate((layout_x + tx, layout_y + ty));
-            canvas.draw_image(image, (0, 0), None);
-            canvas.restore();
-            return Ok(());
-        }
+        let is_dirty = dirty_nodes.map(|d| d.contains(&node_id)).unwrap_or(true);
 
-        // Skip re-rendering a static subtree if it is not dirty.
-        if let Some(dirty) = dirty_nodes {
-            if !dirty.contains(&node_id) {
+        // Cache hit only when the node is not dirty. Dirty static nodes must
+        // re-rasterize so mutations never serve stale pixels (plan 03).
+        if !is_dirty {
+            if let Some(image) = static_cache.get(&node_id) {
+                canvas.save();
+                canvas.translate((layout_x + tx, layout_y + ty));
+                canvas.draw_image(image, (0, 0), None);
+                canvas.restore();
                 return Ok(());
             }
+            // No cache entry and not dirty: nothing to draw this pass (parent
+            // full frame or prior full pass should have filled the cache).
+            // Fall through to rasterize so the first full frame still works.
+        } else {
+            // Drop any stale entry before re-rasterizing.
+            static_cache.remove(&node_id);
         }
 
-        // Cache miss: render the subtree to an offscreen surface and cache it.
+        // Cache miss or dirty: render the subtree to an offscreen surface and cache it.
         let info = skia_safe::ImageInfo::new(
             (width as i32, height as i32),
             skia_safe::ColorType::RGBA8888,
@@ -460,13 +462,14 @@ pub fn render_at_time(
     surfaces: &mut Option<(skia_safe::Surface, skia_safe::Surface)>,
 ) -> Result<(), RenderError> {
     // Build the incremental dirty set if invalidation has been requested.
-    // Ancestors and descendants are included so that transforms/layout roots
-    // are set up correctly and children of a dirty parent are re-evaluated.
-    let dirty: Option<std::collections::HashSet<NodeId>> = if director.dirty_nodes.is_empty() {
-        None
-    } else {
-        Some(director.expand_dirty_set(&director.dirty_nodes))
-    };
+    // Safe default (plan 03): without a compiled dependency graph, always run
+    // a full frame so hierarchy/property edits cannot leave stale pixels.
+    let dirty: Option<std::collections::HashSet<NodeId>> =
+        if director.dirty_nodes.is_empty() || !director.is_compiled() {
+            None
+        } else {
+            Some(director.expand_dirty_set(&director.dirty_nodes))
+        };
 
     director.update(time, dirty.as_ref());
     layout_engine.compute_layout(&mut director.scene, director.width, director.height, time);

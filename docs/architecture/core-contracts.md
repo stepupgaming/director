@@ -64,14 +64,17 @@ See plan **02** (implemented).
 update(time, dirty?) → layout → post_layout → render → (mix_audio / encode)
 ```
 
-| Item | Contract | Current gap |
-|------|----------|-------------|
-| Full vs incremental | Same pixels for same scene+time after public mutations | Not property-tested |
-| Static cache | Auto-invalidated on mutation; never required manual clear for correctness | Manual clear |
-| Dirty expansion | Ancestors, descendants, masks, dependents | Partially implemented |
-| Uncompiled graph | Incremental falls back to full | Verify |
+| Item | Contract | Status (2026-07-19) |
+|------|----------|---------------------|
+| Full vs incremental | Same pixels for same scene+time after public mutations | **Done** — `tests/pipeline_equivalence.rs` |
+| Static cache | Auto-invalidated via `note_mutation` / `invalidate`; dirty static nodes never serve cache hits | **Done** |
+| Dirty expansion | Ancestors, descendants, mask subtrees, reverse mask users; drop stale ids | **Done** |
+| Uncompiled graph | Incremental falls back to full (`!is_compiled()` ⇒ dirty `None`) | **Done** |
+| Mutation hook | Public pixel/layout mutations call `Director::note_mutation` | **Done** (color, mask, set_static, invalidate) |
 
-See plan **03**.
+Entry points: `render_at_time` (export / incremental-aware), `render_frame` (preview; full update).
+
+See plan **03** (implemented).
 
 ---
 

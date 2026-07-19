@@ -818,24 +818,23 @@ impl Director {
     }
 
     /// Expand a dirty set to include all ancestors and descendants of dirty
-    /// nodes.
+    /// nodes, plus reverse mask users.
     ///
     /// Ancestors are included because a parent's transform/layout context is
     /// required to render a dirty child correctly. Descendants are included
     /// because a change to a parent (e.g., a transform or layout change) may
-    /// affect its children. Mask nodes are treated as descendants for the
-    /// same reason.
-    pub(crate) fn expand_dirty_set(&self, dirty: &std::collections::HashSet<NodeId>) -> std::collections::HashSet<NodeId> {
+    /// affect its children. Mask nodes referenced by any included node (and
+    /// their subtrees) are included. Nodes that **use** a dirty node as their
+    /// mask are also included so mask edits recompose masked content.
+    pub fn expand_dirty_set(&self, dirty: &std::collections::HashSet<NodeId>) -> std::collections::HashSet<NodeId> {
         let mut expanded = dirty.clone();
 
-        // Add ancestors.
+        // Add ancestors (transform/layout context). Do **not** treat ancestors as
+        // seeds for descendant expansion — that would dirty all siblings.
         for &node_id in dirty {
             let mut current = node_id;
             while let Some(node) = self.scene.get_node(current) {
                 if let Some(parent_id) = node.parent {
-                    // If the parent was already in the set, it was processed by
-                    // an earlier chain that walked up to the root, so this
-                    // branch is fully covered.
                     if !expanded.insert(parent_id) {
                         break;
                     }
@@ -846,8 +845,20 @@ impl Director {
             }
         }
 
-        // Add descendants (children and mask nodes) recursively.
+        // Seeds for descendant expansion: original dirty nodes plus content that
+        // uses a dirty node as its mask. Ancestors are NOT seeds — otherwise
+        // every sibling of a dirty child would be re-evaluated.
         let mut stack: Vec<NodeId> = dirty.iter().copied().collect();
+        for (id, node) in self.scene.iter_alive() {
+            if let Some(mask_id) = node.mask_node {
+                if dirty.contains(&mask_id) {
+                    if expanded.insert(id) {
+                        stack.push(id);
+                    }
+                }
+            }
+        }
+
         while let Some(node_id) = stack.pop() {
             if let Some(node) = self.scene.get_node(node_id) {
                 for &child_id in &node.children {
@@ -863,7 +874,74 @@ impl Director {
             }
         }
 
+        // Drop stale ids that no longer resolve.
+        expanded.retain(|id| self.scene.get_node(*id).is_some());
         expanded
+    }
+
+    /// Evict static-cache entries for `ids` and their ancestors, and clear nested
+    /// composition surface caches when a composition node is on the chain.
+    fn evict_caches_for(&mut self, ids: &std::collections::HashSet<NodeId>) {
+        for &id in ids {
+            let mut current = Some(id);
+            while let Some(cid) = current {
+                self.static_cache.remove(&cid);
+                if let Some(node) = self.scene.get_node(cid) {
+                    if let Some(comp) = node
+                        .element
+                        .as_any()
+                        .downcast_ref::<crate::node::composition::CompositionNode>()
+                    {
+                        if let Ok(mut guard) = comp.surface_cache.lock() {
+                            *guard = None;
+                        }
+                    }
+                    current = node.parent;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Record that public API mutated `ids` in a way that can change pixels or layout.
+    ///
+    /// - Marks each live id dirty (merged into `dirty_nodes`).
+    /// - Evicts static-cache entries for the ids and their ancestors.
+    /// - Clears nested composition surface caches when a composition node is affected.
+    ///
+    /// Call this from scripting/property mutations so correctness never depends on
+    /// manual `clear_static_cache`.
+    pub fn note_mutation(&mut self, ids: impl IntoIterator<Item = NodeId>) {
+        let mut seeds: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        for id in ids {
+            if self.scene.get_node(id).is_some() {
+                seeds.insert(id);
+            }
+        }
+        if seeds.is_empty() {
+            return;
+        }
+        self.evict_caches_for(&seeds);
+        self.dirty_nodes.extend(seeds);
+    }
+
+    /// Convenience: mark a single node mutated (pixels/layout).
+    pub fn note_node_mutation(&mut self, id: NodeId) {
+        self.note_mutation([id]);
+    }
+
+    /// Whether the dependency graph has been built via [`compile`].
+    ///
+    /// Incremental render requires a compiled graph; otherwise the pipeline
+    /// falls back to a full frame (plan 03 safe default).
+    pub fn is_compiled(&self) -> bool {
+        !self.compiler.is_empty()
+    }
+
+    /// Drop every static-cache entry. Prefer [`note_mutation`] for targeted eviction.
+    pub fn clear_all_static_cache(&mut self) {
+        self.static_cache.clear();
     }
 
     /// Triggers `post_layout` on all active nodes.
@@ -1011,7 +1089,12 @@ impl Director {
             }
         }
 
-        self.dirty_nodes = dirty.clone();
+        // Evict static/comp caches for hash-dirtied nodes (plan 03).
+        // Property mutations that don't change structural hashes must go through
+        // `note_mutation` (e.g. set_color) rather than force-dirtying every Node input.
+        self.evict_caches_for(&dirty);
+        // Merge with any dirties previously recorded via note_mutation.
+        self.dirty_nodes.extend(dirty.iter().copied());
         dirty
     }
 
