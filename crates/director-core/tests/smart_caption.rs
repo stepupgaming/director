@@ -33,7 +33,7 @@ fn smart_caption_avoids_bottom_face() {
     let mut director = Director::new(
         1080,
         1920,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -89,7 +89,7 @@ fn smart_caption_switches_when_face_moves() {
     let mut director = Director::new(
         1080,
         1920,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -222,7 +222,7 @@ fn smart_caption_uses_left_anchor_when_right_top_and_bottom_are_blocked() {
     let mut director = Director::new(
         1080,
         1920,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -305,7 +305,7 @@ fn smart_caption_uses_right_anchor_when_left_top_and_bottom_are_blocked() {
     let mut director = Director::new(
         1080,
         1920,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -390,7 +390,7 @@ fn smart_caption_continuous_uses_free_xy_position() {
     let mut director = Director::new(
         1080,
         1920,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -441,7 +441,7 @@ fn project_roundtrip_smart_caption_preserves_entity_refs() {
     let mut director = Director::new(
         1080,
         1920,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,

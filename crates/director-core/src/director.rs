@@ -43,7 +43,10 @@ pub struct DirectorContext {
     pub assets: AssetManager,
 }
 
-/// Represents a scene (or clip) on the timeline.
+/// Flat view of a sequenced clip (for transitions, manifests, and tests).
+///
+/// Authoring and playback use [`Track`]/`TrackClip`] only. This DTO is derived
+/// via [`Director::flat_timeline`] and is no longer a second stored timeline.
 #[derive(Clone, Debug)]
 pub struct TimelineItem {
     /// The root node of this scene.
@@ -60,6 +63,19 @@ pub struct TimelineItem {
     pub audio_tracks: Vec<usize>,
 }
 
+impl From<&crate::timeline::TrackClip> for TimelineItem {
+    fn from(clip: &crate::timeline::TrackClip) -> Self {
+        Self {
+            scene_root: clip.scene_root,
+            name: clip.name.clone(),
+            start_time: clip.start_time,
+            duration: clip.duration,
+            z_index: clip.z_index,
+            audio_tracks: clip.audio_tracks.clone(),
+        }
+    }
+}
+
 /// The central engine coordinator.
 ///
 /// `Director` manages the Scene Graph (nodes), Timeline (sequencing),
@@ -68,9 +84,7 @@ pub struct TimelineItem {
 pub struct Director {
     /// The Scene Graph.
     pub scene: SceneGraph,
-    /// The timeline of scenes (legacy, replaced by tracks below).
-    pub timeline: Vec<TimelineItem>,
-    /// Multi-track timeline (replaces legacy timeline). Each track is a compositing layer.
+    /// Multi-track timeline — the only sequencing structure (plan 01).
     pub tracks: Vec<Track>,
     /// Index of the default track that `add_scene` pushes to.
     pub default_track_idx: usize,
@@ -80,8 +94,8 @@ pub struct Director {
     pub width: i32,
     /// Output height in pixels.
     pub height: i32,
-    /// Frames Per Second.
-    pub fps: u32,
+    /// Frames per second (`f64` so NTSC rates like 23.976 / 29.97 round-trip).
+    pub fps: f64,
     /// Number of sub-frame samples for motion blur (default: 1).
     pub samples_per_frame: u32,
     /// Shutter angle in degrees (0.0 to 360.0). Default: 180.0.
@@ -195,11 +209,12 @@ impl Director {
     pub fn new(
         width: i32,
         height: i32,
-        fps: u32,
+        fps: f64,
         asset_loader: Arc<dyn AssetLoader>,
         render_mode: RenderMode,
         context: Option<DirectorContext>,
     ) -> Self {
+        let fps = if fps.is_finite() && fps > 0.0 { fps } else { 30.0 };
         let assets = if let Some(ctx) = context {
             ctx.assets
         } else {
@@ -271,7 +286,6 @@ impl Director {
         tracks.push(Track::new("Default"));
         Self {
             scene: SceneGraph::new(),
-            timeline: Vec::new(),
             tracks,
             default_track_idx: 0,
             transitions: Vec::new(),
@@ -451,33 +465,93 @@ impl Director {
         self.audio_mixer.add_track(track)
     }
 
-    fn collect_active_roots<'a>(&'a self, global_time: f64) -> Vec<(NodeId, f64)> {
+    fn collect_active_roots(&self, global_time: f64) -> Vec<(NodeId, f64)> {
         let mut roots = Vec::new();
-        // Try new track system first
-        if self.tracks.iter().any(|t| !t.clips.is_empty()) {
-            for track in &self.tracks {
-                for clip in &track.clips {
-                    if track.enabled
-                        && global_time >= clip.start_time
-                        && global_time < clip.start_time + clip.duration
-                    {
-                        let local_time = clip.local_time(global_time);
-                        roots.push((clip.scene_root, local_time));
-                    }
-                }
+        for track in &self.tracks {
+            if !track.enabled {
+                continue;
             }
-        } else {
-            // Legacy timeline fallback
-            for item in &self.timeline {
-                if global_time >= item.start_time
-                    && global_time < item.start_time + item.duration
-                {
-                    let local_time = global_time - item.start_time;
-                    roots.push((item.scene_root, local_time));
+            for clip in &track.clips {
+                if clip.is_active_at(global_time) {
+                    roots.push((clip.scene_root, clip.local_time(global_time)));
                 }
             }
         }
         roots
+    }
+
+    /// Flatten all track clips into a `TimelineItem` list (stable order: track
+    /// order, then clip order within each track). Used by transitions, manifests,
+    /// and tests that need a linear scene index.
+    pub fn flat_timeline(&self) -> Vec<TimelineItem> {
+        let mut items = Vec::new();
+        for track in &self.tracks {
+            for clip in &track.clips {
+                items.push(TimelineItem::from(clip));
+            }
+        }
+        items
+    }
+
+    /// Maximum end time across all clips (seconds). Returns 0.0 if empty.
+    pub fn timeline_duration(&self) -> f64 {
+        let mut max_end = 0.0f64;
+        for track in &self.tracks {
+            for clip in &track.clips {
+                max_end = max_end.max(clip.end_time());
+            }
+        }
+        max_end
+    }
+
+    /// Ensure `default_track_idx` is valid and return it.
+    pub fn ensure_default_track(&mut self) -> usize {
+        if self.tracks.is_empty() {
+            self.tracks.push(Track::new("Default"));
+            self.default_track_idx = 0;
+        } else if self.default_track_idx >= self.tracks.len() {
+            self.default_track_idx = 0;
+        }
+        self.default_track_idx
+    }
+
+    /// Push a clip onto a track (default track if `track_idx` is `None`).
+    pub fn push_clip(&mut self, track_idx: Option<usize>, clip: crate::timeline::TrackClip) {
+        let idx = track_idx.unwrap_or_else(|| self.ensure_default_track());
+        if idx >= self.tracks.len() {
+            let default = self.ensure_default_track();
+            self.tracks[default].clips.push(clip);
+        } else {
+            self.tracks[idx].clips.push(clip);
+        }
+    }
+
+    /// Test/helper: place a root on the default track covering `[0, duration)`.
+    pub fn push_scene_root(&mut self, scene_root: NodeId, duration: f64) {
+        self.push_scene_root_at(scene_root, 0.0, duration, None);
+    }
+
+    /// Test/helper: place a root on a track at an explicit start time.
+    pub fn push_scene_root_at(
+        &mut self,
+        scene_root: NodeId,
+        start_time: f64,
+        duration: f64,
+        name: Option<String>,
+    ) {
+        let mut clip = crate::timeline::TrackClip::new(scene_root, start_time, duration);
+        clip.name = name;
+        self.push_clip(None, clip);
+    }
+
+    /// Frame index → time (seconds). See [`crate::timeline::frame_to_time`].
+    pub fn frame_to_time(&self, frame: u64) -> f64 {
+        crate::timeline::frame_to_time(frame, self.fps)
+    }
+
+    /// Time (seconds) → frame index. See [`crate::timeline::time_to_frame`].
+    pub fn time_to_frame(&self, time: f64) -> u64 {
+        crate::timeline::time_to_frame(time, self.fps)
     }
 
     /// Updates the state of active nodes for the given global time.
@@ -874,7 +948,7 @@ impl Director {
         let duration_minutes = crate::style_policy::total_duration_minutes(self);
         let duration = duration_minutes * 60.0;
         let time_range = if duration > 0.0 { (0.0, duration) } else { (0.0, 1.0) };
-        let score = self.score_style_policy(time_range, 10);
+        let score = self.score_style_policy(time_range, self.style_policy.samples.max(2));
 
         for violation in &score.violations {
             let message = format!(
@@ -943,12 +1017,14 @@ impl Director {
     ///
     /// The scorer samples the scene over `time_range` using `samples` points.
     /// Results include per-dimension sub-scores and a list of violations.
+    /// Time-varying dimensions such as motion require at least two samples;
+    /// values below two are clamped to two.
     pub fn score_style_policy(
         &self,
         time_range: (f64, f64),
         samples: usize,
     ) -> PolicyScore {
-        StylePolicyScorer::new().score(self, &self.style_policy, time_range, samples)
+        StylePolicyScorer::new().score(self, &self.style_policy, time_range, samples.max(2))
     }
 
 }
@@ -970,7 +1046,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1041,7 +1117,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1103,7 +1179,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1170,7 +1246,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1180,14 +1256,7 @@ mod tests {
         box_node.style.size.width = taffy::style::Dimension::length(1080.0);
         box_node.style.size.height = taffy::style::Dimension::length(1920.0);
         let root = director.scene.add_node(Box::new(box_node));
-        director.timeline.push(TimelineItem {
-            scene_root: root,
-            name: Some("main".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(root, 0.0, 2.0, Some("main".into()));
 
         let snapshot = crate::render_manifest::layout_snapshot(&mut director, 0.5);
 

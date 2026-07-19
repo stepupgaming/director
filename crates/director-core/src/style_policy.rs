@@ -201,7 +201,7 @@ impl Default for AudioPolicy {
 }
 
 /// Top-level production style policy.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StylePolicy {
     #[serde(default)]
     pub typography: TypographyPolicy,
@@ -211,6 +211,29 @@ pub struct StylePolicy {
     pub transitions: TransitionPolicy,
     #[serde(default)]
     pub audio: AudioPolicy,
+    /// Number of evenly-spaced samples used when scoring motion and other
+    /// time-varying dimensions during `compile()`. Higher values give a more
+    /// accurate score at the cost of compile-time work.
+    #[serde(default = "StylePolicy::default_samples")]
+    pub samples: usize,
+}
+
+impl StylePolicy {
+    fn default_samples() -> usize {
+        10
+    }
+}
+
+impl Default for StylePolicy {
+    fn default() -> Self {
+        Self {
+            typography: TypographyPolicy::default(),
+            motion: MotionPolicy::default(),
+            transitions: TransitionPolicy::default(),
+            audio: AudioPolicy::default(),
+            samples: Self::default_samples(),
+        }
+    }
 }
 
 /// Evaluates a `Director` scene against a `StylePolicy`.
@@ -688,19 +711,9 @@ impl StylePolicyScorer {
     }
 }
 
-/// Compute total timeline duration in minutes, including both legacy timeline
-/// and modern track clips.
+/// Compute total timeline duration in minutes from track clips.
 pub(crate) fn total_duration_minutes(director: &Director) -> f64 {
-    let mut max_end = 0.0f64;
-    for item in &director.timeline {
-        max_end = max_end.max(item.start_time + item.duration);
-    }
-    for track in &director.tracks {
-        for clip in &track.clips {
-            max_end = max_end.max(clip.start_time + clip.duration);
-        }
-    }
-    max_end / 60.0
+    director.timeline_duration() / 60.0
 }
 
 #[cfg(test)]
@@ -719,7 +732,7 @@ mod tests {
         Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -728,6 +741,12 @@ mod tests {
 
     fn empty_font_collection() -> Arc<Mutex<FontCollection>> {
         Arc::new(Mutex::new(FontCollection::new()))
+    }
+
+    #[test]
+    fn default_policy_has_expected_sample_count() {
+        let policy = StylePolicy::default();
+        assert_eq!(policy.samples, 10);
     }
 
     #[test]
@@ -790,14 +809,7 @@ mod tests {
     #[test]
     fn detects_too_many_transitions() {
         let mut director = empty_director();
-        director.timeline.push(crate::director::TimelineItem {
-            scene_root: 0,
-            name: None,
-            start_time: 0.0,
-            duration: 60.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root(0, 60.0);
 
         for i in 0..20 {
             director.transitions.push(Transition {

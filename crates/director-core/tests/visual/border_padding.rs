@@ -10,7 +10,6 @@
 // and executed by `tests/visual/templates.rs`.
 
 use director_core::animation::Animated;
-use director_core::director::TimelineItem;
 use director_core::node::{BoxNode, TextNode};
 use director_core::element::TextSpan;
 use director_core::types::Color;
@@ -33,14 +32,7 @@ fn border_basic() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut box_node = BoxNode::new();
         box_node.style.size.width = Dimension::length(100.0);
@@ -73,14 +65,7 @@ fn border_radius() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut box_node = BoxNode::new();
         box_node.style.size.width = Dimension::length(120.0);
@@ -115,14 +100,7 @@ fn padding_basic() {
         root.bg_color = Some(Animated::new(Color::new(0.15, 0.15, 0.2, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut parent = BoxNode::new();
         parent.style.size.width = Dimension::length(160.0);
@@ -166,14 +144,7 @@ fn border_padding_combined() {
         root.bg_color = Some(Animated::new(Color::new(0.08, 0.08, 0.12, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut card = BoxNode::new();
         card.style.size.width = Dimension::length(240.0);
@@ -221,14 +192,7 @@ fn template_pill_button() {
         root.bg_color = Some(Animated::new(Color::new(0.05, 0.05, 0.08, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut pill = BoxNode::new();
         pill.style.size.width = Dimension::auto();
@@ -282,14 +246,7 @@ fn overflow_hidden_border_radius() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Container with rounded corners and overflow:hidden
         let mut container = BoxNode::new();

@@ -11,21 +11,14 @@ fn build_director(node_count: usize) -> Director {
     let mut director = Director::new(
         1080,
         1920,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
     );
 
     let root = director.scene.add_node(Box::new(BoxNode::new()));
-    director.timeline.push(director_core::director::TimelineItem {
-        scene_root: root,
-        name: Some("main".into()),
-        start_time: 0.0,
-        duration: 10.0,
-        z_index: 0,
-        audio_tracks: vec![],
-    });
+    director.push_scene_root_at(root, 0.0, 10.0, Some("main".into()));
 
     // Add a flat hierarchy of child boxes nodes under the root.
     for _ in 0..node_count {

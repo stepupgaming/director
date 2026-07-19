@@ -35,7 +35,7 @@ fn test_pipeline_parity() {
     let req = MovieRequest {
         width: 1920,
         height: 1080,
-        fps: 30,
+        fps: 30.0,
         default_font: None,
         asset_search_paths: vec![],
         scenes: vec![director_schema::Scene {
@@ -104,10 +104,11 @@ fn test_pipeline_parity() {
 
     // 2. Verify Bindings
     // Get root node from scene 0
-    // Director.timeline[0].scene_root is the ID
-    let root_id = director.timeline[0].scene_root;
-    assert_eq!(director.timeline[0].name.as_deref(), Some("Scene 1"));
-    assert_eq!(director.timeline[0].z_index, 7);
+    // Flat timeline[0].scene_root is the ID
+    let flat = director.flat_timeline();
+    let root_id = flat[0].scene_root;
+    assert_eq!(flat[0].name.as_deref(), Some("Scene 1"));
+    assert_eq!(flat[0].z_index, 7);
     let root_node = director
         .scene
         .get_node(root_id)

@@ -8,7 +8,7 @@
 //! - **Configuration**: `configure_motion_blur`, `configure_encoder`
 //! - **Validation**: rejects malformed transition ranges/durations
 
-use crate::director::{Director, TimelineItem};
+use crate::director::Director;
 use crate::node::BoxNode;
 use crate::systems::transitions::{Transition, TransitionType};
 use crate::timeline::TrackClip;
@@ -94,7 +94,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     });
 
     // ========== LOOP SCENE PRIMITIVE ==========
-    // Repeat a scene's content N times by creating N copies on the timeline
+    // Repeat a scene's content N times as track clips (copies audio_tracks).
     engine.register_fn("add_loop", |movie: &mut MovieHandle, scene: SceneHandle, count: i64| {
         let mut d = match movie.lock_director() {
             Ok(d) => d,
@@ -104,42 +104,68 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
         let scene_duration = scene.duration;
         let root_id = scene.root_id;
         let start = scene.start_time + scene_duration;
+        let audio_tracks = scene.audio_tracks.clone();
         for i in 1..n {
-            let item = TimelineItem {
-                scene_root: root_id,
-                name: Some(format!("loop_{}", i)),
-                start_time: start + (i as f64) * scene_duration,
-                duration: scene_duration,
-                z_index: 0,
-                audio_tracks: Vec::new(),
-            };
-            d.timeline.push(item);
+            let mut clip = TrackClip::new(
+                root_id,
+                start + ((i - 1) as f64) * scene_duration,
+                scene_duration,
+            );
+            // i starts at 1: first extra copy at start, then +duration each
+            clip.start_time = start + ((i - 1) as f64) * scene_duration;
+            clip.name = Some(format!("loop_{}", i));
+            clip.audio_tracks = audio_tracks.clone();
+            d.push_clip(None, clip);
         }
     });
 
     // ========== FREEZE SCENE PRIMITIVE ==========
-    // Create a frozen hold of a scene at a specific time point
+    // Hold a frozen source time after the scene ends.
     engine.register_fn("add_freeze", |movie: &mut MovieHandle, scene: SceneHandle, freeze_at: f64, hold_duration: f64| {
         let mut d = match movie.lock_director() {
             Ok(d) => d,
             Err(_) => return,
         };
-        // Create a new timeline item that references the same scene root
-        // but has a start_offset so it renders frozen at `freeze_at`
+        if hold_duration <= 0.0 {
+            return;
+        }
         let freeze_start = scene.start_time + scene.duration;
-        let item = TimelineItem {
-            scene_root: scene.root_id,
-            name: Some("freeze".to_string()),
-            start_time: freeze_start,
-            duration: hold_duration,
-            z_index: 0,
-            audio_tracks: Vec::new(),
+        let mut clip = TrackClip::new(scene.root_id, freeze_start, hold_duration);
+        clip.name = Some("freeze".to_string());
+        clip.freeze_time = Some(freeze_at);
+        clip.audio_tracks = scene.audio_tracks.clone();
+        d.push_clip(None, clip);
+    });
+
+    engine.register_fn(
+        "set_clip_freeze",
+        |clip: &mut ClipHandle, freeze_at: f64| {
+            let mut d = match clip.lock_director() {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            if let Some(c) = d
+                .tracks
+                .get_mut(clip.track_idx)
+                .and_then(|t| t.clips.get_mut(clip.clip_idx))
+            {
+                c.freeze_time = Some(freeze_at);
+            }
+        },
+    );
+
+    engine.register_fn("clear_clip_freeze", |clip: &mut ClipHandle| {
+        let mut d = match clip.lock_director() {
+            Ok(d) => d,
+            Err(_) => return,
         };
-        d.timeline.push(item);
-        // Note: The scene will render at its natural time; for true frame freezing
-        // the renderer would need a freeze_time field. This creates a hold frame
-        // by reusing the scene's last rendered state.
-        let _ = freeze_at; // Mark as used — future: pass to renderer as freeze_time
+        if let Some(c) = d
+            .tracks
+            .get_mut(clip.track_idx)
+            .and_then(|t| t.clips.get_mut(clip.clip_idx))
+        {
+            c.freeze_time = None;
+        }
     });
 
     // ========== SERIES / SEQUENCE HELPERS ==========
@@ -207,14 +233,30 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     // 1. Director/Movie
     engine.register_type_with_name::<MovieHandle>("Movie");
 
-    // Overload 1: 3 args (Default Preview)
+    // Overload 1: 3 args integer fps (Default Preview)
     let l1 = loader.clone();
     engine.register_fn("new_director", move |w: i64, h: i64, fps: i64| {
         let director = Director::new(
             w as i32,
             h as i32,
-            fps as u32,
+            fps as f64,
             l1.clone(),
+            default_mode,
+            None,
+        );
+        MovieHandle {
+            director: Arc::new(Mutex::new(director)),
+        }
+    });
+
+    // Overload: fractional fps (23.976, 29.97, …)
+    let l1f = loader.clone();
+    engine.register_fn("new_director", move |w: i64, h: i64, fps: f64| {
+        let director = Director::new(
+            w as i32,
+            h as i32,
+            fps,
+            l1f.clone(),
             default_mode,
             None,
         );
@@ -236,10 +278,56 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
                 "export" => RenderMode::Export,
                 _ => RenderMode::Preview,
             };
-            let director = Director::new(w as i32, h as i32, fps as u32, l2.clone(), mode, None);
+            let director = Director::new(w as i32, h as i32, fps as f64, l2.clone(), mode, None);
             MovieHandle {
                 director: Arc::new(Mutex::new(director)),
             }
+        },
+    );
+
+    let l2f = loader.clone();
+    engine.register_fn(
+        "new_director",
+        move |w: i64, h: i64, fps: f64, config: rhai::Map| {
+            let mode_str = config
+                .get("mode")
+                .and_then(|v| v.clone().into_string().ok())
+                .unwrap_or_else(|| "preview".to_string());
+            let mode = match mode_str.as_str() {
+                "export" => RenderMode::Export,
+                _ => RenderMode::Preview,
+            };
+            let director = Director::new(w as i32, h as i32, fps, l2f.clone(), mode, None);
+            MovieHandle {
+                director: Arc::new(Mutex::new(director)),
+            }
+        },
+    );
+
+    engine.register_fn("movie_fps", |movie: &mut MovieHandle| -> f64 {
+        movie
+            .lock_director()
+            .map(|d| d.fps)
+            .unwrap_or(0.0)
+    });
+
+    engine.register_fn(
+        "frame_to_time",
+        |movie: &mut MovieHandle, frame: i64| -> f64 {
+            movie
+                .lock_director()
+                .map(|d| d.frame_to_time(frame.max(0) as u64))
+                .unwrap_or(0.0)
+        },
+    );
+
+    engine.register_fn(
+        "time_to_frame",
+        |movie: &mut MovieHandle, time: f64| -> i64 {
+            movie
+                .lock_director()
+                .map(|d| d.time_to_frame(time) as i64)
+                .unwrap_or(0)
         },
     );
 
@@ -697,7 +785,7 @@ fn add_scene_internal_at(
             audio_tracks: Vec::new(),
         },
     };
-    let track_idx = d.default_track_idx;
+    let track_idx = d.ensure_default_track();
     let start_time = seq.current_time;
 
     let mut root = BoxNode::new();
@@ -707,20 +795,7 @@ fn add_scene_internal_at(
     };
     let id = d.scene.add_node(Box::new(root));
 
-    let clip = TrackClip::new(id, start_time, duration);
-    if track_idx < d.tracks.len() {
-        d.tracks[track_idx].clips.push(clip);
-    }
-
-    let item = TimelineItem {
-        scene_root: id,
-        name: None,
-        start_time,
-        duration,
-        z_index: 0,
-        audio_tracks: Vec::new(),
-    };
-    d.timeline.push(item);
+    d.push_clip(Some(track_idx), TrackClip::new(id, start_time, duration));
 
     SceneHandle {
         director: seq.director.clone(),
@@ -746,20 +821,15 @@ fn add_scene_internal(
             audio_tracks: Vec::new(),
         },
     };
-    let track_idx = target_track_idx.unwrap_or(d.default_track_idx);
-    let start_time = {
-        if d.tracks.is_empty() || track_idx >= d.tracks.len() || d.tracks[track_idx].clips.is_empty() {
-            d.timeline
-                .last()
-                .map(|i| i.start_time + i.duration)
-                .unwrap_or(0.0)
-        } else {
-            let clips = &d.tracks[track_idx].clips;
-            clips
-                .last()
-                .map(|c| c.start_time + c.duration)
-                .unwrap_or(0.0)
-        }
+    let track_idx = target_track_idx.unwrap_or_else(|| d.ensure_default_track());
+    let start_time = if track_idx < d.tracks.len() {
+        d.tracks[track_idx]
+            .clips
+            .last()
+            .map(|c| c.end_time())
+            .unwrap_or(0.0)
+    } else {
+        0.0
     };
 
     let mut root = BoxNode::new();
@@ -769,22 +839,7 @@ fn add_scene_internal(
     };
     let id = d.scene.add_node(Box::new(root));
 
-    // Add to target track
-    let clip = TrackClip::new(id, start_time, duration);
-    if track_idx < d.tracks.len() {
-        d.tracks[track_idx].clips.push(clip);
-    }
-
-    // Add to legacy timeline
-    let item = TimelineItem {
-        scene_root: id,
-        name: None,
-        start_time,
-        duration,
-        z_index: 0,
-        audio_tracks: Vec::new(),
-    };
-    d.timeline.push(item);
+    d.push_clip(Some(track_idx), TrackClip::new(id, start_time, duration));
 
     SceneHandle {
         director: movie.director.clone(),
@@ -863,9 +918,10 @@ fn add_transition_with_kind(
         return;
     }
 
-    // Find indices
-    let from_idx = d.timeline.iter().position(|i| i.scene_root == from.root_id);
-    let to_idx = d.timeline.iter().position(|i| i.scene_root == to.root_id);
+    // Flat indices match Director::flat_timeline (track order, then clip order).
+    let flat = d.flat_timeline();
+    let from_idx = flat.iter().position(|i| i.scene_root == from.root_id);
+    let to_idx = flat.iter().position(|i| i.scene_root == to.root_id);
 
     if let (Some(f_idx), Some(t_idx)) = (from_idx, to_idx) {
         if t_idx <= f_idx {
@@ -876,33 +932,41 @@ fn add_transition_with_kind(
             );
             return;
         }
-        if duration > d.timeline[f_idx].duration {
+        if duration > flat[f_idx].duration {
             warn!(
                 duration,
-                from_duration = d.timeline[f_idx].duration,
+                from_duration = flat[f_idx].duration,
                 "Ignoring transition: duration exceeds source scene duration"
             );
             return;
         }
 
-        // Ripple Left Logic
-        // We shift 'to' scene and all subsequent scenes (index >= t_idx) left by duration.
-
-        for i in t_idx..d.timeline.len() {
-            d.timeline[i].start_time -= duration;
-
-            // Sync Audio
-            let audio_ids = d.timeline[i].audio_tracks.clone();
-            for track_id in audio_ids {
-                if let Some(track) = d.audio_mixer.get_track_mut(track_id) {
-                    track.start_time -= duration;
+        // Ripple left: shift 'to' clip and all later flat clips left by duration.
+        // Walk tracks/clips in the same order as flat_timeline.
+        let mut audio_shift: Vec<usize> = Vec::new();
+        let mut flat_i = 0usize;
+        for track in d.tracks.iter_mut() {
+            for clip in track.clips.iter_mut() {
+                if flat_i >= t_idx {
+                    clip.start_time -= duration;
+                    audio_shift.extend(clip.audio_tracks.iter().copied());
                 }
+                flat_i += 1;
+            }
+        }
+        for track_id in audio_shift {
+            if let Some(audio) = d.audio_mixer.get_track_mut(track_id) {
+                audio.start_time -= duration;
             }
         }
 
         let easing = parse_easing(easing_str);
-
-        let start_time = d.timeline[t_idx].start_time;
+        // Recompute start after ripple.
+        let start_time = d
+            .flat_timeline()
+            .get(t_idx)
+            .map(|i| i.start_time)
+            .unwrap_or(0.0);
 
         let transition = Transition {
             from_scene_idx: f_idx,

@@ -6,9 +6,12 @@ How to write and maintain documentation for Director Engine.
 
 | Location | Purpose |
 |----------|---------|
-| `docs/architecture/` | System design, internals |
+| `docs/architecture/` | System design, internals, **core contracts** |
+| `docs/plans/` | Active implementation plans (core hardening) |
 | `docs/contributing/` | Contributor guides |
-| `docs/specs/` | Design specifications |
+| `docs/archive/` | Superseded / deferred docs (not current contracts) |
+| `docs/specs/` | Extra design notes under docs (if any) |
+| `specs/` | RON feature specs for the harness |
 | `crates/*/README.md` | Per-crate documentation |
 
 ---
@@ -18,9 +21,10 @@ How to write and maintain documentation for Director Engine.
 | Change | Update |
 |--------|--------|
 | New Rhai API | `.agent/skills/director-rhai/resources/API_REFERENCE.md` |
-| Architecture change | `docs/architecture/overview.md` |
+| Architecture / frame loop | `docs/architecture/overview.md` |
+| Time, identity, pipeline, anim, scene, determinism spines | `docs/architecture/core-contracts.md` + relevant `docs/plans/0*.md` |
 | New crate | `crates/<name>/README.md` |
-| New feature spec | `docs/specs/<name>.md` |
+| Finished or superseded plan | Plan status + `docs/plans/00-core-hardening-index.md`; move dead product drafts to `docs/archive/` |
 
 ---
 

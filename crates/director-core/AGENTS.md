@@ -208,13 +208,25 @@ rather than relying on host system fonts.
   (director.rs, BUNDLED_FONTS).
 * Multiple weights of a family (Regular/Bold/Italic) are registered under
   the same family alias so font_weight / font_style resolve deterministically.
-* Roboto-Regular is required; Bold/Italic/Inter/Poppins are optional and
-  warn (not error) if missing. setup_assets.sh and CI download the full set.
+* Roboto-Regular is required today; Bold/Italic/Inter/Poppins currently warn
+  if missing. **Plan 06** makes caption/export-critical weights fail-closed in
+  CI/export. setup_assets.sh and CI should provision the full set.
 * Emoji fallback is loaded via DefaultAssetLoader::load_font_fallback
   (assets/fonts/emoji.ttf or DIRECTOR_EMOJI_FONT env var).
 * Do NOT add host-system-font-dependent text paths; new caption/template
   fonts must be added to BUNDLED_FONTS AND downloaded in setup_assets.sh
-  and .github/workflows/ci.yml, then force-kept in .gitignore.## Semantic Entity Registry
+  and .github/workflows/ci.yml, then force-kept in .gitignore.
+
+## Core hardening
+
+Engine solidity work is specified under `docs/plans/` (index `00`). Local
+spines that this crate owns: time/timeline (`director`/`timeline`/`lifecycle`),
+identity (`scene`/`types`), frame pipeline (`systems/renderer`, compile),
+animation (`animation.rs`), project model (`project.rs`), determinism (fonts,
+video/audio clocks). Update `docs/architecture/core-contracts.md` when those
+contracts change.
+
+## Semantic Entity Registry
 
 - `src/entity.rs` — persistent UUID-based identity for faces, speakers, objects, and
   caption phrases. Each entity stores a temporal bounding-box track and

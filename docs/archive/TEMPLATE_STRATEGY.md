@@ -1,5 +1,8 @@
 # Template & Abstraction Architecture
 
+> **ARCHIVED / DEFERRED (2026-07-19).** Recipes / smart-components product layer.  
+> Not current priority under core hardening. See [`docs/archive/README.md`](./README.md).
+
 ## 1\. The Philosophy: "Behaviors, not Boilerplate"
 
 In `Director`, a template is not just a `.dirproj` file with a placeholder image. A template is a **reusable Rhai module** that defines a specific *behavior* or *style*.

@@ -18,7 +18,7 @@ use std::sync::Arc;
 #[test]
 fn text_fit_shrink() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(1920, 1080, 30, loader, RenderMode::Preview, None);
+    let mut director = Director::new(1920, 1080, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "This is a very long text that should shrink to fit.".to_string(),
@@ -40,16 +40,7 @@ fn text_fit_shrink() {
 
     let id = director.scene.add_node(Box::new(text_node));
 
-    director
-        .timeline
-        .push(director_core::director::TimelineItem {
-            scene_root: id,
-            name: None,
-            start_time: 0.0,
-            duration: 1.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+    director.push_scene_root(id, 1.0);
 
     // Trigger layout
     let mut surface = skia_safe::surfaces::raster_n32_premul((1920, 1080)).unwrap();
@@ -77,7 +68,7 @@ fn text_fit_shrink() {
 #[test]
 fn text_span_rich_styling() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let mut director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "Styled Text".to_string(),
@@ -96,16 +87,7 @@ fn text_span_rich_styling() {
 
     let id = director.scene.add_node(Box::new(text_node));
 
-    director
-        .timeline
-        .push(director_core::director::TimelineItem {
-            scene_root: id,
-            name: None,
-            start_time: 0.0,
-            duration: 1.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+    director.push_scene_root(id, 1.0);
 
     // Should not panic during render
     let mut surface = skia_safe::surfaces::raster_n32_premul((800, 600)).unwrap();
@@ -116,7 +98,7 @@ fn text_span_rich_styling() {
 #[test]
 fn text_explicit_ltr_english() {
     let loader = Arc::new(DefaultAssetLoader);
-    let director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "ABC".to_string(),
@@ -142,7 +124,7 @@ fn text_explicit_ltr_english() {
 #[test]
 fn text_auto_detects_arabic_rtl() {
     let loader = Arc::new(DefaultAssetLoader);
-    let director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "مرحبا".to_string(),
@@ -163,7 +145,7 @@ fn text_auto_detects_arabic_rtl() {
 #[test]
 fn text_shadow() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let mut director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     let spans = vec![TextSpan {
         text: "Shadow Test".to_string(),
@@ -183,16 +165,7 @@ fn text_shadow() {
 
     let id = director.scene.add_node(Box::new(text_node));
 
-    director
-        .timeline
-        .push(director_core::director::TimelineItem {
-            scene_root: id,
-            name: None,
-            start_time: 0.0,
-            duration: 1.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+    director.push_scene_root(id, 1.0);
 
     // Should not panic during render
     let mut surface = skia_safe::surfaces::raster_n32_premul((800, 600)).unwrap();

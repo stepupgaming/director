@@ -79,20 +79,14 @@ pub fn render_export(
 
     let width = director.width;
     let height = director.height;
-    let fps = director.fps;
+    let fps = director.fps.max(1e-6);
 
-    let mut max_duration = 0.0;
-    for item in &director.timeline {
-        let end = item.start_time + item.duration;
-        if end > max_duration {
-            max_duration = end;
-        }
-    }
+    let mut max_duration = director.timeline_duration();
     if max_duration == 0.0 {
         max_duration = 5.0;
     }
 
-    let total_frames = (max_duration * fps as f64).ceil() as usize;
+    let total_frames = crate::timeline::duration_to_frame_count(max_duration, fps) as usize;
 
     if let Some(path) = audio_track_path {
         if let Ok(bytes) = std::fs::read(path) {
@@ -103,6 +97,7 @@ pub fn render_export(
     }
 
     let settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
+        .with_fps(fps)
         .with_encoder_mode(director.encoder_mode)
         .with_alpha(alpha);
     let mut encoder = Encoder::new(&out_path, settings)?;
@@ -137,10 +132,10 @@ pub fn render_export(
 
     let samples = director.samples_per_frame.max(1);
     let shutter_angle = director.shutter_angle.clamp(0.0, 360.0);
-    let frame_duration = 1.0 / fps as f64;
+    let frame_duration = 1.0 / fps;
     let shutter_duration = frame_duration * (shutter_angle as f64 / 360.0);
 
-    let samples_per_frame = (director.audio_mixer.sample_rate as f64 / fps as f64).round() as usize;
+    let samples_per_frame = (director.audio_mixer.sample_rate as f64 / fps).round() as usize;
 
     // Pre-allocate transition surfaces to avoid per-frame allocation churn
     let mut transition_surfaces = if !director.transitions.is_empty() {
@@ -154,7 +149,7 @@ pub fn render_export(
     };
 
     for i in 0..total_frames {
-        let frame_start_time = i as f64 / fps as f64;
+        let frame_start_time = crate::timeline::frame_to_time(i as u64, fps);
         let shutter_start_time = frame_start_time - (shutter_duration / 2.0);
 
         if samples == 1 {
@@ -220,7 +215,7 @@ pub fn render_export(
             );
             pixels
         };
-        encoder.encode(&pixels, i as f64 / fps as f64)?;
+        encoder.encode(&pixels, crate::timeline::frame_to_time(i as u64, fps))?;
 
         let audio_samples = director.mix_audio(samples_per_frame, frame_start_time);
         encoder.encode_audio(&audio_samples, frame_start_time)?;

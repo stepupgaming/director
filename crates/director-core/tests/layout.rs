@@ -17,7 +17,7 @@ use taffy::style::{GridPlacement, GridTemplateComponent};
 /// Dump scene tree to string for snapshot testing.
 fn dump_scene_tree(director: &Director) -> String {
     let mut output = String::new();
-    if let Some(item) = director.timeline.first() {
+    if let Some(item) = director.flat_timeline().first() {
         recursive_dump(&director.scene, item.scene_root, 0, &mut output);
     }
     output
@@ -52,7 +52,7 @@ fn layout_structure_snapshot() {
     let director = Director::new(
         1000,
         1000,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -75,14 +75,7 @@ fn layout_structure_snapshot() {
         root.style.align_items = Some(taffy::style::AlignItems::Center);
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 10.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 10.0);
 
         // Row with space-between children
         let mut row = BoxNode::new();
@@ -175,7 +168,7 @@ fn grid_layout_basic() {
     let director = Director::new(
         1000,
         1000,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -201,14 +194,7 @@ fn grid_layout_basic() {
     ];
     let grid_id = d.scene.add_node(Box::new(grid));
 
-    d.timeline.push(TimelineItem {
-        scene_root: grid_id,
-        name: None,
-        start_time: 0.0,
-        duration: 10.0,
-        z_index: 0,
-        audio_tracks: vec![],
-    });
+    d.push_scene_root(grid_id, 10.0);
 
     // Item 1 (0,0)
     let mut item1 = BoxNode::new();

@@ -1,5 +1,4 @@
 use director_core::node::BoxNode;
-use director_core::director::TimelineItem;
 use taffy::style::{Dimension, AlignItems, JustifyContent, FlexDirection};
 use director_core::types::Color;
 use director_core::animation::Animated;
@@ -26,14 +25,7 @@ crate::visual_test_matrix!(
 
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let colors = [
             Color::new(0.9, 0.2, 0.2, 1.0),
@@ -76,14 +68,7 @@ crate::visual_test_matrix!(
 
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Child Items of different sizes
         for i in 0..3 {

@@ -4,7 +4,6 @@
 // large font, text shadows, rich multi-span text, and TextFit shrink.
 
 use director_core::animation::Animated;
-use director_core::director::TimelineItem;
 use director_core::element::{TextFit, TextShadow, TextSpan};
 use director_core::node::{BoxNode, TextNode};
 use director_core::types::Color;
@@ -26,14 +25,7 @@ fn text_basic() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Hello World".to_string(),
@@ -68,14 +60,7 @@ fn text_multiline() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "This is a longer piece of text that should wrap across \
@@ -114,14 +99,7 @@ fn text_colored() {
         root.bg_color = Some(Animated::new(Color::WHITE));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Colored Text".to_string(),
@@ -156,14 +134,7 @@ fn text_large() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "BIG".to_string(),
@@ -198,14 +169,7 @@ fn text_shadow() {
         root.bg_color = Some(Animated::new(Color::new(0.8, 0.8, 0.8, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Shadow".to_string(),
@@ -246,14 +210,7 @@ fn text_rich_spans() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![
             TextSpan {
@@ -304,14 +261,7 @@ fn text_textfit_shrink() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "This text is too large for the box and should shrink.".to_string(),
@@ -352,14 +302,7 @@ fn text_align_left() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Left aligned text should start from the left edge of its container and wrap naturally when the line becomes too long.".to_string(),
@@ -398,14 +341,7 @@ fn text_align_center() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Center aligned text should be centered within its container, with each line wrapping and maintaining equal space on both sides.".to_string(),
@@ -444,14 +380,7 @@ fn text_align_right() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Right aligned text should end flush with the right edge of its container, with each line wrapping and aligning to the right side.".to_string(),
@@ -490,14 +419,7 @@ fn text_align_justify() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Justified text should stretch to fill the full width of each line, distributing space between words so both left and right edges are flush.".to_string(),
@@ -540,14 +462,7 @@ fn text_fit_shrink() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "SHRINK".to_string(),
@@ -589,14 +504,7 @@ fn text_fit_auto() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Short text should be narrow, not stretched to fill the 400px frame
         let spans = vec![TextSpan {
@@ -636,14 +544,7 @@ fn text_fit_wrap() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Wrap mode text should flow across multiple lines when constrained to a narrow width container.".to_string(),
@@ -682,14 +583,7 @@ fn text_stroke() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "STROKE".to_string(),
@@ -726,14 +620,7 @@ fn text_background() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Background".to_string(),
@@ -774,14 +661,7 @@ fn font_weight_matrix() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![
             TextSpan {
@@ -835,14 +715,7 @@ fn font_style_italic() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![
             TextSpan {
@@ -892,14 +765,7 @@ fn text_gradient() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let spans = vec![TextSpan {
             text: "Gradient".to_string(),

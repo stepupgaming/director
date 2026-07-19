@@ -1,5 +1,4 @@
 use director_core::animation::Animated;
-use director_core::director::TimelineItem;
 use director_core::node::BoxNode;
 use director_core::types::Color;
 use skia_safe::BlendMode;
@@ -21,14 +20,7 @@ fn basic_box() {
         root_node.style.size.height = Dimension::percent(1.0);
         let root_id = d.scene.add_node(Box::new(root_node));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Child
         let mut box_node = BoxNode::new();
@@ -64,14 +56,7 @@ crate::visual_test_matrix!(
         root.bg_color = Some(Animated::new(Color::new(1.0, 1.0, 1.0, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Bottom Box (Red)
         let mut box1 = BoxNode::new();
@@ -125,14 +110,7 @@ fn box_gradient_diagonal() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut box_node = BoxNode::new();
         box_node.style.size.width = Dimension::length(150.0);

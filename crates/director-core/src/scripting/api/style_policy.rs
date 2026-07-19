@@ -71,10 +71,26 @@ pub fn register(engine: &mut Engine) {
             Ok(policy_score_to_map(score))
         },
     );
+
+    engine.register_fn(
+        "style_policy_violations",
+        |movie: &mut MovieHandle| -> Result<rhai::Array, Box<rhai::EvalAltResult>> {
+            let d = movie.lock_director()?;
+            let score = d
+                .last_policy_score
+                .clone()
+                .ok_or("no style policy violations available; run compile() first")?;
+            Ok(policy_violations_to_array(score.violations))
+        },
+    );
 }
 
 fn parse_style_policy(config: &Map) -> Result<StylePolicy, Box<rhai::EvalAltResult>> {
     let mut policy = StylePolicy::default();
+
+    if let Some(v) = config.get("samples").and_then(|v| v.as_int().ok()) {
+        policy.samples = v.max(2) as usize;
+    }
 
     if let Some(typography) = config.get("typography").and_then(|v| v.clone().try_cast::<Map>()) {
         policy.typography = parse_typography_policy(&typography)?;
@@ -194,8 +210,14 @@ fn policy_score_to_map(score: crate::style_policy::PolicyScore) -> Map {
         .collect();
     map.insert("dimension_scores".into(), dimension_scores.into());
 
-    let violations: rhai::Array = score
-        .violations
+    let violations = policy_violations_to_array(score.violations);
+    map.insert("violations".into(), violations.into());
+
+    map
+}
+
+fn policy_violations_to_array(violations: Vec<crate::style_policy::PolicyViolation>) -> rhai::Array {
+    violations
         .into_iter()
         .map(|v| {
             let mut m = Map::new();
@@ -210,9 +232,6 @@ fn policy_score_to_map(score: crate::style_policy::PolicyScore) -> Map {
             m.insert("description".into(), v.description.into());
             rhai::Dynamic::from_map(m)
         })
-        .collect();
-    map.insert("violations".into(), violations.into());
-
-    map
+        .collect()
 }
 

@@ -21,7 +21,7 @@ pub struct ProjectManifest {
     pub api_manifest_version: u32,
     pub width: u32,
     pub height: u32,
-    pub fps: u32,
+    pub fps: f64,
     /// Total timeline duration in seconds (scenes, loops, holds).
     pub duration_secs: f64,
     pub scene_count: usize,
@@ -302,7 +302,7 @@ mod tests {
         let request = MovieRequest {
             width: 1920,
             height: 1080,
-            fps: 30,
+            fps: 30.0,
             default_font: None,
             asset_search_paths: vec![],
             scenes: vec![Scene {

@@ -14,7 +14,7 @@ fn empty_director() -> Director {
     Director::new(
         1920,
         1080,
-        30,
+        30.0,
         Arc::new(DefaultAssetLoader),
         RenderMode::Preview,
         None,
@@ -650,14 +650,7 @@ fn compile_emits_style_policy_violations() {
     d.scene.nodes[id].as_mut().unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
 
     // Give the timeline a non-zero duration so the scorer has a range.
-    d.timeline.push(director_core::director::TimelineItem {
-        scene_root: id,
-        name: None,
-        start_time: 0.0,
-        duration: 2.0,
-        z_index: 0,
-        audio_tracks: vec![],
-    });
+    d.push_scene_root(id, 2.0);
 
     d.compile();
 

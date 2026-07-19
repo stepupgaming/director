@@ -5,7 +5,6 @@
 // asset dependencies.
 
 use director_core::animation::Animated;
-use director_core::director::TimelineItem;
 use director_core::node::{BoxNode, ImageNode};
 use director_core::types::{Color, ObjectFit};
 use taffy::style::Dimension;
@@ -65,14 +64,7 @@ fn setup_image_director(fit: ObjectFit) -> std::sync::Arc<std::sync::Mutex<direc
         root.bg_color = Some(Animated::new(Color::new(0.9, 0.9, 0.9, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let png_bytes = create_test_image();
         let mut image_node = ImageNode::new(png_bytes);
@@ -130,14 +122,7 @@ fn image_opacity() {
         root.bg_color = Some(Animated::new(Color::new(0.2, 0.6, 0.8, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let png_bytes = create_test_image();
         let mut image_node = ImageNode::new(png_bytes);

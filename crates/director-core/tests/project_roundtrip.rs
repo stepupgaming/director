@@ -47,7 +47,7 @@ fn project_roundtrip() {
     // Settings preserved.
     assert_eq!(loaded.width, 320);
     assert_eq!(loaded.height, 240);
-    assert_eq!(loaded.fps, 30);
+    assert_eq!(loaded.fps, 30.0);
 
     // Scene graph topology preserved.
     // The build creates a root (from add_scene) + bg (child of root) + card
@@ -66,7 +66,7 @@ fn project_roundtrip() {
 
     // Tracks: the legacy_timeline is preserved (add_scene pushes to timeline).
     assert!(
-        !loaded.timeline.is_empty(),
+        !loaded.flat_timeline().is_empty(),
         "at least one legacy timeline item must be loaded"
     );
 
@@ -750,7 +750,7 @@ fn project_roundtrip_preserves_composition() {
 
     // Build a nested director with a single box.
     let loader: Arc<dyn AssetLoader> = Arc::new(DefaultAssetLoader);
-    let mut inner = Director::new(100, 100, 30, loader, RenderMode::Preview, None);
+    let mut inner = Director::new(100, 100, 30.0, loader, RenderMode::Preview, None);
     let mut box_node = BoxNode::new();
     box_node.bg_color = Some(director_core::animation::Animated::new(
         director_core::types::Color::new(1.0, 0.0, 0.0, 1.0),

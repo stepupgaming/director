@@ -92,6 +92,71 @@ fn style_policy_create_and_score_work_from_rhai() {
 }
 
 #[test]
+fn style_policy_score_and_violations_available_after_compile() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let script = r#"
+        let movie = new_director(1080, 1920, 30);
+        let scene = movie.add_scene(2.0);
+        let root = scene.add_box(#{ width: "100%", height: "100%" });
+        let text = root.add_text(#{ content: "Huge text", size: 250.0 });
+
+        let policy = style_policy(#{
+            typography: #{
+                max_font_size: 120.0,
+                weight: 1.0,
+            },
+            motion: #{
+                avg_motion_displacement_threshold: 0.0,
+            },
+        });
+        movie.set_style_policy(policy);
+
+        movie.compile();
+
+        let score = movie.style_policy_score();
+        let violations = movie.style_policy_violations();
+
+        #{
+            score: score,
+            violations: violations,
+        }
+    "#;
+
+    let result = engine
+        .eval::<Map>(script)
+        .expect("compile-time style policy script must evaluate");
+
+    let score: Map = result
+        .get("score")
+        .and_then(|v| v.clone().try_cast::<Map>())
+        .expect("score must be a map");
+
+    let violations: Array = result
+        .get("violations")
+        .and_then(|v| v.clone().try_cast::<Array>())
+        .expect("violations must be an array");
+    assert!(!violations.is_empty(), "should have violations after compile");
+
+    let has_max_font_size = violations.iter().any(|v| {
+        v.clone()
+            .try_cast::<Map>()
+            .map(|m| {
+                m.get("rule")
+                    .and_then(|t| t.clone().into_string().ok())
+                    == Some("typography.max_font_size".to_string())
+            })
+            .unwrap_or(false)
+    });
+    assert!(
+        has_max_font_size,
+        "compile-time violations should include typography.max_font_size"
+    );
+}
+
+#[test]
 fn style_policy_empty_scene_scores_perfectly_from_rhai() {
     let mut engine = Engine::new();
     let loader = Arc::new(DefaultAssetLoader);
@@ -129,6 +194,62 @@ fn style_policy_empty_scene_scores_perfectly_from_rhai() {
         .and_then(|v| v.clone().try_cast::<Array>())
         .expect("violations must be an array");
     assert!(violations.is_empty(), "empty scene should have no violations");
+}
+
+#[test]
+fn style_policy_samples_configurable_from_rhai() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+
+    let script = r#"
+        let movie = new_director(1080, 1920, 30);
+        let scene = movie.add_scene(2.0);
+        let root = scene.add_box(#{ width: "100%", height: "100%" });
+        let box = root.add_box(#{ width: 100.0, height: 100.0 });
+
+        // Animate the box across the screen very quickly.
+        box.animate("x", 0.0, 5000.0, 1.0, "linear");
+
+        let policy = style_policy(#{
+            samples: 20,
+            motion: #{
+                max_pixels_per_second: 1000.0,
+                weight: 1.0,
+            },
+        });
+        movie.set_style_policy(policy);
+
+        movie.compile();
+        let score = movie.style_policy_score();
+        score
+    "#;
+
+    let score = engine
+        .eval::<Map>(script)
+        .expect("samples config script must evaluate");
+    let total_score: f64 = score
+        .get("total_score")
+        .and_then(|v| v.as_float().ok())
+        .expect("total_score present");
+    assert!(total_score < 1.0, "fast motion should produce a sub-perfect score");
+
+    let violations: Array = score
+        .get("violations")
+        .and_then(|v| v.clone().try_cast::<Array>())
+        .expect("violations must be an array");
+    let has_motion = violations.iter().any(|v| {
+        v.clone()
+            .try_cast::<Map>()
+            .map(|m| {
+                m.get("rule")
+                    .and_then(|t| t.clone().into_string().ok())
+                    .map(|s| s.starts_with("motion"))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    });
+    assert!(has_motion, "should detect a motion violation with custom samples");
 }
 
 #[test]

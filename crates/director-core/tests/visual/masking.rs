@@ -4,7 +4,6 @@
 // to clip the masked node to the mask's alpha shape.
 
 use director_core::animation::Animated;
-use director_core::director::TimelineItem;
 use director_core::node::BoxNode;
 use director_core::types::Color;
 use taffy::style::Dimension;
@@ -25,14 +24,7 @@ fn mask_circle() {
         root.bg_color = Some(Animated::new(Color::new(0.9, 0.9, 0.9, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Mask node: a white box with large border radius → circular mask
         let mut mask = BoxNode::new();
@@ -77,14 +69,7 @@ fn mask_strip() {
         root.bg_color = Some(Animated::new(Color::new(0.9, 0.9, 0.9, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Mask node: a thin vertical white strip
         let mut mask = BoxNode::new();

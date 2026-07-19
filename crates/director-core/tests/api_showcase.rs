@@ -376,7 +376,7 @@ movie
 #[test]
 fn caption_renders_visible_pixels() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(800, 600, 30, loader, RenderMode::Preview, None);
+    let mut director = Director::new(800, 600, 30.0, loader, RenderMode::Preview, None);
 
     // Root box: white background, full size
     let mut root = BoxNode::new();
@@ -410,14 +410,7 @@ fn caption_renders_visible_pixels() {
 
     director.scene.try_add_child(root_id, caption_id);
 
-    director.timeline.push(TimelineItem {
-        scene_root: root_id,
-        name: None,
-        start_time: 0.0,
-        duration: 5.0,
-        z_index: 0,
-        audio_tracks: vec![],
-    });
+    director.push_scene_root(root_id, 5.0);
 
     // Render at time 1.0s (caption is active)
     let mut surface = skia_safe::surfaces::raster_n32_premul((800, 600)).unwrap();

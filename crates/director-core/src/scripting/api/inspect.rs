@@ -50,9 +50,6 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn("list_scene_roots", |m: &mut MovieHandle| -> Array {
         let mut arr = Array::new();
         if let Ok(d) = m.lock_director() {
-            for item in &d.timeline {
-                arr.push((item.scene_root as i64).into());
-            }
             for track in &d.tracks {
                 for clip in &track.clips {
                     arr.push((clip.scene_root as i64).into());

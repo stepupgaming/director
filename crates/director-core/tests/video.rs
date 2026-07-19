@@ -29,7 +29,7 @@ impl AssetLoader for MockAssetLoader {
 #[ignore = "Requires test video asset. Run with: cargo test video -- --ignored"]
 fn video_export_mode_blocks() {
     let asset_loader = Arc::new(MockAssetLoader);
-    let mut director = Director::new(100, 100, 60, asset_loader, RenderMode::Export, None);
+    let mut director = Director::new(100, 100, 60.0, asset_loader, RenderMode::Export, None);
 
     // This test requires a video file at assets/test_video.mp4
     // Generate with: ffmpeg -f lavfi -i testsrc=duration=2:size=100x100:rate=30 -pix_fmt yuv420p assets/test_video.mp4
@@ -51,14 +51,7 @@ fn video_export_mode_blocks() {
     let video_node = VideoNode::new(VideoSource::Path(abs_path), RenderMode::Export);
     let node_id = director.scene.add_node(Box::new(video_node));
 
-    director.timeline.push(TimelineItem {
-        scene_root: node_id,
-        name: None,
-        start_time: 0.0,
-        duration: 10.0,
-        z_index: 0,
-        audio_tracks: vec![],
-    });
+    director.push_scene_root(node_id, 10.0);
 
     let start = Instant::now();
     for i in 0..10 {
@@ -77,20 +70,13 @@ fn video_export_mode_blocks() {
 #[test]
 fn video_bytes_source() {
     let asset_loader = Arc::new(MockAssetLoader);
-    let mut director = Director::new(100, 100, 30, asset_loader, RenderMode::Preview, None);
+    let mut director = Director::new(100, 100, 30.0, asset_loader, RenderMode::Preview, None);
 
     // Empty bytes should fail gracefully
     let video_node = VideoNode::new(VideoSource::Bytes(vec![]), RenderMode::Preview);
     let node_id = director.scene.add_node(Box::new(video_node));
 
-    director.timeline.push(TimelineItem {
-        scene_root: node_id,
-        name: None,
-        start_time: 0.0,
-        duration: 1.0,
-        z_index: 0,
-        audio_tracks: vec![],
-    });
+    director.push_scene_root(node_id, 1.0);
 
     // Should not panic
     director.update(0.0, None);

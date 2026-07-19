@@ -180,21 +180,7 @@ impl Element for CompositionNode {
                     )?;
                 }
             } else {
-                let mut items: Vec<(usize, crate::director::TimelineItem)> = d
-                    .timeline
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .filter(|(_, item)| {
-                        current_time >= item.start_time
-                            && current_time < item.start_time + item.duration
-                    })
-                    .collect();
-                items.sort_by_key(|(_, item)| item.z_index);
-
-                for (_, item) in items {
-                    render_recursive(&d.scene, &d.assets, &mut local_cache, item.scene_root, c, 1.0, 0, None)?;
-                }
+                // No clips — nothing to draw from the inner director timeline.
             }
 
             // Now draw surface to main canvas

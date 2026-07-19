@@ -20,7 +20,6 @@ use crate::semantic::{intersection_area, CaptionTrajectory, SemanticManifest, So
 use crate::element::element_kind;
 use crate::systems::layout::LayoutEngine;
 use crate::types::BoundsRect;
-use crate::Element;
 use serde::{Deserialize, Serialize};
 
 pub const RENDER_MANIFEST_VERSION: u32 = 1;
@@ -51,7 +50,7 @@ pub struct RenderManifest {
     pub version: u32,
     pub width: i32,
     pub height: i32,
-    pub fps: u32,
+    pub fps: f64,
     pub sample_time: f64,
     pub duration_secs: f64,
     pub timeline: Vec<TimelineManifestEntry>,
@@ -629,20 +628,7 @@ impl Director {
 }
 
 fn collect_timeline(director: &Director) -> Vec<TimelineItem> {
-    let mut items = director.timeline.clone();
-    for track in &director.tracks {
-        for clip in &track.clips {
-            items.push(TimelineItem {
-                scene_root: clip.scene_root,
-                name: clip.name.clone(),
-                start_time: clip.start_time,
-                duration: clip.duration,
-                z_index: clip.z_index,
-                audio_tracks: clip.audio_tracks.clone(),
-            });
-        }
-    }
-    items
+    director.flat_timeline()
 }
 
 /// Capture a lightweight layout snapshot at `time` without cloning the
@@ -734,20 +720,13 @@ mod tests {
         let mut director = Director::new(
             640,
             360,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
         );
         let root = director.scene.add_node(Box::new(BoxNode::new()));
-        director.timeline.push(TimelineItem {
-            scene_root: root,
-            name: Some("main".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(root, 0.0, 2.0, Some("main".into()));
 
         let manifest = build_render_manifest(&mut director, 0.0);
         assert_eq!(manifest.nodes.len(), 1);
@@ -766,7 +745,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -788,14 +767,7 @@ mod tests {
             ActiveSpeakerCameraConfig::default(),
         );
         let camera_id = director.scene.add_node(Box::new(camera));
-        director.timeline.push(TimelineItem {
-            scene_root: camera_id,
-            name: Some("active_speaker_camera".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(camera_id, 0.0, 2.0, Some("active_speaker_camera".into()));
 
         let manifest = build_render_manifest(&mut director, 0.5);
         assert_eq!(manifest.nodes.len(), 1, "manifest should contain exactly the camera node");
@@ -812,7 +784,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -832,14 +804,7 @@ mod tests {
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
         let caption = CaptionNode::new(lines, director.assets.font_collection.clone());
         let caption_id = director.scene.add_node(Box::new(caption));
-        director.timeline.push(TimelineItem {
-            scene_root: caption_id,
-            name: Some("caption".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(caption_id, 0.0, 2.0, Some("caption".into()));
 
         let manifest = build_render_manifest(&mut director, 0.5);
         let config = VerificationConfig::default();
@@ -862,7 +827,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -898,14 +863,7 @@ mod tests {
         ]);
 
         let smart_id = director.scene.add_node(Box::new(smart));
-        director.timeline.push(TimelineItem {
-            scene_root: smart_id,
-            name: Some("smart_caption".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(smart_id, 0.0, 2.0, Some("smart_caption".into()));
 
         let manifest = build_render_manifest(&mut director, 0.5);
         let config = VerificationConfig::default();
@@ -929,7 +887,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -940,14 +898,7 @@ mod tests {
         box_node.style.size.width = taffy::style::Dimension::length(1080.0);
         box_node.style.size.height = taffy::style::Dimension::length(200.0);
         let root = director.scene.add_node(Box::new(box_node));
-        director.timeline.push(TimelineItem {
-            scene_root: root,
-            name: Some("box".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(root, 0.0, 2.0, Some("box".into()));
 
         let manifest = build_render_manifest(&mut director, 0.0);
         let config = VerificationConfig::default();
@@ -969,7 +920,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -980,14 +931,7 @@ mod tests {
         box_node.style.size.width = taffy::style::Dimension::length(100.0);
         box_node.style.size.height = taffy::style::Dimension::length(100.0);
         let root = director.scene.add_node(Box::new(box_node));
-        director.timeline.push(TimelineItem {
-            scene_root: root,
-            name: Some("static".into()),
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(root, 0.0, 5.0, Some("static".into()));
 
         let manifest = build_render_manifest(&mut director, 0.0);
         let config = VerificationConfig::default();
@@ -1006,7 +950,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1017,14 +961,7 @@ mod tests {
         box_node.style.size.width = taffy::style::Dimension::length(1080.0);
         box_node.style.size.height = taffy::style::Dimension::length(200.0);
         let root = director.scene.add_node(Box::new(box_node));
-        director.timeline.push(TimelineItem {
-            scene_root: root,
-            name: Some("box".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(root, 0.0, 2.0, Some("box".into()));
 
         let manifest = build_render_manifest(&mut director, 0.0);
         let config = VerificationConfig::default();
@@ -1044,7 +981,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1069,14 +1006,7 @@ mod tests {
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
         let caption = CaptionNode::new(lines, director.assets.font_collection.clone());
         let caption_id = director.scene.add_node(Box::new(caption));
-        director.timeline.push(TimelineItem {
-            scene_root: caption_id,
-            name: Some("caption".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(caption_id, 0.0, 2.0, Some("caption".into()));
 
         let manifest = build_render_manifest(&mut director, 0.5);
         let config = VerificationConfig::default();
@@ -1095,7 +1025,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1140,14 +1070,7 @@ mod tests {
         ]);
 
         let smart_id = director.scene.add_node(Box::new(smart));
-        director.timeline.push(TimelineItem {
-            scene_root: smart_id,
-            name: Some("smart_caption".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(smart_id, 0.0, 2.0, Some("smart_caption".into()));
 
         let manifest = build_render_manifest(&mut director, 0.5);
         let config = VerificationConfig::default();
@@ -1203,7 +1126,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1243,14 +1166,7 @@ mod tests {
         camera.inner_mut().style.size.height = taffy::style::Dimension::length(1920.0);
 
         let camera_id = director.scene.add_node(Box::new(camera));
-        director.timeline.push(TimelineItem {
-            scene_root: camera_id,
-            name: Some("active_speaker_camera".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(camera_id, 0.0, 2.0, Some("active_speaker_camera".into()));
 
         let manifest = build_render_manifest(&mut director, 0.5);
         let config = VerificationConfig::default();
@@ -1278,7 +1194,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1311,14 +1227,7 @@ mod tests {
         camera.set_video_size(2000.0, 2000.0);
 
         let camera_id = director.scene.add_node(Box::new(camera));
-        director.timeline.push(TimelineItem {
-            scene_root: camera_id,
-            name: Some("active_speaker_camera".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(camera_id, 0.0, 2.0, Some("active_speaker_camera".into()));
 
         let manifest = build_render_manifest(&mut director, 0.5);
         let config = VerificationConfig::default();
@@ -1339,7 +1248,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1356,14 +1265,7 @@ mod tests {
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
         let caption = CaptionNode::new(lines, empty_font_collection());
         let caption_id = director.scene.add_node(Box::new(caption));
-        director.timeline.push(TimelineItem {
-            scene_root: caption_id,
-            name: Some("caption".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(caption_id, 0.0, 2.0, Some("caption".into()));
 
         let manifest = build_render_manifest(&mut director, 0.5);
         let config = VerificationConfig::default();
@@ -1382,7 +1284,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -1401,14 +1303,7 @@ mod tests {
         let lines = vec![single_word_line("hello", 0.0, 2.0)];
         let caption = CaptionNode::new(lines, director.assets.font_collection.clone());
         let caption_id = director.scene.add_node(Box::new(caption));
-        director.timeline.push(TimelineItem {
-            scene_root: caption_id,
-            name: Some("caption".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(caption_id, 0.0, 2.0, Some("caption".into()));
 
         let manifest = build_render_manifest(&mut director, 0.5);
         let config = VerificationConfig::default();

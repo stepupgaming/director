@@ -3,7 +3,6 @@
 //! Tests for audio resampling and mixing.
 
 use director_core::audio::resample_audio;
-use director_core::director::TimelineItem;
 use director_core::node::BoxNode;
 use director_core::scene::AudioBinding;
 use director_core::video_wrapper::RenderMode;
@@ -176,17 +175,10 @@ fn audio_energy_bands_separation() {
 #[test]
 fn audio_binding_uses_track_relative_time_and_duration_window() {
     let loader = Arc::new(DefaultAssetLoader);
-    let mut director = Director::new(640, 360, 30, loader, RenderMode::Preview, None);
+    let mut director = Director::new(640, 360, 30.0, loader, RenderMode::Preview, None);
 
     let root_id = director.scene.add_node(Box::new(BoxNode::new()));
-    director.timeline.push(TimelineItem {
-        scene_root: root_id,
-        name: None,
-        start_time: 0.0,
-        duration: 5.0,
-        z_index: 0,
-        audio_tracks: vec![],
-    });
+    director.push_scene_root(root_id, 5.0);
 
     let sample_rate = director.audio_mixer.sample_rate as usize;
     let freq = 100.0_f32; // Bass band

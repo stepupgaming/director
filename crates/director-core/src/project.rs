@@ -35,7 +35,7 @@
 //! * **Tracks & legacy timeline**: fully round-tripped (clips, fades,
 //!   speed, source in/out, z_index, audio_tracks).
 use crate::animation::{Animated, EasingType};
-use crate::director::{Director, TimelineItem};
+use crate::director::Director;
 use crate::entity::{EntityId, EntityTrack};
 use crate::node::text::TextNode;
 use crate::node::BoxNode;
@@ -105,6 +105,9 @@ pub struct ClipData {
     pub source_end: f64,
     #[serde(default = "default_one_f")]
     pub speed: f64,
+    /// When set, pin source local time for the whole clip (plan 01 freeze).
+    #[serde(default)]
+    pub freeze_time: Option<f64>,
     #[serde(default)]
     pub fade_in: f64,
     #[serde(default)]
@@ -1640,26 +1643,15 @@ pub fn director_to_project(d: &Director) -> Project {
             clips: t.clips.iter().map(track_clip_to_data).collect(),
         })
         .collect();
-    let legacy_timeline = d
-        .timeline
-        .iter()
-        .map(|it| TimelineItemData {
-            scene_root: it.scene_root,
-            start_time: it.start_time,
-            duration: it.duration,
-            z_index: it.z_index,
-            name: it.name.clone(),
-            audio_tracks: it.audio_tracks.clone(),
-        })
-        .collect();
+    // Tracks are canonical; legacy_timeline is only read on load for migration.
     Project {
         version: PROJECT_VERSION,
         width: d.width,
         height: d.height,
-        fps: d.fps as f64,
+        fps: d.fps,
         nodes,
         tracks,
-        legacy_timeline,
+        legacy_timeline: Vec::new(),
         entities: d.entities.iter().cloned().collect(),
     }
 }
@@ -1674,6 +1666,7 @@ fn track_clip_to_data(c: &TrackClip) -> ClipData {
         source_start: c.source_start,
         source_end: c.source_end,
         speed: c.speed,
+        freeze_time: c.freeze_time,
         fade_in: c.fade_in,
         fade_out: c.fade_out,
         audio_tracks: c.audio_tracks.clone(),
@@ -1687,7 +1680,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
     let mut director = Director::new(
         project.width,
         project.height,
-        project.fps.round() as u32, // Director.fps is u32; the f64 in Project is preserved for export-side timing.
+        project.fps,
         loader,
         RenderMode::Preview,
         None,
@@ -1935,6 +1928,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                             source_start: c.source_start,
                             source_end: c.source_end,
                             speed: c.speed,
+                            freeze_time: c.freeze_time,
                             fade_in: c.fade_in,
                             fade_out: c.fade_out,
                             audio_tracks: c.audio_tracks,
@@ -1945,20 +1939,21 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
         })
         .collect();
 
-    director.timeline = project
-        .legacy_timeline
-        .into_iter()
-        .filter_map(|it| {
-            id_map.get(&it.scene_root).map(|&new_root| TimelineItem {
-                scene_root: new_root,
-                start_time: it.start_time,
-                duration: it.duration,
-                z_index: it.z_index,
-                name: it.name,
-                audio_tracks: it.audio_tracks,
-            })
-        })
-        .collect();
+    // Migrate pre-plan-01 projects that only stored legacy_timeline.
+    let tracks_empty = director.tracks.iter().all(|t| t.clips.is_empty());
+    if tracks_empty && !project.legacy_timeline.is_empty() {
+        director.ensure_default_track();
+        let idx = director.default_track_idx;
+        for it in project.legacy_timeline {
+            if let Some(&new_root) = id_map.get(&it.scene_root) {
+                let mut clip = TrackClip::new(new_root, it.start_time, it.duration);
+                clip.name = it.name;
+                clip.z_index = it.z_index;
+                clip.audio_tracks = it.audio_tracks;
+                director.tracks[idx].clips.push(clip);
+            }
+        }
+    }
 
     // Restore semantic entity tracks (UUIDs are stable, no remapping needed).
     for track in project.entities {

@@ -3,9 +3,9 @@
 //! Audio playback and analysis functions for Rhai scripts.
 //!
 //! ## Responsibilities
-//! - **Audio Loading**: `add_audio` for adding audio tracks
+//! - **Audio Loading**: `add_audio` for adding audio tracks, `add_global_audio` for raw samples
 //! - **Volume Animation**: `animate_volume` for volume fades
-//! - **Audio Analysis**: `bass`, `mids`, `highs`, `get_energy`, `get_spectrum`
+//! - **Audio Analysis**: `bass`, `mids`, `highs`, `get_energy`, `get_spectrum`, `loudness`
 //! - **Audio Reactivity**: `bind_audio` for audio-reactive properties
 //! - **Safety Guards**: lock-poison handling and track/node validation
 
@@ -45,6 +45,23 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
+    engine.register_fn(
+        "add_global_audio",
+        |movie: &mut MovieHandle, samples: rhai::Array| -> Result<AudioTrackHandle, Box<rhai::EvalAltResult>> {
+            let mut d = movie.lock_director()?;
+            let samples: Vec<f32> = samples
+                .into_iter()
+                .map(|v| v.as_float().map(|f| f as f32))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("invalid audio sample: {}", e))?;
+            let id = d.add_global_audio(samples);
+            Ok(AudioTrackHandle {
+                director: movie.director.clone(),
+                id,
+            })
+        },
+    );
+
     engine.register_fn("add_audio", |scene: &mut SceneHandle, path: &str| {
         let id = {
             let mut d = match scene.lock_director() {
@@ -65,12 +82,13 @@ pub fn register(engine: &mut Engine) {
                 });
 
             let id = d.add_scene_audio(samples, scene.start_time, scene.duration);
-            if let Some(item) = d
-                .timeline
+            if let Some(clip) = d
+                .tracks
                 .iter_mut()
-                .find(|i| i.scene_root == scene.root_id)
+                .flat_map(|t| t.clips.iter_mut())
+                .find(|c| c.scene_root == scene.root_id)
             {
-                item.audio_tracks.push(id);
+                clip.audio_tracks.push(id);
             }
             id
         };
@@ -220,6 +238,31 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn("id", |track: &mut AudioTrackHandle| -> i64 {
         track.id as i64
     });
+
+    // Loudness analysis (IT-R BS.1770)
+    // Usage: let loudness = track.loudness();
+    //        print("LUFS: " + loudness.integrated_lufs);
+    engine.register_fn(
+        "loudness",
+        |track: &mut AudioTrackHandle| -> Result<rhai::Map, Box<rhai::EvalAltResult>> {
+            let d = match track.lock_director() {
+                Ok(d) => d,
+                Err(e) => return Err(e),
+            };
+            let Some(t) = d.audio_mixer.tracks.get(track.id).and_then(|t| t.as_ref()) else {
+                return Err(format!("audio track {} not found", track.id).into());
+            };
+
+            let analysis = crate::loudness::analyze_stereo(&t.samples, d.audio_mixer.sample_rate);
+            let mut map = rhai::Map::new();
+            map.insert("integrated_lufs".into(), analysis.integrated_lufs.into());
+            map.insert("true_peak_db".into(), analysis.true_peak_db.into());
+            map.insert("loudness_range_lu".into(), analysis.loudness_range_lu.into());
+            map.insert("channels".into(), (analysis.channels as i64).into());
+            map.insert("sample_rate".into(), (analysis.sample_rate as i64).into());
+            Ok(map)
+        },
+    );
 
     // ========== PAN ==========
     engine.register_fn("set_pan", |track: &mut AudioTrackHandle, pan: f64| {

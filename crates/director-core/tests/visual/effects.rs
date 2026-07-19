@@ -4,7 +4,6 @@
 // rounded corners, and overflow:hidden clipping.
 
 use director_core::animation::Animated;
-use director_core::director::TimelineItem;
 use director_core::element::TextSpan;
 use director_core::node::TextNode;
 use director_core::node::BoxNode;
@@ -36,14 +35,7 @@ fn setup_scene_with_box(
         root.bg_color = Some(Animated::new(Color::WHITE));
         root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut box_node = BoxNode::new();
         box_node.style.size.width = Dimension::length(box_w);
@@ -169,14 +161,7 @@ fn effect_overflow_hidden() {
         root.bg_color = Some(Animated::new(Color::WHITE));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Parent box (red) with overflow hidden, 100x100 centered
         let mut parent = BoxNode::new();
@@ -223,14 +208,7 @@ fn cross_blur_shadow_overflow() {
         root.bg_color = Some(Animated::new(Color::new(0.9, 0.9, 0.9, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Parent with blur, shadow, rounded corners, and overflow hidden
         let mut parent = BoxNode::new();
@@ -279,14 +257,7 @@ fn cross_animated_border_radius() {
         root.bg_color = Some(Animated::new(Color::WHITE));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut box_node = BoxNode::new();
         box_node.style.size.width = Dimension::length(120.0);
@@ -324,14 +295,7 @@ fn cross_text_in_rotated() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Parent box with rotation and scale
         let mut parent = BoxNode::new();

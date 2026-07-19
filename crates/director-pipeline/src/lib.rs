@@ -94,50 +94,48 @@ pub fn load_movie(request: MovieRequest, loader: Arc<dyn AssetLoader>) -> Result
         cumulative_time += loop_span + hold_extra;
         scene_end_times.push(start_time + loop_span + hold_extra);
 
-        // Primary timeline item
-        director
-            .timeline
-            .push(director_core::director::TimelineItem {
-                scene_root: root_id,
-                name: scene_data.name.clone(),
+        // Primary track clip
+        {
+            let mut clip = director_core::timeline::TrackClip::new(
+                root_id,
                 start_time,
-                duration: scene_data.duration_secs,
-                z_index: scene_data.z_index,
-                audio_tracks: vec![],
-            });
+                scene_data.duration_secs,
+            );
+            clip.name = scene_data.name.clone();
+            clip.z_index = scene_data.z_index;
+            director.push_clip(None, clip);
+        }
 
-        // Rhai `add_loop` — duplicate plays on the timeline (same spacing as lifecycle.rs)
+        // Rhai `add_loop` — duplicate plays on the track (same spacing as lifecycle.rs)
         if plays > 1 {
             let scene_duration = scene_data.duration_secs;
             let repeat_start = start_time + scene_duration;
             for i in 1..plays {
-                director
-                    .timeline
-                    .push(director_core::director::TimelineItem {
-                        scene_root: root_id,
-                        name: Some(format!("loop_{i}")),
-                        start_time: repeat_start + i as f64 * scene_duration,
-                        duration: scene_duration,
-                        z_index: scene_data.z_index,
-                        audio_tracks: vec![],
-                    });
+                let mut clip = director_core::timeline::TrackClip::new(
+                    root_id,
+                    repeat_start + (i as f64 - 1.0) * scene_duration,
+                    scene_duration,
+                );
+                // match lifecycle: start + (i-1)*duration for i in 1..n
+                clip.start_time = repeat_start + ((i - 1) as f64) * scene_duration;
+                clip.name = Some(format!("loop_{i}"));
+                clip.z_index = scene_data.z_index;
+                director.push_clip(None, clip);
             }
         }
 
         // Rhai `add_freeze` — hold frame after scene ends
         if let Some(hold) = &scene_data.post_hold {
             let freeze_start = start_time + loop_span;
-            director
-                .timeline
-                .push(director_core::director::TimelineItem {
-                    scene_root: root_id,
-                    name: Some("freeze".to_string()),
-                    start_time: freeze_start,
-                    duration: hold.duration,
-                    z_index: scene_data.z_index,
-                    audio_tracks: vec![],
-                });
-            let _ = hold.freeze_at;
+            let mut clip = director_core::timeline::TrackClip::new(
+                root_id,
+                freeze_start,
+                hold.duration,
+            );
+            clip.name = Some("freeze".to_string());
+            clip.z_index = scene_data.z_index;
+            clip.freeze_time = hold.freeze_at;
+            director.push_clip(None, clip);
         }
     }
 
@@ -755,16 +753,16 @@ fn build_node_recursive(
                         .with_context(|| {
                             format!("Failed to build sub-composition scene: {}", scene_data.id)
                         })?;
-                internal_director
-                    .timeline
-                    .push(director_core::director::TimelineItem {
-                        scene_root: root_id,
-                        name: scene_data.name.clone(),
-                        start_time: cumulative_time,
-                        duration: scene_data.duration_secs,
-                        z_index: scene_data.z_index,
-                        audio_tracks: vec![],
-                    });
+                {
+                    let mut clip = director_core::timeline::TrackClip::new(
+                        root_id,
+                        cumulative_time,
+                        scene_data.duration_secs,
+                    );
+                    clip.name = scene_data.name.clone();
+                    clip.z_index = scene_data.z_index;
+                    internal_director.push_clip(None, clip);
+                }
                 cumulative_time += scene_data.duration_secs;
             }
 

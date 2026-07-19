@@ -1,6 +1,9 @@
 # SDK Architecture
 
-> **Status:** Draft  
+> **ARCHIVED / DEFERRED (2026-07-19).** Product SDK / L1–L3 draft — not core engine work.  
+> See [`docs/archive/README.md`](./README.md) and [`docs/plans/00-core-hardening-index.md`](../plans/00-core-hardening-index.md).
+
+> **Status:** Draft (archived)  
 > **Author:** babybirdprd  
 > **Created:** 2024-12-27  
 > **Updated:** 2024-12-27  

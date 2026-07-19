@@ -78,18 +78,7 @@ fn main() {
 
     let width = director.width as i32;
     let height = director.height as i32;
-    let timeline_duration = director
-        .timeline
-        .iter()
-        .map(|item| item.start_time + item.duration)
-        .fold(0.0_f64, f64::max);
-    let track_duration = director
-        .tracks
-        .iter()
-        .flat_map(|t| t.clips.iter())
-        .map(|clip| clip.start_time + clip.duration)
-        .fold(0.0_f64, f64::max);
-    let duration = timeline_duration.max(track_duration);
+    let duration = director.timeline_duration();
 
     let frames = cli.frames.max(1);
     let sample_times: Vec<f64> = (0..frames)

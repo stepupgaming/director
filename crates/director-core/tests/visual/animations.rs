@@ -5,7 +5,6 @@
 // in interpolation, easing, and transform application.
 
 use director_core::animation::{Animated, EasingType};
-use director_core::director::TimelineItem;
 use director_core::node::BoxNode;
 use director_core::types::Color;
 use taffy::style::Dimension;
@@ -34,14 +33,7 @@ fn setup_scene_with_box(
         root.bg_color = Some(Animated::new(bg));
         root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut box_node = BoxNode::new();
         box_node.style.size.width = Dimension::length(100.0);

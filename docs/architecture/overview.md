@@ -1,100 +1,83 @@
 # Director Engine Architecture
 
-This document provides a high-level overview of the internal architecture and the frame loop execution flow of `director-engine`.
+High-level map of the runtime. **Normative spines** (time, identity, pipeline, etc.): [core-contracts.md](./core-contracts.md). **Hardening program:** [../plans/00-core-hardening-index.md](../plans/00-core-hardening-index.md).
 
-## High Level Components
+## Crates
 
-*   **Director**: The central coordinator. It manages the `SceneGraph`, `Timeline`, and shared `AssetManager`.
-*   **SceneGraph**: A flattened list of `SceneNode`s (ECS-lite). Nodes contain a generic `Element` (behavior) and `Transform`/`Style` data.
-*   **LayoutEngine**: A wrapper around `Taffy` that computes Flexbox/Grid layouts for the scene graph.
-*   **AssetManager**: Thread-safe storage for heavy resources (Images, Fonts, Shaders).
-*   **Renderer**: Recursive Skia drawing logic that traverses the computed layout and draws to a Surface/Canvas.
-*   **VideoWrapper**: Encapsulates `FFMPEG` for encoding frames to MP4.
+| Crate | Role |
+|-------|------|
+| `director-core` | Scene graph, timeline, layout, animation, Rhai API, export, visual tests |
+| `director-cli` | CLI render entrypoints |
+| `director-schema` | JSON / schema-facing types |
+| `director-pipeline` | Schema → Director loading |
+| `lottie-*` | Lottie parse / data / Skia path |
 
-## Frame Execution Loop
+## High-level components
 
-The following sequence diagram illustrates the lifecycle of a single frame render.
+- **Director** — owns `SceneGraph`, tracks/timeline, assets, audio, compile/dirty state, export settings.
+- **SceneGraph** — arena of `SceneNode` (`Element` + transform/layout/hierarchy/mask).
+- **Track / TrackClip** — intended sequencing model (speed, source window, fades). Legacy `timeline: Vec<TimelineItem>` still exists and is used by several APIs/tests — **unification is plan 01**.
+- **LayoutEngine** — Taffy flexbox/grid; writes `layout_rect`.
+- **Renderer** — Skia recursive draw; optional dirty set + static subtree cache.
+- **Animation** — `Animated<T>` keyframes, springs, easings (including bezier/hold/expression).
+- **VideoWrapper / export** — FFmpeg encode path; color tags on H.264.
+- **Scripting** — Rhai handles over `Arc<Mutex<Director>>`.
+
+## Frame loop
 
 ```mermaid
 sequenceDiagram
-    participant User as Rust/Rhai Script
+    participant User as Rust/Rhai
     participant Director
-    participant Timeline
+    participant Tracks as Tracks/Timeline
     participant Scene as SceneGraph
-    participant Anim as Animation System
-    participant Layout as LayoutEngine (Taffy)
-    participant Render as Skia Renderer
-    participant Encoder as FFmpeg Encoder
+    participant Anim as Animation
+    participant Layout as LayoutEngine
+    participant Render as Skia
+    participant Encoder as FFmpeg
 
-    User->>Director: new_director()
-    User->>Director: add_scene() / add_node()
-    User->>Director: render_export(path)
+    User->>Director: build graph / add scenes
+    User->>Director: render_export / render_at_time
 
-    loop Every Frame (e.g., 0.0s to 5.0s)
-        Director->>Director: update(time)
-
-        rect rgb(30, 30, 30)
-            note right of Director: 1. State Update Phase
-            Director->>Timeline: Get Active Scene(s)
-            Director->>Scene: Traverse Active Nodes
-
-            loop For Each Node
-                Scene->>Scene: Calculate Local Time
-                Scene->>Anim: Update Animated Properties
-                Anim-->>Scene: New Values (Opacity, Transform, Uniforms)
-                Scene->>Scene: Element::update(local_time)
-            end
+    loop Each frame time t
+        Director->>Tracks: active clips at t
+        Director->>Scene: set local_time (clip mapping)
+        loop Active nodes (or dirty subset)
+            Scene->>Anim: update channels at local_time
+            Scene->>Scene: Element::update(local_time)
         end
-
-        rect rgb(40, 40, 40)
-            note right of Director: 2. Layout Phase
-            Director->>Layout: compute_layout(width, height)
-            Layout->>Scene: Measure Intrinsic Sizes (Text/Image)
-            Layout->>Layout: Compute Taffy Tree
-            Layout-->>Director: Final Layout Rects
-
-            Director->>Scene: run_post_layout()
-            Scene->>Scene: Element::post_layout() (e.g., Auto-Shrink Text)
-        end
-
-        rect rgb(50, 50, 50)
-            note right of Director: 3. Render Phase
-            Director->>Render: render_recursive(root_node)
-
-            loop Recursively Draw Tree
-                Render->>Scene: Get Transform/Opacity
-                Render->>Render: Canvas::save() / concat()
-
-                alt Has Effects (Blur/Shader)?
-                    Render->>Render: save_layer(ImageFilter)
-                end
-
-                Render->>Scene: Element::render(Canvas)
-
-                alt Is CompositionNode?
-                   Scene->>Director: Nested Director::render()
-                else Is TextNode?
-                   Scene->>Scene: Shape & Draw Glyphs
-                end
-
-                Render->>Render: Canvas::restore()
-            end
-        end
-
-        rect rgb(60, 60, 60)
-            note right of Director: 4. Encode Phase
-            Director->>Director: mix_audio()
-            Director->>Encoder: Send Audio Samples
-            Director->>Encoder: Send Video Frame (Pixels)
-        end
+        Director->>Layout: compute_layout
+        Layout-->>Scene: layout_rect
+        Director->>Scene: post_layout (e.g. text fit)
+        Director->>Render: render_recursive
+        Render->>Scene: Element::render
+        Director->>Director: mix_audio(t)
+        Director->>Encoder: video frame + audio
     end
-
-    Encoder-->>User: output.mp4
+    Encoder-->>User: output media
 ```
 
-## Data Flow
+## Data flow (summary)
 
-1.  **Scripting**: Rhai scripts mutate the `SceneGraph` via `NodeHandle`s.
-2.  **Update**: `Animated<T>` structs interpolate values based on the current time and keyframes/springs.
-3.  **Layout**: `Taffy` computes the geometry.
-4.  **Render**: `Skia` rasterizes the geometry using the updated state.
+1. **Author** — Rhai (or Rust) mutates the live `Director`.
+2. **Update** — clip local time → animated properties → element state.
+3. **Layout** — Taffy measures and places.
+4. **Render** — Skia rasterizes (effects, masks, nested comps).
+5. **Export** — frames + mixed audio to FFmpeg.
+
+## Incremental path (in progress)
+
+`compile()` builds a dependency graph; `invalidate` fills `dirty_nodes`; `render_at_time` may update/render a subset and consult `static_cache`. **Correctness requirement:** full render ≡ incremental (plan 03). Until that gate exists, treat incremental as optimization under test, not gospel.
+
+## Nested compositions
+
+`CompositionNode` embeds an inner `Director` and renders it to an offscreen surface. Identity and time across the boundary are defined in [core-contracts.md](./core-contracts.md) (plan 02).
+
+## Related docs
+
+| Doc | Purpose |
+|-----|---------|
+| [core-contracts.md](./core-contracts.md) | Normative spines + current gaps |
+| [../plans/](../plans/00-core-hardening-index.md) | Hardening implementation plans |
+| [../archive/](../archive/README.md) | Historical audit / deferred product plans |
+| [../contributing/development.md](../contributing/development.md) | Build and test |

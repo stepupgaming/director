@@ -164,6 +164,11 @@ fn example_features_verify_and_repair() {
     validate_script("examples/features/verify_and_repair.rhai");
 }
 
+#[test]
+fn example_features_style_policy_check() {
+    validate_script("examples/features/style_policy_check.rhai");
+}
+
 fn validate_script(relative_path: &str) {
     let mut engine = Engine::new();
     let loader = Arc::new(DefaultAssetLoader);

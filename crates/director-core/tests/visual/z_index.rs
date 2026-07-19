@@ -5,7 +5,6 @@
 // With z_index, higher values render on top of lower values.
 
 use director_core::animation::Animated;
-use director_core::director::TimelineItem;
 use director_core::node::BoxNode;
 use director_core::types::Color;
 use taffy::style::Dimension;
@@ -28,14 +27,7 @@ fn z_index_higher_on_top() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Blue box (inserted first, z_index=0)
         let mut blue = BoxNode::new();
@@ -89,14 +81,7 @@ fn z_index_overrides_insertion_order() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Red box (inserted first, z_index=2)
         let mut red = BoxNode::new();

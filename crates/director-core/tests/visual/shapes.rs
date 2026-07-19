@@ -4,7 +4,6 @@
 // with fill, stroke, and gradient support.
 
 use director_core::animation::Animated;
-use director_core::director::TimelineItem;
 use director_core::node::{BoxNode, PathCommand, ShapeNode, ShapeType};
 use director_core::types::{Color, GradientConfig};
 use taffy::style::Dimension;
@@ -25,14 +24,7 @@ fn shape_circle_fill() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let shape = ShapeNode::new(ShapeType::Circle { cx: 150.0, cy: 100.0, r: 60.0 });
         let mut shape = shape;
@@ -61,14 +53,7 @@ fn shape_circle_stroke_only() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut shape = ShapeNode::new(ShapeType::Circle { cx: 150.0, cy: 100.0, r: 60.0 });
         shape.fill_color = None;
@@ -98,14 +83,7 @@ fn shape_circle_fill_and_stroke() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut shape = ShapeNode::new(ShapeType::Circle { cx: 150.0, cy: 100.0, r: 60.0 });
         shape.fill_color = Some(Animated::new(Color::new(0.2, 0.5, 0.9, 1.0)));
@@ -135,14 +113,7 @@ fn shape_ellipse_fill() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut shape = ShapeNode::new(ShapeType::Ellipse { cx: 150.0, cy: 100.0, rx: 100.0, ry: 50.0 });
         shape.fill_color = Some(Animated::new(Color::new(0.2, 0.4, 0.9, 1.0)));
@@ -170,14 +141,7 @@ fn shape_ellipse_gradient() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let mut shape = ShapeNode::new(ShapeType::Ellipse { cx: 150.0, cy: 100.0, rx: 100.0, ry: 50.0 });
         shape.fill_gradient = Some(GradientConfig {
@@ -214,14 +178,7 @@ fn shape_path_triangle() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let commands = vec![
             PathCommand::MoveTo { x: 150.0, y: 30.0 },
@@ -255,14 +212,7 @@ fn shape_path_quad_curve() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let commands = vec![
             PathCommand::MoveTo { x: 30.0, y: 100.0 },
@@ -298,14 +248,7 @@ fn shape_path_cubic_curve() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let commands = vec![
             PathCommand::MoveTo { x: 150.0, y: 60.0 },
@@ -339,14 +282,7 @@ fn shape_path_arc() {
         root.bg_color = Some(Animated::new(Color::new(0.1, 0.1, 0.1, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         let commands = vec![
             PathCommand::MoveTo { x: 150.0, y: 100.0 },

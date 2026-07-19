@@ -79,10 +79,12 @@ pub fn apply_effect_to_node(d: &mut Director, node_id: NodeId, effect: EffectTyp
 
     d.scene.add_child(effect_id, node_id);
 
-    // Update Root if needed
-    for item in &mut d.timeline {
-        if item.scene_root == node_id {
-            item.scene_root = effect_id;
+    // Update Root if needed (tracks only — plan 01).
+    for track in &mut d.tracks {
+        for clip in &mut track.clips {
+            if clip.scene_root == node_id {
+                clip.scene_root = effect_id;
+            }
         }
     }
 

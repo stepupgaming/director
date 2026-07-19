@@ -118,8 +118,11 @@ See [docs/contributing/development.md](docs/contributing/development.md) for det
 | Document | Description |
 |----------|-------------|
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Engine internals |
+| [docs/architecture/core-contracts.md](docs/architecture/core-contracts.md) | Normative engine spines (time, identity, pipeline, …) |
+| [docs/plans/00-core-hardening-index.md](docs/plans/00-core-hardening-index.md) | Active core-hardening program |
 | [docs/contributing/development.md](docs/contributing/development.md) | Build guide & contributing |
 | [examples/README.md](examples/README.md) | Example scripts index |
+| [docs/archive/](docs/archive/README.md) | Historical audit / deferred product plans |
 
 
 ---

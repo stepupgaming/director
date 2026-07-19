@@ -342,56 +342,31 @@ fn render_scene_to_canvas(
     let assets = &director.assets;
     canvas.clear(skia_safe::Color::BLACK);
 
-    let has_tracks = director.tracks.iter().any(|t| !t.clips.is_empty());
-    if has_tracks {
-        let mut clips: Vec<(usize, usize, &TrackClip)> = Vec::new();
-        for (ti, track) in director.tracks.iter().enumerate() {
-            for (ci, clip) in track.clips.iter().enumerate() {
-                if track.enabled
-                    && time >= clip.start_time
-                    && time < clip.start_time + clip.duration
-                {
-                    clips.push((ti, ci, clip));
-                }
+    let mut clips: Vec<(usize, usize, &TrackClip)> = Vec::new();
+    for (ti, track) in director.tracks.iter().enumerate() {
+        if !track.enabled {
+            continue;
+        }
+        for (ci, clip) in track.clips.iter().enumerate() {
+            if clip.is_active_at(time) {
+                clips.push((ti, ci, clip));
             }
         }
-        clips.sort_by_key(|(_, _, c)| c.z_index);
-        for (ti, _, clip) in clips {
-            let track_opacity = director.tracks[ti].opacity;
-            let fade_opacity = clip.fade_opacity(time);
-            render_recursive(
-                &director.scene,
-                assets,
-                &mut director.static_cache,
-                clip.scene_root,
-                canvas,
-                track_opacity * fade_opacity,
-                0,
-                dirty_nodes,
-            )?;
-        }
-    } else {
-        let mut items: Vec<(usize, TimelineItem)> = director
-            .timeline
-            .iter()
-            .cloned()
-            .enumerate()
-            .filter(|(_, item)| time >= item.start_time && time < item.start_time + item.duration)
-            .collect();
-        items.sort_by_key(|(_, item)| item.z_index);
-
-        for (_, item) in items {
-            render_recursive(
-                &director.scene,
-                assets,
-                &mut director.static_cache,
-                item.scene_root,
-                canvas,
-                1.0,
-                0,
-                dirty_nodes,
-            )?;
-        }
+    }
+    clips.sort_by_key(|(_, _, c)| c.z_index);
+    for (ti, _, clip) in clips {
+        let track_opacity = director.tracks[ti].opacity;
+        let fade_opacity = clip.fade_opacity(time);
+        render_recursive(
+            &director.scene,
+            assets,
+            &mut director.static_cache,
+            clip.scene_root,
+            canvas,
+            track_opacity * fade_opacity,
+            0,
+            dirty_nodes,
+        )?;
     }
 
     if director.debug_overlays {
@@ -423,7 +398,7 @@ pub fn render_frame(
     }
 
     // Motion blur: sample across the shutter duration and accumulate.
-    let fps = director.fps as f64;
+    let fps = director.fps.max(1e-6);
     let frame_duration = 1.0 / fps;
     let shutter_duration = frame_duration * (shutter_angle as f64 / 360.0);
     let shutter_start_time = time - (shutter_duration / 2.0);
@@ -506,16 +481,15 @@ pub fn render_at_time(
 
     canvas.clear(skia_safe::Color::BLACK);
 
-    // Check transition
+    // Check transition (indices refer to Director::flat_timeline order).
     let transition = director
         .transitions
         .iter()
         .find(|t| time >= t.start_time && time < t.start_time + t.duration)
         .cloned();
 
-    // Collect items. Need indices to match with transition.
-    let mut items: Vec<(usize, TimelineItem)> = director
-        .timeline
+    let flat = director.flat_timeline();
+    let mut items: Vec<(usize, TimelineItem)> = flat
         .iter()
         .cloned()
         .enumerate()
@@ -531,8 +505,8 @@ pub fn render_at_time(
                 if !drawn_transition {
                     if let Some((surf_a, surf_b)) = surfaces {
                         if let (Some(item_a), Some(item_b)) = (
-                            director.timeline.get(trans.from_scene_idx),
-                            director.timeline.get(trans.to_scene_idx),
+                            flat.get(trans.from_scene_idx),
+                            flat.get(trans.to_scene_idx),
                         ) {
                             surf_a.canvas().clear(skia_safe::Color::TRANSPARENT);
                             surf_b.canvas().clear(skia_safe::Color::TRANSPARENT);
@@ -592,14 +566,29 @@ pub fn render_at_time(
             }
         }
     } else {
-        for (_, item) in items {
+        // Prefer track path so fade/track opacity apply.
+        let mut clips: Vec<(usize, &TrackClip)> = Vec::new();
+        for (ti, track) in director.tracks.iter().enumerate() {
+            if !track.enabled {
+                continue;
+            }
+            for clip in &track.clips {
+                if clip.is_active_at(time) {
+                    clips.push((ti, clip));
+                }
+            }
+        }
+        clips.sort_by_key(|(_, c)| c.z_index);
+        for (ti, clip) in clips {
+            let track_opacity = director.tracks[ti].opacity;
+            let fade_opacity = clip.fade_opacity(time);
             render_recursive(
                 &director.scene,
                 assets_ref,
                 &mut director.static_cache,
-                item.scene_root,
+                clip.scene_root,
                 canvas,
-                1.0,
+                track_opacity * fade_opacity,
                 0,
                 dirty,
             )?;
@@ -623,7 +612,7 @@ mod tests {
         let mut director = Director::new(
             1080,
             1920,
-            30,
+            30.0,
             Arc::new(crate::DefaultAssetLoader),
             RenderMode::Preview,
             None,
@@ -636,14 +625,7 @@ mod tests {
         director.scene.try_add_child(root, child_a);
         director.scene.try_add_child(root, child_b);
 
-        director.timeline.push(TimelineItem {
-            scene_root: root,
-            name: Some("scene".into()),
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        director.push_scene_root_at(root, 0.0, 5.0, Some("scene".into()));
 
         director
     }
@@ -673,7 +655,7 @@ mod tests {
         )
         .expect("full render should succeed");
 
-        let root_id = director.timeline[0].scene_root;
+        let root_id = director.flat_timeline()[0].scene_root;
         let child_a = director.scene.get_node(root_id).unwrap().children[0];
         let child_b = director.scene.get_node(root_id).unwrap().children[1];
 
@@ -778,7 +760,7 @@ mod tests {
             skia_safe::surfaces::raster(&info, None, None).expect("failed to create test surface");
 
         // Replace child_b with a tracked static element.
-        let root_id = director.timeline[0].scene_root;
+        let root_id = director.flat_timeline()[0].scene_root;
         let child_b = director.scene.get_node(root_id).unwrap().children[1];
         let (tracker, count) = RenderTracker::new();
         director.scene.nodes[child_b] = Some(crate::scene::SceneNode::new(Box::new(tracker)));
@@ -830,7 +812,7 @@ mod tests {
         )
         .expect("full render should succeed");
 
-        let root_id = director.timeline[0].scene_root;
+        let root_id = director.flat_timeline()[0].scene_root;
         let child_a = director.scene.get_node(root_id).unwrap().children[0];
         let child_b = director.scene.get_node(root_id).unwrap().children[1];
 
@@ -879,7 +861,7 @@ mod tests {
         )
         .expect("full render should succeed");
 
-        let root_id = director.timeline[0].scene_root;
+        let root_id = director.flat_timeline()[0].scene_root;
         let child_a = director.scene.get_node(root_id).unwrap().children[0];
         let child_b = director.scene.get_node(root_id).unwrap().children[1];
 

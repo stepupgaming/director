@@ -87,7 +87,7 @@ pub struct EncoderSettings {
     pub height: usize,
     pub sample_rate: i32,
     pub hardware_accel: HardwareAccel,
-    pub fps: u32,
+    pub fps: f64,
     pub encoder_mode: EncoderMode,
     pub alpha: bool,
 }
@@ -99,10 +99,15 @@ impl EncoderSettings {
             height: h,
             sample_rate: 48000,
             hardware_accel: HardwareAccel::Auto,
-            fps: 30,
+            fps: 30.0,
             encoder_mode: EncoderMode::Auto,
             alpha: false,
         }
+    }
+
+    pub fn with_fps(mut self, fps: f64) -> Self {
+        self.fps = if fps.is_finite() && fps > 0.0 { fps } else { 30.0 };
+        self
     }
 
     pub fn with_encoder_mode(mut self, mode: EncoderMode) -> Self {

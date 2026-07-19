@@ -7,10 +7,12 @@ The heart of Director Engine. Contains rendering, layout, animation, and scripti
 | Component | Purpose |
 |-----------|---------|
 | **Scene Graph** | Arena-based node storage with `NodeId` handles |
-| **Layout** | Taffy-powered Flexbox (Grid planned) |
-| **Rendering** | Skia 2D rasterization |
-| **Animation** | Keyframes, springs, easings |
+| **Timeline** | `tracks` / `TrackClip` (+ legacy `timeline` — being unified, plan 01) |
+| **Layout** | Taffy-powered Flexbox/Grid |
+| **Rendering** | Skia 2D rasterization, dirty/static cache paths |
+| **Animation** | Keyframes, springs, easings (bezier/hold/expression) |
 | **Scripting** | Rhai API bindings |
+| **Project I/O** | Versioned JSON save/load (`project.rs`) |
 
 ## Usage
 
@@ -34,12 +36,15 @@ let movie = engine.eval::<scripting::MovieHandle>(script)?;
 
 | Module | Purpose |
 |--------|---------|
-| `director.rs` | Timeline coordinator |
+| `director.rs` | Coordinator: tracks, update, compile/invalidate |
+| `timeline.rs` | `Track` / `TrackClip` |
 | `scene.rs` | Scene graph storage |
-| `scripting.rs` | Rhai bindings |
+| `scripting/` | Rhai bindings |
 | `animation.rs` | Animation system |
-| `systems/` | Renderer, Layout, Assets |
-| `node/` | Node implementations (Box, Text, Image, etc.) |
+| `systems/` | Renderer, layout, assets, transitions |
+| `node/` | Box, Text, Image, Caption, Effect, … |
+| `project.rs` | Project JSON round-trip |
+| `api_catalog.rs` | SSOT for effects/transitions/helpers |
 
 ## Feature Flags
 
@@ -48,6 +53,12 @@ let movie = engine.eval::<scripting::MovieHandle>(script)?;
 | `mock_video` | Build without FFmpeg |
 | `vulkan` | Enable Vulkan Skia backend |
 
+## Core hardening
+
+Active engine plans (time, identity, pipeline, …):  
+[docs/plans/00-core-hardening-index.md](../../docs/plans/00-core-hardening-index.md)  
+Contracts: [docs/architecture/core-contracts.md](../../docs/architecture/core-contracts.md)
+
 ---
 
-*See [AGENTS.md](../../AGENTS.md) for detailed architecture.*
+*See root [AGENTS.md](../../AGENTS.md) and [crates/director-core/AGENTS.md](./AGENTS.md).*

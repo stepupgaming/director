@@ -3,7 +3,7 @@
 // Tests for CompositionNode which renders an isolated sub-timeline to a surface.
 
 use director_core::animation::Animated;
-use director_core::director::{Director, TimelineItem};
+use director_core::director::{Director};
 use director_core::node::{BoxNode, CompositionNode};
 use director_core::types::Color;
 use taffy::style::Dimension;
@@ -23,20 +23,13 @@ fn composition_nested() {
         root.bg_color = Some(Animated::new(Color::new(0.9, 0.9, 0.9, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Build inner director
         let mut inner = Director::new(
             150,
             150,
-            30,
+            30.0,
             d.assets.loader.clone(),
             director_core::video_wrapper::RenderMode::Preview,
             None,
@@ -48,14 +41,7 @@ fn composition_nested() {
         inner_root.bg_color = Some(Animated::new(Color::new(0.2, 0.5, 0.9, 1.0)));
         let inner_root_id = inner.scene.add_node(Box::new(inner_root));
 
-        inner.timeline.push(TimelineItem {
-            scene_root: inner_root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        inner.push_scene_root(inner_root_id, 5.0);
 
         let comp_node = CompositionNode::new(inner);
         let comp_id = d.scene.add_node(Box::new(comp_node));
@@ -81,20 +67,13 @@ fn composition_scaled() {
         root.bg_color = Some(Animated::new(Color::WHITE));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root(root_id, 5.0);
 
         // Inner director with a smaller canvas and a rounded box
         let mut inner = Director::new(
             100,
             100,
-            30,
+            30.0,
             d.assets.loader.clone(),
             director_core::video_wrapper::RenderMode::Preview,
             None,
@@ -107,14 +86,7 @@ fn composition_scaled() {
         inner_root.border_radius = Animated::new(50.0); // circle-ish
         let inner_root_id = inner.scene.add_node(Box::new(inner_root));
 
-        inner.timeline.push(TimelineItem {
-            scene_root: inner_root_id,
-            name: None,
-            start_time: 0.0,
-            duration: 5.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        inner.push_scene_root(inner_root_id, 5.0);
 
         let mut comp_node = CompositionNode::new(inner);
         // Make the composition fill the parent (scaled up from 100x100 to 300x300)

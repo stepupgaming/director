@@ -52,7 +52,6 @@ fn all_caption_fixtures() {
 #[test]
 fn smart_caption_avoids_bottom_face() {
     use director_core::animation::Animated;
-    use director_core::director::TimelineItem;
     use director_core::entity::{BoundingBox, EntityKind};
     use director_core::node::caption::{CaptionLine, CaptionNode, CaptionWord};
     use director_core::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
@@ -76,14 +75,7 @@ fn smart_caption_avoids_bottom_face() {
         root.bg_color = Some(Animated::new(Color::new(0.0, 0.0, 0.0, 1.0)));
         let root_id = d.scene.add_node(Box::new(root));
 
-        d.timeline.push(TimelineItem {
-            scene_root: root_id,
-            name: Some("smart_caption_face_avoidance".into()),
-            start_time: 0.0,
-            duration: 2.0,
-            z_index: 0,
-            audio_tracks: vec![],
-        });
+        d.push_scene_root_at(root_id, 0.0, 2.0, Some("smart_caption_face_avoidance".into()));
 
         // Face entity occupying the bottom-center of the frame.
         let face = d.entities.create(EntityKind::Face, "mara".to_string());
@@ -194,7 +186,6 @@ fn smart_caption_avoids_bottom_face() {
 #[test]
 fn smart_caption_switches_anchor_with_moving_face() {
     use director_core::animation::Animated;
-    use director_core::director::TimelineItem;
     use director_core::entity::{BoundingBox, EntityKind};
     use director_core::node::caption::{CaptionLine, CaptionNode, CaptionPosition, CaptionWord};
     use director_core::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
@@ -229,14 +220,7 @@ fn smart_caption_switches_anchor_with_moving_face() {
     root.bg_color = Some(Animated::new(Color::new(0.0, 0.0, 0.0, 1.0)));
     let root_id = d.scene.add_node(Box::new(root));
 
-    d.timeline.push(TimelineItem {
-        scene_root: root_id,
-        name: Some("smart_caption_moving_face".into()),
-        start_time: 0.0,
-        duration: 4.0,
-        z_index: 0,
-        audio_tracks: vec![],
-    });
+    d.push_scene_root_at(root_id, 0.0, 4.0, Some("smart_caption_moving_face".into()));
 
     // Face entity that stays at the bottom for the first second, moves to
     // the top over the next two seconds, and stays at the top for the final

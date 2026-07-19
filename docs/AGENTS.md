@@ -1,31 +1,37 @@
 # Purpose
 
-- Own durable documentation for architecture, contribution workflow, and technical specifications.
+- Own durable documentation for architecture, contribution workflow, technical specs, and active engineering plans.
 
 ## Ownership
 
-- `architecture/` owns engine overview and roadmap-style architecture documentation.
-- `contributing/` owns development and documentation workflow.
-- `specs/` owns technical architecture and API strategy documents.
+- `architecture/` — engine overview and **normative core contracts**.
+- `plans/` — active implementation plans (core hardening program).
+- `contributing/` — development and documentation workflow.
+- `specs/` — RON / harness-oriented feature specs (see also repo-root `specs/`).
+- `archive/` — superseded or deferred docs (not current contracts).
 
 ## Local Contracts
 
-- Documentation must describe current or intentionally planned behavior clearly enough to guide implementation.
-- Remove stale claims when source code or workflow changes.
-- Cross-reference examples, specs, and crates when docs describe executable behavior.
+- Documentation must describe **current** behavior or clearly marked **planned** behavior.
+- Remove or archive stale claims when code diverges; do not leave progress tables that oversell the tree.
+- Active engine work is guided by `plans/` + `architecture/core-contracts.md`, not by archived audit/product drafts.
+- Cross-reference crates, examples, and tests when docs describe executable behavior.
 
 ## Work Guidance
 
-- Keep broad architecture in `architecture/`, process in `contributing/`, and detailed technical specs in `specs/`.
-- Update docs when public APIs, workflows, or architecture responsibilities change.
+- Prefer updating `core-contracts.md` in the same change as spine behavior.
+- New multi-phase work gets a plan under `plans/` and a line in `plans/00-core-hardening-index.md` (or a successor index).
+- Do not resurrect archived SDK/recipe/composition plans as current priority without an explicit product decision after core gates.
 
 ## Verification
 
-- For docs-only edits, review links and referenced paths.
-- Run code verification when docs are changed alongside implementation.
+- Docs-only: check links and paths.
+- With code: run the verification listed in the touched plan / root `AGENTS.md`.
 
 ## Child DOX Index
 
-- `architecture/` - Overview documents.
-- `contributing/` - Development and documentation workflow.
-- `specs/` - Technical API and architecture specification documents.
+- `architecture/` — Overview + core contracts.
+- `plans/` — Core hardening plans (00 index + 01–06).
+- `contributing/` — Development and documentation workflow.
+- `specs/` — Reserved for docs-local design notes (may be empty; harness RON specs live in repo-root `specs/`).
+- `archive/` — Historical audit and deferred product docs.
