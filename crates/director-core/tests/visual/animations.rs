@@ -16,8 +16,8 @@ fn setup_scene_with_box(
     box_color: Color,
 ) -> (
     std::sync::Arc<std::sync::Mutex<director_core::Director>>,
-    usize,
-    usize,
+    director_core::types::NodeId,
+    director_core::types::NodeId,
 ) {
     use crate::visual::setup_test_director;
 

@@ -180,14 +180,18 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    fn n(index: u32) -> NodeId {
+        NodeId::at(index)
+    }
+
     #[test]
     fn direct_dependency_is_affected() {
         let mut graph = DependencyGraph::new();
         let entity = Uuid::new_v4();
-        graph.record(7, DependencyInput::Entity(entity));
+        graph.record(n(7), DependencyInput::Entity(entity));
 
         let affected = graph.affected_nodes(&[DependencyInput::Entity(entity)]);
-        assert!(affected.contains(&7));
+        assert!(affected.contains(&n(7)));
         assert_eq!(affected.len(), 1);
     }
 
@@ -195,8 +199,8 @@ mod tests {
     fn transitive_node_dependency_is_affected() {
         let mut graph = DependencyGraph::new();
         // Node 2 depends on node 1; node 1 depends on entity E.
-        graph.record(1, DependencyInput::Entity(Uuid::new_v4()));
-        graph.record(2, DependencyInput::Node(1));
+        graph.record(n(1), DependencyInput::Entity(Uuid::new_v4()));
+        graph.record(n(2), DependencyInput::Node(n(1)));
 
         let affected = graph.affected_nodes(&[DependencyInput::Entity(Uuid::new_v4())]);
         // Only the entity input we recorded for node 1 should affect node 1.
@@ -209,14 +213,14 @@ mod tests {
     fn transitive_propagation() {
         let mut graph = DependencyGraph::new();
         let entity = Uuid::new_v4();
-        graph.record(1, DependencyInput::Entity(entity));
-        graph.record(2, DependencyInput::Node(1));
-        graph.record(3, DependencyInput::Node(2));
+        graph.record(n(1), DependencyInput::Entity(entity));
+        graph.record(n(2), DependencyInput::Node(n(1)));
+        graph.record(n(3), DependencyInput::Node(n(2)));
 
         let affected = graph.affected_nodes(&[DependencyInput::Entity(entity)]);
-        assert!(affected.contains(&1));
-        assert!(affected.contains(&2));
-        assert!(affected.contains(&3));
+        assert!(affected.contains(&n(1)));
+        assert!(affected.contains(&n(2)));
+        assert!(affected.contains(&n(3)));
         assert_eq!(affected.len(), 3);
     }
 
@@ -225,20 +229,20 @@ mod tests {
         let mut graph = DependencyGraph::new();
         let e1 = Uuid::new_v4();
         let e2 = Uuid::new_v4();
-        graph.record(1, DependencyInput::Entity(e1));
-        graph.record(2, DependencyInput::Entity(e2));
+        graph.record(n(1), DependencyInput::Entity(e1));
+        graph.record(n(2), DependencyInput::Entity(e2));
 
         let affected = graph.affected_nodes(&[DependencyInput::Entity(e1), DependencyInput::Entity(e2)]);
-        assert!(affected.contains(&1));
-        assert!(affected.contains(&2));
+        assert!(affected.contains(&n(1)));
+        assert!(affected.contains(&n(2)));
         assert_eq!(affected.len(), 2);
     }
 
     #[test]
     fn audio_track_dependency() {
         let mut graph = DependencyGraph::new();
-        graph.record(5, DependencyInput::AudioTrack(0));
+        graph.record(n(5), DependencyInput::AudioTrack(0));
         let affected = graph.affected_nodes(&[DependencyInput::AudioTrack(0)]);
-        assert!(affected.contains(&5));
+        assert!(affected.contains(&n(5)));
     }
 }

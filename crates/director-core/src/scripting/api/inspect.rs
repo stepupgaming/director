@@ -14,7 +14,7 @@ pub fn register(engine: &mut Engine) {
     // ---- Live scene-graph introspection ----
 
     engine.register_fn("node_id", |n: &mut NodeHandle| -> i64 {
-        n.id as i64
+        n.id.index as i64
     });
 
     engine.register_fn("node_bounds", |n: &mut NodeHandle| -> Map {
@@ -36,7 +36,7 @@ pub fn register(engine: &mut Engine) {
         if let Ok(d) = n.lock_director() {
             if let Some(node) = d.scene.get_node(n.id) {
                 for c in &node.children {
-                    arr.push((*c as i64).into());
+                    arr.push((c.index as i64).into());
                 }
             }
         }
@@ -52,7 +52,7 @@ pub fn register(engine: &mut Engine) {
         if let Ok(d) = m.lock_director() {
             for track in &d.tracks {
                 for clip in &track.clips {
-                    arr.push((clip.scene_root as i64).into());
+                    arr.push((clip.scene_root.index as i64).into());
                 }
             }
         }

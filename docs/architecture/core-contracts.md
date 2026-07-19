@@ -24,27 +24,37 @@ See plan **01** (implemented).
 
 ## 2. Identity
 
-| Item | Contract | Current gap |
-|------|----------|-------------|
-| `NodeId` | Never aliases under destroy/reuse while a handle lives | `usize` + free-list recycle |
-| Stale handles | Operations error; no silent no-op on wrong node | Weak |
-| Nested composition | Inner ids invalid in outer director | Under-documented |
+| Item | Contract | Status (2026-07-19) |
+|------|----------|---------------------|
+| `NodeId` | Generational `{ index, generation }`; free-list reuse bumps generation | **Done** |
+| Stale handles | `get_node` / Rhai `ensure_alive` fail; no silent alias | **Done** |
+| Nested composition | Inner `NodeId`s valid only on the nested director; outer cannot fetch them | **Done** (contract + tests) |
 | Entity ids | UUID stable (already) | OK |
 
-See plan **02**.
+### Nested composition boundary
+
+| Concern | Rule |
+|---------|------|
+| Identity | Inner arena ids are **not** valid on the outer `Director` |
+| Time | Outer feeds `local_time - start_offset` into inner `update` |
+| Assets/fonts | Shared via cloned `AssetManager` / `DirectorContext` when the composition is created |
+| Dirty | Invalidating the outer composition node re-renders the whole inner surface |
+| Serialize | Inner director is a nested project document |
+
+See plan **02** (implemented).
 
 ---
 
 ## 3. Graph mutation
 
-| Op | Contract |
-|----|----------|
-| Reparent | Same `NodeId`; hierarchy edges update |
-| `apply_effect` | Either non-rewriting attach **or** rewrite that returns new id and invalidates old — no silent handle theft |
-| `set_mask` | Mask identity preserved per documented ownership |
-| Destroy | Recursive; ids stale |
+| Op | Contract | Status |
+|----|----------|--------|
+| Reparent | Same `NodeId`; hierarchy edges update | **Done** |
+| `apply_effect` | **Rewrite (honest):** returns new effect-wrapper `NodeId`; original stays alive as child; scene roots / parent edges rewrite to wrapper. Rhai returns the new handle; old handle still addresses the inner node. If target is already `EffectNode`, `push_or_wrap_effect` **attaches** in place (same id). | **Done** |
+| `set_mask` | Mask keeps its `NodeId`; detached from previous parent's children; exclusive via `mask_node` + parent pointer; destroy owner destroys mask | **Done** |
+| Destroy | Recursive (children + exclusive mask); generation bump; ids stale | **Done** |
 
-See plan **02**.
+See plan **02** (implemented).
 
 ---
 

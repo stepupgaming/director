@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn track_local_time_speed() {
-        let mut clip = TrackClip::new(0, 10.0, 4.0);
+        let mut clip = TrackClip::new(NodeId::at(0), 10.0, 4.0);
         clip.speed = 2.0;
         assert!((clip.local_time(10.0) - 0.0).abs() < 1e-9);
         assert!((clip.local_time(11.0) - 2.0).abs() < 1e-9);
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn track_local_time_source_window() {
-        let mut clip = TrackClip::new(0, 0.0, 10.0);
+        let mut clip = TrackClip::new(NodeId::at(0), 0.0, 10.0);
         clip.source_start = 1.0;
         clip.source_end = 3.0;
         clip.speed = 1.0;
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn track_freeze_pins_local_time() {
-        let mut clip = TrackClip::new(0, 5.0, 2.0);
+        let mut clip = TrackClip::new(NodeId::at(0), 5.0, 2.0);
         clip.speed = 1.0;
         clip.freeze_time = Some(1.25);
         assert!((clip.local_time(5.0) - 1.25).abs() < 1e-9);
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn track_non_positive_speed_pins_source_start() {
-        let mut clip = TrackClip::new(0, 0.0, 2.0);
+        let mut clip = TrackClip::new(NodeId::at(0), 0.0, 2.0);
         clip.source_start = 0.5;
         clip.speed = 0.0;
         assert!((clip.local_time(1.0) - 0.5).abs() < 1e-9);

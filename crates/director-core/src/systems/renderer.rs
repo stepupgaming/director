@@ -313,8 +313,7 @@ pub fn draw_debug_overlays(scene: &SceneGraph, canvas: &skia_safe::Canvas) {
 
     let font = skia_safe::Font::default();
 
-    for (id, node_opt) in scene.nodes.iter().enumerate() {
-        let Some(node) = node_opt else { continue };
+    for (id, node) in scene.iter_alive() {
         let rect = node.layout_rect;
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
             continue;
@@ -763,8 +762,8 @@ mod tests {
         let root_id = director.flat_timeline()[0].scene_root;
         let child_b = director.scene.get_node(root_id).unwrap().children[1];
         let (tracker, count) = RenderTracker::new();
-        director.scene.nodes[child_b] = Some(crate::scene::SceneNode::new(Box::new(tracker)));
-        if let Some(node) = director.scene.nodes[child_b].as_mut() {
+        if let Some(node) = director.scene.get_node_mut(child_b) {
+            node.element = Box::new(tracker);
             node.is_static = true;
             node.parent = Some(root_id);
             node.layout_rect = skia_safe::Rect::from_wh(100.0, 100.0);

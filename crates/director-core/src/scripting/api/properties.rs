@@ -107,6 +107,12 @@ pub fn register(engine: &mut Engine) {
     );
 
     engine.register_fn(
+        // Mask ownership (plan 02):
+        // - Mask keeps its public NodeId; generation is unchanged.
+        // - Mask is detached from the normal children list of its previous parent
+        //   and parented exclusively under the owner via `mask_node`.
+        // - Destroying the owner recursively destroys the mask (exclusive ownership).
+        // - The mask handle remains valid until destroy.
         "set_mask",
         |node: &mut NodeHandle, mask: NodeHandle| -> Result<(), Box<rhai::EvalAltResult>> {
             let mut d = node.lock_director()?;
@@ -129,7 +135,7 @@ pub fn register(engine: &mut Engine) {
                 m_node.parent = Some(node.id);
             }
 
-            // 4. Assign mask_node to owner
+            // 4. Assign mask_node to owner (id preserved)
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 n.mask_node = Some(mask.id);
             }

@@ -61,7 +61,8 @@ use taffy::style::Style;
 
 /// Current project schema version. Bump on any breaking change to the
 /// serialized shape; `load_project_json` rejects unknown (newer) versions.
-pub const PROJECT_VERSION: u32 = 1;
+/// Bumped to 2 when `NodeId` became generational `{ index, generation }` in JSON.
+pub const PROJECT_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Project {
@@ -1503,9 +1504,7 @@ fn node_opacity(sn: &crate::scene::SceneNode) -> f32 {
 
 pub fn director_to_project(d: &Director) -> Project {
     let mut nodes = Vec::new();
-    let total = d.scene.nodes.len();
-    for i in 0..total {
-        if let Some(sn) = d.scene.get_node(i as NodeId) {
+    for (id, sn) in d.scene.iter_alive() {
             let kind = node_kind_name(sn);
             let opacity = node_opacity(sn);
             let transform = TransformData {
@@ -1621,7 +1620,7 @@ pub fn director_to_project(d: &Director) -> Project {
                 _ => {}
             }
             nodes.push(NodeData {
-                id: i as NodeId,
+                id,
                 parent: sn.parent,
                 kind,
                 transform,
@@ -1633,7 +1632,6 @@ pub fn director_to_project(d: &Director) -> Project {
                 layout,
                 entity_refs: sn.entity_refs.clone(),
             });
-        }
     }
     let tracks = d
         .tracks

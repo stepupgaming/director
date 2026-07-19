@@ -19,7 +19,7 @@ use crate::node::caption::scaled_safe_zone;
 use crate::semantic::{intersection_area, CaptionTrajectory, SemanticManifest, SolverConfig, SolverParams, TrajectorySample};
 use crate::element::element_kind;
 use crate::systems::layout::LayoutEngine;
-use crate::types::BoundsRect;
+use crate::types::{BoundsRect, NodeId};
 use serde::{Deserialize, Serialize};
 
 pub const RENDER_MANIFEST_VERSION: u32 = 1;
@@ -40,7 +40,7 @@ pub struct LayoutSnapshot {
 /// A single node's bounds inside a [`LayoutSnapshot`].
 #[derive(Debug, Clone)]
 pub struct LayoutNodeSnapshot {
-    pub id: usize,
+    pub id: NodeId,
     pub kind: &'static str,
     pub bounds: BoundsRect,
 }
@@ -59,7 +59,7 @@ pub struct RenderManifest {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct TimelineManifestEntry {
-    pub scene_root: usize,
+    pub scene_root: NodeId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub start_time: f64,
@@ -69,10 +69,10 @@ pub struct TimelineManifestEntry {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct RenderNodeEntry {
-    pub id: usize,
+    pub id: NodeId,
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<usize>,
+    pub parent_id: Option<NodeId>,
     pub depth: u32,
     pub child_count: usize,
     pub z_index: i32,
@@ -123,7 +123,7 @@ pub struct VerificationIssue {
     /// End time of the affected region in seconds.
     pub end_time: f64,
     /// IDs of scene nodes involved in the issue.
-    pub node_ids: Vec<usize>,
+    pub node_ids: Vec<NodeId>,
     /// Human-readable description of the issue.
     pub description: String,
     /// Optional suggested fix (e.g., "move caption to top").
@@ -167,7 +167,7 @@ impl Default for VerificationConfig {
 #[derive(Serialize, Debug, Clone, Default)]
 pub struct RepairResult {
     /// Node IDs that were marked dirty by the repair.
-    pub affected_nodes: Vec<usize>,
+    pub affected_nodes: Vec<NodeId>,
     /// Time ranges that were recompiled.
     pub affected_regions: Vec<(f64, f64)>,
     /// Number of issues that were queued for repair.
@@ -186,8 +186,7 @@ pub fn build_render_manifest(director: &mut Director, sample_time: f64) -> Rende
     );
 
     let mut nodes = Vec::new();
-    for (id, slot) in director.scene.nodes.iter().enumerate() {
-        let Some(node) = slot else { continue };
+    for (id, node) in director.scene.iter_alive() {
         let depth = parent_depth(&director.scene, id);
         let r = node.layout_rect;
         nodes.push(RenderNodeEntry {
@@ -474,8 +473,7 @@ impl RenderManifest {
         _config: &VerificationConfig,
         issues: &mut Vec<VerificationIssue>,
     ) {
-        for (id, slot) in director.scene.nodes.iter().enumerate() {
-            let Some(node) = slot else { continue };
+        for (id, node) in director.scene.iter_alive() {
             let Some(camera) = node.element.as_any().downcast_ref::<ActiveSpeakerCamera>() else {
                 continue;
             };
@@ -544,8 +542,7 @@ pub fn verify_smart_caption_trajectories(
     config: &VerificationConfig,
 ) -> Vec<VerificationIssue> {
     let mut issues = Vec::new();
-    for (id, slot) in director.scene.nodes.iter().enumerate() {
-        let Some(node) = slot else { continue };
+    for (id, node) in director.scene.iter_alive() {
         let Some(smart) = node.element.as_any().downcast_ref::<SmartCaptionNode>() else {
             continue;
         };
@@ -555,7 +552,7 @@ pub fn verify_smart_caption_trajectories(
 }
 
 fn verify_smart_caption_node(
-    node_id: usize,
+    node_id: NodeId,
     smart: &SmartCaptionNode,
     director: &Director,
     config: &VerificationConfig,
@@ -646,17 +643,14 @@ pub fn layout_snapshot(director: &mut Director, time: f64) -> LayoutSnapshot {
 
     let nodes = director
         .scene
-        .nodes
-        .iter()
-        .enumerate()
-        .filter_map(|(id, node_opt)| {
-            let node = node_opt.as_ref()?;
+        .iter_alive()
+        .map(|(id, node)| {
             let r = node.layout_rect;
-            Some(LayoutNodeSnapshot {
+            LayoutNodeSnapshot {
                 id,
                 kind: element_kind(node.element.as_ref()),
                 bounds: BoundsRect::new(r.left(), r.top(), r.width(), r.height()),
-            })
+            }
         })
         .collect();
 
@@ -675,7 +669,7 @@ fn total_duration(director: &Director) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
-fn parent_depth(scene: &crate::scene::SceneGraph, id: usize) -> u32 {
+fn parent_depth(scene: &crate::scene::SceneGraph, id: NodeId) -> u32 {
     let mut depth = 0u32;
     let mut current = scene.get_node(id).and_then(|n| n.parent);
     while let Some(pid) = current {

@@ -189,8 +189,9 @@ pub fn mix_scene_audio(
     let mut stack: Vec<(crate::types::NodeId, f64)> = active_roots.to_vec();
 
     while let Some((id, local_time)) = stack.pop() {
-        if id < scene_nodes.len() {
-            if let Some(node) = &scene_nodes[id] {
+        let idx = id.index();
+        if idx < scene_nodes.len() {
+            if let Some(node) = &scene_nodes[idx] {
                 if let Some(samples) =
                     node.element
                         .get_audio(local_time, samples_needed, sample_rate)

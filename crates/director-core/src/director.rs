@@ -572,14 +572,7 @@ impl Director {
         }
 
         while let Some((id, time)) = stack.pop() {
-            if id >= self.scene.nodes.len() {
-                continue;
-            }
-            if self.scene.nodes[id].is_none() {
-                continue;
-            }
-
-            let Some(node) = self.scene.nodes[id].as_mut() else {
+            let Some(node) = self.scene.get_node_mut(id) else {
                 continue;
             };
 
@@ -598,8 +591,10 @@ impl Director {
         }
 
         // Pass 2: Parallel node update via Rayon
-        self.scene.nodes.par_iter_mut().enumerate().for_each(|(node_id, node_opt)| {
+        let generations = self.scene.generations_snapshot();
+        self.scene.nodes.par_iter_mut().enumerate().for_each(|(index, node_opt)| {
             if let Some(node) = node_opt {
+                let node_id = NodeId::new(index as u32, generations[index]);
                 if (node.last_visit_time - global_time).abs() >= 0.0001 {
                     return;
                 }
@@ -691,88 +686,97 @@ impl Director {
         // Pass 3: Audio Reactive Bindings
         // Process after animations so audio values take priority
         let analyzer = self.audio_analyzer.clone();
-        for (node_id, node_opt) in self.scene.nodes.iter_mut().enumerate() {
-            if let Some(node) = node_opt {
-                if (node.last_visit_time - global_time).abs() < 0.0001 {
-                    // During incremental updates, skip audio bindings for nodes
-                    // that are not dirty.
-                    if let Some(ref dirty) = dirty {
-                        if !dirty.contains(&node_id) {
-                            continue;
-                        }
+        for (node_id, node) in self.scene.iter_alive_mut() {
+            if (node.last_visit_time - global_time).abs() >= 0.0001 {
+                continue;
+            }
+            // During incremental updates, skip audio bindings for nodes
+            // that are not dirty.
+            if let Some(ref dirty) = dirty {
+                if !dirty.contains(&node_id) {
+                    continue;
+                }
+            }
+            for binding in &mut node.audio_bindings {
+                // Get audio samples from the track
+                let energy = if let Some(Some(track)) =
+                    self.audio_mixer.tracks.get(binding.track_id)
+                {
+                    Self::audio_binding_energy(&analyzer, track, global_time, &binding.band)
+                } else {
+                    0.0
+                };
+
+                // Map energy (0-1) to output range
+                let raw_value =
+                    binding.min_value + energy * (binding.max_value - binding.min_value);
+
+                // Apply temporal smoothing
+                let smoothed = if binding.smoothing > 0.0 {
+                    binding.prev_value * binding.smoothing
+                        + raw_value * (1.0 - binding.smoothing)
+                } else {
+                    raw_value
+                };
+                binding.prev_value = smoothed;
+
+                // Apply to property
+                match binding.property.as_str() {
+                    "scale" => {
+                        node.transform.scale_x.current_value = smoothed;
+                        node.transform.scale_y.current_value = smoothed;
                     }
-                    for binding in &mut node.audio_bindings {
-                        // Get audio samples from the track
-                        let energy = if let Some(Some(track)) =
-                            self.audio_mixer.tracks.get(binding.track_id)
+                    "scale_x" => node.transform.scale_x.current_value = smoothed,
+                    "scale_y" => node.transform.scale_y.current_value = smoothed,
+                    "x" => node.transform.translate_x.current_value = smoothed,
+                    "y" => node.transform.translate_y.current_value = smoothed,
+                    "rotation" => node.transform.rotation.current_value = smoothed,
+                    "opacity" => node.element.set_opacity(smoothed),
+                    _ => {}
+                }
+            }
+
+            // Spectrum visualizer: compute FFT and update bar heights
+            if let Some(sv) = node
+                .element
+                .as_any_mut()
+                .downcast_mut::<crate::node::SpectrumVisualizerNode>()
+            {
+                match self.audio_mixer.tracks.get(sv.track_id) {
+                    Some(Some(track)) => {
+                        if let Some(analysis_time) =
+                            Self::audio_analysis_time(track, global_time, analyzer.sample_rate)
                         {
-                            Self::audio_binding_energy(&analyzer, track, global_time, &binding.band)
-                        } else {
-                            0.0
-                        };
-
-                        // Map energy (0-1) to output range
-                        let raw_value =
-                            binding.min_value + energy * (binding.max_value - binding.min_value);
-
-                        // Apply temporal smoothing
-                        let smoothed = if binding.smoothing > 0.0 {
-                            binding.prev_value * binding.smoothing
-                                + raw_value * (1.0 - binding.smoothing)
-                        } else {
-                            raw_value
-                        };
-                        binding.prev_value = smoothed;
-
-                        // Apply to property
-                        match binding.property.as_str() {
-                            "scale" => {
-                                node.transform.scale_x.current_value = smoothed;
-                                node.transform.scale_y.current_value = smoothed;
-                            }
-                            "scale_x" => node.transform.scale_x.current_value = smoothed,
-                            "scale_y" => node.transform.scale_y.current_value = smoothed,
-                            "x" => node.transform.translate_x.current_value = smoothed,
-                            "y" => node.transform.translate_y.current_value = smoothed,
-                            "rotation" => node.transform.rotation.current_value = smoothed,
-                            "opacity" => node.element.set_opacity(smoothed),
-                            _ => {}
-                        }
-                    }
-
-                    // Spectrum visualizer: compute FFT and update bar heights
-                    if let Some(sv) = node.element.as_any_mut().downcast_mut::<crate::node::SpectrumVisualizerNode>() {
-                        match self.audio_mixer.tracks.get(sv.track_id) {
-                            Some(Some(track)) => {
-                                if let Some(analysis_time) = Self::audio_analysis_time(track, global_time, analyzer.sample_rate) {
-                                    let spectrum = analyzer.compute_spectrum(&track.samples, analysis_time);
-                                    if !spectrum.is_empty() && sv.bar_count > 0 {
-                                        let bins_per_bar = (spectrum.len() / sv.bar_count).max(1);
-                                        let effective_bars = sv.bar_count.min(spectrum.len());
-                                        for i in 0..effective_bars {
-                                            let bin_start = i * bins_per_bar;
-                                            let bin_end = ((i + 1) * bins_per_bar).min(spectrum.len());
-                                            let avg = if bin_end > bin_start {
-                                                spectrum[bin_start..bin_end].iter().sum::<f32>() / (bin_end - bin_start) as f32
-                                            } else {
-                                                0.0
-                                            };
-                                            // Boost for visibility; typical music peaks around 0.3-0.5
-                                            let target = (avg * 4.0).min(1.0);
-                                            sv.smoothed_heights[i] = sv.smoothed_heights[i] * sv.smoothing
-                                                + target * (1.0 - sv.smoothing);
-                                            sv.bar_heights[i] = sv.smoothed_heights[i];
-                                        }
-                                    }
+                            let spectrum =
+                                analyzer.compute_spectrum(&track.samples, analysis_time);
+                            if !spectrum.is_empty() && sv.bar_count > 0 {
+                                let bins_per_bar = (spectrum.len() / sv.bar_count).max(1);
+                                let effective_bars = sv.bar_count.min(spectrum.len());
+                                for i in 0..effective_bars {
+                                    let bin_start = i * bins_per_bar;
+                                    let bin_end =
+                                        ((i + 1) * bins_per_bar).min(spectrum.len());
+                                    let avg = if bin_end > bin_start {
+                                        spectrum[bin_start..bin_end].iter().sum::<f32>()
+                                            / (bin_end - bin_start) as f32
+                                    } else {
+                                        0.0
+                                    };
+                                    // Boost for visibility; typical music peaks around 0.3-0.5
+                                    let target = (avg * 4.0).min(1.0);
+                                    sv.smoothed_heights[i] = sv.smoothed_heights[i]
+                                        * sv.smoothing
+                                        + target * (1.0 - sv.smoothing);
+                                    sv.bar_heights[i] = sv.smoothed_heights[i];
                                 }
                             }
-                            Some(None) | None => {
-                                tracing::debug!(
-                                    "SpectrumVisualizerNode references missing or empty audio track {}",
-                                    sv.track_id
-                                );
-                            }
                         }
+                    }
+                    Some(None) | None => {
+                        tracing::debug!(
+                            "SpectrumVisualizerNode references missing or empty audio track {}",
+                            sv.track_id
+                        );
                     }
                 }
             }
@@ -893,9 +897,7 @@ impl Director {
         self.compiler.clear();
         self.dirty_nodes.clear();
 
-        for (node_id, node_opt) in self.scene.nodes.iter().enumerate() {
-            let Some(node) = node_opt else { continue };
-
+        for (node_id, node) in self.scene.iter_alive() {
             // Entity references.
             for &entity_id in &node.entity_refs {
                 self.compiler.record(node_id, DependencyInput::Entity(entity_id));

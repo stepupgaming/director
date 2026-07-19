@@ -1,6 +1,6 @@
 # Core Hardening — Master Index
 
-> **Status:** Plan 01 implemented (2026-07-19); next is plan 02  
+> **Status:** Plans 01–02 implemented (2026-07-19); next is plan 03  
 > **Priority:** Engine solidity over product surface  
 > **Out of scope until cores land:** compositions/props CLI, preview server, recipes, agent repair loops, new shader batches, SDK/template layers
 
@@ -60,8 +60,8 @@ Do not schedule under this program:
 |---|------|---------|--------|
 | 0 | This index + truth pass | Single source of “what’s true” | **Done** |
 | 1 | [01-time-and-timeline.md](01-time-and-timeline.md) | One timeline; real freeze/speed/in-out; `f64` fps | **Done** |
-| 2 | [02-identity-and-mutation.md](02-identity-and-mutation.md) | Stable IDs; explicit graph mutation | Spec — **next** |
-| 3 | [03-frame-pipeline.md](03-frame-pipeline.md) | Full render ≡ incremental; auto cache invalidation | Spec |
+| 2 | [02-identity-and-mutation.md](02-identity-and-mutation.md) | Stable IDs; explicit graph mutation | **Done** |
+| 3 | [03-frame-pipeline.md](03-frame-pipeline.md) | Full render ≡ incremental; auto cache invalidation | Spec — **next** |
 | 4 | [04-animation-eval.md](04-animation-eval.md) | Pure, tested evaluation; loud unknown props | Spec |
 | 5 | [05-scene-model.md](05-scene-model.md) | One serializable scene contract | Spec |
 | 6 | [06-determinism-and-media.md](06-determinism-and-media.md) | Same script → same pixels/audio clock | Spec |
@@ -100,4 +100,4 @@ cargo test -p director-core --test visual_suite --no-default-features --features
 
 ## Next action
 
-Implement **[02-identity-and-mutation.md](02-identity-and-mutation.md)** — stable `NodeId` / handle mutation contracts.
+Implement **[03-frame-pipeline.md](03-frame-pipeline.md)** — full ≡ incremental render; auto cache invalidation.

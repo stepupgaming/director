@@ -132,14 +132,16 @@ fn dependency_graph_transitive_propagation() {
     let mut graph = DependencyGraph::new();
     let entity = Uuid::new_v4();
 
-    graph.record(1, DependencyInput::Entity(entity));
-    graph.record(2, DependencyInput::Node(1));
-    graph.record(3, DependencyInput::Node(2));
+    use director_core::types::NodeId;
+    let n = |i| NodeId::at(i);
+    graph.record(n(1), DependencyInput::Entity(entity));
+    graph.record(n(2), DependencyInput::Node(n(1)));
+    graph.record(n(3), DependencyInput::Node(n(2)));
 
     let affected = graph.affected_nodes(&[DependencyInput::Entity(entity)]);
-    assert!(affected.contains(&1));
-    assert!(affected.contains(&2));
-    assert!(affected.contains(&3));
+    assert!(affected.contains(&n(1)));
+    assert!(affected.contains(&n(2)));
+    assert!(affected.contains(&n(3)));
 }
 
 #[test]
@@ -647,7 +649,7 @@ fn compile_emits_style_policy_violations() {
     let mut text = TextNode::new(vec![], Arc::new(Mutex::new(FontCollection::new())));
     text.default_font_size.current_value = 250.0;
     let id = d.scene.add_node(Box::new(text));
-    d.scene.nodes[id].as_mut().unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
+    d.scene.get_node_mut(id).unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
 
     // Give the timeline a non-zero duration so the scorer has a range.
     d.push_scene_root(id, 2.0);

@@ -73,7 +73,7 @@ fn project_roundtrip() {
     // The saved file is valid JSON with the version field.
     let raw = std::fs::read_to_string(&tmp).expect("read saved file");
     let v: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-    assert_eq!(v["version"], 1, "version must be 1");
+    assert_eq!(v["version"], 2, "version must be 2 (generational NodeId)");
     assert_eq!(v["width"], 320);
     assert_eq!(v["height"], 240);
     assert_eq!(v["fps"], 30.0);
@@ -200,19 +200,17 @@ fn project_roundtrip_preserves_animation() {
 
 fn find_box_with_bg(d: &director_core::Director, hex: &str) -> Option<director_core::types::NodeId> {
     let target = hex.to_ascii_lowercase();
-    for (i, sn_opt) in d.scene.nodes.iter().enumerate() {
-        if let Some(sn) = sn_opt {
-            if let Some(b) = sn.element.as_any().downcast_ref::<director_core::node::BoxNode>() {
-                if let Some(c) = &b.bg_color {
-                    let got = format!(
-                        "#{:02x}{:02x}{:02x}",
-                        (c.current_value.r * 255.0) as u8,
-                        (c.current_value.g * 255.0) as u8,
-                        (c.current_value.b * 255.0) as u8
-                    );
-                    if got == target {
-                        return Some(i as director_core::types::NodeId);
-                    }
+    for (id, sn) in d.scene.iter_alive() {
+        if let Some(b) = sn.element.as_any().downcast_ref::<director_core::node::BoxNode>() {
+            if let Some(c) = &b.bg_color {
+                let got = format!(
+                    "#{:02x}{:02x}{:02x}",
+                    (c.current_value.r * 255.0) as u8,
+                    (c.current_value.g * 255.0) as u8,
+                    (c.current_value.b * 255.0) as u8
+                );
+                if got == target {
+                    return Some(id);
                 }
             }
         }
@@ -305,12 +303,10 @@ fn project_roundtrip_preserves_layout() {
 }
 
 fn find_abs_box(d: &director_core::Director) -> Option<director_core::types::NodeId> {
-    for (i, sn_opt) in d.scene.nodes.iter().enumerate() {
-        if let Some(sn) = sn_opt {
-            if let Some(b) = sn.element.as_any().downcast_ref::<BoxNode>() {
-                if matches!(b.style.position, taffy::style::Position::Absolute) {
-                    return Some(i as director_core::types::NodeId);
-                }
+    for (id, sn) in d.scene.iter_alive() {
+        if let Some(b) = sn.element.as_any().downcast_ref::<BoxNode>() {
+            if matches!(b.style.position, taffy::style::Position::Absolute) {
+                return Some(id);
             }
         }
     }
@@ -992,13 +988,12 @@ fn loaded_smart_caption_trajectory_avoids_entities() {
     // Negative case: corrupt the loaded trajectory so it overlaps the face.
     let smart_id = loaded
         .scene
-        .nodes
-        .iter()
-        .enumerate()
-        .find_map(|(i, sn)| {
-            sn.as_ref()
-                .and_then(|n| n.element.as_any().downcast_ref::<SmartCaptionNode>())
-                .map(|_| i as director_core::types::NodeId)
+        .iter_alive()
+        .find_map(|(id, sn)| {
+            sn.element
+                .as_any()
+                .downcast_ref::<SmartCaptionNode>()
+                .map(|_| id)
         })
         .expect("loaded project must contain a SmartCaptionNode");
 

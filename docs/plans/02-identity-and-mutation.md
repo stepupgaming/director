@@ -1,6 +1,6 @@
 # Plan 02 — Identity & Graph Mutation
 
-> **Status:** Spec  
+> **Status:** Done (2026-07-19)  
 > **Priority:** P0  
 > **Depends on:** 01 preferred (timeline callers settled)  
 > **Blocks:** 03 (reliable dirty sets), 05 (stable serialization ids)
@@ -132,8 +132,16 @@ Optional later: replace full nested `Director` with `Subgraph { scene, tracks, f
 
 ## Done when
 
-- [ ] No silent id recycle under live handles  
-- [ ] Mutation policy documented in `core-contracts.md` and tested  
-- [ ] Nested composition boundary documented and tested  
-- [ ] Compile/invalidate ignore stale ids  
-- [ ] Workspace tests green  
+- [x] No silent id recycle under live handles — generational `NodeId` + free-list gen bump  
+- [x] Mutation policy documented in `core-contracts.md` and tested  
+- [x] Nested composition boundary documented and tested  
+- [x] Compile/invalidate ignore stale ids (`get_node` generation match; dirty retain live)  
+- [x] Acceptance tests: `crates/director-core/tests/identity_mutation.rs` + scene unit tests  
+
+### Implementation notes
+
+- `NodeId { index, generation }` in `types.rs`; arena `generations` parallel to `nodes`.
+- Project JSON stores full `NodeId` (serde object); `PROJECT_VERSION` bumped.
+- Rhai `node_id()` still returns bare index for script compat; compiler invalidation resolves index → live `id_at`.
+- `apply_effect_to_node`: rewrite wrap; `push_or_wrap_effect`: attach when already `EffectNode`.
+- `set_mask`: exclusive ownership; destroy owner destroys mask.

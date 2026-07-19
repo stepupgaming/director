@@ -4,14 +4,14 @@
 //!
 //!
 //! ## Responsibilities
-//! - **Node Storage**: `Vec<Option<SceneNode>>` arena with `NodeId` indices.
+//! - **Node Storage**: Generational arena (`nodes` + `generations`) keyed by [`NodeId`].
 //! - **Hierarchy**: Parent-child relationships via `children` and `parent`.
 //! - **Node Operations**: Add, remove, reparent nodes with cycle prevention.
 //!
 //! ## Key Types
 //! - `SceneGraph`: The arena container.
 //! - `SceneNode`: Wraps an `Element` with layout and hierarchy data.
-//! - `NodeId`: A `usize` index into the arena (defined in `types.rs`).
+//! - `NodeId`: Generational handle (`index` + `generation`) defined in `types.rs`.
 
 use crate::element::Element;
 use crate::entity::EntityId;
@@ -168,52 +168,115 @@ impl SceneNode {
 /// The Scene Graph data structure.
 ///
 /// Manages the arena of nodes and their relationships.
+///
+/// Slots are recycled via `free_indices`, but each free bumps `generations[index]`
+/// so previously issued [`NodeId`] values never alias the next occupant.
 #[derive(Clone)]
 pub struct SceneGraph {
-    /// The Arena of all nodes. Using `Option` allows for future removal/recycling.
+    /// Arena slots. `None` means free (or never occupied after destroy).
     pub nodes: Vec<Option<SceneNode>>,
-    /// Indices of nodes that have been removed and can be reused.
-    pub free_indices: Vec<usize>,
+    /// Parallel generation counters; length always equals `nodes.len()`.
+    generations: Vec<u32>,
+    /// Free slot indices available for reuse.
+    free_indices: Vec<u32>,
 }
 
 impl SceneGraph {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
+            generations: Vec::new(),
             free_indices: Vec::new(),
         }
     }
 
     pub fn reset(&mut self) {
         self.nodes.clear();
+        self.generations.clear();
         self.free_indices.clear();
+    }
+
+    /// Live [`NodeId`] for an occupied slot index, if any.
+    #[inline]
+    pub fn id_at(&self, index: usize) -> Option<NodeId> {
+        if self.nodes.get(index).and_then(|n| n.as_ref()).is_some() {
+            Some(NodeId::new(index as u32, self.generations[index]))
+        } else {
+            None
+        }
+    }
+
+    /// Generation currently stored at `index` (0 if out of range).
+    #[inline]
+    pub fn generation_at(&self, index: usize) -> u32 {
+        self.generations.get(index).copied().unwrap_or(0)
+    }
+
+    /// Snapshot of slot generations for parallel iteration (index → generation).
+    #[inline]
+    pub fn generations_snapshot(&self) -> Vec<u32> {
+        self.generations.clone()
+    }
+
+    /// Whether `id` resolves to a live node (index + generation match).
+    #[inline]
+    pub fn contains(&self, id: NodeId) -> bool {
+        self.get_node(id).is_some()
+    }
+
+    /// Iterate live nodes as `(NodeId, &SceneNode)`.
+    pub fn iter_alive(&self) -> impl Iterator<Item = (NodeId, &SceneNode)> {
+        self.nodes.iter().enumerate().filter_map(|(index, slot)| {
+            let node = slot.as_ref()?;
+            Some((NodeId::new(index as u32, self.generations[index]), node))
+        })
+    }
+
+    /// Iterate live nodes mutably as `(NodeId, &mut SceneNode)`.
+    pub fn iter_alive_mut(&mut self) -> impl Iterator<Item = (NodeId, &mut SceneNode)> {
+        self.nodes
+            .iter_mut()
+            .zip(self.generations.iter().copied())
+            .enumerate()
+            .filter_map(|(index, (slot, generation))| {
+                let node = slot.as_mut()?;
+                Some((NodeId::new(index as u32, generation), node))
+            })
     }
 
     /// Adds a new element to the scene graph and returns its ID.
     pub fn add_node(&mut self, element: Box<dyn Element>) -> NodeId {
-        if let Some(id) = self.free_indices.pop() {
-            self.nodes[id] = Some(SceneNode::new(element));
-            id
+        if let Some(index) = self.free_indices.pop() {
+            let idx = index as usize;
+            // Generation was bumped on destroy; issue the new id with that generation.
+            let generation = self.generations[idx];
+            self.nodes[idx] = Some(SceneNode::new(element));
+            NodeId::new(index, generation)
         } else {
-            let id = self.nodes.len();
+            let index = self.nodes.len() as u32;
             self.nodes.push(Some(SceneNode::new(element)));
-            id
+            self.generations.push(0);
+            NodeId::new(index, 0)
         }
     }
 
     /// Recursively destroys a node and its children, freeing their indices for reuse.
+    ///
+    /// After destroy, `id` (and descendant ids) no longer resolve via [`get_node`].
+    /// Slot reuse assigns a higher generation so the old handle cannot alias.
     pub fn destroy_node(&mut self, id: NodeId) {
-        // 1. Check if node exists (and isn't already deleted)
-        if id >= self.nodes.len() || self.nodes[id].is_none() {
+        // 1. Require a live generational match.
+        if self.get_node(id).is_none() {
             return;
         }
+        let idx = id.index();
 
         // 2. Collect IDs to process (to avoid holding borrows on self.nodes)
-        let (parent_id, children_ids) = {
-            let Some(node) = self.nodes[id].as_ref() else {
+        let (parent_id, children_ids, mask_id) = {
+            let Some(node) = self.nodes[idx].as_ref() else {
                 return;
             };
-            (node.parent, node.children.clone())
+            (node.parent, node.children.clone(), node.mask_node)
         };
 
         // 3. Detach from Parent
@@ -221,14 +284,18 @@ impl SceneGraph {
             self.remove_child(pid, id);
         }
 
-        // 4. Recursively destroy children
+        // 4. Recursively destroy children and exclusive mask
         for child_id in children_ids {
             self.destroy_node(child_id);
         }
+        if let Some(mask) = mask_id {
+            self.destroy_node(mask);
+        }
 
-        // 5. Free the slot
-        self.nodes[id] = None;
-        self.free_indices.push(id);
+        // 5. Free the slot and bump generation so stale handles fail.
+        self.nodes[idx] = None;
+        self.generations[idx] = self.generations[idx].wrapping_add(1);
+        self.free_indices.push(id.index);
     }
 
     /// Establishes a parent-child relationship between two nodes.
@@ -247,7 +314,7 @@ impl SceneGraph {
             return false;
         }
 
-        // Both nodes must exist.
+        // Both nodes must exist (generational match).
         if self.get_node(parent).is_none() || self.get_node(child).is_none() {
             return false;
         }
@@ -271,7 +338,7 @@ impl SceneGraph {
             self.remove_child(old_parent_id, child);
         }
 
-        if let Some(p_node) = self.nodes.get_mut(parent).and_then(|n| n.as_mut()) {
+        if let Some(p_node) = self.get_node_mut(parent) {
             if !p_node.children.contains(&child) {
                 p_node.children.push(child);
             }
@@ -279,7 +346,7 @@ impl SceneGraph {
             return false;
         }
 
-        if let Some(c_node) = self.nodes.get_mut(child).and_then(|n| n.as_mut()) {
+        if let Some(c_node) = self.get_node_mut(child) {
             c_node.parent = Some(parent);
             true
         } else {
@@ -290,26 +357,34 @@ impl SceneGraph {
     /// Removes a child from a parent node's children list.
     /// Also clears the child's `parent` field when it points to this parent.
     pub fn remove_child(&mut self, parent: NodeId, child: NodeId) {
-        if let Some(p_node) = self.nodes.get_mut(parent).and_then(|n| n.as_mut()) {
+        if let Some(p_node) = self.get_node_mut(parent) {
             if let Some(pos) = p_node.children.iter().position(|&x| x == child) {
                 p_node.children.remove(pos);
             }
         }
-        if let Some(c_node) = self.nodes.get_mut(child).and_then(|n| n.as_mut()) {
+        if let Some(c_node) = self.get_node_mut(child) {
             if c_node.parent == Some(parent) {
                 c_node.parent = None;
             }
         }
     }
 
-    /// Returns a mutable reference to the SceneNode.
+    /// Returns a mutable reference to the SceneNode when `id` is live.
     pub fn get_node_mut(&mut self, id: NodeId) -> Option<&mut SceneNode> {
-        self.nodes.get_mut(id).and_then(|n| n.as_mut())
+        let idx = id.index();
+        if self.generations.get(idx).copied() != Some(id.generation) {
+            return None;
+        }
+        self.nodes.get_mut(idx).and_then(|n| n.as_mut())
     }
 
-    /// Returns a shared reference to the SceneNode.
+    /// Returns a shared reference to the SceneNode when `id` is live.
     pub fn get_node(&self, id: NodeId) -> Option<&SceneNode> {
-        self.nodes.get(id).and_then(|n| n.as_ref())
+        let idx = id.index();
+        if self.generations.get(idx).copied() != Some(id.generation) {
+            return None;
+        }
+        self.nodes.get(idx).and_then(|n| n.as_ref())
     }
 }
 
@@ -359,5 +434,32 @@ mod tests {
         assert!(!p1_node.children.contains(&child));
         assert!(p2_node.children.contains(&child));
         assert_eq!(child_node.parent, Some(p2));
+    }
+
+    #[test]
+    fn node_id_no_alias_after_destroy() {
+        let mut scene = SceneGraph::new();
+        let old = scene.add_node(Box::new(BoxNode::new()));
+        scene.destroy_node(old);
+        let fresh = scene.add_node(Box::new(BoxNode::new()));
+
+        assert_eq!(old.index, fresh.index, "slot should recycle");
+        assert_ne!(old.generation, fresh.generation, "generation must bump");
+        assert!(scene.get_node(old).is_none(), "stale id must not resolve");
+        assert!(scene.get_node(fresh).is_some());
+    }
+
+    #[test]
+    fn reparent_keeps_id() {
+        let mut scene = SceneGraph::new();
+        let p1 = scene.add_node(Box::new(BoxNode::new()));
+        let p2 = scene.add_node(Box::new(BoxNode::new()));
+        let child = scene.add_node(Box::new(BoxNode::new()));
+        assert!(scene.try_add_child(p1, child));
+        let before = child;
+        assert!(scene.try_add_child(p2, child));
+        assert_eq!(before, child);
+        assert!(scene.get_node(before).is_some());
+        assert_eq!(scene.get_node(child).unwrap().parent, Some(p2));
     }
 }

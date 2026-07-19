@@ -33,9 +33,10 @@ fn recursive_dump(graph: &SceneGraph, node_id: NodeId, depth: usize, output: &mu
             node.layout_rect.width(),
             node.layout_rect.height()
         );
+        // Snapshot format uses slot index only (generation is always 0 in this fixture).
         output.push_str(&format!(
             "{}Node[{}] z:{} {}\n",
-            indent, node_id, node.z_index, rect
+            indent, node_id.index, node.z_index, rect
         ));
         for &child_id in &node.children {
             recursive_dump(graph, child_id, depth + 1, output);

@@ -58,25 +58,37 @@ movie
     // Trigger update to validate traversal
     director.update(0.5, None);
 
-    // Verify structure:
+    // Verify structure by live slot index (generation 0 in a fresh arena):
     // IDs: 0=root, 1=container, 2=red_box, 3=mask
-    let red_box_node = director.scene.get_node(2).expect("Red box should exist");
+    use director_core::types::NodeId;
+    let red = NodeId::at(2);
+    let mask = NodeId::at(3);
+    let container_id = NodeId::at(1);
+
+    let red_box_node = director.scene.get_node(red).expect("Red box should exist");
     assert_eq!(
         red_box_node.mask_node,
-        Some(3),
+        Some(mask),
         "Mask node should be assigned"
     );
 
-    let mask_node = director.scene.get_node(3).expect("Mask should exist");
-    assert_eq!(mask_node.parent, Some(2), "Mask parent should be red_box");
+    let mask_node = director.scene.get_node(mask).expect("Mask should exist");
+    assert_eq!(
+        mask_node.parent,
+        Some(red),
+        "Mask parent should be red_box"
+    );
 
-    let container = director.scene.get_node(1).expect("Container should exist");
+    let container = director
+        .scene
+        .get_node(container_id)
+        .expect("Container should exist");
     assert!(
-        !container.children.contains(&3),
+        !container.children.contains(&mask),
         "Mask should be removed from container children"
     );
     assert!(
-        container.children.contains(&2),
+        container.children.contains(&red),
         "Red box should still be in container"
     );
 }

@@ -188,7 +188,11 @@ fn apply_box_shadow(node: &mut BoxNode, props: &rhai::Map) {
     }
 }
 
-fn set_root_z_index(scene: &mut crate::scene::SceneGraph, root_id: usize, props: &rhai::Map) {
+fn set_root_z_index(
+    scene: &mut crate::scene::SceneGraph,
+    root_id: crate::types::NodeId,
+    props: &rhai::Map,
+) {
     if let Some(z) = props.get("z_index").and_then(|v| v.as_int().ok()) {
         if let Some(n) = scene.get_node_mut(root_id) {
             n.z_index = z as i32;
@@ -198,8 +202,8 @@ fn set_root_z_index(scene: &mut crate::scene::SceneGraph, root_id: usize, props:
 
 fn attach_child(
     d: &mut crate::director::Director,
-    parent: usize,
-    child: usize,
+    parent: crate::types::NodeId,
+    child: crate::types::NodeId,
 ) -> Result<(), String> {
     if !d.add_child(parent, child) {
         d.scene.destroy_node(child);
@@ -214,7 +218,7 @@ fn to_eval_err(e: String) -> Box<rhai::EvalAltResult> {
 
 fn attach_image_or_placeholder(
     d: &mut crate::director::Director,
-    parent_id: usize,
+    parent_id: crate::types::NodeId,
     image: Option<skia_safe::Image>,
     size: Size<Dimension>,
     object_fit: crate::types::ObjectFit,

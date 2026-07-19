@@ -221,10 +221,16 @@ rather than relying on host system fonts.
 
 Engine solidity work is specified under `docs/plans/` (index `00`). Local
 spines that this crate owns: time/timeline (`director`/`timeline`/`lifecycle`),
-identity (`scene`/`types`), frame pipeline (`systems/renderer`, compile),
-animation (`animation.rs`), project model (`project.rs`), determinism (fonts,
-video/audio clocks). Update `docs/architecture/core-contracts.md` when those
-contracts change.
+identity (`scene`/`types` — generational `NodeId`), frame pipeline
+(`systems/renderer`, compile), animation (`animation.rs`), project model
+(`project.rs`), determinism (fonts, video/audio clocks). Update
+`docs/architecture/core-contracts.md` when those contracts change.
+
+Identity (plan 02): `NodeId { index, generation }`; free-list reuse bumps
+generation; Rhai `ensure_alive` errors on stale handles. `apply_effect`
+rewrite returns wrapper id (attach-in-place when target is already
+`EffectNode`). `set_mask` keeps mask id under exclusive ownership. Nested
+composition ids are arena-local to the inner director.
 
 ## Semantic Entity Registry
 

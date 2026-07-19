@@ -44,71 +44,74 @@ impl LayoutEngine {
     #[instrument(level = "debug", skip(self, scene), fields(time = time))]
     pub fn compute_layout(&mut self, scene: &mut SceneGraph, width: i32, height: i32, time: f64) {
         // 1. Sync Phase A: Ensure Nodes Exist & Update Styles
-        // Iterate over all potential node IDs in the Scene
-        for (id, node_opt) in scene.nodes.iter_mut().enumerate() {
-            if let Some(node) = node_opt {
-                // Ensure existence in Taffy
-                let t_id = if let Some(&existing_t_id) = self.node_map.get(&id) {
-                    existing_t_id
-                } else {
-                    let style = node.element.layout_style();
+        // Drop taffy nodes whose scene ids no longer resolve (destroy / gen bump).
+        let stale_keys: Vec<NodeId> = self
+            .node_map
+            .keys()
+            .copied()
+            .filter(|id| scene.get_node(*id).is_none())
+            .collect();
+        for id in stale_keys {
+            if let Some(t_id) = self.node_map.remove(&id) {
+                self.taffy.remove(t_id).ok();
+            }
+        }
 
-                    // All nodes now have context (Director NodeId) to support measure if needed
-                    match self.taffy.new_leaf_with_context(style, id) {
-                        Ok(new_t_id) => {
-                            self.node_map.insert(id, new_t_id);
-                            new_t_id
-                        }
-                        Err(e) => {
-                            warn!(node_id = id, error = %e, "Failed to create taffy node");
-                            continue;
-                        }
-                    }
-                };
-
-                // Sync Style if dirty
-                if node.dirty_style {
-                    let style = node.element.layout_style();
-                    if let Err(e) = self.taffy.set_style(t_id, style) {
-                        warn!(node_id = id, error = %e, "Failed to sync taffy style");
-                    }
-
-                    // Taffy 0.9.2 doesn't support updating measure function per node this way.
-                    // Measure logic must be handled in compute_layout_with_measure.
-
-                    node.dirty_style = false;
-                }
+        for (id, node) in scene.iter_alive_mut() {
+            // Ensure existence in Taffy
+            let t_id = if let Some(&existing_t_id) = self.node_map.get(&id) {
+                existing_t_id
             } else {
-                // Node is deleted in Scene
-                if let Some(t_id) = self.node_map.remove(&id) {
-                    self.taffy.remove(t_id).ok();
+                let style = node.element.layout_style();
+
+                // All nodes now have context (Director NodeId) to support measure if needed
+                match self.taffy.new_leaf_with_context(style, id) {
+                    Ok(new_t_id) => {
+                        self.node_map.insert(id, new_t_id);
+                        new_t_id
+                    }
+                    Err(e) => {
+                        warn!(node_id = %id, error = %e, "Failed to create taffy node");
+                        continue;
+                    }
                 }
+            };
+
+            // Sync Style if dirty
+            if node.dirty_style {
+                let style = node.element.layout_style();
+                if let Err(e) = self.taffy.set_style(t_id, style) {
+                    warn!(node_id = %id, error = %e, "Failed to sync taffy style");
+                }
+
+                // Taffy 0.9.2 doesn't support updating measure function per node this way.
+                // Measure logic must be handled in compute_layout_with_measure.
+
+                node.dirty_style = false;
             }
         }
 
         // 2. Sync Phase B: Update Relationships (Children)
         // We iterate again. Since we updated all nodes in Phase A, all valid children should be in node_map.
-        for (id, node_opt) in scene.nodes.iter().enumerate() {
-            if let Some(node) = node_opt {
-                if let Some(&t_id) = self.node_map.get(&id) {
-                    let mut children_t_ids = Vec::with_capacity(node.children.len() + 1);
+        for (id, node) in scene.iter_alive() {
+            if let Some(&t_id) = self.node_map.get(&id) {
+                let mut children_t_ids = Vec::with_capacity(node.children.len() + 1);
 
-                    for &child_id in &node.children {
-                        if let Some(&child_t_id) = self.node_map.get(&child_id) {
-                            children_t_ids.push(child_t_id);
-                        }
+                for &child_id in &node.children {
+                    if let Some(&child_t_id) = self.node_map.get(&child_id) {
+                        children_t_ids.push(child_t_id);
                     }
-                    if let Some(mask_id) = node.mask_node {
-                        if let Some(&mask_t_id) = self.node_map.get(&mask_id) {
-                            children_t_ids.push(mask_t_id);
-                        }
+                }
+                if let Some(mask_id) = node.mask_node {
+                    if let Some(&mask_t_id) = self.node_map.get(&mask_id) {
+                        children_t_ids.push(mask_t_id);
                     }
+                }
 
-                    // Always set children to ensure structure is correct
-                    // Taffy's set_children is optimized to do nothing if children list hasn't changed.
-                    if let Err(e) = self.taffy.set_children(t_id, &children_t_ids) {
-                        warn!(node_id = id, error = %e, "Failed to sync taffy children");
-                    }
+                // Always set children to ensure structure is correct
+                // Taffy's set_children is optimized to do nothing if children list hasn't changed.
+                if let Err(e) = self.taffy.set_children(t_id, &children_t_ids) {
+                    warn!(node_id = %id, error = %e, "Failed to sync taffy children");
                 }
             }
         }
@@ -116,14 +119,12 @@ impl LayoutEngine {
         // 3. Compute Layout for Active Roots
         // Iterate scene nodes to find active roots (parent is None + recently visited)
         let mut active_roots = Vec::new();
-        for (id, node_opt) in scene.nodes.iter().enumerate() {
-            if let Some(node) = node_opt {
-                // Is a root?
-                if node.parent.is_none() {
-                    // Is active? (Visited in this frame)
-                    if (node.last_visit_time - time).abs() < 0.001 {
-                        active_roots.push(id);
-                    }
+        for (id, node) in scene.iter_alive() {
+            // Is a root?
+            if node.parent.is_none() {
+                // Is active? (Visited in this frame)
+                if (node.last_visit_time - time).abs() < 0.001 {
+                    active_roots.push(id);
                 }
             }
         }
@@ -157,7 +158,7 @@ impl LayoutEngine {
                         },
                         measure_func,
                     ) {
-                        warn!(root_id, error = %e, "Failed to compute layout");
+                        warn!(%root_id, error = %e, "Failed to compute layout");
                     } else {
                         // 4. Write back results to Scene Nodes
                         self.write_back_recursive(scene, root_id);
@@ -172,7 +173,7 @@ impl LayoutEngine {
             let layout = match self.taffy.layout(*t_id) {
                 Ok(layout) => layout,
                 Err(e) => {
-                    warn!(node_id, error = %e, "Failed to read taffy layout");
+                    warn!(%node_id, error = %e, "Failed to read taffy layout");
                     return;
                 }
             };
@@ -180,7 +181,7 @@ impl LayoutEngine {
             // Scope for mutable borrow
             let (children, mask_node) = {
                 let Some(node) = scene.get_node_mut(node_id) else {
-                    warn!(node_id, "Missing scene node during layout write-back");
+                    warn!(%node_id, "Missing scene node during layout write-back");
                     return;
                 };
 

@@ -214,7 +214,7 @@ fn verification_issue_to_map(issue: VerificationIssue) -> rhai::Dynamic {
         issue
             .node_ids
             .into_iter()
-            .map(|id| rhai::Dynamic::from_int(id as i64))
+            .map(|id| rhai::Dynamic::from_int(id.index as i64))
             .collect::<Array>()
             .into(),
     );
@@ -275,14 +275,9 @@ fn verification_issue_from_map(map: &Map) -> Result<VerificationIssue, Box<rhai:
         .map(|arr| {
             arr.iter()
                 .map(|v| {
-                    let id = v.as_int()?;
-                    if id < 0 {
-                        return Err(Box::<rhai::EvalAltResult>::from(format!(
-                            "node_id must be non-negative, got {}",
-                            id
-                        )));
-                    }
-                    Ok(id as usize)
+                    // Prefer #{index,generation}; bare int is index@0 for issue replay.
+                    crate::scripting::utils::node_id_from_dynamic(v)
+                        .map_err(|e| Box::<rhai::EvalAltResult>::from(e))
                 })
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -341,7 +336,7 @@ fn repair_result_to_map(result: RepairResult) -> Map {
         result
             .affected_nodes
             .into_iter()
-            .map(|id| rhai::Dynamic::from_int(id as i64))
+            .map(|id| rhai::Dynamic::from_int(id.index as i64))
             .collect::<Array>()
             .into(),
     );

@@ -11,6 +11,7 @@ use crate::compiler::DependencyInput;
 use rhai::Engine;
 
 use super::super::types::MovieHandle;
+use super::super::utils::{node_id_from_dynamic, node_id_index_i64};
 
 /// Register compiler-related Rhai functions.
 pub fn register(engine: &mut Engine) {
@@ -35,7 +36,7 @@ pub fn register(engine: &mut Engine) {
             let affected = d.invalidate(vec![DependencyInput::Entity(id)]);
             let arr: rhai::Array = affected
                 .into_iter()
-                .map(|id| rhai::Dynamic::from_int(id as i64))
+                .map(|id| rhai::Dynamic::from_int(node_id_index_i64(id)))
                 .collect();
             Ok(arr)
         },
@@ -51,7 +52,7 @@ pub fn register(engine: &mut Engine) {
             let affected = d.invalidate(vec![DependencyInput::AudioTrack(track_id as usize)]);
             let arr: rhai::Array = affected
                 .into_iter()
-                .map(|id| rhai::Dynamic::from_int(id as i64))
+                .map(|id| rhai::Dynamic::from_int(node_id_index_i64(id)))
                 .collect();
             Ok(arr)
         },
@@ -64,10 +65,14 @@ pub fn register(engine: &mut Engine) {
             if d.compiler.is_empty() {
                 d.compile();
             }
-            let affected = d.invalidate(vec![DependencyInput::Node(node_id as usize)]);
+            let id = d
+                .scene
+                .id_at(node_id as usize)
+                .ok_or_else(|| format!("no live node at index {node_id}"))?;
+            let affected = d.invalidate(vec![DependencyInput::Node(id)]);
             let arr: rhai::Array = affected
                 .into_iter()
-                .map(|id| rhai::Dynamic::from_int(id as i64))
+                .map(|id| rhai::Dynamic::from_int(node_id_index_i64(id)))
                 .collect();
             Ok(arr)
         },
@@ -80,7 +85,7 @@ pub fn register(engine: &mut Engine) {
             let arr: rhai::Array = d
                 .dirty_nodes
                 .iter()
-                .map(|&id| rhai::Dynamic::from_int(id as i64))
+                .map(|&id| rhai::Dynamic::from_int(node_id_index_i64(id)))
                 .collect();
             Ok(arr)
         },
@@ -103,7 +108,11 @@ pub fn register(engine: &mut Engine) {
             if d.compiler.is_empty() {
                 d.compile();
             }
-            let inputs = d.compiler.inputs_of(node_id as usize);
+            let id = d
+                .scene
+                .id_at(node_id as usize)
+                .ok_or_else(|| format!("no live node at index {node_id}"))?;
+            let inputs = d.compiler.inputs_of(id);
             Ok(inputs.into_iter().map(dependency_input_to_rhai_map).collect())
         },
     );
@@ -120,7 +129,10 @@ pub fn register(engine: &mut Engine) {
                 d.compile();
             }
             let dependents = d.compiler.dependents_of(&DependencyInput::Entity(id));
-            Ok(dependents.into_iter().map(|id| rhai::Dynamic::from_int(id as i64)).collect())
+            Ok(dependents
+                .into_iter()
+                .map(|id| rhai::Dynamic::from_int(node_id_index_i64(id)))
+                .collect())
         },
     );
 
@@ -134,7 +146,10 @@ pub fn register(engine: &mut Engine) {
                 d.compile();
             }
             let dependents = d.compiler.dependents_of(&DependencyInput::AudioTrack(track_id as usize));
-            Ok(dependents.into_iter().map(|id| rhai::Dynamic::from_int(id as i64)).collect())
+            Ok(dependents
+                .into_iter()
+                .map(|id| rhai::Dynamic::from_int(node_id_index_i64(id)))
+                .collect())
         },
     );
 
@@ -147,8 +162,15 @@ pub fn register(engine: &mut Engine) {
             if d.compiler.is_empty() {
                 d.compile();
             }
-            let dependents = d.compiler.dependents_of(&DependencyInput::Node(node_id as usize));
-            Ok(dependents.into_iter().map(|id| rhai::Dynamic::from_int(id as i64)).collect())
+            let id = d
+                .scene
+                .id_at(node_id as usize)
+                .ok_or_else(|| format!("no live node at index {node_id}"))?;
+            let dependents = d.compiler.dependents_of(&DependencyInput::Node(id));
+            Ok(dependents
+                .into_iter()
+                .map(|id| rhai::Dynamic::from_int(node_id_index_i64(id)))
+                .collect())
         },
     );
 
@@ -183,13 +205,42 @@ pub fn register(engine: &mut Engine) {
             }
 
             let d = movie.lock_director()?;
-            let affected = d.affected_nodes(parsed);
+            // Resolve bare integer node/children values against the live scene
+            // so generation matches compile-time NodeIds.
+            let mut resolved = Vec::with_capacity(parsed.len());
+            for input in parsed {
+                resolved.push(resolve_dependency_input_live(&d, input)?);
+            }
+            let affected = d.affected_nodes(resolved);
             Ok(affected
                 .into_iter()
-                .map(|id| rhai::Dynamic::from_int(id as i64))
+                .map(|id| rhai::Dynamic::from_int(node_id_index_i64(id)))
                 .collect())
         },
     );
+}
+
+fn resolve_dependency_input_live(
+    director: &crate::director::Director,
+    input: DependencyInput,
+) -> Result<DependencyInput, Box<rhai::EvalAltResult>> {
+    match input {
+        DependencyInput::Node(id) => {
+            let live = director
+                .scene
+                .id_at(id.index())
+                .ok_or_else(|| format!("no live node at index {}", id.index))?;
+            Ok(DependencyInput::Node(live))
+        }
+        DependencyInput::Children(id) => {
+            let live = director
+                .scene
+                .id_at(id.index())
+                .ok_or_else(|| format!("no live node at index {}", id.index))?;
+            Ok(DependencyInput::Children(live))
+        }
+        other => Ok(other),
+    }
 }
 
 fn dependency_input_from_rhai_map(map: &rhai::Map) -> Result<DependencyInput, String> {
@@ -218,16 +269,12 @@ fn dependency_input_from_rhai_map(map: &rhai::Map) -> Result<DependencyInput, St
             Ok(DependencyInput::AudioTrack(id as usize))
         }
         "node" => {
-            let id = value
-                .as_int()
-                .map_err(|_| "node input value must be an integer".to_string())?;
-            Ok(DependencyInput::Node(id as usize))
+            let id = node_id_from_dynamic(value)?;
+            Ok(DependencyInput::Node(id))
         }
         "children" => {
-            let id = value
-                .as_int()
-                .map_err(|_| "children input value must be an integer".to_string())?;
-            Ok(DependencyInput::Children(id as usize))
+            let id = node_id_from_dynamic(value)?;
+            Ok(DependencyInput::Children(id))
         }
         _ => Err(format!("unknown dependency input type: {}", ty)),
     }
@@ -246,12 +293,15 @@ fn dependency_input_to_rhai_map(input: DependencyInput) -> rhai::Dynamic {
         }
         DependencyInput::Node(id) => {
             map.insert("type".into(), "node".into());
-            map.insert("value".into(), (id as i64).into());
+            // Index form keeps existing Rhai scripts working; generation is
+            // recovered via live scene resolve on the way back in.
+            map.insert("value".into(), node_id_index_i64(id).into());
         }
         DependencyInput::Children(id) => {
             map.insert("type".into(), "children".into());
-            map.insert("value".into(), (id as i64).into());
+            map.insert("value".into(), node_id_index_i64(id).into());
         }
     }
     rhai::Dynamic::from_map(map)
 }
+

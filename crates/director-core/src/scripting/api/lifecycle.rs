@@ -779,7 +779,7 @@ fn add_scene_internal_at(
         Ok(d) => d,
         Err(_) => return SceneHandle {
             director: seq.director.clone(),
-            root_id: 0,
+            root_id: crate::types::NodeId::default(),
             start_time: 0.0,
             duration: 0.0,
             audio_tracks: Vec::new(),
@@ -815,7 +815,7 @@ fn add_scene_internal(
         Ok(d) => d,
         Err(_) => return SceneHandle {
             director: movie.director.clone(),
-            root_id: 0,
+            root_id: crate::types::NodeId::default(),
             start_time: 0.0,
             duration: 0.0,
             audio_tracks: Vec::new(),

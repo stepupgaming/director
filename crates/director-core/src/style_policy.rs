@@ -305,8 +305,7 @@ impl StylePolicyScorer {
 
         let mut text_area: f64 = 0.0;
 
-        for (id, node_opt) in director.scene.nodes.iter().enumerate() {
-            let Some(node) = node_opt else { continue };
+        for (id, node) in director.scene.iter_alive() {
             let is_text = node.element.as_any().is::<TextNode>()
                 || node.element.as_any().is::<CaptionNode>()
                 || node.element.as_any().is::<SmartCaptionNode>();
@@ -433,7 +432,7 @@ impl StylePolicyScorer {
         let mut evaluated_pairs = 0usize;
 
         // Previous sampled state: (node_id, x, y, rotation, scale_x, scale_y).
-        let mut prev_state: Vec<(usize, f64, f64, f64, f64, f64)> = Vec::new();
+        let mut prev_state: Vec<(NodeId, f64, f64, f64, f64, f64)> = Vec::new();
 
         for i in 0..samples {
             let t = time_range.0 + i as f64 * dt;
@@ -447,9 +446,8 @@ impl StylePolicyScorer {
             }
             sampled_director.update(t, None);
 
-            let mut current_state: Vec<(usize, f64, f64, f64, f64, f64)> = Vec::new();
-            for (id, node_opt) in sampled_director.scene.nodes.iter().enumerate() {
-                let Some(node) = node_opt else { continue };
+            let mut current_state: Vec<(NodeId, f64, f64, f64, f64, f64)> = Vec::new();
+            for (id, node) in sampled_director.scene.iter_alive() {
                 current_state.push((
                     id,
                     node.transform.translate_x.current_value as f64,
@@ -765,7 +763,7 @@ mod tests {
         let mut text = TextNode::new(vec![], empty_font_collection());
         text.default_font_size.current_value = 250.0;
         let id = director.scene.add_node(Box::new(text));
-        director.scene.nodes[id].as_mut().unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
+        director.scene.get_node_mut(id).unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
         director.style_policy.typography.max_font_size = 200.0;
 
         let score = director.score_style_policy((0.0, 1.0), 2);
@@ -778,7 +776,7 @@ mod tests {
         let mut text = TextNode::new(vec![], empty_font_collection());
         text.default_font_size.current_value = 250.0;
         let id = director.scene.add_node(Box::new(text));
-        director.scene.nodes[id].as_mut().unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
+        director.scene.get_node_mut(id).unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
 
         let mut policy = StylePolicy::default();
         policy.typography.max_font_size = 200.0;
@@ -795,7 +793,7 @@ mod tests {
         text.default_font_size.current_value = 24.0;
         let id = director.scene.add_node(Box::new(text));
         // Cover 50% of the canvas with text.
-        director.scene.nodes[id].as_mut().unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 1080.0, 960.0);
+        director.scene.get_node_mut(id).unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 1080.0, 960.0);
 
         let mut policy = StylePolicy::default();
         policy.typography.max_text_area_ratio = 0.35;
@@ -809,7 +807,7 @@ mod tests {
     #[test]
     fn detects_too_many_transitions() {
         let mut director = empty_director();
-        director.push_scene_root(0, 60.0);
+        director.push_scene_root(NodeId::at(0), 60.0);
 
         for i in 0..20 {
             director.transitions.push(Transition {
@@ -850,7 +848,7 @@ mod tests {
         text.default_font_size.current_value = 24.0;
         let id = director.scene.add_node(Box::new(text));
         // Animate translate_x from 0 to 2000 over 1 second.
-        director.scene.nodes[id].as_mut().unwrap().transform.translate_x.add_segment(0.0, 2000.0, 1.0, EasingType::Linear);
+        director.scene.get_node_mut(id).unwrap().transform.translate_x.add_segment(0.0, 2000.0, 1.0, EasingType::Linear);
 
         let mut policy = StylePolicy::default();
         policy.motion.max_pixels_per_second = 100.0;

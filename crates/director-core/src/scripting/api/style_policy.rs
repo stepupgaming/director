@@ -224,7 +224,7 @@ fn policy_violations_to_array(violations: Vec<crate::style_policy::PolicyViolati
             m.insert("rule".into(), v.rule.into());
             m.insert("severity".into(), v.severity.as_str().into());
             if let Some(id) = v.node_id {
-                m.insert("node_id".into(), (id as i64).into());
+                m.insert("node_id".into(), (id.index as i64).into());
             }
             if let Some(time) = v.time {
                 m.insert("time".into(), time.into());

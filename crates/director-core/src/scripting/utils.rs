@@ -19,6 +19,79 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use taffy::prelude::*;
 use taffy::style::{GridPlacement, GridTemplateComponent, Style};
 
+/// Encode a [`NodeId`] for Rhai as `#{ index, generation }`.
+pub fn node_id_to_dynamic(id: NodeId) -> Dynamic {
+    let mut m = Map::new();
+    m.insert("index".into(), (id.index as i64).into());
+    m.insert("generation".into(), (id.generation as i64).into());
+    Dynamic::from_map(m)
+}
+
+/// Decode a Rhai value into a [`NodeId`].
+///
+/// Accepts:
+/// - `#{ index, generation }` maps (preferred)
+/// - bare integers as `index` at generation 0 (compat / tests)
+pub fn node_id_from_dynamic(value: &Dynamic) -> Result<NodeId, String> {
+    if let Some(map) = value.clone().try_cast::<Map>() {
+        let index = map
+            .get("index")
+            .and_then(|v| v.as_int().ok())
+            .ok_or_else(|| "node id map missing integer 'index'".to_string())?;
+        if index < 0 {
+            return Err(format!("node index must be non-negative, got {index}"));
+        }
+        let generation = map
+            .get("generation")
+            .and_then(|v| v.as_int().ok())
+            .unwrap_or(0);
+        if generation < 0 {
+            return Err(format!(
+                "node generation must be non-negative, got {generation}"
+            ));
+        }
+        return Ok(NodeId::new(index as u32, generation as u32));
+    }
+    if let Ok(index) = value.as_int() {
+        if index < 0 {
+            return Err(format!("node index must be non-negative, got {index}"));
+        }
+        return Ok(NodeId::at(index as u32));
+    }
+    Err("node id must be an integer or #{ index, generation } map".into())
+}
+
+/// Resolve a Rhai node id against the live scene.
+///
+/// Maps use exact generation match. Bare integers select the **current** live
+/// occupant of that slot (`id_at`), so compiler introspection stays correct
+/// after free-list reuse.
+pub fn resolve_live_node_id(director: &Director, value: &Dynamic) -> Result<NodeId, String> {
+    if value.clone().try_cast::<Map>().is_some() {
+        let id = node_id_from_dynamic(value)?;
+        if director.scene.get_node(id).is_none() {
+            return Err(format!("NodeId {id} is stale (node was destroyed)"));
+        }
+        return Ok(id);
+    }
+    if let Ok(index) = value.as_int() {
+        if index < 0 {
+            return Err(format!("node index must be non-negative, got {index}"));
+        }
+        return director
+            .scene
+            .id_at(index as usize)
+            .ok_or_else(|| format!("no live node at index {index}"));
+    }
+    Err("node id must be an integer or #{ index, generation } map".into())
+}
+
+/// Integer index form for Rhai APIs that historically returned bare `i64` ids.
+#[inline]
+pub fn node_id_index_i64(id: NodeId) -> i64 {
+    id.index as i64
+}
+
 /// Extract outer style properties for effect wrapper nodes.
 /// Copies all container/layout properties so the wrapper preserves flex/grid
 /// behaviour; the inner node gets reset to fill the wrapper (100% w/h).
@@ -27,6 +100,16 @@ pub fn extract_outer_style(source: &Style) -> Style {
 }
 
 /// Apply an effect to a node by wrapping it in an EffectNode.
+///
+/// # Mutation policy (plan 02 — rewrite, honest)
+///
+/// - Returns the **new** effect wrapper [`NodeId`] (canonical outer identity).
+/// - The original `node_id` remains alive as a **child** of the wrapper; it is
+///   **not** destroyed. Callers that used the target as a scene root or parent
+///   edge are rewritten to the wrapper.
+/// - Rhai `apply_effect` returns a new [`crate::scripting::types::NodeHandle`]
+///   with the wrapper id; scripts must use the returned handle for further
+///   outer mutations. The old handle still addresses the inner content node.
 pub fn apply_effect_to_node(d: &mut Director, node_id: NodeId, effect: EffectType) -> NodeId {
     let parent_id_opt = d.scene.get_node(node_id).and_then(|n| n.parent);
 
@@ -60,7 +143,7 @@ pub fn apply_effect_to_node(d: &mut Director, node_id: NodeId, effect: EffectTyp
             comp_node.style.inset = taffy::geometry::Rect::auto();
         }
     } else {
-        return node_id; // Failure fallback
+        return node_id; // Failure fallback — caller should have validated liveness
     }
 
     let effect_node = EffectNode {

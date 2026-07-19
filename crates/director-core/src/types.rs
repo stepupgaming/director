@@ -10,13 +10,14 @@
 //! ## Key Types
 //! - `Color`: Float-based RGBA color.
 //! - `Transform`: All animated transform properties.
-//! - `NodeId`: Type alias for arena indices (`usize`).
+//! - `NodeId`: Generational arena handle (`index` + `generation`).
 
 use crate::animation::Animated;
 use keyframe::CanTween;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use skia_safe::{Color4f, ImageFilter, Path, PathMeasure, Point, TileMode};
+use std::fmt;
 
 /// Specifies how the content of a replaceable element (img, video) should
 /// be resized to fit its container.
@@ -40,10 +41,54 @@ impl Default for ObjectFit {
     }
 }
 
-// --- From director.rs ---
+// --- Scene identity ---
 
-/// A unique identifier for a node in the scene graph.
-pub type NodeId = usize;
+/// Generational handle into the scene-graph arena.
+///
+/// `index` selects the slot; `generation` must match the slot's current
+/// generation. Destroy + free-list reuse bumps generation so stale handles
+/// never resolve to a different live node.
+#[derive(
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+)]
+pub struct NodeId {
+    pub index: u32,
+    pub generation: u32,
+}
+
+impl NodeId {
+    /// Construct a handle. Prefer IDs returned by [`crate::scene::SceneGraph::add_node`].
+    pub const fn new(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
+
+    /// Handle for slot `index` at generation 0 (fresh arena / unit-test helper).
+    pub const fn at(index: u32) -> Self {
+        Self::new(index, 0)
+    }
+
+    #[inline]
+    pub const fn index(self) -> usize {
+        self.index as usize
+    }
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}@{}", self.index, self.generation)
+    }
+}
 
 /// State for a node currently animating along an SVG path.
 pub struct PathAnimationState {
