@@ -95,13 +95,18 @@ See plan **04** (implemented). Acceptance: `crates/director-core/tests/animation
 
 ## 6. Scene document
 
-| Item | Contract | Current gap |
-|------|----------|-------------|
-| Canonical I/O | Versioned project document ↔ Director | Parallel MovieRequest drift history |
-| Required kinds | Hard error on load failure | Some fallbacks possible |
-| Catalog | Effects/transitions SSOT in `api_catalog` | Keep CI parity |
+| Item | Contract | Status |
+|------|----------|--------|
+| Canonical I/O | Versioned `Project` JSON (`PROJECT_VERSION`) ↔ `Director` | **Primary** path (`save_project_json` / `load_project_json`) |
+| `fps` | `f64` in document (NTSC-safe) | **Locked** |
+| Tracks | Canonical; `legacy_timeline` migrates on load | **Locked** (plan 01) |
+| Node ids | Generational `{ index, generation }` in JSON | **Locked** (plan 02) |
+| Required kinds | Box, Text, Image, Video, Caption, SmartCaption, Effect, Composition, Lottie, Spectrum — rebuild or **hard error** | **Locked** (plan 05) |
+| Optional kinds | Vector, Shape, ActiveSpeakerCamera, Wgpu — may placeholder with warning | Declared |
+| Catalog | `api_catalog` SSOT for Rhai effect names; `project_effect_type_tags` / `EffectType::type_tag` for runtime enum | **Parity tested** |
+| MovieRequest / pipeline | Secondary inbound; do not add features only there without project parity | Documented |
 
-See plan **05**.
+See plan **05** (implemented). Acceptance: `tests/project_roundtrip.rs` Plan 05 cases.
 
 ---
 

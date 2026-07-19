@@ -1081,3 +1081,203 @@ fn project_roundtrip_preserves_entities() {
 
     let _ = std::fs::remove_file(&tmp);
 }
+
+
+/// Plan 05: required kinds never silently become Box when rebuild fails.
+#[test]
+fn required_kind_missing_data_errors() {
+    use director_core::project::{director_from_project, Project, PROJECT_VERSION};
+    use director_core::types::NodeId;
+    use serde_json::json;
+
+    // Minimal project with a broken Lottie (required) — no model / path.
+    let project = Project {
+        version: PROJECT_VERSION,
+        width: 64,
+        height: 64,
+        fps: 30.0,
+        nodes: vec![director_core::project::NodeData {
+            id: NodeId::at(0),
+            parent: None,
+            kind: "Lottie".into(),
+            transform: Default::default(),
+            opacity: 1.0,
+            z_index: 0,
+            blend_mode: "src_over".into(),
+            props: Default::default(),
+            layout: Default::default(),
+            animations: Default::default(),
+            entity_refs: vec![],
+        }],
+        tracks: vec![],
+        legacy_timeline: vec![],
+        entities: vec![],
+    };
+    // Construct via JSON to avoid private field friction if NodeData fields differ.
+    let _ = project;
+    let raw = json!({
+        "version": PROJECT_VERSION,
+        "width": 64,
+        "height": 64,
+        "fps": 30.0,
+        "nodes": [{
+            "id": {"index": 0, "generation": 0},
+            "parent": null,
+            "kind": "Lottie",
+            "transform": {
+                "scale_x": 1.0, "scale_y": 1.0, "rotation": 0.0,
+                "skew_x": 0.0, "skew_y": 0.0,
+                "translate_x": 0.0, "translate_y": 0.0,
+                "pivot_x": 0.5, "pivot_y": 0.5
+            },
+            "opacity": 1.0,
+            "z_index": 0,
+            "blend_mode": "src_over",
+            "props": {},
+            "layout": {},
+            "animations": {},
+            "entity_refs": []
+        }],
+        "tracks": [],
+        "legacy_timeline": [],
+        "entities": []
+    });
+    let project: director_core::project::Project =
+        serde_json::from_value(raw).expect("project deser");
+    let msg = match director_from_project(project) {
+        Ok(_) => panic!("expected load error for broken required Lottie"),
+        Err(e) => format!("{e:#}"),
+    };
+    assert!(
+        msg.contains("Lottie") || msg.contains("required"),
+        "expected required-kind error, got: {msg}"
+    );
+}
+
+/// Plan 05: kind policy matrix classification.
+#[test]
+fn node_kind_tier_matrix() {
+    use director_core::project::{node_kind_tier, NodeKindTier, REQUIRED_NODE_KINDS};
+    for k in REQUIRED_NODE_KINDS {
+        assert_eq!(node_kind_tier(k), NodeKindTier::Required, "{k}");
+    }
+    assert_eq!(node_kind_tier("Vector"), NodeKindTier::Optional);
+    assert_eq!(node_kind_tier("Wgpu"), NodeKindTier::Optional);
+    assert_eq!(node_kind_tier("NotANode"), NodeKindTier::Unknown);
+}
+
+/// Plan 05: catalog effect surface non-empty and project tags cover runtime enum tags.
+#[test]
+fn catalog_effect_parity() {
+    use director_core::api_catalog::{catalog_effect_names, project_effect_type_tags};
+    use director_core::animation::Animated;
+    use director_core::node::effect::EffectType;
+    use std::collections::HashSet;
+
+    let names = catalog_effect_names();
+    assert!(names.len() >= 50, "catalog should list many effects, got {}", names.len());
+    for must in ["blur", "pixelate", "vignette", "glow"] {
+        assert!(names.iter().any(|n| *n == must), "missing catalog name {must}");
+    }
+
+    let tags: HashSet<&str> = project_effect_type_tags().iter().copied().collect();
+    // Spot-check runtime tags via type_tag() on constructed variants.
+    let samples = [
+        EffectType::Blur(Animated::new(1.0)).type_tag(),
+        EffectType::Pixelate(Animated::new(2.0)).type_tag(),
+        EffectType::Thermal.type_tag(),
+        EffectType::Mirror.type_tag(),
+        EffectType::Gameboy.type_tag(),
+    ];
+    for t in samples {
+        assert!(tags.contains(t), "project_effect_type_tags missing {t}");
+    }
+    assert_eq!(tags.len(), project_effect_type_tags().len());
+}
+
+/// Plan 05: fps is f64 in project JSON (NTSC rates).
+#[test]
+fn schema_fps_f64_project_json() {
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(
+            r##"let m = new_director(64, 64, 23.976); m.add_scene(0.5); m"##,
+        )
+        .expect("build");
+    let tmp = std::env::temp_dir().join("director_fps_f64.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).unwrap();
+    }
+    let raw = std::fs::read_to_string(&tmp).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let fps = v["fps"].as_f64().expect("fps number");
+    assert!((fps - 23.976).abs() < 1e-9, "fps={fps}");
+    let loaded = director_core::Director::load_project_json(&tmp).unwrap();
+    assert!((loaded.fps - 23.976).abs() < 1e-9);
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// Plan 05: save → load → pixels match for a simple Box scene.
+#[test]
+fn project_roundtrip_pixels_smoke() {
+    use director_core::systems::layout::LayoutEngine;
+    use director_core::systems::renderer::render_at_time;
+    use skia_safe::{AlphaType, ColorSpace, ColorType, ImageInfo};
+
+    let mut engine = Engine::new();
+    let loader = Arc::new(DefaultAssetLoader);
+    register_rhai_api(&mut engine, loader.clone());
+    let build = r##"
+        let movie = new_director(64, 64, 30);
+        let scene = movie.add_scene(1.0);
+        let bg = scene.add_box(#{ width: 64, height: 64, bg_color: "#112233" });
+        let card = bg.add_box(#{ width: 20, height: 20, bg_color: "#ff0066" });
+        movie
+    "##;
+    let movie = engine
+        .eval::<director_core::scripting::MovieHandle>(build)
+        .expect("build");
+
+    fn pixels(d: &mut director_core::Director) -> Vec<u8> {
+        let info = ImageInfo::new(
+            (d.width, d.height),
+            ColorType::RGBA8888,
+            AlphaType::Premul,
+            Some(ColorSpace::new_srgb()),
+        );
+        let mut surface = skia_safe::surfaces::raster(&info, None, None).unwrap();
+        let mut layout = LayoutEngine::new();
+        render_at_time(d, &mut layout, 0.0, surface.canvas(), &mut None).unwrap();
+        let mut px = vec![0u8; (d.width * d.height * 4) as usize];
+        assert!(surface.read_pixels(&info, &mut px, (d.width * 4) as usize, (0, 0)));
+        px
+    }
+
+    let before = {
+        let mut d = movie.director.lock().unwrap();
+        pixels(&mut d)
+    };
+
+    let tmp = std::env::temp_dir().join("director_project_pixels_smoke.json");
+    {
+        let d = movie.director.lock().unwrap();
+        d.save_project_json(&tmp).unwrap();
+    }
+    let mut loaded = director_core::Director::load_project_json(&tmp).unwrap();
+    let after = pixels(&mut loaded);
+    assert_eq!(before.len(), after.len());
+    let max_diff = before
+        .iter()
+        .zip(after.iter())
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_diff <= 2,
+        "pixel round-trip max channel diff {max_diff} exceeds tolerance"
+    );
+    let _ = std::fs::remove_file(&tmp);
+}

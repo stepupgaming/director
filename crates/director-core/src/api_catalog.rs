@@ -762,6 +762,91 @@ pub fn catalog_effect_schema_tags() -> Vec<&'static str> {
     EFFECT_CATALOG.iter().map(|e| e.schema_tag).collect()
 }
 
+/// PascalCase `EffectType` tags that project JSON can serialize (Plan 05 parity).
+///
+/// Catalog Rhai names are snake_case and include ColorMatrix presets
+/// (`grayscale`, `sepia`, …) that lower to `ColorMatrix` / other runtime types.
+/// This list is the runtime enum surface that must stay in lockstep with
+/// `EffectType::type_tag` / `project::effect_type_to_json`.
+pub fn project_effect_type_tags() -> &'static [&'static str] {
+    &[
+        "Blur",
+        "ColorMatrix",
+        "RuntimeShader",
+        "DropShadow",
+        "DirectionalBlur",
+        "FilmGrain",
+        "Vignette",
+        "ChromaticAberration",
+        "Pixelate",
+        "Sharpen",
+        "Glow",
+        "Warp",
+        "Swirl",
+        "Ripple",
+        "Glass",
+        "Shake",
+        "Duotone",
+        "Posterize",
+        "Threshold",
+        "Scanlines",
+        "Glitch",
+        "EdgeDetect",
+        "ZoomBlur",
+        "Kaleidoscope",
+        "Thermal",
+        "Liquid",
+        "Acid",
+        "Halftone",
+        "Ascii",
+        "Sketch",
+        "Mirror",
+        "TriTone",
+        "Vhs",
+        "NeonEdge",
+        "Fisheye",
+        "Bulge",
+        "Barrel",
+        "LensFlare",
+        "Noir",
+        "Cyberpunk",
+        "Vintage",
+        "Gameboy",
+        "BleachBypass",
+        "TealOrange",
+        "Plasma",
+        "Hologram",
+        "Emboss",
+        "Toon",
+        "OilPaint",
+        "LightLeak",
+        "Aurora",
+        "SunRays",
+        "SkinSmooth",
+        "BeautyGlow",
+        "SoftFocus",
+        "Vibrance",
+        "Fog",
+        "Mist",
+        "Rain",
+        "Snow",
+        "Dust",
+        "BokehDots",
+        "FilmLook",
+        "OrangeTeal",
+        "CrossProcess",
+        "Polaroid",
+        "FadedFilm",
+        "Midnight",
+        "Watercolor",
+        "Crosshatch",
+        "Pointillism",
+        "Mosaic",
+        "Ink",
+        "PencilColor",
+    ]
+}
+
 /// Primary transition type strings.
 pub fn catalog_transition_names() -> Vec<&'static str> {
     TRANSITION_CATALOG.iter().map(|t| t.name).collect()

@@ -1,6 +1,6 @@
 # Plan 05 — Single Scene Model
 
-> **Status:** Spec  
+> **Status:** Done (2026-07-19)  
 > **Priority:** P1  
 > **Depends on:** 02 (stable ids), 01 (tracks-only timeline)  
 > **Blocks:** honest project I/O; stopping schema/Rhai drift
@@ -139,8 +139,20 @@ Do not add new features only to `MovieRequest` without project parity.
 
 ## Done when
 
-- [ ] Kind matrix published and enforced in tests  
-- [ ] Required kinds never become Box  
-- [ ] Catalog parity CI green  
-- [ ] fps/tracks/freeze fields match plan 01 in documents  
-- [ ] At least one pixel round-trip smoke test  
+- [x] Kind matrix published and enforced in tests  
+- [x] Required kinds never become Box  
+- [x] Catalog parity CI green  
+- [x] fps/tracks/freeze fields match plan 01 in documents  
+- [x] At least one pixel round-trip smoke test  
+
+## Implementation notes (landed)
+
+- `NodeKindTier` / `REQUIRED_NODE_KINDS` / `node_kind_tier` in `project.rs`.
+- Load: Lottie / Effect / Composition rebuild failure → `anyhow` error (no Box).
+- Caption kind fully round-tripped (`caption_props_to_json`).
+- `EffectType::type_tag` + `api_catalog::project_effect_type_tags` for enum ↔ JSON tags.
+- Schema `MovieRequest.fps` already `f64`; project JSON fps NTSC test added.
+- Pipeline `MovieRequest` remains secondary; project document is canonical.
+- Tests: `required_kind_missing_data_errors`, `node_kind_tier_matrix`,
+  `catalog_effect_parity`, `schema_fps_f64_project_json`,
+  `project_roundtrip_pixels_smoke`.

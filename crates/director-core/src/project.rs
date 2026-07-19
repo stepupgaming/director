@@ -22,18 +22,15 @@
 //!   height), default size/color, `fit`/`min_size`/`max_size`, `align`,
 //!   `text_direction`, and text shadow — rebuilt via `text_node_to_json` and
 //!   `build_text_node_from_props`, plus transform/opacity/layout.
-//! * **Other kinds** (Image, Video, Lottie, Effect, Composition, Caption,
-//!   Vector, Spectrum, WGPU): kind tag + transform + opacity + layout
-//!   preserved. On reload the node is reconstructed as a `BoxNode`
-//!   placeholder with its Taffy layout applied. The original element type is
-//!   lossy, but the graph, geometry, and timeline stay loadable and renderable.
-//! * **Animation**: transform channels (scale/rotation/skew/translate) and
-//!   Box props (opacity, bg_color, border_*, shadow_*, blur, backdrop_blur)
-//!   serialize their **keyframes**, so motion survives the round-trip and
-//!   reproduces at any time after `update(t)`. Text nodes preserve opacity
-//!   keyframes (reconstructed as Box placeholders; see below).
-//! * **Tracks & legacy timeline**: fully round-tripped (clips, fades,
-//!   speed, source in/out, z_index, audio_tracks).
+//! * **Required kinds** (see [`NodeKindTier`]): Box, Text, Image, Video,
+//!   Caption, SmartCaption, Effect, Composition, Lottie, Spectrum — full
+//!   rebuild or **hard error** (never silent Box placeholder).
+//! * **Optional kinds** (Vector, Shape, ActiveSpeakerCamera, Wgpu, Unknown):
+//!   may degrade with a warning; load continues.
+//! * **Animation**: transform channels and Box/Text opacity keyframes survive
+//!   round-trip and reproduce after `update(t)`.
+//! * **Tracks & legacy timeline**: tracks are canonical; legacy_timeline is
+//!   migrated on load (plan 01).
 use crate::animation::{Animated, EasingType};
 use crate::director::Director;
 use crate::entity::{EntityId, EntityTrack};
@@ -63,6 +60,41 @@ use taffy::style::Style;
 /// serialized shape; `load_project_json` rejects unknown (newer) versions.
 /// Bumped to 2 when `NodeId` became generational `{ index, generation }` in JSON.
 pub const PROJECT_VERSION: u32 = 2;
+
+/// Round-trip tier for a project JSON `kind` string (Plan 05).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeKindTier {
+    /// Must rebuild exactly; failure is a hard load error.
+    Required,
+    /// Best-effort; may warn and continue (placeholder only if rebuild fails).
+    Optional,
+    /// Not a known engine kind.
+    Unknown,
+}
+
+/// Classify a serialized node kind for the kind-policy matrix.
+pub fn node_kind_tier(kind: &str) -> NodeKindTier {
+    match kind {
+        "Box" | "Text" | "Image" | "Video" | "Caption" | "SmartCaption" | "Effect"
+        | "Composition" | "Lottie" | "Spectrum" => NodeKindTier::Required,
+        "Vector" | "Shape" | "ActiveSpeakerCamera" | "Wgpu" => NodeKindTier::Optional,
+        _ => NodeKindTier::Unknown,
+    }
+}
+
+/// Required kind names for tests and docs.
+pub const REQUIRED_NODE_KINDS: &[&str] = &[
+    "Box",
+    "Text",
+    "Image",
+    "Video",
+    "Caption",
+    "SmartCaption",
+    "Effect",
+    "Composition",
+    "Lottie",
+    "Spectrum",
+];
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Project {
@@ -1319,6 +1351,20 @@ fn rebuild_effect_node_from_props(
 
 // ---- SmartCaption props ----
 
+fn caption_props_to_json(node: &CaptionNode) -> JsonMap<String, JsonValue> {
+    let mut p = JsonMap::new();
+    p.insert(
+        "lines".into(),
+        serde_json::to_value(&node.lines).unwrap_or_default(),
+    );
+    p.insert(
+        "style".into(),
+        serde_json::to_value(&node.style).unwrap_or_default(),
+    );
+    p.insert("opacity".into(), JsonValue::from(node.opacity.current_value));
+    p
+}
+
 fn smart_caption_props_to_json(node: &SmartCaptionNode) -> JsonMap<String, JsonValue> {
     let mut p = JsonMap::new();
     p.insert("lines".into(), serde_json::to_value(&node.inner.lines).unwrap_or_default());
@@ -1351,6 +1397,9 @@ fn rebuild_caption_node_from_props(
     if let Some(style) = style {
         node.style = style;
         node.after_style_changed();
+    }
+    if let Some(opacity) = props.get("opacity").and_then(|v| v.as_f64()) {
+        node.opacity.current_value = opacity as f32;
     }
     node
 }
@@ -1531,6 +1580,12 @@ pub fn director_to_project(d: &Director) -> Project {
                     .downcast_ref::<TextNode>()
                     .map(text_node_to_json)
                     .unwrap_or_default(),
+                "Caption" => sn
+                    .element
+                    .as_any()
+                    .downcast_ref::<CaptionNode>()
+                    .map(caption_props_to_json)
+                    .unwrap_or_default(),
                 "SmartCaption" => sn
                     .element
                     .as_any()
@@ -1686,7 +1741,7 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
 
     let mut id_map: std::collections::HashMap<NodeId, NodeId> = Default::default();
 
-    // First pass: create nodes (Box / Text / placeholder Box for others).
+    // First pass: create nodes. Required kinds hard-error; optional may placeholder.
     for n in &project.nodes {
         let new_id = match n.kind.as_str() {
             "Box" => {
@@ -1706,6 +1761,15 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 );
                 tnode.opacity.current_value = n.opacity;
                 director.scene.add_node(Box::new(tnode))
+            }
+            "Caption" => {
+                let mut node = rebuild_caption_node_from_props(
+                    &n.props,
+                    director.assets.font_collection.clone(),
+                );
+                node.opacity.current_value = n.opacity;
+                apply_layout_style_json(&mut node.style_cache, &n.layout);
+                director.scene.add_node(Box::new(node))
             }
             "SmartCaption" => {
                 let inner = rebuild_caption_node_from_props(
@@ -1768,41 +1832,37 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 director.scene.add_node(Box::new(node))
             }
             "Lottie" => {
-                if let Some(mut node) = rebuild_lottie_node_from_props(&n.props, &director.assets) {
-                    node.opacity.current_value = n.opacity;
-                    apply_layout_style_json(&mut node.style, &n.layout);
-                    director.scene.add_node(Box::new(node))
-                } else {
-                    let mut b = BoxNode::new();
-                    b.opacity.current_value = n.opacity;
-                    apply_layout_style_json(&mut b.style, &n.layout);
-                    tracing::warn!("load_project: failed to rebuild Lottie node (id was {})", n.id);
-                    director.scene.add_node(Box::new(b))
-                }
+                let mut node = rebuild_lottie_node_from_props(&n.props, &director.assets)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "load_project: required kind 'Lottie' failed to rebuild (id was {})",
+                            n.id
+                        )
+                    })?;
+                node.opacity.current_value = n.opacity;
+                apply_layout_style_json(&mut node.style, &n.layout);
+                director.scene.add_node(Box::new(node))
             }
             "Effect" => {
-                if let Some(mut node) = rebuild_effect_node_from_props(&n.props, &director.assets) {
-                    apply_layout_style_json(&mut node.style, &n.layout);
-                    director.scene.add_node(Box::new(node))
-                } else {
-                    let mut b = BoxNode::new();
-                    b.opacity.current_value = n.opacity;
-                    apply_layout_style_json(&mut b.style, &n.layout);
-                    tracing::warn!("load_project: failed to rebuild Effect node (id was {})", n.id);
-                    director.scene.add_node(Box::new(b))
-                }
+                let mut node = rebuild_effect_node_from_props(&n.props, &director.assets)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "load_project: required kind 'Effect' failed to rebuild (id was {})",
+                            n.id
+                        )
+                    })?;
+                apply_layout_style_json(&mut node.style, &n.layout);
+                director.scene.add_node(Box::new(node))
             }
             "Composition" => {
-                if let Some(mut node) = rebuild_composition_node_from_props(&n.props) {
-                    apply_layout_style_json(&mut node.style, &n.layout);
-                    director.scene.add_node(Box::new(node))
-                } else {
-                    let mut b = BoxNode::new();
-                    b.opacity.current_value = n.opacity;
-                    apply_layout_style_json(&mut b.style, &n.layout);
-                    tracing::warn!("load_project: failed to rebuild Composition node (id was {})", n.id);
-                    director.scene.add_node(Box::new(b))
-                }
+                let mut node = rebuild_composition_node_from_props(&n.props).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "load_project: required kind 'Composition' failed to rebuild (id was {})",
+                        n.id
+                    )
+                })?;
+                apply_layout_style_json(&mut node.style, &n.layout);
+                director.scene.add_node(Box::new(node))
             }
             "Spectrum" => {
                 let mut node = rebuild_spectrum_node_from_props(&n.props);
@@ -1810,17 +1870,26 @@ pub fn director_from_project(project: Project) -> anyhow::Result<Director> {
                 apply_layout_style_json(&mut node.style, &n.layout);
                 director.scene.add_node(Box::new(node))
             }
-            _ => {
-                let mut b = BoxNode::new();
-                b.opacity.current_value = n.opacity;
-                apply_layout_style_json(&mut b.style, &n.layout);
-                tracing::warn!(
-                    "load_project: kind '{}' is not fully round-tripped; \
-                     reconstructing as a BoxNode placeholder (id was {})",
-                    n.kind,
-                    n.id
-                );
-                director.scene.add_node(Box::new(b))
+            other => {
+                match node_kind_tier(other) {
+                    NodeKindTier::Required => {
+                        anyhow::bail!(
+                            "load_project: required kind '{other}' has no loader (id was {})",
+                            n.id
+                        );
+                    }
+                    NodeKindTier::Optional | NodeKindTier::Unknown => {
+                        let mut b = BoxNode::new();
+                        b.opacity.current_value = n.opacity;
+                        apply_layout_style_json(&mut b.style, &n.layout);
+                        tracing::warn!(
+                            "load_project: kind '{other}' is optional/unknown; \
+                             reconstructing as a BoxNode placeholder (id was {})",
+                            n.id
+                        );
+                        director.scene.add_node(Box::new(b))
+                    }
+                }
             }
         };
         id_map.insert(n.id, new_id);
