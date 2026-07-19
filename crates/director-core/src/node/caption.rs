@@ -1624,10 +1624,16 @@ impl Element for CaptionNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        if property == "opacity" {
-            let ease_fn = crate::node::parse_easing(easing);
-            self.opacity.add_segment(start, target, duration, ease_fn);
+    ) -> Result<(), String> {
+        match property {
+            "opacity" => {
+                let ease_fn = crate::scripting::utils::parse_easing_result(easing)?;
+                self.opacity.add_segment(start, target, duration, ease_fn);
+                Ok(())
+            }
+            other => Err(format!(
+                "unknown property '{other}' on caption; valid: opacity"
+            )),
         }
     }
 

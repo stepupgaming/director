@@ -323,13 +323,18 @@ impl Element for ShapeNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        let ease_fn = parse_easing(easing);
+    ) -> Result<(), String> {
+        let ease_fn = crate::scripting::utils::parse_easing_result(easing)?;
         match property {
             "opacity" => self.opacity.add_segment(start, target, duration, ease_fn),
             "stroke_width" => self.stroke_width.add_segment(start, target, duration, ease_fn),
-            _ => {}
+            other => {
+                return Err(format!(
+                    "unknown property '{other}' on shape; valid: opacity, stroke_width"
+                ));
+            }
         }
+        Ok(())
     }
 
     fn animate_property_spring(
@@ -338,7 +343,7 @@ impl Element for ShapeNode {
         start: Option<f32>,
         target: f32,
         config: crate::animation::SpringConfig,
-    ) {
+    ) -> Result<(), String> {
         let apply = |anim: &mut Animated<f32>| {
             if let Some(s) = start {
                 anim.add_spring_with_start(s, target, config);
@@ -349,8 +354,13 @@ impl Element for ShapeNode {
         match property {
             "opacity" => apply(&mut self.opacity),
             "stroke_width" => apply(&mut self.stroke_width),
-            _ => {}
+            other => {
+                return Err(format!(
+                    "spring: unknown property '{other}' on shape; valid: opacity, stroke_width"
+                ));
+            }
         }
+        Ok(())
     }
 
     fn animate_color(

@@ -621,17 +621,11 @@ impl Director {
                 // Update Path Animation (using cached PathMeasure)
                 if let Some(path_anim) = &mut node.path_animation {
                     let effective_time = node.local_time * path_anim.speed as f64;
-                    let loop_dur = path_anim.duration;
-                    let wrapped = if loop_dur > 0.0 && effective_time >= loop_dur {
-                        let elapsed = (effective_time / loop_dur) as i32;
-                        if path_anim.loop_count < 0 || elapsed < path_anim.loop_count {
-                            effective_time % loop_dur
-                        } else {
-                            loop_dur
-                        }
-                    } else {
-                        effective_time.min(loop_dur)
-                    };
+                    let wrapped = crate::types::wrap_looped_time(
+                        effective_time,
+                        path_anim.duration,
+                        path_anim.loop_count,
+                    );
                     path_anim.progress.update(wrapped);
                     let length = path_anim.length();
                     let dist = path_anim.progress.current_value * length;
@@ -650,17 +644,11 @@ impl Director {
                 // At 0% -> start of from_path. At 100% -> end of to_path.
                 if let Some(morph) = &mut node.path_morph {
                     let effective_time = node.local_time * morph.speed as f64;
-                    let loop_dur = morph.duration;
-                    let wrapped = if loop_dur > 0.0 && effective_time >= loop_dur {
-                        let elapsed = (effective_time / loop_dur) as i32;
-                        if morph.loop_count < 0 || elapsed < morph.loop_count {
-                            effective_time % loop_dur
-                        } else {
-                            loop_dur
-                        }
-                    } else {
-                        effective_time.min(loop_dur)
-                    };
+                    let wrapped = crate::types::wrap_looped_time(
+                        effective_time,
+                        morph.duration,
+                        morph.loop_count,
+                    );
                     morph.progress.update(wrapped);
                     let t = morph.progress.current_value.clamp(0.0, 1.0);
                     if let Some((p, angle)) = morph.sample_morph(t, t) {

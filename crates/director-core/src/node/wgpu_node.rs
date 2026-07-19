@@ -385,11 +385,16 @@ impl Element for WgpuNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        let ease_fn = parse_easing(easing);
+    ) -> Result<(), String> {
+        let ease_fn = crate::scripting::utils::parse_easing_result(easing)?;
         match property {
-            "opacity" => self.opacity.add_segment(start, target, duration, ease_fn),
-            _ => {}
+            "opacity" => {
+                self.opacity.add_segment(start, target, duration, ease_fn);
+                Ok(())
+            }
+            other => Err(format!(
+                "unknown property '{other}' on wgpu_node; valid: opacity"
+            )),
         }
     }
 
@@ -399,13 +404,19 @@ impl Element for WgpuNode {
         start: Option<f32>,
         target: f32,
         config: crate::animation::SpringConfig,
-    ) {
-        if property == "opacity" {
-            if let Some(s) = start {
-                self.opacity.add_spring_with_start(s, target, config);
-            } else {
-                self.opacity.add_spring(target, config);
+    ) -> Result<(), String> {
+        match property {
+            "opacity" => {
+                if let Some(s) = start {
+                    self.opacity.add_spring_with_start(s, target, config);
+                } else {
+                    self.opacity.add_spring(target, config);
+                }
+                Ok(())
             }
+            other => Err(format!(
+                "spring: unknown property '{other}' on wgpu_node; valid: opacity"
+            )),
         }
     }
 }

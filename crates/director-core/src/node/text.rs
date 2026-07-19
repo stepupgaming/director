@@ -86,6 +86,9 @@ pub struct TextNode {
 
     // Layout & Styling
     pub fit_mode: TextFit,
+    /// Fit-solved size used when `fit_mode == Shrink`. Never written into the
+    /// animated `default_font_size` channel (Plan 04).
+    pub fitted_font_size: Option<f32>,
     pub min_size: f32,
     pub max_size: f32,
     pub shadow: Option<TextShadow>,
@@ -121,6 +124,7 @@ impl Clone for TextNode {
             paragraph: Mutex::new(None), // Must rebuild
             font_collection: self.font_collection.clone(),
             fit_mode: self.fit_mode.clone(),
+            fitted_font_size: self.fitted_font_size,
             min_size: self.min_size,
             max_size: self.max_size,
             shadow: self.shadow.clone(),
@@ -156,6 +160,7 @@ impl TextNode {
             paragraph: Mutex::new(None),
             font_collection,
             fit_mode: TextFit::None,
+            fitted_font_size: None,
             min_size: 10.0,
             max_size: 200.0,
             shadow: None,
@@ -171,6 +176,20 @@ impl TextNode {
         };
         node.init_paragraph();
         node
+    }
+
+    /// Font size used for paragraph layout/render.
+    ///
+    /// When Shrink fit is active and a fit pass has run, returns
+    /// `fitted_font_size`. Otherwise returns the animated channel value.
+    /// Fit never writes into `default_font_size`.
+    pub fn effective_font_size(&self) -> f32 {
+        if self.fit_mode == TextFit::Shrink {
+            if let Some(fitted) = self.fitted_font_size {
+                return fitted;
+            }
+        }
+        self.default_font_size.current_value
     }
 
     /// Builds the paragraph using current spans and style
@@ -191,8 +210,8 @@ impl TextNode {
         let mut strut_style = StrutStyle::new();
         let default_font_families = vec!["Roboto"]; // Bundled fallback, avoids broken system font resolution
 
-        // We use the default font size for the strut, or a fallback of 20.0 if not set.
-        let font_size = self.default_font_size.current_value;
+        // Prefer fit-solved size when Shrink is active; otherwise the animated channel.
+        let font_size = self.effective_font_size();
 
         strut_style.set_font_families(&default_font_families);
         strut_style.set_font_size(font_size);
@@ -225,9 +244,7 @@ impl TextNode {
             let mut text_style = TextStyle::new();
 
             // 1. Font Size
-            let size = span
-                .font_size
-                .unwrap_or(self.default_font_size.current_value);
+            let size = span.font_size.unwrap_or_else(|| self.effective_font_size());
             text_style.set_font_size(size);
 
             // 2. Font Family
@@ -713,15 +730,16 @@ impl Element for TextNode {
         if self.fit_mode == TextFit::Shrink {
             let target_width = rect.width();
             let target_height = rect.height();
-
+            // Cap search by the authored/animated size so fit only shrinks.
+            let authored = self.default_font_size.current_value;
             let mut low = self.min_size;
-            let mut high = self.max_size;
-            let mut best_size = self.min_size;
+            let mut high = self.max_size.min(authored.max(self.min_size));
+            let mut best_size = low;
 
             for _ in 0..5 {
                 let mid = (low + high) / 2.0;
-
-                self.default_font_size.current_value = mid;
+                // Probe via fitted field only — never touch the animation channel.
+                self.fitted_font_size = Some(mid);
                 self.init_paragraph();
 
                 let mut p_guard = match self.paragraph.lock() {
@@ -739,8 +757,10 @@ impl Element for TextNode {
                 }
             }
 
-            self.default_font_size.current_value = best_size;
+            self.fitted_font_size = Some(best_size);
             self.init_paragraph();
+        } else {
+            self.fitted_font_size = None;
         }
 
         self.dirty_layout = false;
@@ -887,19 +907,25 @@ impl Element for TextNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
+    ) -> Result<(), String> {
+        let ease_fn = crate::scripting::utils::parse_easing_result(easing)?;
         match property {
             "font_size" | "size" => {
-                let ease_fn = crate::node::parse_easing(easing);
                 self.default_font_size
                     .add_segment(start, target, duration, ease_fn);
                 self.dirty_layout = true;
+                // Invalidate fit cache so the next post_layout re-solves.
+                self.fitted_font_size = None;
+                Ok(())
             }
             "opacity" => {
-                let ease_fn = crate::node::parse_easing(easing);
                 self.opacity.add_segment(start, target, duration, ease_fn);
+                Ok(())
             }
-            _ => {}
+            other => Err(format!(
+                "unknown property '{other}' on text; valid: font_size/size, opacity \
+                 (plus transform props via animate: scale, rotation, x/y, ...)"
+            )),
         }
     }
 
@@ -960,13 +986,30 @@ impl Element for TextNode {
         start: Option<f32>,
         target: f32,
         config: crate::animation::SpringConfig,
-    ) {
-        if property == "opacity" {
-            if let Some(s) = start {
-                self.opacity.add_spring_with_start(s, target, config);
-            } else {
-                self.opacity.add_spring(target, config);
+    ) -> Result<(), String> {
+        match property {
+            "opacity" => {
+                if let Some(s) = start {
+                    self.opacity.add_spring_with_start(s, target, config);
+                } else {
+                    self.opacity.add_spring(target, config);
+                }
+                Ok(())
             }
+            "font_size" | "size" => {
+                if let Some(s) = start {
+                    self.default_font_size
+                        .add_spring_with_start(s, target, config);
+                } else {
+                    self.default_font_size.add_spring(target, config);
+                }
+                self.dirty_layout = true;
+                self.fitted_font_size = None;
+                Ok(())
+            }
+            other => Err(format!(
+                "spring: unknown property '{other}' on text; valid: opacity, font_size/size"
+            )),
         }
     }
 

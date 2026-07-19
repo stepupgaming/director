@@ -303,13 +303,20 @@ impl Element for LottieNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        let ease = parse_easing(easing);
-
-        if property == "opacity" {
-            self.opacity.add_segment(start, target, duration, ease);
-        } else if property == "frame" {
-            self.frame.add_segment(start, target, duration, ease);
+    ) -> Result<(), String> {
+        let ease = crate::scripting::utils::parse_easing_result(easing)?;
+        match property {
+            "opacity" => {
+                self.opacity.add_segment(start, target, duration, ease);
+                Ok(())
+            }
+            "frame" => {
+                self.frame.add_segment(start, target, duration, ease);
+                Ok(())
+            }
+            other => Err(format!(
+                "unknown property '{other}' on lottie; valid: opacity, frame"
+            )),
         }
     }
 }

@@ -742,7 +742,8 @@ mod tests {
             _target: f32,
             _duration: f64,
             _easing: &str,
-        ) {
+        ) -> Result<(), String> {
+            Ok(())
         }
     }
 

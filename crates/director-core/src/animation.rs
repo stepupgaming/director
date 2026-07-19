@@ -11,6 +11,17 @@
 //! - `Animated<T>`: Holds keyframes and evaluates at a given time.
 //! - `EasingType`: Enum of all supported easing functions.
 //! - `SpringConfig`: Configuration for spring animations.
+//!
+//! ## Eval contract (`value_at` / `update`)
+//!
+//! Pure evaluation from keyframe data + query time `t` (seconds):
+//! - empty / single keyframe → that value
+//! - `t <= first.time` → first value (hold)
+//! - `t >= last.time` → last value (hold)
+//! - else lerp segment with that segment's easing (Hold stays at start until end)
+//!
+//! `reverse` / `yoyo` / `loop_count` are **authoring** ops that rewrite stored
+//! keyframes; runtime eval remains a pure function of the stored list + `t`.
 
 use keyframe::{AnimationSequence, CanTween, EasingFunction, Keyframe};
 use schemars::JsonSchema;
@@ -183,11 +194,27 @@ fn cubic_bezier_y(t: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
 /// Tiny expression evaluator for `EasingType::Expression`. Supports the
 /// variable `t` (0..1), constants `pi`/`e`, numbers, parentheses and the
 /// functions `sin`, `cos`, `tan`, `abs`, `min`, `max`, `clamp`, `sqrt`, `pow`.
+///
+/// On parse failure returns `Err` (unknown identifiers, empty expr, div-by-zero
+/// yields non-finite → clamped by caller). The easing `y()` path falls back to
+/// linear `t` only after logging is not available here — prefer
+/// [`evaluate_expression_result`] at authoring time.
 pub fn evaluate_expression(expr: &str, t: f64) -> f64 {
-    match parse_expr(&mut expr.chars().peekable(), t) {
-        Ok(v) => v,
-        Err(_) => t,
+    evaluate_expression_result(expr, t).unwrap_or(t)
+}
+
+/// Fallible expression eval used by authoring validation and tests.
+pub fn evaluate_expression_result(expr: &str, t: f64) -> Result<f64, String> {
+    let trimmed = expr.trim();
+    if trimmed.is_empty() {
+        return Err("empty expression".into());
     }
+    let v = parse_expr(&mut trimmed.chars().peekable(), t)
+        .map_err(|_| format!("failed to parse expression: '{expr}'"))?;
+    if !v.is_finite() {
+        return Err(format!("expression produced non-finite value: '{expr}'"));
+    }
+    Ok(v)
 }
 
 use std::iter::Peekable;
@@ -513,8 +540,58 @@ where
 
     /// Updates `current_value` based on the provided absolute time.
     pub fn update(&mut self, time: f64) {
+        self.current_value = self.value_at(time);
+        // Keep the keyframe sequence cursor in sync for any code that still
+        // reads `sequence.now()` directly.
         self.sequence.advance_to(time);
-        self.current_value = self.sequence.now();
+    }
+
+    /// Pure evaluation at absolute time `t` without mutating keyframe storage.
+    ///
+    /// See module-level eval contract. Uses `raw_keyframes` as the source of
+    /// truth so authoring ops (`reverse`/`yoyo`) are reflected immediately.
+    ///
+    /// Zero-duration segments (equal adjacent times) step to the later value
+    /// at that time — so `add_segment(a, b, 0.0, …)` lands on `b` at `t_start`.
+    pub fn value_at(&self, t: f64) -> T {
+        let kfs = &self.raw_keyframes;
+        if kfs.is_empty() {
+            return self.current_value.clone();
+        }
+        if kfs.len() == 1 {
+            return kfs[0].0.clone();
+        }
+
+        // Strictly before first keyframe → hold first value.
+        if t < kfs[0].1 {
+            return kfs[0].0.clone();
+        }
+        // At or after last keyframe → hold last value
+        // (also covers zero-duration chains that collapse onto last.time).
+        if t >= kfs[kfs.len() - 1].1 {
+            return kfs[kfs.len() - 1].0.clone();
+        }
+
+        // Largest i with kfs[i].time <= t (binary-search equivalent linear scan).
+        let mut i = 0;
+        for j in 1..kfs.len() {
+            if kfs[j].1 <= t {
+                i = j;
+            } else {
+                break;
+            }
+        }
+        // Guaranteed i + 1 < len because t < last.time.
+        let (ref v0, t0, _) = kfs[i];
+        let (ref v1, t1, ref ease) = kfs[i + 1];
+        let dur = t1 - t0;
+        if dur <= 0.0 {
+            // Zero-duration step: already at/after this knot → target.
+            return v1.clone();
+        }
+        let local = ((t - t0) / dur).clamp(0.0, 1.0);
+        let eased = ease.y(local);
+        T::ease(v0.clone(), v1.clone(), eased as f32)
     }
 }
 
@@ -698,6 +775,121 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use keyframe::EasingFunction;
+
+    #[test]
+    fn eval_linear_midpoint() {
+        let mut a = Animated::new(0.0_f32);
+        a.raw_keyframes = vec![
+            (0.0, 0.0, EasingType::Linear),
+            (10.0, 1.0, EasingType::Linear),
+        ];
+        // Rebuild sequence for update path parity.
+        let frames: Vec<Keyframe<f32>> = a
+            .raw_keyframes
+            .iter()
+            .map(|(v, t, e)| Keyframe::new(*v, *t, e.clone()))
+            .collect();
+        a.sequence = AnimationSequence::from(frames);
+        assert!((a.value_at(0.5) - 5.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn eval_hold_stays_start_until_end() {
+        let mut a = Animated::new(0.0_f32);
+        a.raw_keyframes = vec![
+            (0.0, 0.0, EasingType::Linear),
+            (10.0, 1.0, EasingType::Hold),
+        ];
+        let frames: Vec<Keyframe<f32>> = a
+            .raw_keyframes
+            .iter()
+            .map(|(v, t, e)| Keyframe::new(*v, *t, e.clone()))
+            .collect();
+        a.sequence = AnimationSequence::from(frames);
+        assert!((a.value_at(0.0) - 0.0).abs() < 1e-5);
+        assert!((a.value_at(0.5) - 0.0).abs() < 1e-5, "hold stays at start");
+        assert!((a.value_at(0.999) - 0.0).abs() < 1e-5);
+        assert!((a.value_at(1.0) - 10.0).abs() < 1e-5, "hold jumps at end");
+    }
+
+    #[test]
+    fn eval_before_after_extents() {
+        let mut a = Animated::new(1.0_f32);
+        a.add_segment(1.0, 5.0, 2.0, EasingType::Linear);
+        assert!((a.value_at(-1.0) - 1.0).abs() < 1e-5);
+        assert!((a.value_at(0.0) - 1.0).abs() < 1e-5);
+        assert!((a.value_at(100.0) - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn eval_bezier_monotonic_x() {
+        // ease-like bezier; y should stay in a reasonable range for x in [0,1]
+        let ease = EasingType::CubicBezier {
+            x1: 0.42,
+            y1: 0.0,
+            x2: 0.58,
+            y2: 1.0,
+        };
+        let mut prev = ease.y(0.0);
+        assert!((prev - 0.0).abs() < 1e-5);
+        for i in 1..=20 {
+            let x = i as f64 / 20.0;
+            let y = ease.y(x);
+            assert!(y >= -0.05 && y <= 1.05, "y out of range at x={x}: {y}");
+            // Not strictly monotonic for all beziers, but this one should increase.
+            assert!(y + 1e-6 >= prev, "non-monotonic at x={x}");
+            prev = y;
+        }
+        assert!((ease.y(1.0) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn reverse_yoyo_loop_tables() {
+        let mut a = Animated::new(0.0_f32);
+        a.add_segment(0.0, 10.0, 1.0, EasingType::Linear);
+        assert!((a.value_at(0.5) - 5.0).abs() < 1e-3);
+
+        a.reverse();
+        // After reverse: 10 at t=0 → 0 at t=1
+        assert!((a.value_at(0.0) - 10.0).abs() < 1e-3);
+        assert!((a.value_at(1.0) - 0.0).abs() < 1e-3);
+        assert!((a.value_at(0.5) - 5.0).abs() < 1e-3);
+
+        let mut b = Animated::new(0.0_f32);
+        b.add_segment(0.0, 10.0, 1.0, EasingType::Linear);
+        b.yoyo();
+        // 0→10 over [0,1], then 10→0 over [1,2]
+        assert!((b.value_at(0.5) - 5.0).abs() < 1e-2);
+        assert!((b.value_at(1.5) - 5.0).abs() < 1e-2);
+        assert!((b.value_at(2.0) - 0.0).abs() < 1e-2);
+
+        let mut c = Animated::new(0.0_f32);
+        c.add_segment(0.0, 4.0, 1.0, EasingType::Linear);
+        c.loop_count(2);
+        // Two copies: [0,1] and [1,2]
+        assert!((c.value_at(0.5) - 2.0).abs() < 1e-2);
+        assert!((c.value_at(1.5) - 2.0).abs() < 1e-2);
+        assert!((c.value_at(2.0) - 4.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn expression_rejects_bad_ident() {
+        assert!(evaluate_expression_result("nope(t)", 0.5).is_err());
+        assert!(evaluate_expression_result("", 0.5).is_err());
+        assert!(evaluate_expression_result("sin(t)", 0.0).is_ok());
+        let v = evaluate_expression_result("t * 2", 0.5).unwrap();
+        assert!((v - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zero_duration_segment_steps_to_target() {
+        let mut a = Animated::new(0.0_f32);
+        a.add_segment(0.0, 7.0, 0.0, EasingType::Linear);
+        // At end time, value is target.
+        let end = a.duration();
+        assert!((a.value_at(end) - 7.0).abs() < 1e-4);
+    }
 
     #[test]
     fn test_easing_endpoints() {

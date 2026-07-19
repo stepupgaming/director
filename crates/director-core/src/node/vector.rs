@@ -144,10 +144,16 @@ impl Element for VectorNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        if property == "opacity" {
-            let ease = parse_easing(easing);
-            self.opacity.add_segment(start, target, duration, ease);
+    ) -> Result<(), String> {
+        match property {
+            "opacity" => {
+                let ease = crate::scripting::utils::parse_easing_result(easing)?;
+                self.opacity.add_segment(start, target, duration, ease);
+                Ok(())
+            }
+            other => Err(format!(
+                "unknown property '{other}' on vector; valid: opacity"
+            )),
         }
     }
 }

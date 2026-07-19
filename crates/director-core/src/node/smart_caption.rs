@@ -428,9 +428,9 @@ impl Element for SmartCaptionNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
+    ) -> Result<(), String> {
         self.inner
-            .animate_property(property, start, target, duration, easing);
+            .animate_property(property, start, target, duration, easing)
     }
 
     fn set_opacity(&mut self, opacity: f32) {

@@ -332,8 +332,8 @@ impl Element for BoxNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        let ease_fn = parse_easing(easing);
+    ) -> Result<(), String> {
+        let ease_fn = crate::scripting::utils::parse_easing_result(easing)?;
         match property {
             "opacity" => self.opacity.add_segment(start, target, duration, ease_fn),
             "blur" => self.blur.add_segment(start, target, duration, ease_fn),
@@ -355,8 +355,14 @@ impl Element for BoxNode {
             "backdrop_blur" => self
                 .backdrop_blur
                 .add_segment(start, target, duration, ease_fn),
-            _ => {}
+            other => {
+                return Err(format!(
+                    "unknown property '{other}' on box; valid: opacity, blur, shadow_blur, \
+                     shadow_x, shadow_y, border_radius, border_width, backdrop_blur"
+                ));
+            }
         }
+        Ok(())
     }
 
     fn animate_property_spring(
@@ -365,7 +371,7 @@ impl Element for BoxNode {
         start: Option<f32>,
         target: f32,
         config: crate::animation::SpringConfig,
-    ) {
+    ) -> Result<(), String> {
         let apply = |anim: &mut crate::animation::Animated<f32>| {
             if let Some(s) = start {
                 anim.add_spring_with_start(s, target, config);
@@ -383,7 +389,13 @@ impl Element for BoxNode {
             "border_radius" => apply(&mut self.border_radius),
             "border_width" => apply(&mut self.border_width),
             "backdrop_blur" => apply(&mut self.backdrop_blur),
-            _ => {}
+            other => {
+                return Err(format!(
+                    "spring: unknown property '{other}' on box; valid: opacity, blur, shadow_*, \
+                     border_radius, border_width, backdrop_blur"
+                ));
+            }
         }
+        Ok(())
     }
 }

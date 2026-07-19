@@ -1261,16 +1261,25 @@ impl Element for EffectNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        let ease_fn = parse_easing(easing);
+    ) -> Result<(), String> {
+        let ease_fn = crate::scripting::utils::parse_easing_result(easing)?;
+        let mut found = false;
         for effect in &mut self.effects {
             if let EffectType::RuntimeShader { uniforms, .. } = effect {
                 if let Some(anim) = uniforms.get_mut(property) {
                     if let ShaderUniform::Float(a) = anim {
                         a.add_segment(start, target, duration, ease_fn.clone());
+                        found = true;
                     }
                 }
             }
+        }
+        if found {
+            Ok(())
+        } else {
+            Err(format!(
+                "unknown property '{property}' on effect; expected a float shader uniform name"
+            ))
         }
     }
 
@@ -1280,7 +1289,8 @@ impl Element for EffectNode {
         start: Option<f32>,
         target: f32,
         config: crate::animation::SpringConfig,
-    ) {
+    ) -> Result<(), String> {
+        let mut found = false;
         for effect in &mut self.effects {
             if let EffectType::RuntimeShader { uniforms, .. } = effect {
                 if let Some(anim) = uniforms.get_mut(property) {
@@ -1290,9 +1300,17 @@ impl Element for EffectNode {
                         } else {
                             a.add_spring(target, config);
                         }
+                        found = true;
                     }
                 }
             }
+        }
+        if found {
+            Ok(())
+        } else {
+            Err(format!(
+                "spring: unknown property '{property}' on effect; expected a float shader uniform"
+            ))
         }
     }
 }

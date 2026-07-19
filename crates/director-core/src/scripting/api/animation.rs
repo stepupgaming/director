@@ -10,12 +10,188 @@
 //! - **Instant Setters**: `set_blur` for immediate property changes
 
 use crate::types::{PathAnimationState, PathMorphState};
-use rhai::Engine;
+use rhai::{Engine, EvalAltResult};
 use skia_safe::Path;
-use tracing::error;
 
 use super::super::types::NodeHandle;
-use super::super::utils::{parse_easing_loud, parse_hex_color, parse_spring_config};
+use super::super::utils::{parse_easing_result, parse_hex_color, parse_spring_config};
+
+
+const TRANSFORM_PROPS: &str = "scale, scale_x, scale_y, rotation, skew_x, skew_y, translate_x/x, translate_y/y";
+
+fn rhai_err(msg: impl Into<String>) -> Box<EvalAltResult> {
+    Box::new(EvalAltResult::ErrorRuntime(msg.into().into(), rhai::Position::NONE))
+}
+
+/// Apply a keyframe segment to a transform or element property.
+fn apply_animate_prop(
+    n: &mut crate::scene::SceneNode,
+    prop: &str,
+    start: f32,
+    end: f32,
+    dur: f64,
+    ease: &crate::animation::EasingType,
+) -> Result<(), String> {
+    if dur < 0.0 {
+        return Err(format!("animate: negative duration {dur} is not allowed"));
+    }
+    match prop {
+        "scale" => {
+            n.transform
+                .scale_x
+                .add_segment(start, end, dur, ease.clone());
+            n.transform
+                .scale_y
+                .add_segment(start, end, dur, ease.clone());
+            Ok(())
+        }
+        "scale_x" => {
+            n.transform.scale_x.add_segment(start, end, dur, ease.clone());
+            Ok(())
+        }
+        "scale_y" => {
+            n.transform.scale_y.add_segment(start, end, dur, ease.clone());
+            Ok(())
+        }
+        "rotation" => {
+            n.transform.rotation.add_segment(start, end, dur, ease.clone());
+            Ok(())
+        }
+        "skew_x" => {
+            n.transform.skew_x.add_segment(start, end, dur, ease.clone());
+            Ok(())
+        }
+        "skew_y" => {
+            n.transform.skew_y.add_segment(start, end, dur, ease.clone());
+            Ok(())
+        }
+        "translate_x" | "x" => {
+            n.transform
+                .translate_x
+                .add_segment(start, end, dur, ease.clone());
+            Ok(())
+        }
+        "translate_y" | "y" => {
+            n.transform
+                .translate_y
+                .add_segment(start, end, dur, ease.clone());
+            Ok(())
+        }
+        other => n
+            .element
+            .animate_property(other, start, end, dur, &format_ease_for_element(ease))
+            .map_err(|e| {
+                if e.contains("unknown property") {
+                    format!(
+                        "{e}; transform props: {TRANSFORM_PROPS}"
+                    )
+                } else {
+                    e
+                }
+            }),
+    }
+}
+
+/// Element animate_property still takes easing as &str; re-serialize known types.
+fn format_ease_for_element(ease: &crate::animation::EasingType) -> String {
+    use crate::animation::EasingType::*;
+    match ease {
+        Linear => "linear".into(),
+        EaseIn => "ease_in".into(),
+        EaseOut => "ease_out".into(),
+        EaseInOut => "ease_in_out".into(),
+        BounceOut => "bounce_out".into(),
+        BounceIn => "bounce_in".into(),
+        BounceInOut => "bounce_in_out".into(),
+        ElasticOut => "elastic_out".into(),
+        ElasticIn => "elastic_in".into(),
+        ElasticInOut => "elastic_in_out".into(),
+        BackOut => "back_out".into(),
+        BackIn => "back_in".into(),
+        BackInOut => "back_in_out".into(),
+        Hold => "hold".into(),
+        CubicBezier { x1, y1, x2, y2 } => format!("cubic_bezier({x1},{y1},{x2},{y2})"),
+        Expression { expr } => format!("expr({expr})"),
+    }
+}
+
+fn apply_spring_prop(
+    n: &mut crate::scene::SceneNode,
+    prop: &str,
+    start: Option<f32>,
+    end: f32,
+    conf: crate::animation::SpringConfig,
+) -> Result<(), String> {
+    match prop {
+        "scale" => {
+            if let Some(s) = start {
+                n.transform.scale_x.add_spring_with_start(s, end, conf.clone());
+                n.transform.scale_y.add_spring_with_start(s, end, conf);
+            } else {
+                n.transform.scale_x.add_spring(end, conf.clone());
+                n.transform.scale_y.add_spring(end, conf);
+            }
+            Ok(())
+        }
+        "scale_x" => {
+            if let Some(s) = start {
+                n.transform.scale_x.add_spring_with_start(s, end, conf);
+            } else {
+                n.transform.scale_x.add_spring(end, conf);
+            }
+            Ok(())
+        }
+        "scale_y" => {
+            if let Some(s) = start {
+                n.transform.scale_y.add_spring_with_start(s, end, conf);
+            } else {
+                n.transform.scale_y.add_spring(end, conf);
+            }
+            Ok(())
+        }
+        "rotation" => {
+            if let Some(s) = start {
+                n.transform.rotation.add_spring_with_start(s, end, conf);
+            } else {
+                n.transform.rotation.add_spring(end, conf);
+            }
+            Ok(())
+        }
+        "skew_x" => {
+            if let Some(s) = start {
+                n.transform.skew_x.add_spring_with_start(s, end, conf);
+            } else {
+                n.transform.skew_x.add_spring(end, conf);
+            }
+            Ok(())
+        }
+        "skew_y" => {
+            if let Some(s) = start {
+                n.transform.skew_y.add_spring_with_start(s, end, conf);
+            } else {
+                n.transform.skew_y.add_spring(end, conf);
+            }
+            Ok(())
+        }
+        "translate_x" | "x" => {
+            if let Some(s) = start {
+                n.transform.translate_x.add_spring_with_start(s, end, conf);
+            } else {
+                n.transform.translate_x.add_spring(end, conf);
+            }
+            Ok(())
+        }
+        "translate_y" | "y" => {
+            if let Some(s) = start {
+                n.transform.translate_y.add_spring_with_start(s, end, conf);
+            } else {
+                n.transform.translate_y.add_spring(end, conf);
+            }
+            Ok(())
+        }
+        other => n.element.animate_property_spring(other, start, end, conf),
+    }
+}
 
 /// Register animation-related Rhai functions.
 pub fn register(engine: &mut Engine) {
@@ -28,534 +204,267 @@ pub fn register(engine: &mut Engine) {
          end: f64,
          dur: f64,
          ease: &str,
-         delay: f64| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+         delay: f64|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!("animate: node {} not found", node.id)));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease_fn = parse_easing_loud(ease);
-
-                // Add delay segment (hold at start value)
-                if delay > 0.0 {
-                    match prop {
-                        "scale" => {
-                            n.transform.scale_x.add_segment(
-                                start as f32,
-                                start as f32,
-                                delay,
-                                crate::animation::EasingType::Linear,
-                            );
-                            n.transform.scale_y.add_segment(
-                                start as f32,
-                                start as f32,
-                                delay,
-                                crate::animation::EasingType::Linear,
-                            );
-                        }
-                        "x" | "translate_x" => n.transform.translate_x.add_segment(
-                            start as f32,
-                            start as f32,
-                            delay,
-                            crate::animation::EasingType::Linear,
-                        ),
-                        "y" | "translate_y" => n.transform.translate_y.add_segment(
-                            start as f32,
-                            start as f32,
-                            delay,
-                            crate::animation::EasingType::Linear,
-                        ),
-                        "rotation" => n.transform.rotation.add_segment(
-                            start as f32,
-                            start as f32,
-                            delay,
-                            crate::animation::EasingType::Linear,
-                        ),
-                        _ => {
-                            error!("animate: unknown property '{prop}'; ignoring delay segment");
-                            n.element.animate_property(
-                                prop,
-                                start as f32,
-                                start as f32,
-                                delay,
-                                "linear",
-                            );
-                        }
-                    }
-                }
-
-                // Add actual animation segment
-                match prop {
-                    "scale" => {
-                        n.transform
-                            .scale_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn.clone());
-                        n.transform
-                            .scale_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn);
-                    }
-                    "scale_x" => {
-                        n.transform
-                            .scale_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "scale_y" => {
-                        n.transform
-                            .scale_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "rotation" => {
-                        n.transform
-                            .rotation
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "translate_x" | "x" => {
-                        n.transform
-                            .translate_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "translate_y" | "y" => {
-                        n.transform
-                            .translate_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    _ => {
-                        error!(
-                            "animate: unknown property '{prop}'; no animation applied. \
-                             Supported: scale, scale_x, scale_y, rotation, skew_x, skew_y, \
-                             translate_x/x, translate_y/y, or a node-specific property"
-                        );
-                        n.element
-                            .animate_property(prop, start as f32, end as f32, dur, ease);
-                    }
-                }
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            if delay > 0.0 {
+                apply_animate_prop(
+                    n,
+                    prop,
+                    start as f32,
+                    start as f32,
+                    delay,
+                    &crate::animation::EasingType::Linear,
+                )
+                .map_err(rhai_err)?;
             }
+            apply_animate_prop(n, prop, start as f32, end as f32, dur, &ease_fn).map_err(rhai_err)
         },
     );
 
     // ========== ANIMATE ==========
     engine.register_fn(
         "animate",
-        |node: &mut NodeHandle, prop: &str, start: f64, end: f64, dur: f64, ease: &str| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle, prop: &str, start: f64, end: f64, dur: f64, ease: &str|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!("animate: node {} not found", node.id)));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease_fn = parse_easing_loud(ease);
-
-                match prop {
-                    "scale" => {
-                        n.transform
-                            .scale_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn.clone());
-                        n.transform
-                            .scale_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn);
-                    }
-                    "scale_x" => {
-                        n.transform
-                            .scale_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "scale_y" => {
-                        n.transform
-                            .scale_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "rotation" => {
-                        n.transform
-                            .rotation
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "skew_x" => {
-                        n.transform
-                            .skew_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "skew_y" => {
-                        n.transform
-                            .skew_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "translate_x" | "x" => {
-                        n.transform
-                            .translate_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "translate_y" | "y" => {
-                        n.transform
-                            .translate_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    _ => {
-                        error!(
-                            "animate: unknown property '{prop}'; no animation applied. \
-                             Supported: scale, scale_x, scale_y, rotation, skew_x, skew_y, \
-                             translate_x/x, translate_y/y, or a node-specific property"
-                        );
-                        n.element
-                            .animate_property(prop, start as f32, end as f32, dur, ease);
-                    }
-                }
-            }
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            apply_animate_prop(n, prop, start as f32, end as f32, dur, &ease_fn).map_err(rhai_err)
         },
     );
 
     // Integer Overload for animate
     engine.register_fn(
         "animate",
-        |node: &mut NodeHandle, prop: &str, start: i64, end: i64, dur: f64, ease: &str| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle, prop: &str, start: i64, end: i64, dur: f64, ease: &str|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!("animate: node {} not found", node.id)));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease_fn = parse_easing_loud(ease);
-
-                match prop {
-                    "scale" => {
-                        n.transform
-                            .scale_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn.clone());
-                        n.transform
-                            .scale_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn);
-                    }
-                    "scale_x" => {
-                        n.transform
-                            .scale_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "scale_y" => {
-                        n.transform
-                            .scale_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "rotation" => {
-                        n.transform
-                            .rotation
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "skew_x" => {
-                        n.transform
-                            .skew_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "skew_y" => {
-                        n.transform
-                            .skew_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "translate_x" | "x" => {
-                        n.transform
-                            .translate_x
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    "translate_y" | "y" => {
-                        n.transform
-                            .translate_y
-                            .add_segment(start as f32, end as f32, dur, ease_fn)
-                    }
-                    _ => {
-                        error!(
-                            "animate: unknown property '{prop}'; no animation applied. \
-                             Supported: scale, scale_x, scale_y, rotation, skew_x, skew_y, \
-                             translate_x/x, translate_y/y, or a node-specific property"
-                        );
-                        n.element
-                            .animate_property(prop, start as f32, end as f32, dur, ease);
-                    }
-                }
-            }
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            apply_animate_prop(n, prop, start as f32, end as f32, dur, &ease_fn).map_err(rhai_err)
         },
     );
 
     // Spring animation via animate (shorthand: animate(prop, end, config))
     engine.register_fn(
         "animate",
-        |node: &mut NodeHandle, prop: &str, end: f64, config: rhai::Map| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
-            };
+        |node: &mut NodeHandle, prop: &str, end: f64, config: rhai::Map|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
             let spring_conf = parse_spring_config(&config);
-
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                match prop {
-                    "scale" => {
-                        n.transform
-                            .scale_x
-                            .add_spring(end as f32, spring_conf.clone());
-                        n.transform.scale_y.add_spring(end as f32, spring_conf);
-                    }
-                    "scale_x" => n.transform.scale_x.add_spring(end as f32, spring_conf),
-                    "scale_y" => n.transform.scale_y.add_spring(end as f32, spring_conf),
-                    "rotation" => n.transform.rotation.add_spring(end as f32, spring_conf),
-                    "skew_x" => n.transform.skew_x.add_spring(end as f32, spring_conf),
-                    "skew_y" => n.transform.skew_y.add_spring(end as f32, spring_conf),
-                    "translate_x" | "x" => {
-                        n.transform.translate_x.add_spring(end as f32, spring_conf)
-                    }
-                    "translate_y" | "y" => {
-                        n.transform.translate_y.add_spring(end as f32, spring_conf)
-                    }
-                    _ => {
-                        error!("animate (spring): unknown property '{prop}'; no spring applied");
-                        n.element
-                            .animate_property_spring(prop, None, end as f32, spring_conf);
-                    }
-                }
-            }
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!("animate: node {} not found", node.id)));
+            };
+            apply_spring_prop(n, prop, None, end as f32, spring_conf).map_err(rhai_err)
         },
     );
 
     // ========== SPRING ==========
     engine.register_fn(
         "spring",
-        |node: &mut NodeHandle, prop: &str, start: f64, end: f64, config: rhai::Map| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
-            };
+        |node: &mut NodeHandle, prop: &str, start: f64, end: f64, config: rhai::Map|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
             let spring_conf = parse_spring_config(&config);
-
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                match prop {
-                    "scale" => {
-                        n.transform.scale_x.add_spring_with_start(
-                            start as f32,
-                            end as f32,
-                            spring_conf.clone(),
-                        );
-                        n.transform.scale_y.add_spring_with_start(
-                            start as f32,
-                            end as f32,
-                            spring_conf,
-                        );
-                    }
-                    "scale_x" => n.transform.scale_x.add_spring_with_start(
-                        start as f32,
-                        end as f32,
-                        spring_conf,
-                    ),
-                    "scale_y" => n.transform.scale_y.add_spring_with_start(
-                        start as f32,
-                        end as f32,
-                        spring_conf,
-                    ),
-                    "rotation" => n.transform.rotation.add_spring_with_start(
-                        start as f32,
-                        end as f32,
-                        spring_conf,
-                    ),
-                    "skew_x" => n.transform.skew_x.add_spring_with_start(
-                        start as f32,
-                        end as f32,
-                        spring_conf,
-                    ),
-                    "skew_y" => n.transform.skew_y.add_spring_with_start(
-                        start as f32,
-                        end as f32,
-                        spring_conf,
-                    ),
-                    "translate_x" | "x" => n.transform.translate_x.add_spring_with_start(
-                        start as f32,
-                        end as f32,
-                        spring_conf,
-                    ),
-                    "translate_y" | "y" => n.transform.translate_y.add_spring_with_start(
-                        start as f32,
-                        end as f32,
-                        spring_conf,
-                    ),
-                    _ => {
-                        error!("animate (spring): unknown property '{prop}'; no spring applied");
-                        n.element.animate_property_spring(
-                            prop,
-                            Some(start as f32),
-                            end as f32,
-                            spring_conf,
-                        );
-                    }
-                }
-            }
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!("spring: node {} not found", node.id)));
+            };
+            apply_spring_prop(n, prop, Some(start as f32), end as f32, spring_conf).map_err(rhai_err)
         },
     );
 
     // ========== PATH_ANIMATE ==========
     engine.register_fn(
         "path_animate",
-        |node: &mut NodeHandle, svg: &str, dur: f64, ease: &str| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle, svg: &str, dur: f64, ease: &str|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!("path_animate: node {} not found", node.id)));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                // Try to parse SVG path
-                if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing_loud(ease);
-                    let mut state = PathAnimationState::new(path, false, dur);
-                    state.progress.add_keyframe(1.0, dur, ease_fn);
-                    n.path_animation = Some(state);
-                } else {
-                    error!("Failed to parse SVG path: {}", svg);
-                }
-            }
+            let path = Path::from_svg(svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse SVG path: {svg}")))?;
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            let mut state = PathAnimationState::new(path, false, dur);
+            state.progress.add_keyframe(1.0, dur, ease_fn);
+            n.path_animation = Some(state);
+            Ok(())
         },
     );
 
     // ========== PATH_ANIMATE_WITH_TANGENT ==========
     engine.register_fn(
         "path_animate_with_tangent",
-        |node: &mut NodeHandle, svg: &str, dur: f64, ease: &str| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle, svg: &str, dur: f64, ease: &str|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!(
+                    "path_animate_with_tangent: node {} not found",
+                    node.id
+                )));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                // Try to parse SVG path
-                if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing_loud(ease);
-                    let mut state = PathAnimationState::new(path, true, dur);
-                    state.progress.add_keyframe(1.0, dur, ease_fn);
-                    n.path_animation = Some(state);
-                } else {
-                    error!("Failed to parse SVG path: {}", svg);
-                }
-            }
+            let path = Path::from_svg(svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse SVG path: {svg}")))?;
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            let mut state = PathAnimationState::new(path, true, dur);
+            state.progress.add_keyframe(1.0, dur, ease_fn);
+            n.path_animation = Some(state);
+            Ok(())
         },
     );
 
     // ========== PATH_MORPH ==========
     engine.register_fn(
         "path_morph",
-        |node: &mut NodeHandle, from_svg: &str, to_svg: &str, dur: f64, ease: &str| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle, from_svg: &str, to_svg: &str, dur: f64, ease: &str|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!("path_morph: node {} not found", node.id)));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                if let Some(from_path) = Path::from_svg(from_svg) {
-                    if let Some(to_path) = Path::from_svg(to_svg) {
-                        let ease_fn = parse_easing_loud(ease);
-                        let mut state = PathMorphState::new(from_path, to_path, false, dur);
-                        state.progress.add_keyframe(1.0, dur, ease_fn);
-                        n.path_morph = Some(state);
-                    } else {
-                        error!("Failed to parse target SVG path: {}", to_svg);
-                    }
-                } else {
-                    error!("Failed to parse source SVG path: {}", from_svg);
-                }
-            }
+            let from_path = Path::from_svg(from_svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse source SVG path: {from_svg}")))?;
+            let to_path = Path::from_svg(to_svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse target SVG path: {to_svg}")))?;
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            let mut state = PathMorphState::new(from_path, to_path, false, dur);
+            state.progress.add_keyframe(1.0, dur, ease_fn);
+            n.path_morph = Some(state);
+            Ok(())
         },
     );
 
     engine.register_fn(
         "path_morph_with_tangent",
-        |node: &mut NodeHandle, from_svg: &str, to_svg: &str, dur: f64, ease: &str| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle, from_svg: &str, to_svg: &str, dur: f64, ease: &str|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!(
+                    "path_morph_with_tangent: node {} not found",
+                    node.id
+                )));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                if let Some(from_path) = Path::from_svg(from_svg) {
-                    if let Some(to_path) = Path::from_svg(to_svg) {
-                        let ease_fn = parse_easing_loud(ease);
-                        let mut state = PathMorphState::new(from_path, to_path, true, dur);
-                        state.progress.add_keyframe(1.0, dur, ease_fn);
-                        n.path_morph = Some(state);
-                    } else {
-                        error!("Failed to parse target SVG path: {}", to_svg);
-                    }
-                } else {
-                    error!("Failed to parse source SVG path: {}", from_svg);
-                }
-            }
+            let from_path = Path::from_svg(from_svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse source SVG path: {from_svg}")))?;
+            let to_path = Path::from_svg(to_svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse target SVG path: {to_svg}")))?;
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            let mut state = PathMorphState::new(from_path, to_path, true, dur);
+            state.progress.add_keyframe(1.0, dur, ease_fn);
+            n.path_morph = Some(state);
+            Ok(())
         },
     );
 
     // ========== PATH_ANIMATE_OPTS (with loop count and speed) ==========
     engine.register_fn(
         "path_animate_opts",
-        |node: &mut NodeHandle, svg: &str, dur: f64, ease: &str, loop_count: i64, speed: f64| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle, svg: &str, dur: f64, ease: &str, loop_count: i64, speed: f64|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!(
+                    "path_animate_opts: node {} not found",
+                    node.id
+                )));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing_loud(ease);
-                    let mut state = PathAnimationState::new(path, false, dur);
-                    state.progress.add_keyframe(1.0, dur, ease_fn);
-                    state.loop_count = loop_count as i32;
-                    state.speed = speed as f32;
-                    n.path_animation = Some(state);
-                } else {
-                    error!("Failed to parse SVG path: {}", svg);
-                }
-            }
+            let path = Path::from_svg(svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse SVG path: {svg}")))?;
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            let mut state = PathAnimationState::new(path, false, dur);
+            state.progress.add_keyframe(1.0, dur, ease_fn);
+            state.loop_count = loop_count as i32;
+            state.speed = speed as f32;
+            n.path_animation = Some(state);
+            Ok(())
         },
     );
 
     engine.register_fn(
         "path_animate_opts",
-        |node: &mut NodeHandle, svg: &str, dur: f64, ease: &str, loop_count: i64, speed: f64, follow_tangent: bool| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle,
+         svg: &str,
+         dur: f64,
+         ease: &str,
+         loop_count: i64,
+         speed: f64,
+         follow_tangent: bool|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!(
+                    "path_animate_opts: node {} not found",
+                    node.id
+                )));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                if let Some(path) = Path::from_svg(svg) {
-                    let ease_fn = parse_easing_loud(ease);
-                    let mut state = PathAnimationState::new(path, follow_tangent, dur);
-                    state.progress.add_keyframe(1.0, dur, ease_fn);
-                    state.loop_count = loop_count as i32;
-                    state.speed = speed as f32;
-                    n.path_animation = Some(state);
-                } else {
-                    error!("Failed to parse SVG path: {}", svg);
-                }
-            }
+            let path = Path::from_svg(svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse SVG path: {svg}")))?;
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            let mut state = PathAnimationState::new(path, follow_tangent, dur);
+            state.progress.add_keyframe(1.0, dur, ease_fn);
+            state.loop_count = loop_count as i32;
+            state.speed = speed as f32;
+            n.path_animation = Some(state);
+            Ok(())
         },
     );
 
     // ========== PATH_MORPH_OPTS (with loop count and speed) ==========
     engine.register_fn(
         "path_morph_opts",
-        |node: &mut NodeHandle, from_svg: &str, to_svg: &str, dur: f64, ease: &str, loop_count: i64, speed: f64| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle,
+         from_svg: &str,
+         to_svg: &str,
+         dur: f64,
+         ease: &str,
+         loop_count: i64,
+         speed: f64|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!(
+                    "path_morph_opts: node {} not found",
+                    node.id
+                )));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                if let Some(from_path) = Path::from_svg(from_svg) {
-                    if let Some(to_path) = Path::from_svg(to_svg) {
-                        let ease_fn = parse_easing_loud(ease);
-                        let mut state = PathMorphState::new(from_path, to_path, false, dur);
-                        state.progress.add_keyframe(1.0, dur, ease_fn);
-                        state.loop_count = loop_count as i32;
-                        state.speed = speed as f32;
-                        n.path_morph = Some(state);
-                    } else {
-                        error!("Failed to parse target SVG path: {}", to_svg);
-                    }
-                } else {
-                    error!("Failed to parse source SVG path: {}", from_svg);
-                }
-            }
+            let from_path = Path::from_svg(from_svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse source SVG path: {from_svg}")))?;
+            let to_path = Path::from_svg(to_svg)
+                .ok_or_else(|| rhai_err(format!("Failed to parse target SVG path: {to_svg}")))?;
+            let ease_fn = parse_easing_result(ease).map_err(rhai_err)?;
+            let mut state = PathMorphState::new(from_path, to_path, false, dur);
+            state.progress.add_keyframe(1.0, dur, ease_fn);
+            state.loop_count = loop_count as i32;
+            state.speed = speed as f32;
+            n.path_morph = Some(state);
+            Ok(())
         },
     );
 
     // ========== SET_BLUR ==========
-    engine.register_fn("set_blur", |node: &mut NodeHandle, val: f64| {
-        let mut d = node.director.lock().unwrap();
-        if let Some(n) = d.scene.get_node_mut(node.id) {
+    engine.register_fn(
+        "set_blur",
+        |node: &mut NodeHandle, val: f64| -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!("set_blur: node {} not found", node.id)));
+            };
             n.element
-                .animate_property("blur", val as f32, val as f32, 0.0, "linear");
-        }
-    });
+                .animate_property("blur", val as f32, val as f32, 0.0, "linear")
+                .map_err(rhai_err)
+        },
+    );
 
     // ========== ANIMATE_COLOR ==========
     engine.register_fn(
@@ -710,45 +619,61 @@ pub fn register(engine: &mut Engine) {
          x1: f64,
          y1: f64,
          x2: f64,
-         y2: f64| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+         y2: f64|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!(
+                    "animate_bezier: node {} not found",
+                    node.id
+                )));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease = crate::animation::EasingType::CubicBezier { x1, y1, x2, y2 };
-                apply_transform_or_element_anim(n, prop, start as f32, end as f32, dur, ease);
-            }
+            let ease = crate::animation::EasingType::CubicBezier { x1, y1, x2, y2 };
+            apply_animate_prop(n, prop, start as f32, end as f32, dur, &ease).map_err(rhai_err)
         },
     );
 
     // `animate_hold(prop, start, end, dur)` — hold at start then jump to end.
     engine.register_fn(
         "animate_hold",
-        |node: &mut NodeHandle, prop: &str, start: f64, end: f64, dur: f64| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle, prop: &str, start: f64, end: f64, dur: f64|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!(
+                    "animate_hold: node {} not found",
+                    node.id
+                )));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                let ease = crate::animation::EasingType::Hold;
-                apply_transform_or_element_anim(n, prop, start as f32, end as f32, dur, ease);
-            }
+            apply_animate_prop(
+                n,
+                prop,
+                start as f32,
+                end as f32,
+                dur,
+                &crate::animation::EasingType::Hold,
+            )
+            .map_err(rhai_err)
         },
     );
 
     // `animate_expression(prop, expr, duration)` — bake a math expression into keyframes.
     engine.register_fn(
         "animate_expression",
-        |node: &mut NodeHandle, prop: &str, expr: &str, duration: f64| {
-            let mut d = match node.lock_director() {
-                Ok(d) => d,
-                Err(_) => return,
+        |node: &mut NodeHandle, prop: &str, expr: &str, duration: f64|
+         -> Result<(), Box<EvalAltResult>> {
+            // Validate expression before baking.
+            crate::animation::evaluate_expression_result(expr, 0.0).map_err(rhai_err)?;
+            crate::animation::evaluate_expression_result(expr, 1.0).map_err(rhai_err)?;
+            let mut d = node.lock_director()?;
+            let Some(n) = d.scene.get_node_mut(node.id) else {
+                return Err(rhai_err(format!(
+                    "animate_expression: node {} not found",
+                    node.id
+                )));
             };
-            if let Some(n) = d.scene.get_node_mut(node.id) {
-                let anim = crate::animation::Animated::<f32>::from_expression(expr, duration);
-                apply_f32_anim(n, prop, anim);
-            }
+            let anim = crate::animation::Animated::<f32>::from_expression(expr, duration);
+            apply_f32_anim(n, prop, anim).map_err(rhai_err)
         },
     );
 
@@ -786,50 +711,58 @@ pub fn register(engine: &mut Engine) {
     });
 }
 
-fn apply_transform_or_element_anim(
+fn apply_f32_anim(
     n: &mut crate::scene::SceneNode,
     prop: &str,
-    start: f32,
-    end: f32,
-    dur: f64,
-    ease: crate::animation::EasingType,
-) {
-    match prop {
-        "scale" => {
-            n.transform.scale_x.add_segment(start, end, dur, ease.clone());
-            n.transform.scale_y.add_segment(start, end, dur, ease);
-        }
-        "scale_x" => n.transform.scale_x.add_segment(start, end, dur, ease),
-        "scale_y" => n.transform.scale_y.add_segment(start, end, dur, ease),
-        "rotation" => n.transform.rotation.add_segment(start, end, dur, ease),
-        "skew_x" => n.transform.skew_x.add_segment(start, end, dur, ease),
-        "skew_y" => n.transform.skew_y.add_segment(start, end, dur, ease),
-        "translate_x" | "x" => n.transform.translate_x.add_segment(start, end, dur, ease),
-        "translate_y" | "y" => n.transform.translate_y.add_segment(start, end, dur, ease),
-        _ => {
-            n.element.animate_property(prop, start, end, dur, "linear");
-        }
-    }
-}
-
-fn apply_f32_anim(n: &mut crate::scene::SceneNode, prop: &str, anim: crate::animation::Animated<f32>) {
+    anim: crate::animation::Animated<f32>,
+) -> Result<(), String> {
     match prop {
         "scale" => {
             n.transform.scale_x = anim.clone();
             n.transform.scale_y = anim;
+            Ok(())
         }
-        "scale_x" => n.transform.scale_x = anim,
-        "scale_y" => n.transform.scale_y = anim,
-        "rotation" => n.transform.rotation = anim,
-        "skew_x" => n.transform.skew_x = anim,
-        "skew_y" => n.transform.skew_y = anim,
-        "translate_x" | "x" => n.transform.translate_x = anim,
-        "translate_y" | "y" => n.transform.translate_y = anim,
-        _ => {
+        "scale_x" => {
+            n.transform.scale_x = anim;
+            Ok(())
+        }
+        "scale_y" => {
+            n.transform.scale_y = anim;
+            Ok(())
+        }
+        "rotation" => {
+            n.transform.rotation = anim;
+            Ok(())
+        }
+        "skew_x" => {
+            n.transform.skew_x = anim;
+            Ok(())
+        }
+        "skew_y" => {
+            n.transform.skew_y = anim;
+            Ok(())
+        }
+        "translate_x" | "x" => {
+            n.transform.translate_x = anim;
+            Ok(())
+        }
+        "translate_y" | "y" => {
+            n.transform.translate_y = anim;
+            Ok(())
+        }
+        other => {
             if let Some(v) = anim.raw_keyframes.first() {
                 let start = v.0;
                 let end = anim.raw_keyframes.last().map(|k| k.0).unwrap_or(start);
-                n.element.animate_property(prop, start, end, anim.sequence.duration(), "linear");
+                n.element.animate_property(
+                    other,
+                    start,
+                    end,
+                    anim.sequence.duration(),
+                    "linear",
+                )
+            } else {
+                Err(format!("animate_expression: empty animation for '{other}'"))
             }
         }
     }

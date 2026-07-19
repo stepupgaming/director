@@ -1,6 +1,6 @@
 # Plan 04 — Animation Evaluation Lock
 
-> **Status:** Spec  
+> **Status:** Done (2026-07-19)  
 > **Priority:** P1  
 > **Depends on:** 01 for time helpers; independent of product features  
 > **Blocks:** trustworthy motion; feeds 05 serialization of keyframes
@@ -109,7 +109,17 @@ Single list of animatable property names (transform + per-element), shared by:
 
 ## Done when
 
-- [ ] Eval semantics documented and table-tested  
-- [ ] Rhai animate paths cannot silent-no-op unknown prop/easing  
-- [ ] Fit vs font_size regression locked  
-- [ ] Path loop boundaries tested  
+- [x] Eval semantics documented and table-tested  
+- [x] Rhai animate paths cannot silent-no-op unknown prop/easing  
+- [x] Fit vs font_size regression locked  
+- [x] Path loop boundaries tested  
+
+## Implementation notes (landed)
+
+- `Animated::value_at(t)` pure eval; `update` delegates to it.
+- `evaluate_expression_result` for fallible expr; runtime `y()` still soft-falls to `t`.
+- `Element::animate_property` / `_spring` return `Result<(), String>`.
+- Rhai `animate` / `spring` / path_* / `animate_bezier|hold|expression` propagate `EvalAltResult`.
+- `TextNode::fitted_font_size` owns Shrink fit; never writes animation channel.
+- `types::wrap_looped_time` used by path anim + morph in `Director::update`.
+- Tests: unit tables in `animation.rs`; acceptance in `tests/animation_eval.rs`.

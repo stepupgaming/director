@@ -1,6 +1,6 @@
 # Core Hardening — Master Index
 
-> **Status:** Plans 01–03 implemented (2026-07-19); next is plan 04  
+> **Status:** Plans 01–04 implemented (2026-07-19); next is plan 05  
 > **Priority:** Engine solidity over product surface  
 > **Out of scope until cores land:** compositions/props CLI, preview server, recipes, agent repair loops, new shader batches, SDK/template layers
 
@@ -62,8 +62,8 @@ Do not schedule under this program:
 | 1 | [01-time-and-timeline.md](01-time-and-timeline.md) | One timeline; real freeze/speed/in-out; `f64` fps | **Done** |
 | 2 | [02-identity-and-mutation.md](02-identity-and-mutation.md) | Stable IDs; explicit graph mutation | **Done** |
 | 3 | [03-frame-pipeline.md](03-frame-pipeline.md) | Full render ≡ incremental; auto cache invalidation | **Done** |
-| 4 | [04-animation-eval.md](04-animation-eval.md) | Pure, tested evaluation; loud unknown props | Spec — **next** |
-| 5 | [05-scene-model.md](05-scene-model.md) | One serializable scene contract | Spec |
+| 4 | [04-animation-eval.md](04-animation-eval.md) | Pure, tested evaluation; loud unknown props | **Done** |
+| 5 | [05-scene-model.md](05-scene-model.md) | One serializable scene contract | Spec — **next** |
 | 6 | [06-determinism-and-media.md](06-determinism-and-media.md) | Same script → same pixels/audio clock | Spec |
 
 **Dependency order:** `01` first (everything samples time). `02` before trusting incremental edit. `03` can start once dirty APIs are understood; finish after `01`–`02`. `04` parallel after `01` time helpers exist. `05` after identity stabilizes. `06` continuous background; fonts/CI can land anytime.
@@ -100,4 +100,4 @@ cargo test -p director-core --test visual_suite --no-default-features --features
 
 ## Next action
 
-Implement **[04-animation-eval.md](04-animation-eval.md)** — pure eval table tests; loud unknown props.
+Implement **[05-scene-model.md](05-scene-model.md)** — one serializable scene contract.

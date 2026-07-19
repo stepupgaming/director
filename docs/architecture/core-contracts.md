@@ -80,13 +80,16 @@ See plan **03** (implemented).
 
 ## 5. Animation eval
 
-| Item | Contract | Current gap |
-|------|----------|-------------|
-| `value_at(t)` | Pure in keyframes + t + documented loop state | Under-tested edges |
-| Unknown prop/easing | Authoring API errors | Some soft paths remain |
-| Text fit | Must not write animation channels | Needs permanent regression |
+| Item | Contract | Status |
+|------|----------|--------|
+| `Animated::value_at(t)` | Pure in `raw_keyframes` + t (hold before first / after last; segment easing incl. Hold) | **Locked** (plan 04) |
+| `reverse` / `yoyo` / `loop_count` | Authoring ops that rewrite stored keyframes; runtime eval stays pure | **Locked** |
+| Unknown prop/easing | Rhai `animate` / `spring` / path APIs return runtime `Err`; no silent linear/no-op | **Locked** |
+| Text fit | `fitted_font_size` separate from animated `default_font_size` channel | **Locked** |
+| Expression easing | Bad/empty idents fail via `evaluate_expression_result` | **Locked** |
+| Path loops | `wrap_looped_time(effective, duration, loop_count)` SSOT | **Locked** |
 
-See plan **04**. Features (bezier/hold/yoyo) exist; **correctness lock** is the work.
+See plan **04** (implemented). Acceptance: `crates/director-core/tests/animation_eval.rs`.
 
 ---
 

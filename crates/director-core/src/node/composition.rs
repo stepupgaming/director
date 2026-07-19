@@ -198,13 +198,17 @@ impl Element for CompositionNode {
 
     fn animate_property(
         &mut self,
-        _property: &str,
+        property: &str,
         _start: f32,
         _target: f32,
         _duration: f64,
         _easing: &str,
-    ) {
-        // No animatable properties on CompositionNode itself yet (e.g. opacity is handled by SceneNode blending)
+    ) -> Result<(), String> {
+        // No animatable properties on CompositionNode itself yet
+        // (opacity is handled by SceneNode blending).
+        Err(format!(
+            "unknown property '{property}' on composition; no element-level animatable properties"
+        ))
     }
 
     fn get_audio(&self, time: f64, samples_needed: usize, _sample_rate: u32) -> Option<Vec<f32>> {

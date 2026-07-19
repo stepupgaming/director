@@ -480,8 +480,9 @@ impl Element for ActiveSpeakerCamera {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        self.inner.animate_property(property, start, target, duration, easing);
+    ) -> Result<(), String> {
+        self.inner
+            .animate_property(property, start, target, duration, easing)
     }
 
     fn animate_property_spring(
@@ -490,8 +491,9 @@ impl Element for ActiveSpeakerCamera {
         start: Option<f32>,
         target: f32,
         config: crate::animation::SpringConfig,
-    ) {
-        self.inner.animate_property_spring(property, start, target, config);
+    ) -> Result<(), String> {
+        self.inner
+            .animate_property_spring(property, start, target, config)
     }
 }
 

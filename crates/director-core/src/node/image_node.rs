@@ -132,13 +132,18 @@ impl Element for ImageNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        let ease_fn = parse_easing(easing);
+    ) -> Result<(), String> {
+        let ease_fn = crate::scripting::utils::parse_easing_result(easing)?;
         match property {
             "opacity" => self.opacity.add_segment(start, target, duration, ease_fn),
             "border_radius" => self.border_radius.add_segment(start, target, duration, ease_fn),
-            _ => {}
+            other => {
+                return Err(format!(
+                    "unknown property '{other}' on image; valid: opacity, border_radius"
+                ));
+            }
         }
+        Ok(())
     }
 
     fn animate_property_spring(
@@ -147,7 +152,7 @@ impl Element for ImageNode {
         start: Option<f32>,
         target: f32,
         config: crate::animation::SpringConfig,
-    ) {
+    ) -> Result<(), String> {
         match property {
             "opacity" => {
                 if let Some(s) = start {
@@ -163,7 +168,12 @@ impl Element for ImageNode {
                     self.border_radius.add_spring(target, config);
                 }
             }
-            _ => {}
+            other => {
+                return Err(format!(
+                    "spring: unknown property '{other}' on image; valid: opacity, border_radius"
+                ));
+            }
         }
+        Ok(())
     }
 }

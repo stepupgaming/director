@@ -168,11 +168,16 @@ impl Element for SpectrumVisualizerNode {
         target: f32,
         duration: f64,
         easing: &str,
-    ) {
-        let ease_fn = parse_easing(easing);
+    ) -> Result<(), String> {
+        let ease_fn = crate::scripting::utils::parse_easing_result(easing)?;
         match property {
-            "opacity" => self.opacity.add_segment(start, target, duration, ease_fn),
-            _ => {}
+            "opacity" => {
+                self.opacity.add_segment(start, target, duration, ease_fn);
+                Ok(())
+            }
+            other => Err(format!(
+                "unknown property '{other}' on spectrum_visualizer; valid: opacity"
+            )),
         }
     }
 
@@ -182,17 +187,19 @@ impl Element for SpectrumVisualizerNode {
         start: Option<f32>,
         target: f32,
         config: crate::animation::SpringConfig,
-    ) {
-        let apply = |anim: &mut Animated<f32>| {
-            if let Some(s) = start {
-                anim.add_spring_with_start(s, target, config);
-            } else {
-                anim.add_spring(target, config);
-            }
-        };
+    ) -> Result<(), String> {
         match property {
-            "opacity" => apply(&mut self.opacity),
-            _ => {}
+            "opacity" => {
+                if let Some(s) = start {
+                    self.opacity.add_spring_with_start(s, target, config);
+                } else {
+                    self.opacity.add_spring(target, config);
+                }
+                Ok(())
+            }
+            other => Err(format!(
+                "spring: unknown property '{other}' on spectrum_visualizer; valid: opacity"
+            )),
         }
     }
 }

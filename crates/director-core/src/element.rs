@@ -139,6 +139,9 @@ pub trait Element: std::fmt::Debug + ElementClone {
     ) -> Result<(), crate::RenderError>;
 
     /// Animates a specific named property.
+    ///
+    /// Returns `Err` for unknown property names or invalid easing strings.
+    /// Authoring surfaces (Rhai) must propagate this rather than soft-failing.
     fn animate_property(
         &mut self,
         property: &str,
@@ -146,17 +149,22 @@ pub trait Element: std::fmt::Debug + ElementClone {
         target: f32,
         duration: f64,
         easing: &str,
-    );
+    ) -> Result<(), String>;
 
     /// Animates a property using physics-based spring dynamics.
+    ///
+    /// Returns `Err` for unknown property names.
     fn animate_property_spring(
         &mut self,
-        _property: &str,
+        property: &str,
         _start: Option<f32>,
         _target: f32,
         _config: crate::animation::SpringConfig,
-    ) {
-        // Default: No-op or Warn
+    ) -> Result<(), String> {
+        Err(format!(
+            "spring: property '{property}' is not spring-animatable on {}",
+            self.kind()
+        ))
     }
 
     /// Animates a color property from start to end over a duration.

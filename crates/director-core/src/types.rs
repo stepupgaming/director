@@ -90,6 +90,30 @@ impl fmt::Display for NodeId {
     }
 }
 
+/// Wrap local animation time for loop / play-once semantics.
+///
+/// Used by path animation and path morph. Pure function of
+/// `(effective_time, duration, loop_count)`.
+///
+/// - `duration <= 0`: returns `0.0`
+/// - `loop_count == 0`: play once, clamp to `[0, duration]`
+/// - `loop_count < 0`: infinite loop via modulo
+/// - `loop_count > 0`: loop while completed loops `< loop_count`, else clamp end
+pub fn wrap_looped_time(effective_time: f64, duration: f64, loop_count: i32) -> f64 {
+    if duration <= 0.0 {
+        return 0.0;
+    }
+    if effective_time < duration {
+        return effective_time.max(0.0);
+    }
+    let elapsed = (effective_time / duration) as i32;
+    if loop_count < 0 || elapsed < loop_count {
+        effective_time % duration
+    } else {
+        duration
+    }
+}
+
 /// State for a node currently animating along an SVG path.
 pub struct PathAnimationState {
     pub path: Path,
@@ -128,6 +152,15 @@ impl PathAnimationState {
     /// Get the cached path length.
     pub fn length(&self) -> f32 {
         self.cached_length
+    }
+
+    /// Wrap local path time for loop/play-once semantics.
+    ///
+    /// - `loop_count == 0`: play once, clamp to `[0, duration]`
+    /// - `loop_count < 0`: infinite loop via modulo
+    /// - `loop_count > 0`: loop while elapsed loops `< loop_count`, else clamp to end
+    pub fn wrap_time(effective_time: f64, duration: f64, loop_count: i32) -> f64 {
+        wrap_looped_time(effective_time, duration, loop_count)
     }
 
     /// Sample a position and tangent at a given distance along the path.
