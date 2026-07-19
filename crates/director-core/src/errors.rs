@@ -14,4 +14,7 @@ pub enum RenderError {
     Anyhow(#[from] anyhow::Error),
     #[error("Recursion depth limit exceeded")]
     RecursionLimit,
+    /// Required bundled fonts missing — export is non-reproducible (Plan 06).
+    #[error("Missing required bundled fonts: {0:?}. Run setup_assets.sh / CI font step.")]
+    MissingRequiredFonts(Vec<String>),
 }

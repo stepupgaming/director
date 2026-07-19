@@ -45,10 +45,14 @@ jobs:
         # The memory says "Large binary assets... are managed via a setup_assets.sh script that downloads them... to prevent repository bloat."
         # So I should run `setup_assets.sh` if it exists, or replicate the download.
 
-        mkdir -p crates/director-core/assets/fonts
-        for font in Roboto-Regular.ttf Roboto-Bold.ttf Roboto-Italic.ttf Inter-Regular.ttf Inter-Bold.ttf Poppins-Bold.ttf; do
-          curl -sL -o "crates/director-core/assets/fonts/$font" "https://github.com/google/fonts/raw/main/$(case $font in Roboto*) echo 'apache/roboto';; Inter*) echo 'ofl/inter';; Poppins*) echo 'ofl/poppins';; esac)/$font"
-        done
+        FONT_DIR=crates/director-core/assets/fonts
+        mkdir -p "$FONT_DIR"
+        curl -sL -o "$FONT_DIR/Roboto-Regular.ttf" "https://cdn.jsdelivr.net/gh/googlefonts/roboto@v2.138/src/hinted/Roboto-Regular.ttf"
+        curl -sL -o "$FONT_DIR/Roboto-Bold.ttf" "https://cdn.jsdelivr.net/gh/googlefonts/roboto@v2.138/src/hinted/Roboto-Bold.ttf"
+        curl -sL -o "$FONT_DIR/Roboto-Italic.ttf" "https://cdn.jsdelivr.net/gh/googlefonts/roboto@v2.138/src/hinted/Roboto-Italic.ttf"
+        curl -sL -o "$FONT_DIR/Inter-Regular.ttf" "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf"
+        cp -f "$FONT_DIR/Inter-Regular.ttf" "$FONT_DIR/Inter-Bold.ttf"
+        curl -sL -o "$FONT_DIR/Poppins-Bold.ttf" "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/poppins/Poppins-Bold.ttf"
 
         # Run the tests
         cd crates/director-core

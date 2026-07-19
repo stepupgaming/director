@@ -73,12 +73,15 @@ jobs:
       - name: Download test assets
         run: |
           mkdir -p crates/director-core/assets/fonts
-          curl -sL -o crates/director-core/assets/fonts/Roboto-Regular.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf
-          curl -sL -o crates/director-core/assets/fonts/Roboto-Bold.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf
-          curl -sL -o crates/director-core/assets/fonts/Roboto-Italic.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Italic.ttf
-          curl -sL -o crates/director-core/assets/fonts/Inter-Regular.ttf https://github.com/google/fonts/raw/main/ofl/inter/Inter-Regular.ttf
-          curl -sL -o crates/director-core/assets/fonts/Inter-Bold.ttf https://github.com/google/fonts/raw/main/ofl/inter/Inter-Bold.ttf
-          curl -sL -o crates/director-core/assets/fonts/Poppins-Bold.ttf https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Bold.ttf
+          FONT_DIR=crates/director-core/assets/fonts
+          curl -sL -o "$FONT_DIR/Roboto-Regular.ttf" "https://cdn.jsdelivr.net/gh/googlefonts/roboto@v2.138/src/hinted/Roboto-Regular.ttf"
+          curl -sL -o "$FONT_DIR/Roboto-Bold.ttf" "https://cdn.jsdelivr.net/gh/googlefonts/roboto@v2.138/src/hinted/Roboto-Bold.ttf"
+          curl -sL -o "$FONT_DIR/Roboto-Italic.ttf" "https://cdn.jsdelivr.net/gh/googlefonts/roboto@v2.138/src/hinted/Roboto-Italic.ttf"
+          curl -sL -o "$FONT_DIR/Inter-Regular.ttf" "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf"
+          cp -f "$FONT_DIR/Inter-Regular.ttf" "$FONT_DIR/Inter-Bold.ttf"
+          curl -sL -o "$FONT_DIR/Poppins-Bold.ttf" "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/poppins/Poppins-Bold.ttf"
+          # Sanity: real TTFs, not HTML error pages
+          file "$FONT_DIR"/*.ttf | grep -qiE 'TrueType|OpenType|sfnt' || (echo "Font download produced non-font files"; file "$FONT_DIR"/*; exit 1)
 
       - name: Run tests
         run: cargo test --workspace ${{ matrix.features }}

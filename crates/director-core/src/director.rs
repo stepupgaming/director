@@ -129,6 +129,9 @@ pub struct Director {
     /// Most recent style-policy score produced by `compile()`, including any
     /// violations that were emitted as warnings/errors.
     pub last_policy_score: Option<PolicyScore>,
+    /// Bundled fonts that failed to load at construction (Plan 06).
+    /// Export must fail closed when this is non-empty.
+    pub missing_required_fonts: Vec<String>,
 }
 
 /// SAFETY: Director is not thread-safe due to Skia internals (RefCounts).
@@ -146,16 +149,17 @@ unsafe impl Send for Director {}
 ///
 /// Files live in `crates/director-core/assets/fonts/` (force-committed via
 /// `.gitignore`) so they are present regardless of the working directory.
-/// `Roboto-Regular` is required; the rest are optional and only warn if missing
-/// (CI/dev setup downloads them).
-const BUNDLED_FONTS: &[(&str, &[&str], bool)] = &[
-    ("Roboto-Regular.ttf", &["Roboto", "Sans Serif", "Arial"], true),
-    ("Roboto-Bold.ttf", &["Roboto", "Sans Serif", "Arial"], false),
-    ("Roboto-Italic.ttf", &["Roboto", "Sans Serif", "Arial"], false),
-    ("Inter-Regular.ttf", &["Inter"], false),
-    ("Inter-Bold.ttf", &["Inter"], false),
-    ("Poppins-Bold.ttf", &["Poppins"], false),
-];
+/// All entries are **required** for export/CI determinism (Plan 06).
+    /// Preview mode logs errors but continues so local iteration is not blocked;
+    /// [`Director::ensure_required_fonts`] fails closed for export.
+    const BUNDLED_FONTS: &[(&str, &[&str], bool)] = &[
+        ("Roboto-Regular.ttf", &["Roboto", "Sans Serif", "Arial"], true),
+        ("Roboto-Bold.ttf", &["Roboto", "Sans Serif", "Arial"], true),
+        ("Roboto-Italic.ttf", &["Roboto", "Sans Serif", "Arial"], true),
+        ("Inter-Regular.ttf", &["Inter"], true),
+        ("Inter-Bold.ttf", &["Inter"], true),
+        ("Poppins-Bold.ttf", &["Poppins"], true),
+    ];
 
 impl Director {
     /// Computes the effective analysis time for an audio track at a given global time.
@@ -215,7 +219,9 @@ impl Director {
         context: Option<DirectorContext>,
     ) -> Self {
         let fps = if fps.is_finite() && fps > 0.0 { fps } else { 30.0 };
+        let mut missing_required_fonts = Vec::new();
         let assets = if let Some(ctx) = context {
+            // Nested comps inherit parent fonts; parent already tracked missing.
             ctx.assets
         } else {
             let mut font_collection = FontCollection::new();
@@ -240,14 +246,17 @@ impl Director {
                                 "Failed to create typeface from bundled font '{}'",
                                 filename
                             );
+                            if *required {
+                                missing_required_fonts.push((*filename).to_string());
+                            }
                         }
                     }
                     Err(_) => {
                         if *required {
+                            missing_required_fonts.push((*filename).to_string());
                             tracing::error!(
                                 "Required bundled font '{}' not found at assets/fonts/{}; \
-                                 text will NOT render on systems without working system fonts. \
-                                 Run `setup_assets.sh` or CI to fetch it before exporting.",
+                                 run `setup_assets.sh` or CI font step before exporting.",
                                 filename,
                                 filename
                             );
@@ -307,7 +316,33 @@ impl Director {
             input_hashes: std::collections::HashMap::new(),
             style_policy: StylePolicy::default(),
             last_policy_score: None,
+            missing_required_fonts,
         }
+    }
+
+    /// Filenames of the bundled font set required for deterministic export (Plan 06).
+    pub fn required_bundled_font_files() -> &'static [&'static str] {
+        &[
+            "Roboto-Regular.ttf",
+            "Roboto-Bold.ttf",
+            "Roboto-Italic.ttf",
+            "Inter-Regular.ttf",
+            "Inter-Bold.ttf",
+            "Poppins-Bold.ttf",
+        ]
+    }
+
+    /// Fail closed when required bundled fonts are missing.
+    ///
+    /// Called at the start of export. Preview construction still succeeds so
+    /// local iteration is not blocked, but export refuses non-reproducible runs.
+    pub fn ensure_required_fonts(&self) -> Result<(), crate::RenderError> {
+        if self.missing_required_fonts.is_empty() {
+            return Ok(());
+        }
+        Err(crate::RenderError::MissingRequiredFonts(
+            self.missing_required_fonts.clone(),
+        ))
     }
 
     /// Mixes audio for the current frame time by traversing the scene graph.

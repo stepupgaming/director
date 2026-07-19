@@ -12,6 +12,7 @@
 
 - Pipeline utilities should preserve compatibility with `director-core` and `director-schema` data contracts.
 - Pipeline errors should be actionable for callers.
+- **Scene document SSOT:** versioned `director_core::project` JSON is the canonical Director save/load path (Plan 05). `MovieRequest` / `load_movie` is a secondary inbound adapter — do not add new node/effect features only on the pipeline path without project-document parity.
 
 ## Work Guidance
 

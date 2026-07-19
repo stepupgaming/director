@@ -9,11 +9,15 @@ echo "⬇️ Downloading Assets..."
 echo "  - Fetching Fonts..."
 FONT_DIR="crates/director-core/assets/fonts"
 mkdir -p "$FONT_DIR"
-curl -L -o "$FONT_DIR/Roboto-Bold.ttf" "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
-curl -L -o "$FONT_DIR/Roboto-Italic.ttf" "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Italic.ttf"
-curl -L -o "$FONT_DIR/Inter-Regular.ttf" "https://github.com/google/fonts/raw/main/ofl/inter/Inter-Regular.ttf"
-curl -L -o "$FONT_DIR/Inter-Bold.ttf" "https://github.com/google/fonts/raw/main/ofl/inter/Inter-Bold.ttf"
-curl -L -o "$FONT_DIR/Poppins-Bold.ttf" "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Bold.ttf"
+# All of these are required for export/CI determinism (Plan 06).
+# Prefer jsDelivr (raw githubusercontent often returns HTML without following).
+curl -L -o "$FONT_DIR/Roboto-Regular.ttf" "https://cdn.jsdelivr.net/gh/googlefonts/roboto@v2.138/src/hinted/Roboto-Regular.ttf"
+curl -L -o "$FONT_DIR/Roboto-Bold.ttf" "https://cdn.jsdelivr.net/gh/googlefonts/roboto@v2.138/src/hinted/Roboto-Bold.ttf"
+curl -L -o "$FONT_DIR/Roboto-Italic.ttf" "https://cdn.jsdelivr.net/gh/googlefonts/roboto@v2.138/src/hinted/Roboto-Italic.ttf"
+# Inter ships as a variable font in google/fonts; use it for Regular + Bold slots.
+curl -L -o "$FONT_DIR/Inter-Regular.ttf" "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf"
+cp -f "$FONT_DIR/Inter-Regular.ttf" "$FONT_DIR/Inter-Bold.ttf"
+curl -L -o "$FONT_DIR/Poppins-Bold.ttf" "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/poppins/Poppins-Bold.ttf"
 # Optional emoji fallback (used by load_font_fallback as assets/fonts/emoji.ttf)
 curl -L -o assets/fonts/emoji.ttf "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf" || echo "  (emoji font fetch failed; optional)"
 

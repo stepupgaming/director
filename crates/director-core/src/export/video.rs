@@ -73,6 +73,9 @@ pub fn render_export(
     audio_track_path: Option<PathBuf>,
     alpha: bool,
 ) -> Result<()> {
+    // Fail closed on missing bundled fonts (Plan 06 determinism).
+    director.ensure_required_fonts()?;
+
     // Build the dependency graph before rendering so incremental
     // invalidation is available during export.
     director.compile();
@@ -135,7 +138,12 @@ pub fn render_export(
     let frame_duration = 1.0 / fps;
     let shutter_duration = frame_duration * (shutter_angle as f64 / 360.0);
 
-    let samples_per_frame = (director.audio_mixer.sample_rate as f64 / fps).round() as usize;
+    // Stereo interleaved samples per video frame (Plan 06 A/V alignment).
+    let samples_per_frame = crate::timeline::audio_samples_per_video_frame(
+        director.audio_mixer.sample_rate,
+        fps,
+        2,
+    );
 
     // Pre-allocate transition surfaces to avoid per-frame allocation churn
     let mut transition_surfaces = if !director.transitions.is_empty() {

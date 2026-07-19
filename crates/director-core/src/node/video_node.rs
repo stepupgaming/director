@@ -151,10 +151,16 @@ impl Element for VideoNode {
         self.opacity.update(time);
         self.border_radius.update(time);
 
+        // Floor seek onto a nominal source fps grid so freeze/speed share one
+        // quantum (Plan 06). Source fps is not always known without probing;
+        // use 30 as the default quantum — SyncDecoder still seeks by time.
+        const DEFAULT_SOURCE_FPS: f64 = 30.0;
+        let seek_time = crate::timeline::video_seek_time(time, DEFAULT_SOURCE_FPS);
+
         if let Some(loader) = &mut self.loader {
             match loader {
                 VideoLoader::Threaded(decoder) => {
-                    decoder.send_request(time);
+                    decoder.send_request(seek_time);
 
                     if let Some(resp) = decoder.get_response() {
                         match resp {
@@ -181,7 +187,7 @@ impl Element for VideoNode {
                         }
                     }
                 }
-                VideoLoader::Sync(decoder) => match decoder.get_frame_at(time) {
+                VideoLoader::Sync(decoder) => match decoder.get_frame_at(seek_time) {
                     Ok((t, data, w, h)) => {
                         let data = Data::new_copy(&data);
                         let info = skia_safe::ImageInfo::new(

@@ -112,14 +112,15 @@ See plan **05** (implemented). Acceptance: `tests/project_roundtrip.rs` Plan 05 
 
 ## 7. Determinism & media
 
-| Item | Contract | Current gap |
-|------|----------|-------------|
-| Fonts | Required set present or export/CI fails | Bold/etc optional warn |
-| RNG | All lib noise uses seeded RNG | Enforce no `thread_rng` |
-| Video seek | One policy (floor/nearest) + freeze pin | Under-specified |
-| A/V duration | Same duration policy as frame count | Under-tested |
+| Item | Contract | Status |
+|------|----------|--------|
+| Fonts | Roboto R/B/I, Inter R/B, Poppins Bold required; export fails via `ensure_required_fonts` | **Locked** (plan 06) |
+| RNG | `rand_float` / `set_seed` use process `StdRng` default `0xC0FFEE`; no `thread_rng` in lib | **Locked** |
+| Video seek | **Floor** onto source frame grid (`video_seek_time` / `video_source_frame_index`); freeze pins local time | **Locked** |
+| A/V duration | `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)` | **Locked** |
+| CI | Fonts downloaded on PR/push; visual suite `mock_video` | Present |
 
-See plan **06**.
+See plan **06** (implemented). Acceptance: `tests/determinism_media.rs`.
 
 ---
 

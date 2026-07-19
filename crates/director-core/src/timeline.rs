@@ -164,6 +164,49 @@ pub fn duration_to_frame_count(duration: f64, fps: f64) -> u64 {
     (duration * fps - 1e-9).ceil().max(0.0) as u64
 }
 
+/// Interleaved stereo sample count for one video frame at `sample_rate` / `fps`.
+///
+/// Policy: `round(sample_rate / fps) * channels` with `channels = 2`.
+/// Export mixes this many samples per frame so A/V length tracks
+/// `duration_to_frame_count` (Plan 06).
+pub fn audio_samples_per_video_frame(sample_rate: u32, fps: f64, channels: u32) -> usize {
+    if fps <= 0.0 || sample_rate == 0 || channels == 0 {
+        return 0;
+    }
+    let per_ch = (sample_rate as f64 / fps).round().max(0.0) as usize;
+    per_ch.saturating_mul(channels as usize)
+}
+
+/// Total interleaved audio samples for a full export of `duration` seconds.
+pub fn export_audio_sample_count(
+    duration: f64,
+    fps: f64,
+    sample_rate: u32,
+    channels: u32,
+) -> usize {
+    let frames = duration_to_frame_count(duration, fps) as usize;
+    frames.saturating_mul(audio_samples_per_video_frame(sample_rate, fps, channels))
+}
+
+/// Map continuous source time (seconds) to a discrete video frame index.
+///
+/// **Policy: Floor** — `floor(time * source_fps + 1e-9)`.
+/// Used by video decode seek so freeze / speed share one quantum story.
+pub fn video_source_frame_index(source_time: f64, source_fps: f64) -> u64 {
+    time_to_frame(source_time, source_fps)
+}
+
+/// Quantize continuous source time onto the source frame grid (floor policy).
+///
+/// Decode requests should use this time so identical floors hit the same cache key.
+pub fn video_seek_time(source_time: f64, source_fps: f64) -> f64 {
+    if source_fps <= 0.0 {
+        return source_time.max(0.0);
+    }
+    let idx = video_source_frame_index(source_time.max(0.0), source_fps);
+    frame_to_time(idx, source_fps)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

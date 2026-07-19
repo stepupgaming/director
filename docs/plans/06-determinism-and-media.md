@@ -1,6 +1,6 @@
 # Plan 06 — Determinism & Media Clock
 
-> **Status:** Spec  
+> **Status:** Done (2026-07-19)  
 > **Priority:** P1 (continuous; fonts/CI can land immediately)  
 > **Depends on:** benefits from 01 (fps/time); independent pieces can ship anytime  
 > **Blocks:** reliable visual goldens and reproducible exports
@@ -108,8 +108,20 @@ decode(frame_policy(video_source_time))
 
 ## Done when
 
-- [ ] Required fonts fail-closed in export/CI  
-- [ ] No unseeded RNG in core lib  
-- [ ] Video seek + freeze policy tested  
-- [ ] A/V duration policy documented + tested  
-- [ ] CI runs on PR/push with fonts  
+- [x] Required fonts fail-closed in export/CI  
+- [x] No unseeded RNG in core lib  
+- [x] Video seek + freeze policy tested  
+- [x] A/V duration policy documented + tested  
+- [x] CI runs on PR/push with fonts  
+
+## Implementation notes (landed)
+
+- All six `BUNDLED_FONTS` marked required; `Director.missing_required_fonts` +
+  `ensure_required_fonts` called from `render_export`.
+- `timeline::{video_seek_time, video_source_frame_index, audio_samples_per_video_frame,
+  export_audio_sample_count}` document floor seek + A/V sample math.
+- `VideoNode::update` quantizes decode requests with `video_seek_time`.
+- Export mixes via `audio_samples_per_video_frame`.
+- `setup_assets.sh` fetches Roboto-Regular too.
+- CI already downloads full font set on PR/push.
+- Tests: `tests/determinism_media.rs`.
