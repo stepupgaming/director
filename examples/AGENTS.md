@@ -21,9 +21,10 @@
 - Update examples when user-facing scripting behavior changes.
 - Prefer small, readable scripts for basics and richer compositions for feature demonstrations.
 - `features/compositions.rhai` demonstrates `register_composition` + default_props; validation accepts either a Movie return or a non-empty composition registry (builders exercised with defaults).
-- `features/stdlib_motion.rhai` covers L1 motion verbs (`fade_in`, `pop_in`, `fly_in_*`, `pulse`).
+- `features/stdlib_motion.rhai` covers L1 motion verbs (`fade_in`, `pop_in`, `fly_in_*`, `pulse`, `typewriter`, `ken_burns`, `pulse_on_beat`).
 - `recipes/faceless_short.rhai` — L3 vertical kinetic explainer.
 - `recipes/kinetic_lower_third.rhai` — L3 16:9 interview package (typewriter + smart lower third).
+- `recipes/image_beats.rhai` — L3 vertical media-prop recipe (image paths + Ken Burns + captions).
 - `features/smart_lower_third.rhai` — L2 content-reactive lower third demo.
 - Keep test helper behavior deterministic enough for CI or local validation.
 

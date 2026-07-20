@@ -723,6 +723,45 @@ pub const RHAI_FUNCTION_CATALOG: &[RhaiFunctionEntry] = &[
         "Return the transitive set of node IDs affected by the given dependency inputs without marking anything dirty",
         &[("inputs", "Array")],
     ),
+    // --- Plan 07 L1 motion stdlib (methods on NodeHandle) ---
+    rhai_fn("fade_in", "L1: opacity 0→1 (Node method; optional delay)", &[("dur", "Float"), ("delay", "Float?")]),
+    rhai_fn("fade_out", "L1: opacity 1→0 (Node method; optional delay)", &[("dur", "Float"), ("delay", "Float?")]),
+    rhai_fn("pop_in", "L1: scale+opacity bounce entrance (Node method)", &[("dur", "Float"), ("delay", "Float?")]),
+    rhai_fn("fly_in_up", "L1: translate_y + fade entrance from below", &[("dur", "Float"), ("delay", "Float?"), ("px", "Float?")]),
+    rhai_fn("fly_in_down", "L1: translate_y + fade entrance from above", &[("dur", "Float"), ("delay", "Float?"), ("px", "Float?")]),
+    rhai_fn("fly_in_left", "L1: translate_x + fade entrance from right", &[("dur", "Float"), ("delay", "Float?"), ("px", "Float?")]),
+    rhai_fn("fly_in_right", "L1: translate_x + fade entrance from left", &[("dur", "Float"), ("delay", "Float?"), ("px", "Float?")]),
+    rhai_fn("fly_out_up", "L1: translate_y + fade exit upward", &[("dur", "Float"), ("delay", "Float?"), ("px", "Float?")]),
+    rhai_fn("fly_out_down", "L1: translate_y + fade exit downward", &[("dur", "Float"), ("delay", "Float?"), ("px", "Float?")]),
+    rhai_fn("fly_out_left", "L1: translate_x + fade exit left", &[("dur", "Float"), ("delay", "Float?"), ("px", "Float?")]),
+    rhai_fn("fly_out_right", "L1: translate_x + fade exit right", &[("dur", "Float"), ("delay", "Float?"), ("px", "Float?")]),
+    rhai_fn("pulse", "L1: single scale pulse", &[("dur", "Float"), ("delay", "Float?"), ("peak", "Float?")]),
+    rhai_fn(
+        "pulse_on_beat",
+        "L1: scale pulses locked to BPM for a duration",
+        &[("bpm", "Float"), ("duration", "Float"), ("peak", "Float?")],
+    ),
+    rhai_fn(
+        "typewriter",
+        "L1: TextNode glyph opacity stagger reveal (Text only)",
+        &[("dur", "Float"), ("delay", "Float?")],
+    ),
+    rhai_fn(
+        "ken_burns",
+        "L1: slow zoom + drift (images/boxes)",
+        &[("dur", "Float"), ("zoom", "Float?"), ("drift_x", "Float?"), ("drift_y", "Float?")],
+    ),
+    // --- Plan 07 L2 ---
+    rhai_fn(
+        "add_smart_lower_third",
+        "L2: content-reactive name/title lower third (Scene method)",
+        &[("props", "Map")],
+    ),
+    rhai_fn(
+        "register_composition",
+        "L2/L3: register a named composition builder with meta + default_props",
+        &[("name", "String"), ("meta", "Map"), ("builder", "Fn")],
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize)]

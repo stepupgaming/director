@@ -188,6 +188,11 @@ fn example_recipes_kinetic_lower_third() {
     validate_script("examples/recipes/kinetic_lower_third.rhai");
 }
 
+#[test]
+fn example_recipes_image_beats() {
+    validate_script("examples/recipes/image_beats.rhai");
+}
+
 fn validate_script(relative_path: &str) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let manifest_path = PathBuf::from(manifest_dir);

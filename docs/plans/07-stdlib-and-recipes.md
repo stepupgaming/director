@@ -1,19 +1,17 @@
 # Plan 07 — L1 Stdlib + L2 Components + L3 Recipes
 
-> **Status:** In progress (2026-07-19) — **not finished**
+> **Status:** Done (v1 stop-line, 2026-07-19)
 > **Stack:** L0 core (done) → L1 motion verbs → L2 templates/compositions → L3 recipes
 > **Not in scope:** `director-sdk` crate, binding migration, capability matrix (Option C deferred)
 
 ## Honest scope
 
-Calling L0–L3 "done" after a thin motion pack + one recipe was wrong. This plan tracks a **real** authoring stack:
-
-| Layer | Done means | Status now |
-|-------|------------|------------|
+| Layer | Done means | Status |
+|-------|------------|--------|
 | **L0** | Engine spines 01–06 green | **Done** |
-| **L1** | Archive-class macros: fade/pop/fly + **typewriter**, **pulse_on_beat**, **ken_burns**; tests; examples | **Mostly done** (v1 verbs landed; expand as recipes need) |
-| **L2** | Layout templates **and** at least one **content-reactive** component (`add_smart_lower_third`); composition+props as the reusable unit | **Partial** — templates + smart L3 + compositions exist; not a full component library |
-| **L3** | Multiple recipe arcs under `examples/recipes/`, each `register_composition`, CLI/preview green | **Partial** — `faceless_short` + `kinetic_lower_third`; more arcs TBD |
+| **L1** | Archive-class macros: fade/pop/fly + **typewriter**, **pulse_on_beat**, **ken_burns**; tests; examples; catalogued | **Done (v1)** |
+| **L2** | Layout templates **and** at least one **content-reactive** component (`add_smart_lower_third`); composition+props as the reusable unit | **Done (v1)** — not a full component library |
+| **L3** | Multiple recipe arcs under `examples/recipes/`, each `register_composition`, CLI/preview green; media props path | **Done (v1)** |
 
 ## Design rules
 
@@ -36,24 +34,48 @@ Calling L0–L3 "done" after a thin motion pack + one recipe was wrong. This pla
 | `typewriter(dur[, delay])` | TextNode glyph opacity stagger |
 | `ken_burns(dur[, zoom[, dx, dy]])` | slow zoom + drift |
 
+Catalogued in `RHAI_FUNCTION_CATALOG` (`api_catalog.rs`) for agent/schema surface.
+
 ## L2 contract
 
 - Layout sugar: existing `add_title_card`, `add_lower_third`, quote/progress/bento/...
 - **Smart:** `add_smart_lower_third` — name/title stack, accent bar, width from content length (clamped).
 - Reusable unit with props: `register_composition`.
 
-## L3 recipes (current)
+## L3 recipes (v1)
 
 | Recipe | Composition | Arc |
 |--------|-------------|-----|
 | `examples/recipes/faceless_short.rhai` | `faceless_short` | 9:16 kinetic explainer beats |
 | `examples/recipes/kinetic_lower_third.rhai` | `kinetic_lower_third` | 16:9 interview plate + typewriter + smart L3 |
+| `examples/recipes/image_beats.rhai` | `image_beats` | 9:16 media props + Ken Burns + captions |
 
-### Still not L3 (archive fantasy — explicit non-goals until deps exist)
+### Explicit non-goals (deferred — not v1)
 
 - Faceless Historian with **TTS / Supertonic VO**
 - Podcast Clipper with **energy-based auto-cut + speaker reframes**
+- Full smart-component library beyond `add_smart_lower_third` + templates
+- `director-sdk` crate / Option C binding migration
 - Asset-store / `.dirproj` component distribution
+
+## v1 stop-line
+
+Plan 07 **stops here**. Further authoring work is additive (more recipes, more L1 verbs as needed, more L2 components) and does **not** reopen this plan unless a contract breaks.
+
+What v1 guarantees:
+
+1. L1 motion pack on `NodeHandle` with unit tests + `stdlib_motion` example.
+2. L2 smart lower third + composition registry + props merge.
+3. ≥3 L3 recipes, including one with **real image path props** (`image_beats`).
+4. Agent-facing catalog entries for L1/L2 helpers.
+5. Examples harness validates recipe scripts (Movie or composition builders).
+
+What v1 does **not** claim:
+
+- Production TTS/VO pipelines
+- Podcast auto-edit
+- Exhaustive component catalog
+- Separate SDK crate
 
 ## Verification
 
@@ -63,6 +85,14 @@ cargo test -p director-core --test examples stdlib_motion
 cargo test -p director-core --test examples smart_lower_third
 cargo test -p director-core --test examples faceless_short
 cargo test -p director-core --test examples kinetic_lower_third
+cargo test -p director-core --test examples image_beats
+```
+
+CLI smoke (optional local):
+
+```bash
+cargo run -p director-cli -- compositions examples/recipes/image_beats.rhai --json
+cargo run -p director-cli -- still examples/recipes/image_beats.rhai --composition image_beats -t 1 -o /tmp/image_beats.png
 ```
 
 ## Done when (plan exit)
@@ -70,8 +100,8 @@ cargo test -p director-core --test examples kinetic_lower_third
 - [x] L1: fade/pop/fly/pulse + typewriter + pulse_on_beat + ken_burns + unit tests
 - [x] L2: `add_smart_lower_third` + example
 - [x] L3: >=2 composition recipes green under examples harness + CLI list
-- [ ] L1 catalogued in agent-facing docs / api surface list (if catalog tracks scripting helpers)
-- [ ] At least one recipe path with **real media props** (image paths), not only typography
-- [ ] Second vertical recipe family OR documented stop-line for v1 stack
+- [x] L1 catalogued in agent-facing docs / api surface list (`RHAI_FUNCTION_CATALOG` + DOX)
+- [x] At least one recipe path with **real media props** (image paths): `image_beats`
+- [x] Documented v1 stop-line (this section) — second vertical family deferred with Historian/Clipper
 
-Until those last boxes flip, **do not mark this plan Done.**
+**Plan 07 = Done at the v1 stop-line.**

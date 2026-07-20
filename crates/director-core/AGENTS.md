@@ -319,10 +319,10 @@ Acceptance: `tests/pipeline_equivalence.rs`.
 ## Authoring stack (L0–L3)
 
 - **L0** — engine + raw Rhai (`animate`, nodes, timeline).
-- **L1** — `src/scripting/api/stdlib.rs`: `fade_in`/`out`, `pop_in`, `fly_in_*`/`fly_out_*`, `pulse`, `pulse_on_beat`, `typewriter`, `ken_burns`.
-- **L2** — `templates.rs` (`add_*` incl. `add_smart_lower_third`) + `register_composition` + shallow props.
-- **L3** — `examples/recipes/*` (must register compositions). Plan 07 is **in progress**, not finished.
-- No separate `director-sdk` crate.
+- **L1** — `src/scripting/api/stdlib.rs`: `fade_in`/`out`, `pop_in`, `fly_in_*`/`fly_out_*`, `pulse`, `pulse_on_beat`, `typewriter`, `ken_burns`. Catalogued in `RHAI_FUNCTION_CATALOG`.
+- **L2** — `templates.rs` (`add_*` incl. `add_smart_lower_third`) + `register_composition` + shallow props. Catalogued helpers: `add_smart_lower_third`, `register_composition`.
+- **L3** — `examples/recipes/*` (must register compositions): `faceless_short`, `kinetic_lower_third`, `image_beats` (media props). Plan 07 **Done at v1 stop-line** (`docs/plans/07-stdlib-and-recipes.md`).
+- No separate `director-sdk` crate. TTS Historian, Podcast Clipper, full component library deferred.
 
 ## Named compositions (Rhai)
 
