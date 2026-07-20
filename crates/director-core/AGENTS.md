@@ -319,10 +319,10 @@ Acceptance: `tests/pipeline_equivalence.rs`.
 ## Authoring stack (L0–L3)
 
 - **L0** — engine + raw Rhai (`animate`, nodes, timeline).
-- **L1** — `src/scripting/api/stdlib.rs` motion verbs: `fade_in`/`fade_out`, `pop_in`, `fly_in_*`/`fly_out_*`, `pulse` (thin wrappers over keyframe animate).
-- **L2** — `templates.rs` layout sugar + `register_composition` + shallow props.
-- **L3** — recipe scripts under `examples/recipes/` (must register compositions for CLI/preview).
-- Plan: `docs/plans/07-stdlib-and-recipes.md`. No separate `director-sdk` crate.
+- **L1** — `src/scripting/api/stdlib.rs`: `fade_in`/`out`, `pop_in`, `fly_in_*`/`fly_out_*`, `pulse`, `pulse_on_beat`, `typewriter`, `ken_burns`.
+- **L2** — `templates.rs` (`add_*` incl. `add_smart_lower_third`) + `register_composition` + shallow props.
+- **L3** — `examples/recipes/*` (must register compositions). Plan 07 is **in progress**, not finished.
+- No separate `director-sdk` crate.
 
 ## Named compositions (Rhai)
 

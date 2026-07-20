@@ -10,6 +10,7 @@
 //! ## Templates
 //! - **Title Card**: Full-screen centered title + subtitle
 //! - **Lower Third**: Bottom banner with text
+//! - **Smart Lower Third**: Content-reactive name/title plate (`add_smart_lower_third`)
 //! - **Split Screen**: Side-by-side content panels
 //! - **Reaction Overlay**: Main video + facecam corner
 //! - **Bento Grid**: Grid of content cards
@@ -53,6 +54,13 @@ pub fn register(engine: &mut Engine) {
         "add_lower_third",
         |scene: &mut SceneHandle, props: rhai::Map| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             build_lower_third(scene, &props)
+        },
+    );
+
+    engine.register_fn(
+        "add_smart_lower_third",
+        |scene: &mut SceneHandle, props: rhai::Map| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            build_smart_lower_third(scene, &props)
         },
     );
 
@@ -630,6 +638,167 @@ fn build_lower_third(
     text_node.style.flex_grow = 1.0;
     let text_id = d.scene.add_node(Box::new(text_node));
     attach_child(&mut d, root_id, text_id).map_err(to_eval_err)?;
+
+    Ok(NodeHandle {
+        director: scene.director.clone(),
+        id: root_id,
+    })
+}
+
+// ============================================================================
+// Smart Lower Third (content-reactive width + name/title stack)
+// ============================================================================
+
+fn build_smart_lower_third(
+    scene: &mut SceneHandle,
+    props: &rhai::Map,
+) -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+    let mut d = scene.lock_director()?;
+
+    let name = props
+        .get("name")
+        .or_else(|| props.get("text"))
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "Name".to_string());
+    let title = props
+        .get("title")
+        .or_else(|| props.get("subtitle"))
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    let bg_color = props
+        .get("bg_color")
+        .and_then(|v| v.clone().into_string().ok())
+        .and_then(|s| parse_hex_color(&s))
+        .unwrap_or(Color::new(0.06, 0.09, 0.16, 0.92));
+    let name_color = props
+        .get("name_color")
+        .or_else(|| props.get("text_color"))
+        .and_then(|v| v.clone().into_string().ok())
+        .and_then(|s| parse_hex_color(&s))
+        .unwrap_or(Color::new(1.0, 1.0, 1.0, 1.0));
+    let title_color = props
+        .get("title_color")
+        .and_then(|v| v.clone().into_string().ok())
+        .and_then(|s| parse_hex_color(&s))
+        .unwrap_or(Color::new(0.58, 0.64, 0.72, 1.0));
+    let accent = props
+        .get("accent_color")
+        .and_then(|v| v.clone().into_string().ok())
+        .and_then(|s| parse_hex_color(&s))
+        .unwrap_or(Color::new(0.22, 0.74, 0.97, 1.0));
+    let name_size = props
+        .get("name_size")
+        .or_else(|| props.get("text_size"))
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(36.0) as f32;
+    let title_size = props
+        .get("title_size")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(22.0) as f32;
+    let margin = props
+        .get("margin")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(48.0) as f32;
+    let max_width_pct = props
+        .get("max_width_pct")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(0.72)
+        .clamp(0.2, 1.0) as f32;
+
+    // Content-reactive width: rough char metric + padding, clamped to max fraction of canvas.
+    let longest = name.chars().count().max(title.chars().count()).max(1) as f32;
+    let approx_text_w = longest * name_size * 0.55;
+    let pad_x = 28.0_f32;
+    let accent_w = 8.0_f32;
+    let desired = approx_text_w + pad_x * 2.0 + accent_w + 16.0;
+    let canvas_w = d.width as f32;
+    let width_px = desired.clamp(180.0, canvas_w * max_width_pct);
+
+    let mut root = make_box_node(None);
+    parse_layout_style(props, &mut root.style);
+    apply_box_shadow(&mut root, props);
+    root.style.position = taffy::style::Position::Absolute;
+    root.style.inset = Rect {
+        left: LengthPercentageAuto::length(margin),
+        right: LengthPercentageAuto::auto(),
+        top: LengthPercentageAuto::auto(),
+        bottom: LengthPercentageAuto::length(margin),
+    };
+    root.style.size = Size {
+        width: Dimension::length(width_px),
+        height: Dimension::auto(),
+    };
+    root.style.flex_direction = FlexDirection::Row;
+    root.style.align_items = Some(AlignItems::Stretch);
+    root.style.gap = Size {
+        width: LengthPercentage::length(0.0),
+        height: LengthPercentage::length(0.0),
+    };
+
+    let root_id = d.scene.add_node(Box::new(root));
+    if !d.add_child(scene.root_id, root_id) {
+        d.scene.destroy_node(root_id);
+        return Err("Failed to attach smart lower third to scene".into());
+    }
+    set_root_z_index(&mut d.scene, root_id, props);
+
+    let mut bar = make_box_node(Some(accent));
+    bar.style.size = Size {
+        width: Dimension::length(accent_w),
+        height: Dimension::auto(),
+    };
+    bar.style.flex_grow = 0.0;
+    bar.style.flex_shrink = 0.0;
+    let bar_id = d.scene.add_node(Box::new(bar));
+    attach_child(&mut d, root_id, bar_id).map_err(to_eval_err)?;
+
+    let mut panel = make_box_node(Some(bg_color));
+    panel.style.flex_grow = 1.0;
+    panel.style.flex_direction = FlexDirection::Column;
+    panel.style.justify_content = Some(JustifyContent::Center);
+    panel.style.align_items = Some(AlignItems::FlexStart);
+    panel.style.padding = Rect {
+        left: LengthPercentage::length(pad_x),
+        right: LengthPercentage::length(pad_x),
+        top: LengthPercentage::length(14.0),
+        bottom: LengthPercentage::length(14.0),
+    };
+    panel.style.gap = Size {
+        width: LengthPercentage::length(0.0),
+        height: LengthPercentage::length(4.0),
+    };
+    // Soft corner on the trailing edge via border radius if supported by box.
+    let panel_id = d.scene.add_node(Box::new(panel));
+    attach_child(&mut d, root_id, panel_id).map_err(to_eval_err)?;
+
+    let font_family = props
+        .get("font_family")
+        .and_then(|v| v.clone().into_string().ok());
+    let mut name_node = make_text_node(
+        &mut d,
+        &name,
+        Some(name_color),
+        name_size,
+        Some(700),
+        font_family.clone(),
+    );
+    name_node.fit_mode = TextFit::Shrink;
+    let name_id = d.scene.add_node(Box::new(name_node));
+    attach_child(&mut d, panel_id, name_id).map_err(to_eval_err)?;
+
+    if !title.is_empty() {
+        let mut title_node = make_text_node(
+            &mut d,
+            &title,
+            Some(title_color),
+            title_size,
+            Some(500),
+            font_family,
+        );
+        title_node.fit_mode = TextFit::Shrink;
+        let title_id = d.scene.add_node(Box::new(title_node));
+        attach_child(&mut d, panel_id, title_id).map_err(to_eval_err)?;
+    }
 
     Ok(NodeHandle {
         director: scene.director.clone(),

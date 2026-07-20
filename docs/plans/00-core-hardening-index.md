@@ -65,7 +65,7 @@ Do not schedule under this program:
 | 4 | [04-animation-eval.md](04-animation-eval.md) | Pure, tested evaluation; loud unknown props | **Done** |
 | 5 | [05-scene-model.md](05-scene-model.md) | One serializable scene contract | **Done** |
 | 6 | [06-determinism-and-media.md](06-determinism-and-media.md) | Same script → same pixels/audio clock | **Done** |
-| 7 | [07-stdlib-and-recipes.md](07-stdlib-and-recipes.md) | L1 verbs + L2 contract + L3 recipes | **Done** |
+| 7 | [07-stdlib-and-recipes.md](07-stdlib-and-recipes.md) | L1 verbs + L2 contract + L3 recipes | **In progress** |
 
 **Dependency order:** `01` first (everything samples time). `02` before trusting incremental edit. `03` can start once dirty APIs are understood; finish after `01`–`02`. `04` parallel after `01` time helpers exist. `05` after identity stabilizes. `06` continuous background; fonts/CI can land anytime.
 
@@ -101,4 +101,4 @@ cargo test -p director-core --test visual_suite --no-default-features --features
 
 ## Next action
 
-Core hardening plans 01–06 are **Done**. Named compositions + props + subcommand CLI are implemented (see `docs/archive/PLAN-compositions-props-cli.md` and `crates/director-cli`). Keep core gates green. Live preview landed. Plan 07 (stdlib + recipes) **Done**. Next candidates: more recipes / agent repair; do not resurrect `director-sdk` without an explicit decision.
+Core hardening plans 01–06 are **Done**. Named compositions + props + subcommand CLI are implemented (see `docs/archive/PLAN-compositions-props-cli.md` and `crates/director-cli`). Keep core gates green. Live preview landed. Plan 07 (stdlib + recipes) is **in progress** (v1 L1/L2/L3 landed; exit criteria still open). Do not resurrect `director-sdk` without an explicit decision. Agent repair remains later.
