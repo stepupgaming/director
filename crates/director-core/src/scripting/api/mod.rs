@@ -24,6 +24,7 @@ pub mod manifest;
 pub mod nodes;
 pub mod properties;
 pub mod smart_caption;
+pub mod stdlib;
 pub mod style_policy;
 pub mod templates;
 
@@ -46,6 +47,7 @@ pub fn register_all_with_default_mode(
     lifecycle::register(engine, loader.clone(), default_mode);
     nodes::register(engine, loader.clone());
     animation::register(engine);
+    stdlib::register(engine);
     audio::register(engine);
     compiler::register(engine);
     effects::register(engine);

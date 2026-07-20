@@ -19,12 +19,12 @@ use super::super::utils::{parse_easing_result, parse_hex_color, parse_spring_con
 
 const TRANSFORM_PROPS: &str = "scale, scale_x, scale_y, rotation, skew_x, skew_y, translate_x/x, translate_y/y";
 
-fn rhai_err(msg: impl Into<String>) -> Box<EvalAltResult> {
+pub(crate) fn rhai_err(msg: impl Into<String>) -> Box<EvalAltResult> {
     Box::new(EvalAltResult::ErrorRuntime(msg.into().into(), rhai::Position::NONE))
 }
 
 /// Apply a keyframe segment to a transform or element property.
-fn apply_animate_prop(
+pub(crate) fn apply_animate_prop(
     n: &mut crate::scene::SceneNode,
     prop: &str,
     start: f32,

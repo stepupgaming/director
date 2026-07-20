@@ -93,7 +93,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Rhai examples are executable reference material. Update examples and tests when scripting-facing behavior changes.
 - Generated or downloaded assets should not become durable source unless the relevant AGENTS.md explicitly says they are owned there.
 - For Python scripts, keep dependencies executable through existing tooling and install packages only with `uv` when installation is necessary.
-- **Core hardening (01–06) is Done.** Product surface now includes named compositions + props + subcommand CLI + live preview. Still deferred: recipes, agent repair loops, SDK/template layers (`docs/archive/`). Keep core contracts green when changing engine spines.
+- **Core hardening (01–06) is Done.** Product surface includes compositions + CLI + live preview + plan 07 stdlib/recipes. Still deferred: agent repair loops, separate director-sdk crate (`docs/archive/`). Keep core contracts green when changing engine spines.
 - Longer-term product direction (after core gates): autonomous high-quality video production for short-form and long-form (Shorts, Reels, TikTok, YouTube). Avoid optimizing for low-quality generated output. Web research as an input belongs at orchestration layers, not in the render core.
 - `vendor/` contains patched copies of third-party crates that cannot be fixed via `[patch.crates-io]` to upstream. Do not modify vendor sources without updating the corresponding `AGENTS.md`.
 - `vendor/skia-safe/` is skia-safe 0.90.0 with two patches keeping the Vulkan `get_proc` thread-local resolver alive for lazy resolution (readback/flush). If the dependency is ever bumped, reapply the patches from the diff in `vendor/AGENTS.md`.

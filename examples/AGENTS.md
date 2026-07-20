@@ -6,6 +6,7 @@
 
 - `basics/` owns minimal reference scripts for core Rhai API usage.
 - `features/` owns scripts demonstrating higher-level rendering, media, effects, transitions, and hardware encoding examples.
+- `recipes/` owns L3 full-arc composition scripts (props in, finished show out).
 - `tests/` owns test scripts, visual comparison helpers, and reference media.
 - Root example `.rhai` files own broader manual or preview scenarios.
 
@@ -20,6 +21,8 @@
 - Update examples when user-facing scripting behavior changes.
 - Prefer small, readable scripts for basics and richer compositions for feature demonstrations.
 - `features/compositions.rhai` demonstrates `register_composition` + default_props; validation accepts either a Movie return or a non-empty composition registry (builders exercised with defaults).
+- `features/stdlib_motion.rhai` covers L1 motion verbs (`fade_in`, `pop_in`, `fly_in_*`, `pulse`).
+- `recipes/faceless_short.rhai` is the first L3 recipe (vertical kinetic explainer via `register_composition`).
 - Keep test helper behavior deterministic enough for CI or local validation.
 
 ## Verification

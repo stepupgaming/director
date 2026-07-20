@@ -168,6 +168,16 @@ fn example_features_compositions() {
     validate_script("examples/features/compositions.rhai");
 }
 
+#[test]
+fn example_features_stdlib_motion() {
+    validate_script("examples/features/stdlib_motion.rhai");
+}
+
+#[test]
+fn example_recipes_faceless_short() {
+    validate_script("examples/recipes/faceless_short.rhai");
+}
+
 fn validate_script(relative_path: &str) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let manifest_path = PathBuf::from(manifest_dir);

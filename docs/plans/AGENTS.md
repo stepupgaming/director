@@ -5,7 +5,8 @@
 ## Ownership
 
 - `00-core-hardening-index.md` — master sequence, **verified truth snapshot**, non-goals, definition of done. Truth pass is complete; do not re-open product scope from `docs/archive/` without updating 00.
-- `01`–`06` — time, identity, pipeline, animation eval, scene model, determinism/media. Implement in order unless 00 explicitly allows parallel work.
+- `01`–`06` — time, identity, pipeline, animation eval, scene model, determinism/media. **Done.**
+- `07-stdlib-and-recipes.md` — L1 motion stdlib + L2 component contract + L3 recipes on the current stack (no SDK crate).
 
 ## Local Contracts
 
@@ -18,7 +19,7 @@
 
 - Implement in index order unless a plan explicitly allows parallel work.
 - Prefer package-scoped tests while iterating; workspace checks before closeout.
-- Do not expand scope into archived composition/SDK/recipe work under these plans.
+- Composition CLI + preview already landed; recipe/stdlib work is plan 07 (not archive C / director-sdk).
 
 ## Verification
 
