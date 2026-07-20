@@ -128,7 +128,7 @@ See plan **06** (implemented). Acceptance: `tests/determinism_media.rs`.
 
 These are **not** core solidity work:
 
-- Live preview server (compositions/props CLI: landed)  
+- Live preview server: landed (`director-engine preview`); compositions/props CLI: landed  
 - Agent repair loops / recipes / SDK L1–L3  
 - New shader packs, NLE UI, GPU rewrite, in-engine STT  
 

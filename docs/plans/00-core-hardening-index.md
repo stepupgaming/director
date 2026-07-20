@@ -2,7 +2,7 @@
 
 > **Status:** Plans 01–06 implemented (2026-07-19) — core hardening program complete
 > **Priority:** Engine solidity over product surface  
-> **Post-core product:** compositions/props CLI landed; still later: preview server, recipes, agent repair loops, SDK/template layers
+> **Post-core product:** compositions/props CLI + live preview landed; still later: recipes, agent repair loops, SDK/template layers
 
 ## Goal
 
@@ -49,7 +49,7 @@ Make Director a **trustworthy frame engine**: one time model, stable identity, p
 Do not schedule under this program:
 
 - Named compositions / props / subcommand CLI (landed; see archive plan)
-- Live preview server
+- Live preview server (landed: `director-engine preview`)
 - Agent inspect→repair product loop
 - Recipes / SDK L1–L3 / template strategy
 - New shader batches, NLE UI, GPU rewrite, in-engine STT
@@ -100,4 +100,4 @@ cargo test -p director-core --test visual_suite --no-default-features --features
 
 ## Next action
 
-Core hardening plans 01–06 are **Done**. Named compositions + props + subcommand CLI are implemented (see `docs/archive/PLAN-compositions-props-cli.md` and `crates/director-cli`). Keep core gates green. Next product milestone candidates: live preview server; do not resurrect recipes/SDK without an explicit decision.
+Core hardening plans 01–06 are **Done**. Named compositions + props + subcommand CLI are implemented (see `docs/archive/PLAN-compositions-props-cli.md` and `crates/director-cli`). Keep core gates green. Live preview (`director-engine preview`) landed. Next candidates: recipes / agent repair; do not resurrect SDK layers without an explicit decision.

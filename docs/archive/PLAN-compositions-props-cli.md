@@ -1,6 +1,6 @@
 # Director: Named Compositions + Typed Props + Subcommand CLI
 
-> **IMPLEMENTED (2026-07-19).** Core compositions registry + CLI subcommands landed after core-hardening 01–06. Live preview server remains the next product milestone.
+> **IMPLEMENTED (2026-07-19).** Core compositions registry + CLI subcommands landed after core-hardening 01–06. Live preview server also landed (`director-engine preview`).
 
 ## Context & decisions made
 

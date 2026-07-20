@@ -1,4 +1,5 @@
 mod gpu;
+mod preview;
 mod run;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -9,6 +10,7 @@ use director_core::video_wrapper::RenderMode;
 use run::{default_video_output, eval_script, resolve_movie, ResolveOpts};
 use skia_safe::{AlphaType, ColorSpace, ColorType, EncodedImageFormat};
 use std::fs;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -75,6 +77,8 @@ enum Commands {
     Still(StillArgs),
     /// List compositions registered by a script
     Compositions(CompositionsArgs),
+    /// Live web preview (scrub / play frames in the browser)
+    Preview(CliPreviewArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -145,6 +149,32 @@ struct CompositionsArgs {
     /// Emit JSON instead of a human table
     #[arg(long, default_value_t = false)]
     json: bool,
+}
+
+#[derive(Parser, Debug)]
+struct CliPreviewArgs {
+    /// Path to the Rhai script
+    script: PathBuf,
+
+    /// Named composition to build
+    #[arg(long)]
+    composition: Option<String>,
+
+    /// Props JSON file path or inline object string
+    #[arg(long)]
+    props: Option<String>,
+
+    /// Bind address (default 127.0.0.1:7788)
+    #[arg(long, default_value = "127.0.0.1:7788")]
+    bind: String,
+
+    /// Open the default browser to the preview URL
+    #[arg(long, default_value_t = true)]
+    open: bool,
+
+    /// Do not open a browser
+    #[arg(long, default_value_t = false)]
+    no_open: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -395,6 +425,34 @@ fn cmd_compositions(args: CompositionsArgs) {
     }
 }
 
+fn cmd_preview(args: CliPreviewArgs) {
+    let bind: SocketAddr = match args.bind.parse() {
+        Ok(a) => a,
+        Err(e) => {
+            error!("invalid --bind '{}': {}", args.bind, e);
+            std::process::exit(1);
+        }
+    };
+    let open_browser = args.open && !args.no_open;
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            error!("failed to start tokio runtime: {}", e);
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = rt.block_on(preview::run_preview(preview::PreviewArgs {
+        script: args.script,
+        composition: args.composition,
+        props: args.props,
+        bind,
+        open_browser,
+    })) {
+        error!("{}", e);
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -404,13 +462,14 @@ fn main() {
         Some(Commands::Render(args)) => cmd_render(args),
         Some(Commands::Still(args)) => cmd_still(args),
         Some(Commands::Compositions(args)) => cmd_compositions(args),
+        Some(Commands::Preview(args)) => cmd_preview(args),
         None => {
             let script = match cli.script {
                 Some(s) => s,
                 None => {
                     eprintln!(
                         "Usage: director-engine <SCRIPT> [OUTPUT]\n\
-                         Or:    director-engine render|still|compositions --help\n\
+                         Or:    director-engine render|still|compositions|preview --help\n\
                          Note: a script named 'render.rhai' needs the explicit form:\n\
                                director-engine render render.rhai"
                     );

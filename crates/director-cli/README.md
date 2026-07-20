@@ -56,6 +56,18 @@ director-engine render render.rhai -o out.mp4
 | 1 | Script / composition / args error |
 | 2 | Render error |
 
+
+# Live preview (browser)
+
+```bash
+director-engine preview script.rhai
+director-engine preview script.rhai --composition intro --props '{"title":"X"}'
+director-engine preview script.rhai --bind 127.0.0.1:7788 --no-open
+```
+
+Opens a minimal player at `http://127.0.0.1:7788/` (scrub, play, reload).
+Endpoints: `GET /api/meta`, `GET /api/frame?t=`, `POST /api/reload`.
+
 ## Installation
 
 ```bash

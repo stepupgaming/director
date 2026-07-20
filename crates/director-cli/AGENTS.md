@@ -4,7 +4,8 @@
 
 ## Ownership
 
-- `src/main.rs` owns the `director-engine` CLI: subcommands `render`, `still`, `compositions`, plus legacy bare `SCRIPT [OUTPUT]`.
+- `src/main.rs` owns the `director-engine` CLI: subcommands `render`, `still`, `compositions`, `preview`, plus legacy bare `SCRIPT [OUTPUT]`.
+- `src/preview/` owns the Axum live preview server and embedded HTML player.
 - `src/run.rs` owns shared script eval + composition/movie resolution (`eval_script`, `resolve_movie`).
 - `src/gpu.rs` owns optional Vulkan context creation.
 - `src/bin/preview_frame.rs` is a **deprecated** still-frame shim; prefer `director-engine still`.
@@ -35,6 +36,7 @@
 - `cargo run -p director-cli --bin director-engine -- --help`
 - `cargo run -p director-cli --bin director-engine -- compositions examples/features/compositions.rhai --json`
 - `cargo run -p director-cli --bin director-engine -- still examples/features/compositions.rhai --composition intro -t 1 -o output/intro.png`
+- `cargo run -p director-cli --bin director-engine -- preview examples/features/compositions.rhai --composition intro --no-open`
 - `cargo run -p director-cli --bin director-manifest -- from-script examples/foo.rhai`
 
 ## Child DOX Index

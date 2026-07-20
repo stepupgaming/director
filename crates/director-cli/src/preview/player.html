@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Director Preview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: #121a2f;
+      --text: #e8eefc;
+      --muted: #93a0c0;
+      --accent: #5b9dff;
+      --border: #24314f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a2748, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(10, 14, 28, 0.7);
+      backdrop-filter: blur(8px);
+    }
+    h1 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: 0.02em;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-variant-numeric: tabular-nums;
+    }
+    main {
+      flex: 1;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+    }
+    .stage {
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      max-width: min(96vw, 1280px);
+      max-height: calc(100vh - 180px);
+    }
+    .stage img {
+      display: block;
+      max-width: 100%;
+      max-height: calc(100vh - 180px);
+      width: auto;
+      height: auto;
+      background: #111;
+    }
+    footer {
+      padding: 0.85rem 1rem 1.1rem;
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+      display: grid;
+      gap: 0.65rem;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    button, select {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: #1a2440;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.4rem 0.7rem;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover, select:hover { border-color: var(--accent); }
+    button.primary {
+      background: linear-gradient(180deg, #3d7dff, #2b63d9);
+      border-color: transparent;
+    }
+    input[type="range"] {
+      flex: 1;
+      min-width: 160px;
+      accent-color: var(--accent);
+    }
+    .time {
+      min-width: 9ch;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .err {
+      color: #ff8e8e;
+      font-size: 0.85rem;
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Director Preview</h1>
+    <div class="meta" id="metaLine">loading…</div>
+  </header>
+  <main>
+    <div class="stage">
+      <img id="frame" alt="preview frame" />
+    </div>
+  </main>
+  <footer>
+    <div class="row">
+      <button class="primary" id="playBtn" type="button">Play</button>
+      <button id="reloadBtn" type="button">Reload</button>
+      <input id="scrub" type="range" min="0" max="1000" value="0" step="1" />
+      <div class="time" id="timeLabel">0.000s</div>
+    </div>
+    <div class="row">
+      <label class="meta" for="compSelect">Composition</label>
+      <select id="compSelect" disabled>
+        <option value="">(default)</option>
+      </select>
+      <span class="err" id="err"></span>
+    </div>
+  </footer>
+  <script>
+    const frameEl = document.getElementById('frame');
+    const scrub = document.getElementById('scrub');
+    const playBtn = document.getElementById('playBtn');
+    const reloadBtn = document.getElementById('reloadBtn');
+    const timeLabel = document.getElementById('timeLabel');
+    const metaLine = document.getElementById('metaLine');
+    const errEl = document.getElementById('err');
+    const compSelect = document.getElementById('compSelect');
+
+    let meta = null;
+    let playing = false;
+    let raf = 0;
+    let lastTs = 0;
+    let t = 0;
+    let inFlight = false;
+    let wantT = 0;
+    let reqToken = 0;
+
+    function setError(msg) {
+      errEl.textContent = msg || '';
+    }
+
+    function formatTime(sec) {
+      return `${sec.toFixed(3)}s`;
+    }
+
+    function duration() {
+      return meta ? meta.duration : 1;
+    }
+
+    function fps() {
+      return meta && meta.fps > 0 ? meta.fps : 30;
+    }
+
+    async function fetchMeta() {
+      const res = await fetch('/api/meta');
+      if (!res.ok) throw new Error(await res.text());
+      meta = await res.json();
+      metaLine.textContent =
+        `${meta.width}×${meta.height} @ ${meta.fps}fps · ${formatTime(meta.duration)}` +
+        (meta.composition ? ` · ${meta.composition}` : '') +
+        ` · ${meta.script}`;
+      scrub.max = String(Math.max(1, Math.round(meta.duration * 1000)));
+      // composition list is informational (server resolved at start)
+      compSelect.innerHTML = '';
+      if (meta.compositions && meta.compositions.length) {
+        for (const name of meta.compositions) {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          if (meta.composition === name) opt.selected = true;
+          compSelect.appendChild(opt);
+        }
+        compSelect.disabled = true;
+        compSelect.title = 'Restart preview with --composition to switch';
+      } else {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '(legacy movie)';
+        compSelect.appendChild(opt);
+        compSelect.disabled = true;
+      }
+    }
+
+    async function showFrame(at) {
+      wantT = Math.max(0, Math.min(duration(), at));
+      t = wantT;
+      scrub.value = String(Math.round(t * 1000));
+      timeLabel.textContent = formatTime(t);
+      if (inFlight) return;
+      inFlight = true;
+      const token = ++reqToken;
+      try {
+        while (true) {
+          const target = wantT;
+          const url = `/api/frame?t=${encodeURIComponent(target.toFixed(4))}`;
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) {
+            const body = await res.text();
+            throw new Error(body || res.statusText);
+          }
+          const blob = await res.blob();
+          if (token !== reqToken) return;
+          const obj = URL.createObjectURL(blob);
+          const prev = frameEl.src;
+          frameEl.src = obj;
+          if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+          setError('');
+          if (Math.abs(wantT - target) < 1e-4) break;
+        }
+      } catch (e) {
+        setError(String(e.message || e));
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    function tick(ts) {
+      if (!playing) return;
+      if (!lastTs) lastTs = ts;
+      const dt = (ts - lastTs) / 1000;
+      lastTs = ts;
+      let next = t + dt;
+      if (next >= duration()) {
+        next = 0;
+      }
+      showFrame(next);
+      raf = requestAnimationFrame(tick);
+    }
+
+    function setPlaying(on) {
+      playing = on;
+      playBtn.textContent = on ? 'Pause' : 'Play';
+      cancelAnimationFrame(raf);
+      lastTs = 0;
+      if (on) raf = requestAnimationFrame(tick);
+    }
+
+    scrub.addEventListener('input', () => {
+      setPlaying(false);
+      showFrame(Number(scrub.value) / 1000);
+    });
+
+    playBtn.addEventListener('click', () => setPlaying(!playing));
+
+    reloadBtn.addEventListener('click', async () => {
+      setPlaying(false);
+      setError('reloading…');
+      try {
+        const res = await fetch('/api/reload', { method: 'POST' });
+        if (!res.ok) throw new Error(await res.text());
+        meta = await res.json();
+        await fetchMeta();
+        await showFrame(0);
+        setError('');
+      } catch (e) {
+        setError(String(e.message || e));
+      }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setPlaying(!playing);
+      } else if (e.code === 'ArrowRight') {
+        setPlaying(false);
+        showFrame(t + 1 / fps());
+      } else if (e.code === 'ArrowLeft') {
+        setPlaying(false);
+        showFrame(t - 1 / fps());
+      } else if (e.code === 'Home') {
+        setPlaying(false);
+        showFrame(0);
+      }
+    });
+
+    (async () => {
+      try {
+        await fetchMeta();
+        await showFrame(0);
+      } catch (e) {
+        setError(String(e.message || e));
+      }
+    })();
+  </script>
+</body>
+</html>
