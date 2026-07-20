@@ -19,6 +19,7 @@
 
 - Update examples when user-facing scripting behavior changes.
 - Prefer small, readable scripts for basics and richer compositions for feature demonstrations.
+- `features/compositions.rhai` demonstrates `register_composition` + default_props; validation accepts either a Movie return or a non-empty composition registry (builders exercised with defaults).
 - Keep test helper behavior deterministic enough for CI or local validation.
 
 ## Verification

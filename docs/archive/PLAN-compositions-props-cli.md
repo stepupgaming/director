@@ -1,7 +1,6 @@
 # Director: Named Compositions + Typed Props + Subcommand CLI
 
-> **ARCHIVED / DEFERRED (2026-07-19).** Valid product plan, but **not** current priority.  
-> Resume only after core-hardening plans 01–03 (at least) land. See [`docs/plans/`](../plans/00-core-hardening-index.md).
+> **IMPLEMENTED (2026-07-19).** Core compositions registry + CLI subcommands landed after core-hardening 01–06. Live preview server remains the next product milestone.
 
 ## Context & decisions made
 

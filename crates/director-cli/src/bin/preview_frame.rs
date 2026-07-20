@@ -1,15 +1,23 @@
+//! Deprecated shim: use `director-engine still` instead.
+
 use clap::Parser;
-use director_core::scripting::register_rhai_api;
+use director_core::scripting::{
+    props_from_file_or_inline, register_rhai_api_with_compositions, MovieHandle,
+};
 use director_core::systems::renderer::render_frame;
+use director_core::video_wrapper::RenderMode;
 use director_core::DefaultAssetLoader;
-use rhai::Engine;
+use rhai::{Dynamic, Engine};
 use skia_safe::{AlphaType, ColorSpace, ColorType, EncodedImageFormat};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Parser, Debug)]
-#[command(name = "preview-frame", about = "Render a single frame from a Rhai script")]
+#[command(
+    name = "preview-frame",
+    about = "DEPRECATED: render a single frame (prefer `director-engine still`)"
+)]
 struct Cli {
     /// Path to the Rhai script
     script: PathBuf,
@@ -21,9 +29,19 @@ struct Cli {
     /// Output PNG path (defaults to frame_{time}.png next to script)
     #[arg(short = 'o', long)]
     output: Option<PathBuf>,
+
+    /// Named composition (if the script registers compositions)
+    #[arg(long)]
+    composition: Option<String>,
+
+    /// Props JSON file or inline object
+    #[arg(long)]
+    props: Option<String>,
 }
 
 fn main() {
+    eprintln!("warning: `preview_frame` is deprecated; use `director-engine still` instead");
+
     let cli = Cli::parse();
 
     let script = match fs::read_to_string(&cli.script) {
@@ -49,13 +67,53 @@ fn main() {
     });
 
     let mut engine = Engine::new();
-    register_rhai_api(&mut engine, Arc::new(DefaultAssetLoader));
+    let registry = register_rhai_api_with_compositions(
+        &mut engine,
+        Arc::new(DefaultAssetLoader),
+        RenderMode::Preview,
+    );
 
-    let movie = match engine.eval::<director_core::scripting::MovieHandle>(&script) {
-        Ok(m) => m,
+    let ast = match engine.compile(&script) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Script compile error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let eval_result = match engine.eval_ast::<Dynamic>(&ast) {
+        Ok(v) => v,
         Err(e) => {
             eprintln!("Script error: {}", e);
             std::process::exit(1);
+        }
+    };
+
+    let movie = if !registry.is_empty() {
+        let over = match cli.props.as_deref() {
+            Some(spec) => match props_from_file_or_inline(spec) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            },
+            None => None,
+        };
+        match registry.build(&engine, &ast, cli.composition.as_deref(), over.as_ref()) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        match eval_result.try_cast::<MovieHandle>() {
+            Some(m) => m,
+            None => {
+                eprintln!("Script must return a Movie or register compositions");
+                std::process::exit(1);
+            }
         }
     };
 

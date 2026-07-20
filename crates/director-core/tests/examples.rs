@@ -4,13 +4,15 @@
 //! It ensures scripts:
 //! - Parse without syntax errors
 //! - Execute without runtime errors
-//! - Return a valid MovieHandle
+//! - Return a valid MovieHandle **or** register named compositions whose
+//!   builders produce MovieHandles with default props
 
 use director_core::{
-    scripting::{register_rhai_api, MovieHandle},
+    scripting::{register_rhai_api_with_compositions, MovieHandle},
+    video_wrapper::RenderMode,
     DefaultAssetLoader,
 };
-use rhai::Engine;
+use rhai::{Dynamic, Engine};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -50,10 +52,6 @@ fn validate_all_example_scripts() {
     let scripts = collect_example_scripts();
     assert!(!scripts.is_empty(), "No example scripts found!");
 
-    let mut engine = Engine::new();
-    let loader = Arc::new(DefaultAssetLoader);
-    register_rhai_api(&mut engine, loader);
-
     // Set working directory to workspace root for asset paths
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let manifest_path = PathBuf::from(manifest_dir);
@@ -79,13 +77,9 @@ fn validate_all_example_scripts() {
             }
         };
 
-        match engine.eval::<MovieHandle>(&script) {
-            Ok(_) => {
-                passed += 1;
-            }
-            Err(e) => {
-                failed.push(format!("{}: {}", script_name, e));
-            }
+        match validate_script_source(&script, &script_name) {
+            Ok(()) => passed += 1,
+            Err(e) => failed.push(e),
         }
     }
 
@@ -169,11 +163,12 @@ fn example_features_style_policy_check() {
     validate_script("examples/features/style_policy_check.rhai");
 }
 
-fn validate_script(relative_path: &str) {
-    let mut engine = Engine::new();
-    let loader = Arc::new(DefaultAssetLoader);
-    register_rhai_api(&mut engine, loader);
+#[test]
+fn example_features_compositions() {
+    validate_script("examples/features/compositions.rhai");
+}
 
+fn validate_script(relative_path: &str) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let manifest_path = PathBuf::from(manifest_dir);
     let workspace_root = manifest_path
@@ -188,11 +183,41 @@ fn validate_script(relative_path: &str) {
     let script = fs::read_to_string(&script_path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", relative_path, e));
 
-    let result = engine.eval::<MovieHandle>(&script);
-    assert!(
-        result.is_ok(),
-        "Script {} failed: {:?}",
-        relative_path,
-        result.err()
+    validate_script_source(&script, relative_path).unwrap_or_else(|e| panic!("{}", e));
+}
+
+/// Accept either a legacy Movie return or a non-empty composition registry
+/// (and exercise each builder with default props).
+fn validate_script_source(script: &str, label: &str) -> Result<(), String> {
+    let mut engine = Engine::new();
+    let registry = register_rhai_api_with_compositions(
+        &mut engine,
+        Arc::new(DefaultAssetLoader),
+        RenderMode::Preview,
     );
+
+    let ast = engine
+        .compile(script)
+        .map_err(|e| format!("{}: compile error: {}", label, e))?;
+    let result = engine
+        .eval_ast::<Dynamic>(&ast)
+        .map_err(|e| format!("{}: {}", label, e))?;
+
+    if !registry.is_empty() {
+        for entry in registry.entries() {
+            registry
+                .build(&engine, &ast, Some(&entry.name), None)
+                .map_err(|e| format!("{}: composition '{}': {}", label, entry.name, e))?;
+        }
+        return Ok(());
+    }
+
+    if result.try_cast::<MovieHandle>().is_some() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{}: script must return MovieHandle or register compositions",
+        label
+    ))
 }

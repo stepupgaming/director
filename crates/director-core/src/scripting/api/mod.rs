@@ -9,10 +9,12 @@
 //! - **audio**: Audio loading, analysis, and reactivity
 //! - **effects**: Visual effects and shaders
 //! - **properties**: Node property setters
+//! - **compositions**: Named compositions + typed props registry
 
 pub mod animation;
 pub mod audio;
 pub mod compiler;
+pub mod compositions;
 pub mod effects;
 pub mod entities;
 pub mod http;
@@ -32,6 +34,10 @@ use std::sync::Arc;
 
 /// Register all API functions with a specific default render mode for
 /// `new_director(width, height, fps)`.
+///
+/// Does **not** register named compositions — hosts that need
+/// `register_composition` must also call [`compositions::register`] with a
+/// shared [`compositions::CompositionRegistry`].
 pub fn register_all_with_default_mode(
     engine: &mut Engine,
     loader: Arc<dyn AssetLoader>,

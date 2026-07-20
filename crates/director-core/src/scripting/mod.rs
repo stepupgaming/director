@@ -22,6 +22,10 @@ mod theme;
 pub mod types;
 pub mod utils;
 
+pub use api::compositions::{
+    build_entry, merged_props, props_from_file_or_inline, props_from_json_str,
+    props_from_json_value, CompositionEntry, CompositionRegistry,
+};
 pub use theme::create_theme_api;
 pub use types::{AudioTrackHandle, MovieHandle, NodeHandle, SceneHandle};
 
@@ -41,6 +45,8 @@ pub const MAX_EXPR_DEPTHS: usize = 128;
 /// Registers the Director Engine API into the provided Rhai `Engine`.
 ///
 /// This exposes `Movie`, `Scene`, `Node`, `AudioTrack` types and their methods.
+/// Named compositions are not registered; use
+/// [`register_rhai_api_with_compositions`] or [`register_composition_api`].
 pub fn register_rhai_api(engine: &mut Engine, loader: Arc<dyn AssetLoader>) {
     register_rhai_api_with_default_mode(engine, loader, RenderMode::Preview);
 }
@@ -64,6 +70,26 @@ pub fn register_rhai_api_with_default_mode(
 
     // Register all API functions
     api::register_all_with_default_mode(engine, loader, default_mode);
+}
+
+/// Registers `register_composition` against an engine-scoped registry.
+///
+/// Call after the base API registration. The host must keep `registry` and the
+/// compiled script [`rhai::AST`] alive when invoking builders.
+pub fn register_composition_api(engine: &mut Engine, registry: CompositionRegistry) {
+    api::compositions::register(engine, registry);
+}
+
+/// Convenience: base API + composition registry (returned for the host).
+pub fn register_rhai_api_with_compositions(
+    engine: &mut Engine,
+    loader: Arc<dyn AssetLoader>,
+    default_mode: RenderMode,
+) -> CompositionRegistry {
+    register_rhai_api_with_default_mode(engine, loader, default_mode);
+    let registry = CompositionRegistry::new();
+    register_composition_api(engine, registry.clone());
+    registry
 }
 
 /// Override the Rhai expression-depth limits at runtime (e.g. from a host

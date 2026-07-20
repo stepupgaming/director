@@ -316,6 +316,13 @@ Acceptance: `tests/pipeline_equivalence.rs`.
   `invalidate_audio_track(movie, idx)`, `invalidate_node(movie, id)`,
   `dirty_nodes(movie)`, `compiler_edge_count(movie)`.
 
+## Named compositions (Rhai)
+
+- `src/scripting/api/compositions.rs` — `CompositionRegistry`, `register_composition`, shallow props merge, JSON listing.
+- Hosts that need compositions call `register_rhai_api_with_compositions` (or `register_composition_api`) and keep the compiled AST alive for `FnPtr::call`.
+- Base `register_rhai_api*` does **not** install the composition registry (opt-in per host).
+- Acceptance: unit tests in `compositions.rs`; example `examples/features/compositions.rhai`; `tests/examples.rs` accepts Movie **or** registry builders.
+
 ## Child DOX Index
 
 - `src/node/AGENTS.md` — effect/shader system: the 6-place shader registration

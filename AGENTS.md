@@ -84,7 +84,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - When asked for advice, provide options rather than a single path.
 - Never use `pip` for Python package installation; use `uv`.
 - Do not use the phrasing the user has forbidden in project instructions.
-- Prefer core engine solidity (time, identity, render pipeline, animation eval, scene model, determinism) over product surface (recipes, agent repair, compositions CLI) until core-hardening plans are done.
+- Core-hardening plans 01–06 are Done. Named compositions + subcommand CLI are in tree; live preview server and recipes remain later product work.
 
 ## Work Guidance
 
@@ -93,7 +93,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Rhai examples are executable reference material. Update examples and tests when scripting-facing behavior changes.
 - Generated or downloaded assets should not become durable source unless the relevant AGENTS.md explicitly says they are owned there.
 - For Python scripts, keep dependencies executable through existing tooling and install packages only with `uv` when installation is necessary.
-- **Near-term engineering priority: core hardening** — time/timeline unification, stable identity, frame-pipeline equivalence, animation eval lock, single scene model, determinism/media. Follow `docs/plans/00-core-hardening-index.md` and `docs/architecture/core-contracts.md`. Do not prioritize compositions/props CLI, preview server, recipes, agent repair loops, or SDK/template layers until those gates land (deferred material is under `docs/archive/`).
+- **Core hardening (01–06) is Done.** Product surface now includes named compositions + props + subcommand CLI. Still deferred: live preview server, recipes, agent repair loops, SDK/template layers (`docs/archive/`). Keep core contracts green when changing engine spines.
 - Longer-term product direction (after core gates): autonomous high-quality video production for short-form and long-form (Shorts, Reels, TikTok, YouTube). Avoid optimizing for low-quality generated output. Web research as an input belongs at orchestration layers, not in the render core.
 - `vendor/` contains patched copies of third-party crates that cannot be fixed via `[patch.crates-io]` to upstream. Do not modify vendor sources without updating the corresponding `AGENTS.md`.
 - `vendor/skia-safe/` is skia-safe 0.90.0 with two patches keeping the Vulkan `get_proc` thread-local resolver alive for lazy resolution (readback/flush). If the dependency is ever bumped, reapply the patches from the diff in `vendor/AGENTS.md`.
