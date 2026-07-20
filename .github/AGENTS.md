@@ -12,11 +12,13 @@
 - CI should reflect commands that contributors can run locally from this repository.
 - Keep system dependency installation aligned with Skia, FFmpeg, font, and audio requirements used by tests.
 - Do not add workflow-only behavior that bypasses repository verification documented in AGENTS.md files.
+- **Auto CI is disabled** on push/PR to conserve private-repo Actions minutes. Workflows stay in tree and run only via `workflow_dispatch` until re-enabled.
 
 ## Work Guidance
 
 - Update workflow commands when package names, feature flags, or test entry points change.
 - Prefer explicit setup steps for external binary/font dependencies needed by tests.
+- To re-enable auto CI, restore `push` / `pull_request` triggers on `ci.yml` and `visual_regression.yml`.
 
 ## Verification
 

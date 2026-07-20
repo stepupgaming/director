@@ -1,9 +1,7 @@
 name: Visual Regression
 
+# Auto CI disabled (private repo quota). Run manually via Actions → workflow_dispatch.
 on:
-  push:
-    branches: [main, master]
-  pull_request:
   workflow_dispatch:
 
 env:
