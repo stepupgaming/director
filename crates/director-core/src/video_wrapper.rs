@@ -9,9 +9,10 @@
 use anyhow::{Context, Result};
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::hash::Hash;
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 // use std::sync::{Arc, Mutex};
@@ -605,10 +606,96 @@ pub enum VideoResponse {
     Error(String),
 }
 
+/// Maximum frames held per decoder cache. Covers freeze frames and the
+/// motion-blur sub-samples that re-request nearby timestamps.
+const MAX_CACHED_FRAMES: usize = 8;
+/// Sequential reads farther ahead than this restart the decode pipe instead
+/// of discarding intermediate frames one by one.
+const MAX_SKIP_AHEAD: u64 = 60;
+
+/// A persistent `ffmpeg` decode pipe for one video source.
+///
+/// Export renders in timeline order, so the common case is a sequential read
+/// from a single long-lived child process — one spawn per source instead of
+/// one per frame. Random seeks (timeline jumps, scrubbing) restart the child
+/// at the new position.
+struct DecodeSession {
+    child: std::process::Child,
+    reader: BufReader<std::process::ChildStdout>,
+    /// Source frame index the next `read_frame` call will return.
+    next_index: u64,
+    frame_len: usize,
+}
+
+impl DecodeSession {
+    fn start(path: &Path, seek_time: f64, start_index: u64, frame_len: usize) -> Result<Self> {
+        let mut child = Command::new(FFmpegDriver::binary())
+            .arg("-ss")
+            .arg(seek_time.max(0.0).to_string())
+            .arg("-i")
+            .arg(path)
+            .arg("-f")
+            .arg("rawvideo")
+            .arg("-pix_fmt")
+            .arg("rgba")
+            .arg("-")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .with_context(|| format!("Failed to spawn ffmpeg decoder for {}", path.display()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("ffmpeg decoder stdout unavailable"))?;
+        Ok(Self {
+            child,
+            reader: BufReader::new(stdout),
+            next_index: start_index,
+            frame_len,
+        })
+    }
+
+    fn read_frame(&mut self) -> Result<Vec<u8>> {
+        let mut buffer = vec![0u8; self.frame_len];
+        self.reader.read_exact(&mut buffer).with_context(|| {
+            format!(
+                "ffmpeg decode pipe ended at source frame {}",
+                self.next_index
+            )
+        })?;
+        self.next_index += 1;
+        Ok(buffer)
+    }
+
+    fn shutdown(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn cache_insert(
+    cache: &mut HashMap<u64, Vec<u8>>,
+    order: &mut VecDeque<u64>,
+    index: u64,
+    frame: Vec<u8>,
+) {
+    if cache.contains_key(&index) {
+        return;
+    }
+    cache.insert(index, frame);
+    order.push_back(index);
+    while order.len() > MAX_CACHED_FRAMES {
+        if let Some(old) = order.pop_front() {
+            cache.remove(&old);
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ThreadedDecoder {
     cmd_tx: Sender<VideoCommand>,
     resp_rx: Receiver<VideoResponse>,
+    source_fps: f64,
     _mode: RenderMode,
 }
 
@@ -622,87 +709,100 @@ impl ThreadedDecoder {
         } else {
             path
         };
-        let (width, height) = probe(&video_path)?;
+        let probed = probe_video(&video_path)?;
+        let (width, height, fps) = (probed.width, probed.height, probed.fps);
+        let frame_len = width as usize * height as usize * 4;
 
         thread::spawn(move || {
-            let mut current_proc: Option<std::process::Child> = None;
+            let mut session: Option<DecodeSession> = None;
+            let mut cache: HashMap<u64, Vec<u8>> = HashMap::new();
+            let mut order: VecDeque<u64> = VecDeque::new();
+
+            let restart = |session: &mut Option<DecodeSession>, time: f64, index: u64| -> Result<()> {
+                if let Some(s) = session.as_mut() {
+                    s.shutdown();
+                }
+                *session = Some(DecodeSession::start(&video_path, time, index, frame_len)?);
+                Ok(())
+            };
 
             loop {
-                let target_time = match cmd_rx.recv() {
+                // Coalesce queued seeks: only the latest scrub position matters.
+                let mut target_time = match cmd_rx.recv() {
                     Ok(VideoCommand::GetFrame(t)) => t,
                     Err(_) => break,
                 };
-
-                if let Some(mut child) = current_proc.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                while let Ok(VideoCommand::GetFrame(t)) = cmd_rx.try_recv() {
+                    target_time = t;
                 }
 
-                // CLI seek
-                let child_res = Command::new(FFmpegDriver::binary())
-                    .arg("-ss")
-                    .arg(target_time.to_string())
-                    .arg("-i")
-                    .arg(&video_path)
-                    .arg("-frames:v")
-                    .arg("1")
-                    .arg("-f")
-                    .arg("rawvideo")
-                    .arg("-pix_fmt")
-                    .arg("rgba")
-                    .arg("-")
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn();
+                let index =
+                    crate::timeline::video_source_frame_index(target_time.max(0.0), fps);
+                if let Some(hit) = cache.get(&index) {
+                    let _ = resp_tx.send(VideoResponse::Frame(
+                        target_time,
+                        hit.clone(),
+                        width,
+                        height,
+                    ));
+                    continue;
+                }
 
-                match child_res {
-                    Ok(mut child) => {
-                        let mut stderr_data = Vec::new();
-                        let mut buffer = Vec::new();
+                let need_restart = match &session {
+                    None => true,
+                    Some(s) => {
+                        index < s.next_index || index - s.next_index > MAX_SKIP_AHEAD
+                    }
+                };
+                if need_restart {
+                    // Seek to the exact frame-grid time, not the raw request time.
+                    let seek = crate::timeline::video_seek_time(target_time, fps);
+                    if let Err(e) = restart(&mut session, seek, index) {
+                        let _ = resp_tx.send(VideoResponse::Error(e.to_string()));
+                        continue;
+                    }
+                }
 
-                        if let Some(mut stdout) = child.stdout.take() {
-                            let _ = stdout.read_to_end(&mut buffer);
+                let mut failed: Option<String> = None;
+                if let Some(s) = session.as_mut() {
+                    while s.next_index < index {
+                        if s.read_frame().is_err() {
+                            failed = Some(format!(
+                                "ffmpeg decode pipe ended while skipping to {:.3}s",
+                                target_time
+                            ));
+                            break;
                         }
-                        if let Some(mut stderr) = child.stderr.take() {
-                            let _ = stderr.read_to_end(&mut stderr_data);
-                        }
-
-                        let status = child.wait();
-                        let stderr_str = String::from_utf8_lossy(&stderr_data);
-                        let expected_len = width as usize * height as usize * 4;
-
-                        if buffer.len() == expected_len {
+                    }
+                }
+                if let Some(err) = failed {
+                    session = None;
+                    let _ = resp_tx.send(VideoResponse::Error(err));
+                    continue;
+                }
+                match session.as_mut().unwrap().read_frame() {
+                    Ok(bytes) => {
+                        if bytes.len() != frame_len {
+                            session = None;
+                            let _ = resp_tx.send(VideoResponse::Error(format!(
+                                "Decoded frame had {} bytes, expected {} for {}x{} RGBA",
+                                bytes.len(),
+                                frame_len,
+                                width,
+                                height
+                            )));
+                        } else {
+                            cache_insert(&mut cache, &mut order, index, bytes.clone());
                             let _ = resp_tx.send(VideoResponse::Frame(
                                 target_time,
-                                buffer,
+                                bytes,
                                 width,
                                 height,
                             ));
-                        } else if let Ok(s) = status {
-                            if !s.success() {
-                                let _ = resp_tx.send(VideoResponse::Error(format!(
-                                    "ffmpeg failed at {:.3}s: {}",
-                                    target_time,
-                                    stderr_str.lines().next().unwrap_or("unknown error")
-                                )));
-                            } else {
-                                let _ = resp_tx.send(VideoResponse::Error(format!(
-                                    "Decoded frame had {} bytes, expected {} for {}x{} RGBA",
-                                    buffer.len(),
-                                    expected_len,
-                                    width,
-                                    height
-                                )));
-                            }
-                        } else {
-                            let _ = resp_tx.send(VideoResponse::Error(format!(
-                                "ffmpeg process error at {:.3}s: {}",
-                                target_time,
-                                stderr_str.lines().next().unwrap_or("unknown error")
-                            )));
                         }
                     }
                     Err(e) => {
+                        session = None;
                         let _ = resp_tx.send(VideoResponse::Error(e.to_string()));
                     }
                 }
@@ -712,8 +812,14 @@ impl ThreadedDecoder {
         Ok(Self {
             cmd_tx,
             resp_rx,
+            source_fps: fps,
             _mode: mode,
         })
+    }
+
+    /// Probed source frame rate driving seek quantization.
+    pub fn source_fps(&self) -> f64 {
+        self.source_fps
     }
 
     pub fn send_request(&self, time: f64) {
@@ -725,7 +831,68 @@ impl ThreadedDecoder {
     }
 }
 
-pub fn probe(path: &Path) -> Result<(u32, u32)> {
+/// Probed video-stream metadata: dimensions plus the real source frame rate.
+///
+/// The frame rate drives `video_seek_time` quantization in `VideoNode`, so a
+/// 24/25/29.97/60 fps source must not be sampled on an assumed 30 fps grid.
+#[derive(Debug, Clone, Copy)]
+pub struct VideoProbe {
+    pub width: u32,
+    pub height: u32,
+    /// Source frames per second. Falls back to 30.0 when ffprobe reports
+    /// `0/0` or an unparsable rate.
+    pub fps: f64,
+}
+
+/// Parses an ffprobe `avg_frame_rate` / `r_frame_rate` token (`"num/den"`).
+/// Returns `None` for `0/0`, zero denominators, and unparsable input.
+pub fn parse_frame_rate(token: &str) -> Option<f64> {
+    let token = token.trim();
+    let (num, den) = token.split_once('/')?;
+    let num: f64 = num.trim().parse().ok()?;
+    let den: f64 = den.trim().parse().ok()?;
+    if !num.is_finite() || !den.is_finite() || num <= 0.0 || den <= 0.0 {
+        return None;
+    }
+    let fps = num / den;
+    if fps.is_finite() && fps > 0.0 {
+        Some(fps)
+    } else {
+        None
+    }
+}
+
+fn probe_frame_rate(path: &Path) -> f64 {
+    for entry in ["avg_frame_rate", "r_frame_rate"] {
+        let output = Command::new("ffprobe")
+            .arg("-v")
+            .arg("error")
+            .arg("-select_streams")
+            .arg("v:0")
+            .arg("-show_entries")
+            .arg(format!("stream={entry}"))
+            .arg("-of")
+            .arg("csv=p=0")
+            .arg(path)
+            .output();
+        if let Ok(output) = output {
+            if output.status.success() {
+                let token = String::from_utf8_lossy(&output.stdout);
+                if let Some(fps) = parse_frame_rate(token.trim()) {
+                    return fps;
+                }
+            }
+        }
+    }
+    tracing::warn!(
+        "Could not probe source fps for {:?}; falling back to 30.0",
+        path
+    );
+    30.0
+}
+
+/// Probes dimensions and source frame rate via ffprobe.
+pub fn probe_video(path: &Path) -> Result<VideoProbe> {
     let output = Command::new("ffprobe")
         .arg("-v")
         .arg("error")
@@ -741,12 +908,22 @@ pub fn probe(path: &Path) -> Result<(u32, u32)> {
     let out = String::from_utf8_lossy(&output.stdout);
     let parts: Vec<&str> = out.trim().split('x').collect();
     if parts.len() == 2 {
-        let w = parts[0].parse()?;
-        let h = parts[1].parse()?;
-        Ok((w, h))
+        let width = parts[0].parse()?;
+        let height = parts[1].parse()?;
+        let fps = probe_frame_rate(path);
+        Ok(VideoProbe {
+            width,
+            height,
+            fps,
+        })
     } else {
         Err(anyhow::anyhow!("Failed to probe video size"))
     }
+}
+
+pub fn probe(path: &Path) -> Result<(u32, u32)> {
+    let probed = probe_video(path)?;
+    Ok((probed.width, probed.height))
 }
 
 #[derive(Debug)]
@@ -754,57 +931,129 @@ pub struct SyncDecoder {
     path: PathBuf,
     width: u32,
     height: u32,
+    fps: f64,
+    frame_len: usize,
+    session: Option<DecodeSession>,
+    cache: HashMap<u64, Vec<u8>>,
+    order: VecDeque<u64>,
+}
+
+// `DecodeSession` holds a live child process + pipe reader; `SyncDecoder` is
+// only ever driven from the thread that owns its `VideoNode`.
+impl std::fmt::Debug for DecodeSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DecodeSession")
+            .field("next_index", &self.next_index)
+            .field("frame_len", &self.frame_len)
+            .finish()
+    }
+}
+
+impl Drop for SyncDecoder {
+    fn drop(&mut self) {
+        if let Some(s) = self.session.as_mut() {
+            s.shutdown();
+        }
+    }
 }
 
 impl SyncDecoder {
     pub fn new(path: PathBuf) -> Result<Self> {
-        let (w, h) = probe(&path)?;
+        let probed = probe_video(&path)?;
+        let frame_len = probed.width as usize * probed.height as usize * 4;
+        if frame_len == 0 {
+            return Err(anyhow::anyhow!(
+                "Probed zero-size video stream for {}",
+                path.display()
+            ));
+        }
         Ok(Self {
             path,
-            width: w,
-            height: h,
+            width: probed.width,
+            height: probed.height,
+            fps: probed.fps,
+            frame_len,
+            session: None,
+            cache: HashMap::new(),
+            order: VecDeque::new(),
         })
     }
 
+    /// Probed source frame rate driving seek quantization.
+    pub fn source_fps(&self) -> f64 {
+        self.fps
+    }
+
+    fn restart(&mut self, seek_time: f64, index: u64) -> Result<()> {
+        if let Some(s) = self.session.as_mut() {
+            s.shutdown();
+        }
+        self.session = Some(DecodeSession::start(
+            &self.path,
+            seek_time,
+            index,
+            self.frame_len,
+        )?);
+        Ok(())
+    }
+
     pub fn get_frame_at(&mut self, time: f64) -> Result<(f64, Vec<u8>, u32, u32)> {
-        let output = Command::new(FFmpegDriver::binary())
-            .arg("-ss")
-            .arg(time.to_string())
-            .arg("-i")
-            .arg(&self.path)
-            .arg("-frames:v")
-            .arg("1")
-            .arg("-f")
-            .arg("rawvideo")
-            .arg("-pix_fmt")
-            .arg("rgba")
-            .arg("-")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(
-                "ffmpeg failed to decode frame at {:.3}s from {}: {}",
-                time,
-                self.path.display(),
-                stderr.lines().next().unwrap_or("unknown error")
-            ));
+        let index = crate::timeline::video_source_frame_index(time.max(0.0), self.fps);
+        if let Some(hit) = self.cache.get(&index) {
+            return Ok((time, hit.clone(), self.width, self.height));
         }
 
-        let expected_len = self.width as usize * self.height as usize * 4;
-        if output.stdout.len() != expected_len {
-            return Err(anyhow::anyhow!(
-                "Decoded frame had {} bytes, expected {} for {}x{} RGBA",
-                output.stdout.len(),
-                expected_len,
-                self.width,
-                self.height
-            ));
+        let need_restart = match &self.session {
+            None => true,
+            Some(s) => index < s.next_index || index - s.next_index > MAX_SKIP_AHEAD,
+        };
+        if need_restart {
+            // Seek to the exact frame-grid time, not the raw request time.
+            let seek = crate::timeline::video_seek_time(time, self.fps);
+            self.restart(seek, index)?;
         }
 
-        Ok((time, output.stdout, self.width, self.height))
+        // Discard intermediate frames on small forward jumps.
+        loop {
+            let next = self.session.as_ref().map(|s| s.next_index).unwrap_or(index);
+            if next >= index {
+                break;
+            }
+            let discard = self
+                .session
+                .as_mut()
+                .expect("decode session")
+                .read_frame();
+            if let Err(e) = discard {
+                self.session = None;
+                return Err(e);
+            }
+        }
+
+        let bytes = match self.session.as_mut() {
+            Some(s) => s.read_frame(),
+            None => return Err(anyhow::anyhow!("decode session unavailable")),
+        };
+        match bytes {
+            Ok(bytes) => {
+                if bytes.len() != self.frame_len {
+                    self.session = None;
+                    return Err(anyhow::anyhow!(
+                        "Decoded frame had {} bytes, expected {} for {}x{} RGBA",
+                        bytes.len(),
+                        self.frame_len,
+                        self.width,
+                        self.height
+                    ));
+                }
+                cache_insert(&mut self.cache, &mut self.order, index, bytes.clone());
+                Ok((time, bytes, self.width, self.height))
+            }
+            Err(e) => {
+                self.session = None;
+                Err(e)
+            }
+        }
     }
 }
 
@@ -814,12 +1063,92 @@ pub enum VideoLoader {
     Sync(SyncDecoder),
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{parse_frame_rate, FFmpegDriver};
+    use std::process::{Command, Stdio};
+
+    #[test]
+    fn parses_ffprobe_frame_rates() {
+        assert!((parse_frame_rate("30/1").unwrap() - 30.0).abs() < 1e-9);
+        assert!((parse_frame_rate("30000/1001").unwrap() - 29.97002997).abs() < 1e-6);
+        assert!((parse_frame_rate("24000/1001").unwrap() - 23.976023976).abs() < 1e-6);
+        assert!((parse_frame_rate("25/1").unwrap() - 25.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rejects_degenerate_frame_rates() {
+        assert!(parse_frame_rate("0/0").is_none());
+        assert!(parse_frame_rate("30/0").is_none());
+        assert!(parse_frame_rate("0/1").is_none());
+        assert!(parse_frame_rate("").is_none());
+        assert!(parse_frame_rate("not-a-rate").is_none());
+    }
+
+    #[test]
+    fn sync_decoder_reads_sequential_frames_from_one_pipe() {
+        if FFmpegDriver::ensure_available().is_err() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "director_decoder_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("src.mp4");
+        let status = Command::new(FFmpegDriver::binary())
+            .arg("-y")
+            .arg("-f")
+            .arg("lavfi")
+            .arg("-i")
+            .arg("testsrc=duration=1:size=64x64:rate=30")
+            .arg("-pix_fmt")
+            .arg("yuv420p")
+            .arg(&src)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if !matches!(status, Ok(s) if s.success()) {
+            return;
+        }
+        let mut decoder = super::SyncDecoder::new(src).expect("decoder");
+        assert!((decoder.source_fps() - 30.0).abs() < 1e-6);
+        let expected = 64usize * 64 * 4;
+        // Sequential export-order reads: the second/third must not respawn.
+        let (t0, f0, w, h) = decoder.get_frame_at(0.0).expect("frame 0");
+        assert_eq!((w, h), (64, 64));
+        assert_eq!(f0.len(), expected);
+        let _ = t0;
+        let (_, f1, _, _) = decoder.get_frame_at(1.0 / 30.0).expect("frame 1");
+        assert_eq!(f1.len(), expected);
+        assert_ne!(f0, f1, "testsrc frames must advance");
+        // Repeat request hits the frame cache.
+        let (_, f1_again, _, _) = decoder.get_frame_at(1.0 / 30.0).expect("frame 1 again");
+        assert_eq!(f1, f1_again);
+        // Backward jump restarts the pipe and still decodes.
+        let (_, f0_again, _, _) = decoder.get_frame_at(0.0).expect("frame 0 again");
+        assert_eq!(f0, f0_again);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 impl VideoLoader {
     pub fn new(path: PathBuf, mode: RenderMode) -> Result<Self> {
         FFmpegDriver::ensure_available()?;
         match mode {
             RenderMode::Preview => Ok(Self::Threaded(ThreadedDecoder::new(path, mode)?)),
             RenderMode::Export => Ok(Self::Sync(SyncDecoder::new(path)?)),
+        }
+    }
+
+    /// Probed source frame rate of the underlying stream.
+    pub fn source_fps(&self) -> f64 {
+        match self {
+            Self::Threaded(d) => d.source_fps(),
+            Self::Sync(d) => d.source_fps(),
         }
     }
 }

@@ -160,6 +160,9 @@ async fn api_frame(
     State(state): State<AppState>,
     Query(q): Query<FrameQuery>,
 ) -> Result<Response, AppError> {
+    // Threading invariant (see `unsafe impl Send for Director`): the session
+    // lock is held across the entire render so two frame requests never touch
+    // the same `Director` concurrently.
     let png = {
         let session = state.inner.lock().map_err(|_| AppError::lock())?;
         let mut director = session

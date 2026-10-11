@@ -37,6 +37,10 @@ pub struct VideoNode {
 
     loader: Option<VideoLoader>,
     pub(crate) render_mode: RenderMode,
+    /// Probed source frame rate. Drives `video_seek_time` quantization so
+    /// 24/25/29.97/60 fps inputs are not sampled on an assumed 30 fps grid.
+    /// Falls back to 30.0 when probing failed (missing file, no ffprobe).
+    pub(crate) source_fps: f64,
 
     // Keep temp file alive
     #[allow(dead_code)]
@@ -53,6 +57,7 @@ impl Clone for VideoNode {
         } else {
             None
         };
+        let source_fps = loader.as_ref().map(|l| l.source_fps()).unwrap_or(self.source_fps);
 
         Self {
             opacity: self.opacity.clone(),
@@ -63,6 +68,7 @@ impl Clone for VideoNode {
             current_frame: Mutex::new(None),
             loader,
             render_mode: self.render_mode,
+            source_fps,
             temp_file: self.temp_file.clone(),
             path: self.path.clone(),
         }
@@ -88,6 +94,7 @@ impl VideoNode {
                 None
             }
         };
+        let source_fps = loader.as_ref().map(|l| l.source_fps()).unwrap_or(30.0);
 
         Self {
             opacity: Animated::new(1.0),
@@ -98,6 +105,7 @@ impl VideoNode {
             current_frame: Mutex::new(None),
             loader,
             render_mode: mode,
+            source_fps,
             temp_file,
             path,
         }
@@ -111,6 +119,11 @@ impl VideoNode {
     /// Returns the resolved path for this video node.
     pub fn path(&self) -> &std::path::PathBuf {
         &self.path
+    }
+
+    /// Probed source frame rate used for seek quantization.
+    pub fn source_fps(&self) -> f64 {
+        self.source_fps
     }
 
     /// Returns the currently buffered video frame, if any.
@@ -151,11 +164,10 @@ impl Element for VideoNode {
         self.opacity.update(time);
         self.border_radius.update(time);
 
-        // Floor seek onto a nominal source fps grid so freeze/speed share one
-        // quantum (Plan 06). Source fps is not always known without probing;
-        // use 30 as the default quantum — SyncDecoder still seeks by time.
-        const DEFAULT_SOURCE_FPS: f64 = 30.0;
-        let seek_time = crate::timeline::video_seek_time(time, DEFAULT_SOURCE_FPS);
+        // Floor seek onto the *probed* source fps grid so freeze/speed share
+        // one quantum (Plan 06). `source_fps` comes from ffprobe at load;
+        // 30.0 is only the fallback when probing failed.
+        let seek_time = crate::timeline::video_seek_time(time, self.source_fps);
 
         if let Some(loader) = &mut self.loader {
             match loader {

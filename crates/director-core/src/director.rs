@@ -134,10 +134,28 @@ pub struct Director {
     pub missing_required_fonts: Vec<String>,
 }
 
-/// SAFETY: Director is not thread-safe due to Skia internals (RefCounts).
-/// However, we wrap it in a Mutex for Rhai, and we strictly ensure in the App
-/// that it remains on a single thread (Axis Actor pattern).
-/// This unsafe impl allows us to put it in Arc<Mutex<>>.
+/// SAFETY (P0 threading audit): `Director` is only `Send` so it can travel
+/// inside `Arc<Mutex<Director>>` (`MovieHandle`) between the thread that
+/// builds it and the thread that locks it. It is NOT safe for concurrent
+/// `&`/`&mut` access. The enforced invariants are:
+///
+/// 1. **Mutex confinement.** Every cross-thread handoff goes through
+///    `Arc<Mutex<Director>>`. The preview server (`director-cli/src/preview`)
+///    holds that lock across the whole `render_png` call, so two HTTP
+///    handlers never render concurrently.
+/// 2. **Disjoint parallel update.** `Director::update` uses Rayon's
+///    `par_iter_mut` over arena slots; each `SceneNode` is touched by exactly
+///    one thread, and cross-node handles (`NodeId`) are only read there.
+///    Shared element state (video frames, Lottie players/caches,
+///    composition sub-directors) sits behind `Mutex`es.
+/// 3. **Thread-confined decoders.** `SyncDecoder` owns a live `ffmpeg` child
+///    + pipe reader and is only driven from its owner's thread; the worker
+///    thread owns the `ThreadedDecoder` pipe exclusively.
+///
+/// Skia objects (`Image` in `static_cache`, surfaces borrowed per call) are
+/// never shared across threads without the `Director` lock held. If a new
+/// `Director` field is added that is `!Send` (e.g. raw GPU contexts, `Rc`,
+/// `RefCell`), this impl must be re-audited — do not extend it blindly.
 unsafe impl Send for Director {}
 
 /// Bundled fonts registered with the Skia font collection at startup.

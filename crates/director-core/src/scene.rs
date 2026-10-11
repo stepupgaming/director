@@ -93,11 +93,17 @@ pub struct SceneNode {
     pub update_generation: u64,
 }
 
-/// SAFETY: SceneNode is Send-safe because all current Element implementations
-/// are semantically Send: Taffy Style's `*const ()` is a niche discriminant,
-/// and Skia handles behind Mutex are accessed exclusively per-thread.
-/// The parallel update loop provides `&mut SceneNode` at disjoint indices,
-/// so no concurrent access to any single Element occurs.
+/// SAFETY (P0 threading audit): `SceneNode` is `Send` so Rayon's
+/// `par_iter_mut` in `Director::update` can hand disjoint `&mut SceneNode`s
+/// to worker threads. Soundness rests on three checked properties:
+///
+/// 1. All current `Element` impls are semantically `Send` (plain data +
+///    `Animated` channels; Taffy `Style`'s `*const ()` is a niche
+///    discriminant, never dereferenced; Skia handles live behind `Mutex`).
+/// 2. The parallel pass touches each arena slot from exactly one thread;
+///    `NodeId` cross-references are read-only in that pass.
+/// 3. No `Element` impl may add thread-local interior mutability (`Rc`,
+///    `RefCell`, raw pointers) without re-auditing this impl.
 unsafe impl Send for SceneNode {}
 
 impl SceneNode {
