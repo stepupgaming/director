@@ -84,6 +84,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - When asked for advice, provide options rather than a single path.
 - Never use `pip` for Python package installation; use `uv`.
 - Do not use the phrasing the user has forbidden in project instructions.
+- Director's product goal is to replace HyperFrames, FFrames and Remotion with a superior native video platform. Assess authoring, motion and media quality, preview/editing, agent tooling, deployment and measured rendering efficiency together; compiler throughput alone does not establish product superiority.
 - Core-hardening plans 01–06 are Done. Named compositions + subcommand CLI + live preview are in tree; recipes/agent repair remain later product work.
 
 ## Work Guidance
@@ -95,7 +96,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Generated or downloaded assets should not become durable source unless the relevant AGENTS.md explicitly says they are owned there.
 - For Python scripts, keep dependencies executable through existing tooling and install packages only with `uv` when installation is necessary.
 - **Core hardening (01–06) is Done.** Product surface includes compositions + CLI + live preview; plan 07 stdlib/recipes is in progress (not complete). Still deferred: agent repair loops, separate director-sdk crate (`docs/archive/`). Keep core contracts green when changing engine spines.
-- Longer-term product direction (after core gates): autonomous high-quality video production for short-form and long-form (Shorts, Reels, TikTok, YouTube). Avoid optimizing for low-quality generated output. Web research as an input belongs at orchestration layers, not in the render core.
+- Product direction: high-quality native video production for agents and developers, covering short-form and long-form (Shorts, Reels, TikTok, YouTube). Keep preview, editing, inspection and export consistent across supported authoring inputs. Web research as an input belongs at orchestration layers, not in the render core.
 - `vendor/` contains third-party source selected by local Cargo patches. Do not modify vendor sources without updating its `AGENTS.md`; exclude vendored packages from workspace membership.
 - `vendor/skia-safe/` is skia-safe 0.90.0 with two edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.
 
