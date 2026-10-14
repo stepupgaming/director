@@ -237,6 +237,12 @@ Frame pipeline (plan 03): `note_mutation` auto-evicts static/comp caches;
 never serve cache hits; `expand_dirty_set` includes reverse mask users.
 Acceptance: `tests/pipeline_equivalence.rs`.
 
+## Native video export
+
+- `src/export/video.rs`: a supplied Vulkan context requires GPU surface allocation. Flush/submit and read RGBA pixels directly from that surface into one reusable frame buffer; do not draw GPU snapshots onto CPU canvases.
+- Export passes per-channel sample-frame counts to `mix_audio`, which returns interleaved stereo. The total output remains `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`.
+- End-to-end A/V acceptance is `cargo test -p director-cli --test html_export`, with FFmpeg and ffprobe in PATH.
+
 ## Semantic Entity Registry
 
 - `src/entity.rs` — persistent UUID-based identity for faces, speakers, objects, and

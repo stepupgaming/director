@@ -23,7 +23,7 @@ use skia_safe::{AlphaType, ColorSpace, ColorType, ImageInfo, Surface};
 use std::path::PathBuf;
 use tracing::instrument;
 
-/// Creates a render surface, preferring GPU hardware acceleration when available.
+/// Create the requested backend. A supplied GPU context requires a GPU target.
 #[allow(unused_variables)]
 fn create_render_surface(
     gpu_context: &mut Option<&mut GpuContext>,
@@ -31,7 +31,7 @@ fn create_render_surface(
 ) -> Option<Surface> {
     #[cfg(feature = "vulkan")]
     if let Some(ctx) = gpu_context.as_deref_mut() {
-        if let Some(surface) = skia_safe::gpu::surfaces::render_target(
+        return skia_safe::gpu::surfaces::render_target(
             ctx,
             skia_safe::gpu::Budgeted::No,
             info,
@@ -40,9 +40,7 @@ fn create_render_surface(
             None,
             false,
             false,
-        ) {
-            return Some(surface);
-        }
+        );
     }
     skia_safe::surfaces::raster(info, None, None)
 }
@@ -112,14 +110,9 @@ pub fn render_export(
         Some(ColorSpace::new_srgb()),
     );
 
-    // Prefer GPU-accelerated surface when Vulkan context is available.
-    // Falls back to CPU raster.
-    let mut surface = create_render_surface(&mut gpu_context, &info)
-        .ok_or(RenderError::SurfaceFailure)?;
-
-    // Pre-create a raster readback surface for GPU -> CPU pixel transfer.
-    // Reusing it avoids per-frame allocation.
-    let mut readback_surface = skia_safe::surfaces::raster(&info, None, None);
+    // Use a GPU target when the caller supplies a Vulkan context.
+    let mut surface =
+        create_render_surface(&mut gpu_context, &info).ok_or(RenderError::SurfaceFailure)?;
 
     let mut accumulation_surface = if director.samples_per_frame > 1 {
         Some(
@@ -138,24 +131,23 @@ pub fn render_export(
     let frame_duration = 1.0 / fps;
     let shutter_duration = frame_duration * (shutter_angle as f64 / 360.0);
 
-    // Stereo interleaved samples per video frame (Plan 06 A/V alignment).
-    let samples_per_frame = crate::timeline::audio_samples_per_video_frame(
-        director.audio_mixer.sample_rate,
-        fps,
-        2,
-    );
+    // The mixer takes sample frames and emits two interleaved samples per frame.
+    let audio_frames_per_video_frame =
+        crate::timeline::audio_samples_per_video_frame(director.audio_mixer.sample_rate, fps, 1);
 
     // Pre-allocate transition surfaces to avoid per-frame allocation churn
     let mut transition_surfaces = if !director.transitions.is_empty() {
-        let surf_a = create_render_surface(&mut gpu_context, &info)
-            .ok_or(RenderError::SurfaceFailure)?;
-        let surf_b = create_render_surface(&mut gpu_context, &info)
-            .ok_or(RenderError::SurfaceFailure)?;
+        let surf_a =
+            create_render_surface(&mut gpu_context, &info).ok_or(RenderError::SurfaceFailure)?;
+        let surf_b =
+            create_render_surface(&mut gpu_context, &info).ok_or(RenderError::SurfaceFailure)?;
         Some((surf_a, surf_b))
     } else {
         None
     };
 
+    let row_bytes = width as usize * 4;
+    let mut pixels = vec![0u8; height as usize * row_bytes];
     for i in 0..total_frames {
         let frame_start_time = crate::timeline::frame_to_time(i as u64, fps);
         let shutter_start_time = frame_start_time - (shutter_duration / 2.0);
@@ -200,32 +192,17 @@ pub fn render_export(
             }
         }
 
-        let row_bytes = width as usize * 4;
-        let pixels = if surface.recording_context().is_some() {
-            // GPU-backed surface: snapshot to the reusable raster readback surface.
-            let snapshot = surface.image_snapshot();
-            let readback = readback_surface.as_mut()
-                .ok_or_else(|| anyhow::anyhow!("Readback surface not available"))?;
-            readback.canvas().clear(skia_safe::Color::TRANSPARENT);
-            readback.canvas().draw_image(&snapshot, (0, 0), None);
-            let mut pixels = vec![0u8; height as usize * row_bytes];
-            anyhow::ensure!(
-                readback.read_pixels(&info, &mut pixels, row_bytes, (0, 0)),
-                "Failed to read pixels from readback surface"
-            );
-            pixels
-        } else {
-            // CPU raster surface: read pixels directly.
-            let mut pixels = vec![0u8; height as usize * row_bytes];
-            anyhow::ensure!(
-                surface.read_pixels(&info, &mut pixels, row_bytes, (0, 0)),
-                "Failed to read pixels from render surface"
-            );
-            pixels
-        };
+        #[cfg(feature = "vulkan")]
+        if let Some(ctx) = gpu_context.as_deref_mut() {
+            ctx.flush_and_submit();
+        }
+        anyhow::ensure!(
+            surface.read_pixels(&info, &mut pixels, row_bytes, (0, 0)),
+            "Failed to read pixels from render surface"
+        );
         encoder.encode(&pixels, crate::timeline::frame_to_time(i as u64, fps))?;
 
-        let audio_samples = director.mix_audio(samples_per_frame, frame_start_time);
+        let audio_samples = director.mix_audio(audio_frames_per_video_frame, frame_start_time);
         encoder.encode_audio(&audio_samples, frame_start_time)?;
     }
 

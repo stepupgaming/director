@@ -90,13 +90,14 @@ When the user requests a durable behavior change, record it here or in the relev
 
 - Use Cargo workspace conventions from `Cargo.toml`; prefer package-scoped checks while iterating and workspace checks before broad closeout.
 - Keep Rust crate ownership clear: public API and shared runtime behavior belong in `crates/director-core`, command-line concerns in `crates/director-cli`, schema reflection in `crates/director-schema`, and Lottie-specific logic in the `lottie-*` crates.
+- `crates/director-html` owns HTML/CSS/HyperFrames compilation and explicit compile-time browser extraction. Native rendering continues through `director-core`; Hyper CN is part of its compatibility corpus.
 - Rhai examples are executable reference material. Update examples and tests when scripting-facing behavior changes.
 - Generated or downloaded assets should not become durable source unless the relevant AGENTS.md explicitly says they are owned there.
 - For Python scripts, keep dependencies executable through existing tooling and install packages only with `uv` when installation is necessary.
 - **Core hardening (01–06) is Done.** Product surface includes compositions + CLI + live preview; plan 07 stdlib/recipes is in progress (not complete). Still deferred: agent repair loops, separate director-sdk crate (`docs/archive/`). Keep core contracts green when changing engine spines.
 - Longer-term product direction (after core gates): autonomous high-quality video production for short-form and long-form (Shorts, Reels, TikTok, YouTube). Avoid optimizing for low-quality generated output. Web research as an input belongs at orchestration layers, not in the render core.
-- `vendor/` contains patched copies of third-party crates that cannot be fixed via `[patch.crates-io]` to upstream. Do not modify vendor sources without updating the corresponding `AGENTS.md`.
-- `vendor/skia-safe/` is skia-safe 0.90.0 with two patches keeping the Vulkan `get_proc` thread-local resolver alive for lazy resolution (readback/flush). If the dependency is ever bumped, reapply the patches from the diff in `vendor/AGENTS.md`.
+- `vendor/` contains third-party source selected by local Cargo patches. Do not modify vendor sources without updating its `AGENTS.md`; exclude vendored packages from workspace membership.
+- `vendor/skia-safe/` is skia-safe 0.90.0 with two edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.
 
 ## Verification
 

@@ -1,0 +1,853 @@
+use crate::{
+    animation,
+    css::{diagnostic, Css, Values},
+    element::HtmlElement,
+    style::{self, Metrics, PaintStyle},
+    CompileError, CompileOptions, CompiledHtml,
+};
+use base64::Engine;
+use director_core::{
+    element::TextSpan,
+    node::{ImageNode, TextNode, VectorNode, VideoNode, VideoSource},
+    types::{NodeId, ObjectFit},
+    video_wrapper::RenderMode,
+    DefaultAssetLoader, Director, Element,
+};
+use scraper::{ElementRef, Html, Selector};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+    sync::Arc,
+};
+
+pub fn read_asset(source: &str, base: &Path) -> Result<Vec<u8>, CompileError> {
+    if let Some(data) = source.strip_prefix("data:") {
+        let (meta, data) = data
+            .split_once(',')
+            .ok_or_else(|| CompileError::Input("invalid data URI".into()))?;
+        if !meta.ends_with(";base64") {
+            return Err(CompileError::Input("data URIs must use base64".into()));
+        }
+        return base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| CompileError::Input(format!("data URI: {e}")));
+    }
+    if source.contains("://") {
+        return Err(CompileError::Input(format!(
+            "remote asset '{source}' must be downloaded before native compilation"
+        )));
+    }
+    std::fs::read(base.join(source))
+        .map_err(|e| CompileError::Input(format!("asset {}: {e}", base.join(source).display())))
+}
+
+pub(crate) struct HtmlAssetLoader;
+pub(crate) fn validate_svg(source: &str) -> Result<(), CompileError> {
+    let dom = Html::parse_fragment(source);
+    let selector = Selector::parse(
+        "text, foreignObject, animate, animateTransform, animateMotion, set, script, image",
+    )
+    .unwrap();
+    if dom.select(&selector).next().is_some() {
+        return Err(CompileError::Input(
+            "SVG text, foreignObject, SMIL, scripts, and nested images require native translation"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+impl director_core::AssetLoader for HtmlAssetLoader {
+    fn load_bytes(&self, path: &str) -> anyhow::Result<Vec<u8>> {
+        if path.starts_with("fonts/") {
+            let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../director-core/assets")
+                .join(path);
+            if let Ok(bytes) = std::fs::read(bundled) {
+                return Ok(bytes);
+            }
+        }
+        director_core::AssetLoader::load_bytes(&DefaultAssetLoader, path)
+    }
+}
+
+pub fn url(source: &str) -> Result<String, CompileError> {
+    let mut input = cssparser::ParserInput::new(source);
+    let mut parser = cssparser::Parser::new(&mut input);
+    parser
+        .expect_url()
+        .map(|u| u.to_string())
+        .map_err(|e| CompileError::Input(format!("font/image URL: {e:?}")))
+}
+
+pub fn load_fonts(
+    director: &mut Director,
+    fonts: &[(String, String)],
+    base: &Path,
+) -> Result<(), CompileError> {
+    if fonts.is_empty() {
+        return Ok(());
+    }
+    let mut provider = skia_safe::textlayout::TypefaceFontProvider::new();
+    for (family, src) in fonts {
+        let bytes = read_asset(&url(src)?, base)?;
+        let bytes = match bytes.get(..4) {
+            Some(b"wOF2") => wuff::decompress_woff2(&bytes).map_err(|e| {
+                CompileError::Input(format!("font '{family}': WOFF2 decode: {e:?}"))
+            })?,
+            Some(b"wOFF") => wuff::decompress_woff1(&bytes)
+                .map_err(|e| CompileError::Input(format!("font '{family}': WOFF decode: {e:?}")))?,
+            _ => bytes,
+        };
+        let face = skia_safe::FontMgr::new()
+            .new_from_data(&bytes, 0)
+            .ok_or_else(|| {
+                CompileError::Input(format!("font '{family}' is not decodable by Skia"))
+            })?;
+        provider.register_typeface(face, Some(family.as_str()));
+    }
+    director
+        .assets
+        .font_collection
+        .lock()
+        .map_err(|_| CompileError::Input("font lock poisoned".into()))?
+        .set_dynamic_font_manager(skia_safe::FontMgr::from(provider));
+    Ok(())
+}
+
+pub fn validate_options(options: &CompileOptions) -> Result<(), CompileError> {
+    if options.width <= 0
+        || options.height <= 0
+        || options.width > 16384
+        || options.height > 16384
+        || !options.fps.is_finite()
+        || options.fps <= 0.0
+        || options.fps > 1000.0
+        || !options.duration.is_finite()
+        || options.duration <= 0.0
+    {
+        return Err(CompileError::Input(
+            "canvas must be 1..16384 pixels, FPS 0..1000, duration finite and positive".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn compile(source: &str, mut options: CompileOptions) -> Result<CompiledHtml, CompileError> {
+    let dom = Html::parse_document(source);
+    let selector = Selector::parse("[data-composition-id]").unwrap();
+    let roots: Vec<_> = dom.select(&selector).collect();
+    let root = if let Some(id) = &options.composition {
+        roots
+            .iter()
+            .copied()
+            .find(|r| r.value().attr("data-composition-id") == Some(id.as_str()))
+            .ok_or_else(|| CompileError::Input(format!("composition '{id}' not found")))?
+    } else {
+        roots.first().copied().unwrap_or_else(|| {
+            dom.select(&Selector::parse("body").unwrap())
+                .next()
+                .unwrap()
+        })
+    };
+    if root
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .any(|e| e.value().name() == "template")
+    {
+        return Err(CompileError::Input(
+            "standalone template roots must be assembled or captured first".into(),
+        ));
+    }
+    for (attr, target) in [
+        ("data-width", &mut options.width),
+        ("data-height", &mut options.height),
+    ] {
+        if let Some(v) = root.value().attr(attr) {
+            *target = v
+                .parse()
+                .map_err(|_| CompileError::Input(format!("invalid {attr}: {v}")))?;
+        }
+    }
+    for (attr, target) in [
+        ("data-duration", &mut options.duration),
+        ("data-fps", &mut options.fps),
+    ] {
+        if let Some(v) = root.value().attr(attr) {
+            *target = v
+                .parse()
+                .map_err(|_| CompileError::Input(format!("invalid {attr}: {v}")))?;
+        }
+    }
+    validate_options(&options)?;
+    let mut css = Css::default();
+    // Explicit video-authoring UA defaults. No host/browser-dependent styles.
+    css.append("html, body { display:block; font-size:16px; color:black; font-family:Roboto; } body { margin:8px; } div,section,article,main,header,footer,p,h1,h2,h3,ul,li { display:block; } h1 {font-size:2em;font-weight:bold;margin-top:.67em;margin-bottom:.67em} h2 {font-size:1.5em;font-weight:bold;margin-top:.83em;margin-bottom:.83em} p {margin-top:1em;margin-bottom:1em} b,strong {font-weight:bold} em,i {font-style:italic} img,svg,video {display:block}")?;
+    for el in dom.select(&Selector::parse("style, link, script").unwrap()) {
+        match el.value().name() {
+            "style" if !el.ancestors().filter_map(ElementRef::wrap).any(|p|p.value().name()=="svg")=>css.append(&el.text().collect::<String>())?,
+            "link" if el.value().attr("rel")==Some("stylesheet")=>{
+                let href=el.value().attr("href").ok_or_else(||CompileError::Input("stylesheet without href".into()))?;
+                let bytes=read_asset(href,&options.base_dir)?;let source=String::from_utf8(bytes).map_err(|e|CompileError::Input(e.to_string()))?;css.append(&source)?;
+            },
+            "script" if !matches!(el.value().attr("type"),Some("application/json"|"application/ld+json"))=>return Err(CompileError::Diagnostics(vec![diagnostic("script","executable JavaScript requires explicit compile-time extraction; run director-engine html capture")])),
+            _=>{},
+        }
+    }
+    let mut director = Director::new(
+        options.width,
+        options.height,
+        options.fps,
+        Arc::new(HtmlAssetLoader),
+        RenderMode::Export,
+        None,
+    );
+    load_fonts(&mut director, &css.fonts, &options.base_dir)?;
+    let mut builder = Builder {
+        director,
+        css,
+        options,
+        ids: BTreeMap::new(),
+        images: HashMap::new(),
+        errors: Vec::new(),
+        nodes: 0,
+    };
+    // Compute inherited values along the full ancestor chain, including body resets.
+    let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
+    ancestors.reverse();
+    let mut parent = Values::new();
+    for ancestor in ancestors {
+        if ancestor.id() != root.id() {
+            parent = builder.css.cascade(ancestor, &parent)?;
+        }
+    }
+    let root_id = builder.node(root, &parent, 0.0, true, 0)?;
+    if !builder.errors.is_empty() {
+        return Err(CompileError::Diagnostics(builder.errors));
+    }
+    builder
+        .director
+        .push_scene_root(root_id, builder.options.duration);
+    builder.director.compile();
+    Ok(CompiledHtml {
+        director: builder.director,
+        element_ids: builder.ids,
+        source_kind: "static".into(),
+        sample_rate: None,
+        node_count: builder.nodes,
+    })
+}
+
+struct Builder {
+    director: Director,
+    css: Css,
+    options: CompileOptions,
+    ids: BTreeMap<String, NodeId>,
+    images: HashMap<String, skia_safe::Image>,
+    errors: Vec<crate::Diagnostic>,
+    nodes: usize,
+}
+
+fn label(el: ElementRef<'_>) -> String {
+    el.value()
+        .attr("id")
+        .map(|id| format!("#{id}"))
+        .unwrap_or_else(|| el.value().name().into())
+}
+fn inline(tag: &str) -> bool {
+    matches!(tag, "span" | "b" | "strong" | "em" | "i" | "br" | "small")
+}
+pub fn text_content(spans: Vec<TextSpan>, paint: &PaintStyle, director: &Director) -> TextNode {
+    let mut node = TextNode::new(spans, director.assets.font_collection.clone());
+    node.default_font_size = director_core::animation::Animated::new(paint.font_size);
+    node.default_color = director_core::animation::Animated::new(paint.color);
+    node.set_text_align(paint.align);
+    prepare_paragraph(&mut node, paint);
+    node
+}
+pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
+    use skia_safe::textlayout::{ParagraphBuilder, ParagraphStyle, StrutStyle, TextStyle};
+    let mut paragraph = ParagraphStyle::new();
+    paragraph.set_text_align(paint.align);
+    paragraph.set_text_direction(if paint.rtl {
+        skia_safe::textlayout::TextDirection::RTL
+    } else {
+        skia_safe::textlayout::TextDirection::LTR
+    });
+    let mut strut = StrutStyle::new();
+    strut.set_font_families(&[paint.font_family.as_str()]);
+    strut.set_font_size(paint.font_size);
+    let font_style = skia_safe::FontStyle::new(
+        skia_safe::font_style::Weight::from(paint.font_weight as i32),
+        skia_safe::font_style::Width::NORMAL,
+        if paint.font_style == "italic" {
+            skia_safe::font_style::Slant::Italic
+        } else {
+            skia_safe::font_style::Slant::Upright
+        },
+    );
+    strut.set_font_style(font_style);
+    let mut default_text = TextStyle::new();
+    default_text.set_font_size(paint.font_size);
+    default_text.set_font_families(&[paint.font_family.as_str()]);
+    default_text.set_font_style(font_style);
+    paragraph.set_text_style(&default_text);
+    let mut collection = node.font_collection.lock().unwrap().clone();
+    let normal_height = collection
+        .find_typefaces(&[paint.font_family.as_str()], font_style)
+        .first()
+        .map(|face| {
+            let (_, metrics) =
+                skia_safe::Font::from_typeface(face.clone(), paint.font_size).metrics();
+            (-metrics.ascent).round() + metrics.descent.round() + metrics.leading.round()
+        })
+        .unwrap_or(paint.font_size * 1.2);
+    strut.set_height(paint.line_height.unwrap_or(normal_height / paint.font_size));
+    strut.set_strut_enabled(true);
+    strut.set_force_strut_height(paint.line_height.is_some());
+    strut.set_height_override(true);
+    strut.set_half_leading(true);
+    strut.set_leading(0.0);
+    paragraph.set_strut_style(strut);
+    let mut builder = ParagraphBuilder::new(&paragraph, collection);
+    for span in &node.spans {
+        let mut text = TextStyle::new();
+        text.set_font_size(span.font_size.unwrap_or(paint.font_size));
+        text.set_color(span.color.unwrap_or(paint.color).to_skia());
+        text.set_font_families(&[span.font_family.as_deref().unwrap_or(&paint.font_family)]);
+        text.set_font_style(skia_safe::FontStyle::new(
+            skia_safe::font_style::Weight::from(
+                span.font_weight.unwrap_or(paint.font_weight) as i32
+            ),
+            skia_safe::font_style::Width::NORMAL,
+            if span.font_style.as_deref().unwrap_or(&paint.font_style) == "italic" {
+                skia_safe::font_style::Slant::Italic
+            } else {
+                skia_safe::font_style::Slant::Upright
+            },
+        ));
+        text.set_letter_spacing(span.letter_spacing.unwrap_or(paint.letter_spacing));
+        builder.push_style(&text);
+        builder.add_text(&span.text);
+        builder.pop();
+    }
+    *node.paragraph.lock().unwrap() = Some(builder.build());
+    node.dirty_layout = false;
+}
+pub fn span(text: String, paint: &PaintStyle) -> TextSpan {
+    TextSpan {
+        text: if paint.uppercase {
+            text.to_uppercase()
+        } else {
+            text
+        },
+        color: None,
+        font_family: Some(paint.font_family.clone()),
+        font_weight: Some(paint.font_weight),
+        font_style: Some(paint.font_style.clone()),
+        font_size: Some(paint.font_size),
+        letter_spacing: Some(paint.letter_spacing),
+        line_height: paint.line_height,
+        ..Default::default()
+    }
+}
+
+impl Builder {
+    fn node(
+        &mut self,
+        el: ElementRef<'_>,
+        parent: &Values,
+        composition_start: f64,
+        root: bool,
+        depth: usize,
+    ) -> Result<NodeId, CompileError> {
+        if depth > 256 || self.nodes > 100000 {
+            return Err(CompileError::Input(
+                "HTML tree exceeds compiler limits".into(),
+            ));
+        }
+        let tag = el.value().name();
+        let context = label(el);
+        let mut values = self.css.cascade(el, parent)?;
+        if tag == "svg" && !self.css.has_local_property(el, "color") {
+            if let Some(color) = el.value().attr("color") {
+                values.insert("color".into(), color.into());
+            }
+        }
+        if matches!(tag, "img" | "svg" | "video") {
+            for dimension in ["width", "height"] {
+                if !values.contains_key(dimension) {
+                    if let Some(value) = el.value().attr(dimension) {
+                        let value = value
+                            .parse::<f32>()
+                            .map(|v| format!("{v}px"))
+                            .unwrap_or_else(|_| value.into());
+                        values.insert(dimension.into(), value);
+                    }
+                }
+            }
+        }
+        let parent_size = parent
+            .get("font-size")
+            .and_then(|s| {
+                style::px(
+                    s,
+                    Metrics {
+                        width: self.options.width as f32,
+                        height: self.options.height as f32,
+                        font_size: 16.0,
+                    },
+                )
+                .ok()
+            })
+            .unwrap_or(16.0);
+        let metrics = Metrics {
+            width: self.options.width as f32,
+            height: self.options.height as f32,
+            font_size: parent_size,
+        };
+        let (mut layout, paint) = style::translate(&values, metrics).map_err(|errors| {
+            CompileError::Diagnostics(
+                errors
+                    .into_iter()
+                    .map(|e| diagnostic(&context, e))
+                    .collect(),
+            )
+        })?;
+        // Store computed font-size to avoid repeated relative-unit multiplication in descendants.
+        values.insert("font-size".into(), format!("{}px", paint.font_size));
+        if root {
+            layout.size = taffy::geometry::Size {
+                width: taffy::prelude::length(self.options.width as f32),
+                height: taffy::prelude::length(self.options.height as f32),
+            };
+            layout.margin = taffy::geometry::Rect::zero();
+        }
+        for (name, _) in el.value().attrs() {
+            if name.starts_with("data-")
+                && !matches!(
+                    name,
+                    "data-composition-id"
+                        | "data-width"
+                        | "data-height"
+                        | "data-duration"
+                        | "data-start"
+                        | "data-end"
+                        | "data-fps"
+                        | "data-track-index"
+                        | "data-hidden"
+                        | "data-no-timeline"
+                        | "data-media-start"
+                        | "data-playback-rate"
+                        | "data-volume"
+                        | "data-hf-id"
+                        | "data-hf-render-id"
+                        | "data-label"
+                )
+            {
+                self.errors.push(diagnostic(
+                    &context,
+                    format!("unsupported HyperFrames attribute '{name}'"),
+                ));
+            }
+        }
+        let numeric = |name: &str, default: f64| -> Result<f64, CompileError> {
+            let v = el
+                .value()
+                .attr(name)
+                .map(|v| {
+                    v.parse::<f64>().map_err(|_| {
+                        CompileError::Input(format!("{context}: {name} must be numeric"))
+                    })
+                })
+                .transpose()?
+                .unwrap_or(default);
+            if !v.is_finite() {
+                return Err(CompileError::Input(format!("{name} must be finite")));
+            }
+            Ok(v)
+        };
+        let start = if root {
+            0.0
+        } else {
+            composition_start + numeric("data-start", 0.0)?
+        };
+        let end = if root {
+            self.options.duration
+        } else if el.value().attr("data-duration").is_some() {
+            start + numeric("data-duration", 0.0)?
+        } else if el.value().attr("data-end").is_some() {
+            composition_start + numeric("data-end", self.options.duration)?
+        } else {
+            self.options.duration
+        };
+        if start < 0.0 || end <= start {
+            return Err(CompileError::Input(format!(
+                "{context}: invalid clip window [{start}, {end})"
+            )));
+        }
+        let content: Option<Box<dyn Element>> = match tag {
+            "img" => {
+                let src = el
+                    .value()
+                    .attr("src")
+                    .ok_or_else(|| CompileError::Input(format!("{context}: image without src")))?;
+                if el.value().attr("srcset").is_some() {
+                    return Err(CompileError::Input(
+                        "responsive srcset requires extraction".into(),
+                    ));
+                }
+                let image = if let Some(image) = self.images.get(src) {
+                    image.clone()
+                } else {
+                    let bytes = read_asset(src, &self.options.base_dir)?;
+                    let image =
+                        skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))
+                            .ok_or_else(|| CompileError::Input(format!("invalid image '{src}'")))?;
+                    self.images.insert(src.into(), image.clone());
+                    image
+                };
+                let mut image = ImageNode::from_image(Some(image));
+                image.object_fit = fit(&values);
+                Some(Box::new(image))
+            }
+            "svg" => {
+                validate_svg(&el.html())?;
+                for child in el
+                    .descendants()
+                    .filter_map(ElementRef::wrap)
+                    .filter(|child| child.id() != el.id())
+                {
+                    for property in [
+                        "fill",
+                        "color",
+                        "stroke",
+                        "stroke-width",
+                        "stroke-linecap",
+                        "stroke-linejoin",
+                        "stroke-dasharray",
+                        "stroke-dashoffset",
+                        "opacity",
+                        "transform",
+                        "filter",
+                        "mix-blend-mode",
+                        "clip-path",
+                        "animation",
+                    ] {
+                        if self.css.has_stylesheet_property(child, property) {
+                            return Err(CompileError::Input(format!("{}: external stylesheet '{property}' inside SVG requires extraction; author SVG presentation attributes or an internal stylesheet", label(child))));
+                        }
+                    }
+                }
+                // Wrapper CSS opacity/transforms paint the SVG once. Keep SVG-local
+                // attributes and internal styles, and freeze inherited currentColor.
+                let mut markup = String::from("<svg");
+                for (name, value) in el.value().attrs().filter(|(name, _)| *name != "style") {
+                    markup.push_str(&format!(
+                        " {name}=\"{}\"",
+                        value.replace('&', "&amp;").replace('"', "&quot;")
+                    ));
+                }
+                if el.value().attr("xmlns").is_none() {
+                    markup.push_str(" xmlns=\"http://www.w3.org/2000/svg\"");
+                }
+                markup.push_str(&format!(
+                    " style=\"color:rgba({},{},{},{})\">",
+                    paint.color.r * 255.0,
+                    paint.color.g * 255.0,
+                    paint.color.b * 255.0,
+                    paint.color.a
+                ));
+                markup.push_str(&el.inner_html());
+                markup.push_str("</svg>");
+                let vector = usvg::Tree::from_data(markup.as_bytes(), &usvg::Options::default())
+                    .map_err(|e| CompileError::Input(format!("{context}: invalid SVG: {e}")))?;
+                if !values.contains_key("width") {
+                    layout.size.width = taffy::prelude::length(vector.size().width());
+                }
+                if !values.contains_key("height") {
+                    layout.size.height = taffy::prelude::length(vector.size().height());
+                }
+                Some(Box::new(VectorNode::new(markup.as_bytes())))
+            }
+            "video" => {
+                if el.value().attr("muted").is_none() {
+                    return Err(CompileError::Input(
+                        "video audio needs an explicit audio element; author muted video".into(),
+                    ));
+                }
+                if el.value().attr("loop").is_some() {
+                    return Err(CompileError::Input("video loop requires extraction".into()));
+                }
+                let src = el
+                    .value()
+                    .attr("src")
+                    .ok_or_else(|| CompileError::Input("video without src".into()))?;
+                let path = self.options.base_dir.join(src);
+                if !path.is_file() {
+                    return Err(CompileError::Input(format!(
+                        "video file missing: {}",
+                        path.display()
+                    )));
+                }
+                let mut video = VideoNode::new(VideoSource::Path(path), RenderMode::Export);
+                video.object_fit = fit(&values);
+                Some(Box::new(video))
+            }
+            "audio" => {
+                let src = el
+                    .value()
+                    .attr("src")
+                    .ok_or_else(|| CompileError::Input("audio without src".into()))?;
+                let bytes = read_asset(src, &self.options.base_dir)?;
+                let mut samples = director_core::audio::load_audio_bytes(&bytes, 48000)
+                    .map_err(|e| CompileError::Input(format!("audio '{src}': {e}")))?;
+                let media_start = numeric("data-media-start", 0.0)?;
+                if media_start < 0.0 {
+                    return Err(CompileError::Input("negative audio media start".into()));
+                }
+                samples.drain(..((media_start * 96000.0) as usize).min(samples.len()));
+                let id = self.director.add_scene_audio(samples, start, end - start);
+                if let Some(track) = &mut self.director.audio_mixer.tracks[id] {
+                    let volume = numeric("data-volume", 1.0)?;
+                    if volume < 0.0 || volume > f32::MAX as f64 {
+                        return Err(CompileError::Input(
+                            "audio volume must be finite and nonnegative".into(),
+                        ));
+                    }
+                    let hidden = el
+                        .ancestors()
+                        .filter_map(ElementRef::wrap)
+                        .any(|el| el.value().attr("data-hidden").is_some_and(|v| v != "false"));
+                    track.volume = director_core::animation::Animated::new(if hidden {
+                        0.0
+                    } else {
+                        volume as f32
+                    });
+                    track.loop_audio = el.value().attr("loop").is_some();
+                }
+                None
+            }
+            "canvas" | "iframe" | "object" | "embed" => {
+                return Err(CompileError::Diagnostics(vec![diagnostic(
+                    &context,
+                    format!(
+                        "{tag} requires a native translator; screenshots are not compiler assets"
+                    ),
+                )]))
+            }
+            "body" | "div" | "section" | "article" | "main" | "header" | "footer" | "h1" | "h2"
+            | "h3" | "p" | "span" => {
+                let children: Vec<_> = el
+                    .children()
+                    .filter_map(ElementRef::wrap)
+                    .filter(|e| !matches!(e.value().name(), "script" | "style" | "link"))
+                    .collect();
+                if children.iter().all(|e| inline(e.value().name())) {
+                    let mut spans = Vec::new();
+                    self.rich_text(el, &values, &paint, &mut spans)?;
+                    normalize(&mut spans, paint.preserve_space);
+                    if spans.is_empty() {
+                        None
+                    } else {
+                        Some(Box::new(text_content(spans, &paint, &self.director)))
+                    }
+                } else {
+                    if el
+                        .children()
+                        .any(|n| n.value().as_text().is_some_and(|t| !t.trim().is_empty()))
+                    {
+                        return Err(CompileError::Input(format!(
+                            "{context}: mixed block and inline content requires extraction"
+                        )));
+                    }
+                    None
+                }
+            }
+            _ => {
+                return Err(CompileError::Input(format!(
+                    "unsupported HTML element '{tag}'"
+                )))
+            }
+        };
+        let has_content = content.is_some();
+        let anonymous_text = has_content
+            && matches!(layout.display, taffy::Display::Flex | taffy::Display::Grid)
+            && !matches!(tag, "img" | "svg" | "video");
+        let mut element = HtmlElement::new(
+            layout,
+            paint.clone(),
+            content,
+            Metrics {
+                font_size: paint.font_size,
+                ..metrics
+            },
+        );
+        element.start = start;
+        element.end = end;
+        element.hidden = el.value().attr("data-hidden").is_some_and(|v| v != "false");
+        element.media_start = numeric("data-media-start", 0.0)?;
+        element.playback_rate = numeric("data-playback-rate", 1.0)?;
+        if element.media_start < 0.0 || element.playback_rate <= 0.0 {
+            return Err(CompileError::Input(
+                "media start must be nonnegative and rate positive".into(),
+            ));
+        }
+        if tag == "audio" && element.playback_rate != 1.0 {
+            return Err(CompileError::Input(
+                "audio playback-rate translation unsupported".into(),
+            ));
+        }
+        element.animations = animation::compile(&values, &self.css, &paint, metrics)
+            .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
+        let id = self.director.scene.add_node(Box::new(element));
+        self.nodes += 1;
+        self.director.scene.get_node_mut(id).unwrap().z_index = paint.z_index;
+        if anonymous_text {
+            let parent = self
+                .director
+                .scene
+                .get_node_mut(id)
+                .unwrap()
+                .element
+                .as_any_mut()
+                .downcast_mut::<HtmlElement>()
+                .unwrap();
+            let content = parent.content.take();
+            let mut anonymous = paint.clone();
+            anonymous.box_node = director_core::node::BoxNode::new();
+            anonymous.opacity = 1.0;
+            anonymous.transform = Default::default();
+            anonymous.corners = [(taffy::prelude::zero(), taffy::prelude::zero()); 4];
+            anonymous.filter = Default::default();
+            anonymous.shadows.clear();
+            anonymous.gradient.clear();
+            anonymous.mask = None;
+            let child = self.director.scene.add_node(Box::new(HtmlElement::new(
+                taffy::Style {
+                    display: taffy::Display::Block,
+                    ..Default::default()
+                },
+                anonymous,
+                content,
+                metrics,
+            )));
+            self.director.scene.add_child(id, child);
+            self.nodes += 1;
+        }
+        if let Some(name) = el.value().attr("id") {
+            if self.ids.insert(name.into(), id).is_some() {
+                return Err(CompileError::Input(format!("duplicate HTML id '{name}'")));
+            }
+        }
+        if !has_content && tag != "audio" {
+            let next_start = if !root && el.value().attr("data-composition-id").is_some() {
+                start
+            } else {
+                composition_start
+            };
+            for child in el.children().filter_map(ElementRef::wrap) {
+                if matches!(child.value().name(), "script" | "style" | "link") {
+                    continue;
+                }
+                let child_id = self.node(child, &values, next_start, false, depth + 1)?;
+                self.director.scene.add_child(id, child_id);
+            }
+        }
+        Ok(id)
+    }
+    fn rich_text(
+        &self,
+        el: ElementRef<'_>,
+        values: &Values,
+        paint: &PaintStyle,
+        spans: &mut Vec<TextSpan>,
+    ) -> Result<(), CompileError> {
+        for node in el.children() {
+            if let Some(text) = node.value().as_text() {
+                spans.push(span(text.to_string(), paint));
+            } else if let Some(child) = ElementRef::wrap(node) {
+                if child.value().name() == "br" {
+                    spans.push(span("\n".into(), paint));
+                    continue;
+                }
+                if matches!(child.value().name(), "script" | "style" | "link") {
+                    continue;
+                }
+                let mut child_values = self.css.cascade(child, values)?;
+                child_values.remove("display");
+                if child_values
+                    .keys()
+                    .any(|k| !crate::css::inherited(k) && !k.starts_with("font-"))
+                {
+                    return Err(CompileError::Input(format!(
+                        "{}: styled inline boxes require extraction",
+                        label(child)
+                    )));
+                }
+                let (_, child_paint) = style::translate(
+                    &child_values,
+                    Metrics {
+                        width: self.options.width as f32,
+                        height: self.options.height as f32,
+                        font_size: paint.font_size,
+                    },
+                )
+                .map_err(|e| CompileError::Input(e.join("; ")))?;
+                let before = spans.len();
+                self.rich_text(child, &child_values, &child_paint, spans)?;
+                if self.css.has_local_property(child, "color") {
+                    for span in &mut spans[before..] {
+                        if span.color.is_none() {
+                            span.color = Some(child_paint.color);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn normalize(spans: &mut Vec<TextSpan>, preserve: bool) {
+    if preserve {
+        return;
+    }
+    let mut last_space = true;
+    for span in spans.iter_mut() {
+        let mut text = String::new();
+        for c in span.text.chars() {
+            if c.is_whitespace() {
+                if !last_space {
+                    text.push(' ');
+                }
+                last_space = true;
+            } else {
+                text.push(c);
+                last_space = false;
+            }
+        }
+        span.text = text;
+    }
+    spans.retain(|s| !s.text.is_empty());
+    if let Some(last) = spans.last_mut() {
+        last.text = last.text.trim_end().into();
+    }
+    spans.retain(|s| !s.text.is_empty());
+}
+pub fn fit(values: &Values) -> ObjectFit {
+    match values.get("object-fit").map(String::as_str) {
+        Some("contain") => ObjectFit::Contain,
+        Some("cover") => ObjectFit::Cover,
+        _ => ObjectFit::Fill,
+    }
+}
+
+pub fn compile_file(
+    path: &Path,
+    mut options: CompileOptions,
+) -> Result<CompiledHtml, CompileError> {
+    options.base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| CompileError::Input(format!("HTML {}: {e}", path.display())))?;
+    compile(&source, options)
+}

@@ -1,4 +1,5 @@
 mod gpu;
+mod html;
 mod preview;
 mod run;
 
@@ -71,6 +72,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Compile HTML/CSS/HyperFrames to native scenes, capture dynamic input, or render
+    Html(html::HtmlArgs),
     /// Render a script (or named composition) to video
     Render(RenderArgs),
     /// Render a single still frame to PNG
@@ -463,6 +466,7 @@ fn main() {
         Some(Commands::Still(args)) => cmd_still(args),
         Some(Commands::Compositions(args)) => cmd_compositions(args),
         Some(Commands::Preview(args)) => cmd_preview(args),
+        Some(Commands::Html(args)) => html::run(args),
         None => {
             let script = match cli.script {
                 Some(s) => s,

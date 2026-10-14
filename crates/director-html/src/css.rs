@@ -1,0 +1,382 @@
+use crate::{CompileError, Diagnostic};
+use lightningcss::{
+    declaration::DeclarationBlock,
+    properties::Property,
+    rules::{keyframes::KeyframeSelector, CssRule},
+    stylesheet::{ParserOptions, PrinterOptions, StyleSheet},
+    traits::ToCss,
+};
+use scraper::{ElementRef, Selector};
+use std::collections::BTreeMap;
+
+pub type Values = BTreeMap<String, String>;
+
+#[derive(Debug, Clone)]
+pub struct Declaration {
+    pub name: String,
+    pub value: String,
+    pub important: bool,
+}
+
+#[derive(Debug)]
+pub struct Rule {
+    selector: Selector,
+    specificity: u32,
+    declarations: Vec<Declaration>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Keyframe {
+    pub offset: f32,
+    pub values: Values,
+}
+
+#[derive(Debug, Default)]
+pub struct Css {
+    rules: Vec<Rule>,
+    pub keyframes: BTreeMap<String, Vec<Keyframe>>,
+    pub fonts: Vec<(String, String)>,
+}
+
+fn expanded(property: &Property<'_>, important: bool) -> Result<Vec<Declaration>, CompileError> {
+    let id = property.property_id();
+    let properties: Vec<_> = id.longhands().map_or_else(
+        || vec![property.clone()],
+        |ids| ids.iter().filter_map(|id| property.longhand(id)).collect(),
+    );
+    // Unparsed shorthands containing variables are expanded after substitution.
+    let properties = if properties.is_empty() {
+        vec![property.clone()]
+    } else {
+        properties
+    };
+    properties
+        .into_iter()
+        .map(|p| {
+            Ok(Declaration {
+                name: p.property_id().name().to_string(),
+                value: p
+                    .value_to_css_string(PrinterOptions::default())
+                    .map_err(|e| CompileError::Input(e.to_string()))?,
+                important,
+            })
+        })
+        .collect()
+}
+
+pub fn declarations(block: &DeclarationBlock<'_>) -> Result<Vec<Declaration>, CompileError> {
+    let mut result = Vec::new();
+    for (properties, important) in [
+        (&block.declarations, false),
+        (&block.important_declarations, true),
+    ] {
+        for property in properties {
+            result.extend(expanded(property, important)?);
+        }
+    }
+    Ok(result)
+}
+
+pub fn parse_inline(css: &str) -> Result<Vec<Declaration>, CompileError> {
+    let block = DeclarationBlock::parse_string(css, ParserOptions::default())
+        .map_err(|e| CompileError::Input(format!("CSS declaration: {e}")))?;
+    declarations(&block)
+}
+
+impl Css {
+    pub fn has_stylesheet_property(&self, el: ElementRef<'_>, name: &str) -> bool {
+        self.rules.iter().any(|rule| {
+            rule.selector.matches(&el) && rule.declarations.iter().any(|d| d.name == name)
+        })
+    }
+    pub fn has_local_property(&self, el: ElementRef<'_>, name: &str) -> bool {
+        self.has_stylesheet_property(el, name)
+            || el
+                .value()
+                .attr("style")
+                .and_then(|s| parse_inline(s).ok())
+                .is_some_and(|ds| ds.iter().any(|d| d.name == name))
+    }
+    pub fn append(&mut self, source: &str) -> Result<(), CompileError> {
+        let sheet = StyleSheet::parse(source, ParserOptions::default())
+            .map_err(|e| CompileError::Input(format!("CSS stylesheet: {e}")))?;
+        for rule in sheet.rules.0 {
+            match rule {
+                CssRule::Style(rule) => {
+                    if !rule.rules.0.is_empty() {
+                        return Err(CompileError::Input(
+                            "CSS nesting requires compile-time extraction".into(),
+                        ));
+                    }
+                    let decls = declarations(&rule.declarations)?;
+                    for selector in rule.selectors.0.iter() {
+                        let source = selector
+                            .to_css_string(PrinterOptions::default())
+                            .map_err(|e| CompileError::Input(e.to_string()))?;
+                        let parsed = Selector::parse(&source).map_err(|e| {
+                            CompileError::Input(format!("unsupported selector '{source}': {e:?}"))
+                        })?;
+                        self.rules.push(Rule {
+                            selector: parsed,
+                            specificity: selector.specificity(),
+                            declarations: decls.clone(),
+                        });
+                    }
+                }
+                CssRule::Keyframes(rule) => {
+                    let name = rule
+                        .name
+                        .to_css_string(PrinterOptions::default())
+                        .map_err(|e| CompileError::Input(e.to_string()))?;
+                    let mut frames = Vec::new();
+                    for frame in rule.keyframes {
+                        let values: Values = declarations(&frame.declarations)?
+                            .into_iter()
+                            .filter(|d| !d.important)
+                            .map(|d| (d.name, d.value))
+                            .collect();
+                        for selector in frame.selectors {
+                            let offset = match selector {
+                                KeyframeSelector::From => 0.0,
+                                KeyframeSelector::To => 1.0,
+                                KeyframeSelector::Percentage(p) => p.0,
+                                _ => {
+                                    return Err(CompileError::Input(
+                                        "scroll-driven keyframes are unsupported".into(),
+                                    ))
+                                }
+                            };
+                            frames.push(Keyframe {
+                                offset,
+                                values: values.clone(),
+                            });
+                        }
+                    }
+                    frames.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+                    self.keyframes.insert(name, frames);
+                }
+                CssRule::FontFace(rule) => {
+                    let mut family = None;
+                    let mut src = None;
+                    for p in rule.properties {
+                        let s = p
+                            .to_css_string(PrinterOptions::default())
+                            .map_err(|e| CompileError::Input(e.to_string()))?;
+                        if let Some((name, value)) = s.trim_end_matches(';').split_once(':') {
+                            match name.trim() {
+                                "font-family" => {
+                                    family =
+                                        Some(value.trim().trim_matches(['\'', '"']).to_string())
+                                }
+                                "src" => src = Some(value.trim().to_string()),
+                                "font-weight" | "font-style" | "font-display" => {}
+                                _ => {
+                                    return Err(CompileError::Input(format!(
+                                        "unsupported font descriptor: {name}"
+                                    )))
+                                }
+                            }
+                        }
+                    }
+                    if let (Some(family), Some(src)) = (family, src) {
+                        self.fonts.push((family, src));
+                    }
+                }
+                _ => {
+                    return Err(CompileError::Input(
+                        "unsupported CSS at-rule; use compile-time extraction".into(),
+                    ))
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn cascade(&self, el: ElementRef<'_>, parent: &Values) -> Result<Values, CompileError> {
+        let mut values: Values = parent
+            .iter()
+            .filter(|(k, _)| inherited(k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let mut winners: BTreeMap<String, ((bool, u32, usize), String)> = BTreeMap::new();
+        let mut matched = Vec::new();
+        for (order, rule) in self.rules.iter().enumerate() {
+            if rule.selector.matches(&el) {
+                for d in &rule.declarations {
+                    matched.push((d.clone(), (d.important, rule.specificity, order)));
+                }
+            }
+        }
+        if let Some(style) = el.value().attr("style") {
+            for d in parse_inline(style)? {
+                let rank = (d.important, u32::MAX, self.rules.len());
+                matched.push((d, rank));
+            }
+        }
+        for (d, rank) in &matched {
+            if d.name.starts_with("--") {
+                insert_winner(&mut winners, d, *rank);
+            }
+        }
+        let mut variables = values.clone();
+        for (key, (_, value)) in &winners {
+            variables.insert(key.clone(), value.clone());
+        }
+        // Expand variable-dependent shorthands before ranking their longhands.
+        for (d, rank) in matched {
+            if !d.name.starts_with("--") {
+                let value = resolve_vars(&d.value, &variables, 0)?;
+                for expanded in parse_inline(&format!("{}: {}", d.name, value))? {
+                    insert_winner(&mut winners, &expanded, rank);
+                }
+            }
+        }
+        for (key, (_, value)) in winners {
+            match value.as_str() {
+                "inherit" => {
+                    if let Some(value) = parent.get(&key) {
+                        values.insert(key, value.clone());
+                    } else {
+                        values.remove(&key);
+                    }
+                }
+                "unset" if inherited(&key) => {}
+                "initial" | "unset" => {
+                    values.remove(&key);
+                }
+                "revert" | "revert-layer" => {
+                    return Err(CompileError::Input(format!(
+                        "{key}: {value} is unsupported"
+                    )))
+                }
+                _ => {
+                    values.insert(key, value);
+                }
+            }
+        }
+        Ok(values)
+    }
+}
+
+fn insert_winner(
+    winners: &mut BTreeMap<String, ((bool, u32, usize), String)>,
+    d: &Declaration,
+    rank: (bool, u32, usize),
+) {
+    if winners.get(&d.name).is_none_or(|(old, _)| rank >= *old) {
+        winners.insert(d.name.clone(), (rank, d.value.clone()));
+    }
+}
+
+pub fn inherited(name: &str) -> bool {
+    name.starts_with("--")
+        || matches!(
+            name,
+            "color"
+                | "font-family"
+                | "font-size"
+                | "font-weight"
+                | "font-style"
+                | "line-height"
+                | "letter-spacing"
+                | "text-align"
+                | "white-space"
+                | "direction"
+                | "text-transform"
+                | "visibility"
+        )
+}
+
+fn resolve_vars(value: &str, variables: &Values, depth: usize) -> Result<String, CompileError> {
+    if depth > 32 {
+        return Err(CompileError::Input("cyclic CSS custom property".into()));
+    }
+    let mut input = cssparser::ParserInput::new(value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut output = String::new();
+    while !parser.is_exhausted() {
+        let start = parser.position();
+        let token = parser
+            .next_including_whitespace_and_comments()
+            .map_err(|e| CompileError::Input(format!("CSS token: {e:?}")))?
+            .clone();
+        if let cssparser::Token::Function(name) = token {
+            let content: String = parser
+                .parse_nested_block(|p| {
+                    let start = p.position();
+                    while p.next_including_whitespace_and_comments().is_ok() {}
+                    Ok::<_, cssparser::ParseError<'_, ()>>(p.slice_from(start).to_string())
+                })
+                .map_err(|e| CompileError::Input(format!("CSS function: {e:?}")))?;
+            if name.eq_ignore_ascii_case("var") {
+                let (key, fallback) = content
+                    .split_once(',')
+                    .map_or((content.as_str(), None), |(k, v)| (k, Some(v)));
+                let replacement = variables
+                    .get(key.trim())
+                    .map(String::as_str)
+                    .or(fallback)
+                    .ok_or_else(|| {
+                        CompileError::Input(format!("undefined CSS variable {}", key.trim()))
+                    })?;
+                output.push_str(&resolve_vars(replacement, variables, depth + 1)?);
+            } else {
+                output.push_str(&name);
+                output.push('(');
+                output.push_str(&resolve_vars(&content, variables, depth + 1)?);
+                output.push(')');
+            }
+        } else {
+            output.push_str(parser.slice_from(start));
+        }
+    }
+    Ok(output)
+}
+
+pub fn diagnostic(context: &str, message: impl Into<String>) -> Diagnostic {
+    Diagnostic {
+        context: context.into(),
+        message: message.into(),
+    }
+}
+
+/// Split at the top-level separator using the CSS tokenizer, preserving functions and strings.
+pub fn split(value: &str, comma: bool) -> Vec<String> {
+    let mut input = cssparser::ParserInput::new(value);
+    let mut p = cssparser::Parser::new(&mut input);
+    let mut start = p.position();
+    let mut parts = Vec::new();
+    while !p.is_exhausted() {
+        let before = p.position();
+        let Ok(token) = p.next_including_whitespace_and_comments().cloned() else {
+            break;
+        };
+        let separator = if comma {
+            matches!(token, cssparser::Token::Comma)
+        } else {
+            matches!(token, cssparser::Token::WhiteSpace(_))
+        };
+        if separator {
+            let piece = p.slice(start..before).trim();
+            if !piece.is_empty() {
+                parts.push(piece.into());
+            }
+            start = p.position();
+        } else if matches!(
+            token,
+            cssparser::Token::Function(_)
+                | cssparser::Token::ParenthesisBlock
+                | cssparser::Token::SquareBracketBlock
+        ) {
+            let _ = p.parse_nested_block(|p| {
+                while p.next_including_whitespace_and_comments().is_ok() {}
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            });
+        }
+    }
+    let piece = p.slice_from(start).trim();
+    if !piece.is_empty() {
+        parts.push(piece.into());
+    }
+    parts
+}

@@ -14,7 +14,7 @@ pub fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
 
     let entry = unsafe { ash::Entry::load() }.ok()?;
 
-    let app_name = CStr::from_bytes_with_nul(b"Director\0").ok()?;
+    let app_name = c"Director";
     let app_info = ash::vk::ApplicationInfo {
         s_type: ash::vk::StructureType::APPLICATION_INFO,
         p_next: std::ptr::null(),
@@ -48,7 +48,8 @@ pub fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
     for pd in &physical_devices {
         let props = unsafe { instance.get_physical_device_properties(*pd) };
         let pd_type = props.device_type;
-        let pd_name = unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }.to_string_lossy();
+        let pd_name =
+            unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }.to_string_lossy();
         match pd_type {
             ash::vk::PhysicalDeviceType::DISCRETE_GPU => {
                 info!("Found discrete GPU: {}", pd_name);
@@ -97,7 +98,7 @@ pub fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
             .enumerate_device_extension_properties(physical_device)
             .ok()?
     };
-    let swapchain_ext = CStr::from_bytes_with_nul(b"VK_KHR_swapchain\0").ok()?;
+    let swapchain_ext = c"VK_KHR_swapchain";
     let has_swapchain = available_extensions
         .iter()
         .any(|ext| unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) == swapchain_ext });
@@ -124,8 +125,6 @@ pub fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
         flags: ash::vk::DeviceCreateFlags::empty(),
         queue_create_info_count: 1,
         p_queue_create_infos: &queue_create_info,
-        enabled_layer_count: 0,
-        pp_enabled_layer_names: std::ptr::null(),
         enabled_extension_count: enabled_extensions.len() as u32,
         pp_enabled_extension_names: enabled_extensions.as_ptr(),
         p_enabled_features: &physical_device_features,
@@ -163,15 +162,15 @@ pub fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
             instance.handle().as_raw() as sk_vk::Instance,
             physical_device.as_raw() as sk_vk::PhysicalDevice,
             device.handle().as_raw() as sk_vk::Device,
-            (queue.as_raw() as sk_vk::Queue, 0),
+            (queue.as_raw() as sk_vk::Queue, queue_family_index as usize),
             &*get_proc,
         )
     };
 
     let context = direct_contexts::make_vulkan(&backend_context, None)?;
 
-    std::mem::forget(instance);
-    std::mem::forget(device);
+    // Ash handles do not destroy Vulkan objects on drop. The leaked resolver
+    // retains the loader; this CLI's native device lives until process exit.
 
     Some(context)
 }
@@ -179,4 +178,104 @@ pub fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
 #[cfg(not(feature = "vulkan"))]
 pub fn create_vulkan_context() -> Option<()> {
     None
+}
+
+/// Explicit GPU requests fail if the requested backend cannot be initialized.
+pub fn required_context(
+    enable: bool,
+) -> Result<Option<director_core::systems::renderer::GpuContext>, String> {
+    if !enable {
+        return Ok(None);
+    }
+    #[cfg(feature = "vulkan")]
+    {
+        create_vulkan_context().map(Some).ok_or_else(|| {
+            "Vulkan initialization failed; --gpu requires a working Vulkan device".into()
+        })
+    }
+    #[cfg(not(feature = "vulkan"))]
+    {
+        Err("Vulkan support is not compiled; build director-cli with --features vulkan".into())
+    }
+}
+
+pub fn render_surface(
+    width: i32,
+    height: i32,
+    context: &mut Option<director_core::systems::renderer::GpuContext>,
+) -> Result<skia_safe::Surface, String> {
+    let info = skia_safe::ImageInfo::new(
+        (width, height),
+        skia_safe::ColorType::RGBA8888,
+        skia_safe::AlphaType::Premul,
+        Some(skia_safe::ColorSpace::new_srgb()),
+    );
+    #[cfg(feature = "vulkan")]
+    if let Some(ctx) = context.as_mut() {
+        return skia_safe::gpu::surfaces::render_target(
+            ctx,
+            skia_safe::gpu::Budgeted::No,
+            &info,
+            0,
+            None,
+            None,
+            false,
+            false,
+        )
+        .ok_or_else(|| "Vulkan render surface allocation failed".into());
+    }
+    #[cfg(not(feature = "vulkan"))]
+    let _ = context;
+    skia_safe::surfaces::raster(&info, None, None)
+        .ok_or_else(|| "CPU render surface allocation failed".into())
+}
+
+/// Read directly from the render target. GPU images cannot be drawn onto a raster canvas.
+pub fn read_pixels(
+    surface: &mut skia_safe::Surface,
+    context: &mut Option<director_core::systems::renderer::GpuContext>,
+    pixels: &mut [u8],
+) -> Result<(), String> {
+    #[cfg(feature = "vulkan")]
+    if let Some(ctx) = context.as_mut() {
+        ctx.flush_and_submit();
+    }
+    #[cfg(not(feature = "vulkan"))]
+    let _ = context;
+    let info = surface.image_info();
+    if surface.read_pixels(&info, pixels, info.width() as usize * 4, (0, 0)) {
+        Ok(())
+    } else {
+        Err("Render surface RGBA readback failed".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(not(feature = "vulkan"))]
+    #[test]
+    fn explicit_gpu_request_requires_compiled_backend() {
+        assert!(required_context(true)
+            .unwrap_err()
+            .contains("--features vulkan"));
+        assert!(required_context(false).unwrap().is_none());
+    }
+    #[cfg(feature = "vulkan")]
+    #[test]
+    #[ignore = "requires a live Vulkan device; run explicitly during GPU verification"]
+    fn gpu_readback_preserves_pixels_across_flushes() {
+        let mut context = required_context(true).unwrap();
+        let mut surface = render_surface(32, 32, &mut context).unwrap();
+        assert!(surface.recording_context().is_some());
+        let mut pixels = vec![0; 32 * 32 * 4];
+        for (color, expected) in [
+            (skia_safe::Color::RED, [255, 0, 0, 255]),
+            (skia_safe::Color::BLUE, [0, 0, 255, 255]),
+        ] {
+            surface.canvas().clear(color);
+            read_pixels(&mut surface, &mut context, &mut pixels).unwrap();
+            assert!(pixels.chunks_exact(4).all(|pixel| pixel == expected));
+        }
+    }
 }

@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  @font-face { font-family:Roboto; src:url("../../crates/director-core/assets/fonts/Roboto-Regular.ttf"); font-weight:400; }
+  @font-face { font-family:Roboto; src:url("../../crates/director-core/assets/fonts/Roboto-Bold.ttf"); font-weight:700; }
+  html, body { margin:0; background:#101420; }
+  * { box-sizing:border-box; }
+  #native { width:100%; height:100%; padding:100px; display:flex; flex-direction:column; justify-content:center; gap:44px; background:linear-gradient(135deg,#101420 0%,#223650 100%); font-family:Roboto; color:#fff; }
+  h1, p { margin:0; }
+  h1 { font-size:104px; line-height:1.1; animation:enter 1.2s ease-out both; }
+  p { font-size:36px; color:#bcd0e8; }
+  .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:28px; }
+  .card { height:200px; padding:28px; display:flex; align-items:center; justify-content:center; background:#304665; border:2px solid #6086b8; border-radius:24px; font-size:42px; }
+  #native-icon { width:80px; height:80px; }
+  #pulse { animation:pulse 1.5s ease-in-out infinite alternate; }
+  @keyframes enter { from { opacity:0; transform:translateY(64px); } to { opacity:1; transform:translateY(0px); } }
+  @keyframes pulse { from { opacity:.45; } to { opacity:1; } }
+</style></head><body>
+<div id="native" data-composition-id="native" data-no-timeline data-width="1920" data-height="1080" data-fps="30" data-duration="3">
+  <h1>HTML becomes native video.</h1>
+  <p>CSS layout. Seekable motion. Director rendering.</p>
+  <div class="cards">
+    <div class="card">Taffy layout</div>
+    <div class="card" id="pulse">Skia paint</div>
+    <div class="card"><svg id="native-icon" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><circle cx="40" cy="40" r="36" fill="#76ddca"/><path d="M30 20 L60 40 L30 60 Z" fill="#101420"/></svg></div>
+  </div>
+</div>
+</body></html>

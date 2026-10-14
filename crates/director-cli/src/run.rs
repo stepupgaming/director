@@ -51,18 +51,10 @@ pub fn eval_script(script_path: &Path, mode: RenderMode) -> Result<EvaluatedScri
 }
 
 /// Optional composition selection + props override for resolve.
+#[derive(Default)]
 pub struct ResolveOpts<'a> {
     pub composition: Option<&'a str>,
     pub props_spec: Option<&'a str>,
-}
-
-impl<'a> Default for ResolveOpts<'a> {
-    fn default() -> Self {
-        Self {
-            composition: None,
-            props_spec: None,
-        }
-    }
 }
 
 /// Resolve a movie from eval result + registry.

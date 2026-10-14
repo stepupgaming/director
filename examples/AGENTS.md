@@ -7,6 +7,7 @@
 - `basics/` owns minimal reference scripts for core Rhai API usage.
 - `features/` owns scripts demonstrating higher-level rendering, media, effects, transitions, and hardware encoding examples.
 - `recipes/` owns L3 full-arc composition scripts (props in, finished show out).
+- `html/` owns native HTML/CSS/HyperFrames compiler reference compositions.
 - `tests/` owns test scripts, visual comparison helpers, and reference media.
 - Root example `.rhai` files own broader manual or preview scenarios.
 
@@ -37,5 +38,6 @@
 ## Child DOX Index
 
 - `basics/` - Introductory Rhai scripts.
+- `html/AGENTS.md` - Native HTML reference compositions and render commands.
 - `features/` - Feature showcase Rhai scripts and media references.
 - `tests/` - Script tests, visual diff helpers, and reference media.

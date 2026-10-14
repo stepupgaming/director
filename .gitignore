@@ -1,5 +1,6 @@
 target/
 assets/
+crates/director-html/tools/node_modules/
 !ultimate_showcase.mp4
 # Keep the bundled test fonts for deterministic visual regression snapshots.
 !crates/director-core/assets/
@@ -20,4 +21,6 @@ NUL
 repomix-output.xml
 .grits/grits.db
 
-vendor/
+vendor/*
+!vendor/AGENTS.md
+!vendor/skia-safe/

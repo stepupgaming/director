@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/director-core",
+    "crates/director-html",
     "crates/director-cli",
     "crates/director-schema",
     "crates/director-pipeline",
@@ -9,6 +10,7 @@ members = [
     "crates/lottie-data",
     "crates/lottie-skia",
 ]
+exclude = ["vendor/skia-safe"]
 
 
 [workspace.package]
@@ -32,4 +34,7 @@ lottie-core = { path = "crates/lottie-core", version = "0.1.0" }
 lottie-data = { path = "crates/lottie-data", version = "0.1.0" }
 lottie-skia = { path = "crates/lottie-skia", version = "0.1.0" }
 director-core = { path = "crates/director-core", version = "1.1.1" }
+
+[patch.crates-io]
+skia-safe = { path = "vendor/skia-safe" }
 
