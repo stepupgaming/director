@@ -57,10 +57,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libavdevice-dev \
+            ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev libavdevice-dev \
             clang libclang-dev llvm-dev \
             libasound2-dev pkg-config build-essential \
             libfreetype6-dev libfontconfig1-dev
+
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
+
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Verify decoder tools
+        run: |
+          ffmpeg -version
+          ffprobe -version
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

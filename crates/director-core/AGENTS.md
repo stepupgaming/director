@@ -21,10 +21,10 @@ reflows when a second line enters; exactly one global active word.
   platform `safe_area_preset`, and dimensional scaling before layout.
 * `compute_slot_assignments()` — overlap bookkeeping (legacy slot ids).
   Render uses a single shared anchor; overlapping cues replace in place.
-* `CaptionNode::measure` — height from `build_block_layout` SkParagraph
-  metrics at `layout_width_fraction * available_width` (no char-width
-  estimate). Cached `block_layout` is reused when width + canvas height
-  match.
+* `CaptionNode::measure` — content height from `build_block_layout`
+  SkParagraph metrics at `max(layout_width_fraction * available_width, 20)`.
+  Anchor margins belong to Taffy insets, not content height. Cached
+  `block_layout` is reused when width + canvas height match.
 * Per-display-line `Paragraph` — each line is its own Skia Paragraph,
   laid out with **uniform `font_size`**. Every TextStyle run on a single
   paragraph shares the same font size, so glyph metrics never vary
@@ -237,12 +237,44 @@ Frame pipeline (plan 03): `note_mutation` auto-evicts static/comp caches;
 never serve cache hits; `expand_dirty_set` includes reverse mask users.
 Acceptance: `tests/pipeline_equivalence.rs`.
 
+Layout synchronization: compare child order including masks before calling Taffy
+`set_children`; identical lists must not invalidate the layout cache. Compare
+dirty styles before `set_style`; unchanged intrinsic-measure nodes still need
+`mark_dirty` after content changes. Persistent layouts must match fresh layouts
+after reordering, reparenting, mask edits, size changes, and generational reuse.
+
+Performance tracking: `python -B crates/director-core/benches/frame_regression.py`
+provides `record --output <baseline>`, `check --baseline <baseline> --output <run>`,
+and offline `compare --baseline <baseline> --current <run> --output <report>`.
+Each capture runs the existing Criterion frame workloads in an isolated output
+directory and pairs 12 timing metrics with 15 exact RGBA frames. Existing output
+directories are refused. Compare only the same machine/toolchain/build settings,
+benchmark source digest, and suite metadata. Default timing allowance is 15%,
+configurable with `--max-regression-percent`; fail when the current 95% lower
+bound exceeds the baseline upper bound plus that allowance. Exit codes: 0 pass,
+1 pixel/timing regression, 2 invalid capture/setup, 3 noisy/inconclusive timing.
+Noisy results require a repeat, not baseline replacement. Reports are JSON and
+Markdown; raw captures stay under ignored `target/`, not durable source.
+
+Tracker verification: `python -B -m unittest discover -s
+crates/director-core/benches -p 'test_*.py'`. The benchmark owns `suite.json` and
+five 640x360 premultiplied RGBA frames per workload via
+`DIRECTOR_PROFILE_PIXELS`. CLI-driven comparisons never auto-update baselines.
+
 ## Native video export
 
 - `systems::renderer::render_sampled_at_time` owns shutter sampling and accumulation for export and the CLI frame worker. Scratch and transition surfaces retain the requested backend; preview/still use the same sampling clock as export.
 - `src/export/video.rs`: a supplied Vulkan context requires GPU surface allocation. Flush/submit and read RGBA pixels directly from that surface into one reusable frame buffer; do not draw GPU snapshots onto CPU canvases.
 - Export passes per-channel sample-frame counts to `mix_audio`, which returns interleaved stereo. The total output remains `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`.
 - End-to-end A/V acceptance is `cargo test -p director-cli --test html_export`, with FFmpeg and ffprobe in PATH.
+
+## Video decoder lifecycle and verification
+
+- `src/video_wrapper.rs`: `DecodeSession` owns its FFmpeg child and kills/reaps it on drop, including read errors and restarts. Drop the old session before spawning its replacement.
+- `ThreadedDecoder` disconnects command and response channels before joining its worker so a full response queue cannot block shutdown. Session cleanup completes before decoder drop returns.
+- Decoder unit tests require FFmpeg and ffprobe in PATH. Generate lossless, frame-numbered fixtures in temporary directories; fail on missing tools or fixture-generation errors instead of silently passing.
+- Verify exact RGBA content, child PID reuse, eight-frame cache eviction, uncached backward and large forward seeks, EOF recovery, and worker shutdown. Cover 24, 25, 30000/1001, 30, and 60 FPS.
+- Run `cargo test -p director-core --lib video_wrapper::tests` for decoder verification. Exact VFR presentation-timestamp sampling remains unsupported.
 
 ## Semantic Entity Registry
 
@@ -340,6 +372,6 @@ Acceptance: `tests/pipeline_equivalence.rs`.
 
 ## Child DOX Index
 
-- `src/node/AGENTS.md` — effect/shader system: the 6-place shader registration
-  contract, SkSL conventions (resolution-relative sampling, Rec.709 luma), and
-  the `api_catalog` → `EffectConfig` auto-generation rule.
+- `src/node/AGENTS.md` — caption measurement/render equivalence and the
+  effect/shader system: 6-place registration, SkSL sampling/luma conventions,
+  and `api_catalog` → `EffectConfig` auto-generation.

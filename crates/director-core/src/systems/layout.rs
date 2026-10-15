@@ -13,6 +13,7 @@
 use crate::scene::SceneGraph;
 use crate::types::NodeId;
 use taffy::prelude::*;
+use taffy::TraversePartialTree;
 use tracing::{instrument, warn};
 
 /// Manages the layout computation using the Taffy engine.
@@ -80,12 +81,22 @@ impl LayoutEngine {
             // Sync Style if dirty
             if node.dirty_style {
                 let style = node.element.layout_style();
-                if let Err(e) = self.taffy.set_style(t_id, style) {
-                    warn!(node_id = %id, error = %e, "Failed to sync taffy style");
+                if self
+                    .taffy
+                    .style(t_id)
+                    .map(|current| current != &style)
+                    .unwrap_or(true)
+                {
+                    if let Err(e) = self.taffy.set_style(t_id, style) {
+                        warn!(node_id = %id, error = %e, "Failed to sync taffy style");
+                    }
+                } else if node.element.needs_measure() {
+                    // Text/media content may change its intrinsic size without
+                    // changing Style. Preserve measure invalidation in that case.
+                    if let Err(e) = self.taffy.mark_dirty(t_id) {
+                        warn!(node_id = %id, error = %e, "Failed to invalidate taffy measure");
+                    }
                 }
-
-                // Taffy 0.9.2 doesn't support updating measure function per node this way.
-                // Measure logic must be handled in compute_layout_with_measure.
 
                 node.dirty_style = false;
             }
@@ -95,23 +106,19 @@ impl LayoutEngine {
         // We iterate again. Since we updated all nodes in Phase A, all valid children should be in node_map.
         for (id, node) in scene.iter_alive() {
             if let Some(&t_id) = self.node_map.get(&id) {
-                let mut children_t_ids = Vec::with_capacity(node.children.len() + 1);
-
-                for &child_id in &node.children {
-                    if let Some(&child_t_id) = self.node_map.get(&child_id) {
-                        children_t_ids.push(child_t_id);
+                let children = node
+                    .children
+                    .iter()
+                    .copied()
+                    .chain(node.mask_node)
+                    .filter_map(|id| self.node_map.get(&id).copied());
+                // Taffy 0.9.2 always dirties layout in set_children, even for
+                // identical lists. Compare without allocating on the warm path.
+                if !self.taffy.child_ids(t_id).eq(children.clone()) {
+                    let children_t_ids: Vec<_> = children.collect();
+                    if let Err(e) = self.taffy.set_children(t_id, &children_t_ids) {
+                        warn!(node_id = %id, error = %e, "Failed to sync taffy children");
                     }
-                }
-                if let Some(mask_id) = node.mask_node {
-                    if let Some(&mask_t_id) = self.node_map.get(&mask_id) {
-                        children_t_ids.push(mask_t_id);
-                    }
-                }
-
-                // Always set children to ensure structure is correct
-                // Taffy's set_children is optimized to do nothing if children list hasn't changed.
-                if let Err(e) = self.taffy.set_children(t_id, &children_t_ids) {
-                    warn!(node_id = %id, error = %e, "Failed to sync taffy children");
                 }
             }
         }
@@ -202,5 +209,114 @@ impl LayoutEngine {
                 self.write_back_recursive(scene, mask_id);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::Element;
+    use crate::node::BoxNode;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[derive(Clone, Debug)]
+    struct MeasuredContent {
+        width: f32,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl Element for MeasuredContent {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+        fn layout_style(&self) -> Style {
+            Style::default()
+        }
+        fn needs_measure(&self) -> bool {
+            true
+        }
+        fn measure(&self, known: Size<Option<f32>>, _: Size<AvailableSpace>) -> Size<f32> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Size {
+                width: known.width.unwrap_or(self.width),
+                height: known.height.unwrap_or(20.0),
+            }
+        }
+        fn update(&mut self, _: f64) -> bool {
+            false
+        }
+        fn render(
+            &self,
+            _: &skia_safe::Canvas,
+            _: skia_safe::Rect,
+            _: f32,
+            _: &mut dyn FnMut(&skia_safe::Canvas),
+        ) -> Result<(), crate::RenderError> {
+            Ok(())
+        }
+        fn animate_property(
+            &mut self,
+            _: &str,
+            _: f32,
+            _: f32,
+            _: f64,
+            _: &str,
+        ) -> Result<(), String> {
+            Err("no animated properties".into())
+        }
+    }
+
+    #[test]
+    fn unchanged_children_and_paint_only_updates_preserve_measure_cache() {
+        let mut scene = SceneGraph::new();
+        let mut root = BoxNode::new();
+        root.style.size = Size {
+            width: Dimension::length(200.0),
+            height: Dimension::length(100.0),
+        };
+        let root = scene.add_node(Box::new(root));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let measured = scene.add_node(Box::new(MeasuredContent {
+            width: 30.0,
+            calls: calls.clone(),
+        }));
+        scene.add_child(root, measured);
+        scene.get_node_mut(root).unwrap().last_visit_time = 0.0;
+        let mut layout = LayoutEngine::new();
+        layout.compute_layout(&mut scene, 200, 100, 0.0);
+        let first_calls = calls.load(Ordering::SeqCst);
+        assert!(first_calls > 0);
+        let original_rect = scene.get_node(measured).unwrap().layout_rect;
+        // Box paint updates report dirty_style even when the Style is unchanged.
+        for _ in 0..3 {
+            scene.get_node_mut(root).unwrap().dirty_style = true;
+            layout.compute_layout(&mut scene, 200, 100, 0.0);
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            first_calls,
+            "unchanged hierarchy/style must retain Taffy's measure cache"
+        );
+        assert_eq!(scene.get_node(measured).unwrap().layout_rect, original_rect);
+
+        let node = scene.get_node_mut(measured).unwrap();
+        node.element
+            .as_any_mut()
+            .downcast_mut::<MeasuredContent>()
+            .unwrap()
+            .width = 80.0;
+        node.dirty_style = true;
+        layout.compute_layout(&mut scene, 200, 100, 0.0);
+        assert!(
+            calls.load(Ordering::SeqCst) > first_calls,
+            "content-only edits must invalidate intrinsic measurements"
+        );
+        assert_eq!(scene.get_node(measured).unwrap().layout_rect.width(), 80.0);
     }
 }

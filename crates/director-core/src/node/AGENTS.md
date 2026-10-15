@@ -21,6 +21,12 @@ pipeline conversion) or the build/tests fail.
 
 ## Local Contracts
 
+### Caption layout
+
+- `caption.rs` measures content height only. Anchor margins belong to Taffy insets, not the measured caption box.
+- Measurement and rendering both compute paragraph width as `max(rect_width * layout_width_fraction, 20)` so narrow boxes preserve the same wrapping and height.
+- Regression checks: `cargo test -p director-core --lib node::caption::tests`, including margin/inset separation and narrow measure/render equivalence.
+
 ### Adding a runtime shader touches 6 places
 
 1. `effect_shaders.rs` — `pub(crate) fn build_<name>(...)` + SkSL string. Use the
@@ -91,4 +97,4 @@ pipeline conversion) or the build/tests fail.
 
 ## Child DOX Index
 
-None — this is a leaf contract doc for the shader/effect system.
+None. This leaf contract owns caption layout and the shader/effect system.

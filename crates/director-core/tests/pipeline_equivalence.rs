@@ -305,6 +305,67 @@ fn note_mutation_dirties_without_structural_hash_change() {
     assert!(!d.static_cache.contains_key(&a));
 }
 
+#[test]
+fn persistent_layout_matches_fresh_layout_after_edits() {
+    let (mut d, root, a, b) = setup_two_child_scene();
+    let mut persistent = LayoutEngine::new();
+    for step in 0..9 {
+        match step {
+            1 => d.scene.get_node_mut(root).unwrap().children.reverse(),
+            2 => {
+                let node = d.scene.get_node_mut(a).unwrap();
+                node.element.as_any_mut().downcast_mut::<BoxNode>().unwrap()
+                    .style.size.width = Dimension::length(15.0);
+                node.dirty_style = true;
+            }
+            3 => d.scene.add_child(a, b),
+            4 => {
+                d.scene.remove_child(a, b);
+                d.scene.get_node_mut(a).unwrap().mask_node = Some(b);
+                d.scene.get_node_mut(b).unwrap().parent = Some(a);
+            }
+            5 => {
+                d.scene.get_node_mut(a).unwrap().mask_node = None;
+                d.scene.get_node_mut(b).unwrap().parent = None;
+                d.scene.add_child(root, b);
+            }
+            6 => {
+                d.scene.destroy_node(b);
+                let mut replacement = BoxNode::new();
+                replacement.style.size.width = Dimension::length(25.0);
+                replacement.style.size.height = Dimension::length(25.0);
+                replacement.bg_color = Some(Animated::new(Color::new(0.8, 0.2, 0.3, 1.0)));
+                let id = d.scene.add_node(Box::new(replacement));
+                assert_eq!(id.index, b.index);
+                assert_ne!(id.generation, b.generation);
+                d.scene.add_child(root, id);
+            }
+            7 => d.width = 120,
+            8 => {
+                d.scene.get_node_mut(a).unwrap().transform.translate_x
+                    .add_segment(0.0, 4.0, 1.0, EasingType::Linear);
+            }
+            _ => {}
+        }
+        let time = step as f64 / 10.0;
+        let info = ImageInfo::new(
+            (d.width, d.height), ColorType::RGBA8888, AlphaType::Premul,
+            Some(ColorSpace::new_srgb()),
+        );
+        let mut surface = skia_safe::surfaces::raster(&info, None, None).unwrap();
+        render_at_time(&mut d, &mut persistent, time, surface.canvas(), &mut None).unwrap();
+        let mut actual = vec![0; (d.width * d.height * 4) as usize];
+        assert!(surface.read_pixels(&info, &mut actual, (d.width * 4) as usize, (0, 0)));
+        let mut fresh = d.clone();
+        fresh.static_cache.clear();
+        assert_eq!(actual, read_pixels(&mut fresh, time), "pixels differ after edit {step}");
+        for (id, node) in d.scene.iter_alive() {
+            assert_eq!(node.layout_rect, fresh.scene.get_node(id).unwrap().layout_rect,
+                "layout differs after edit {step} for {id}");
+        }
+    }
+}
+
 // Silence unused import if EasingType not needed.
 #[allow(dead_code)]
 fn _easing() -> EasingType {

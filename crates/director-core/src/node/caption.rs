@@ -1265,10 +1265,9 @@ impl Element for CaptionNode {
         };
         let canvas_h = Self::effective_canvas_height(&self.style, raw_h);
         let layout_style = self.style.resolved_for_canvas(canvas_h);
-        let block_width = (layout_width.max(20.0)) * layout_style.layout_width_fraction;
+        let block_width = (layout_width * layout_style.layout_width_fraction).max(20.0);
 
-        // Derive height from real SkParagraph metrics (same path as render) so
-        // wrap and multi-slot stacking match the painted layout.
+        // Derive content height from the same paragraph width and metrics as render.
         let stack_h = {
             let mut guard = self.block_layout.lock().unwrap_or_else(|e| e.into_inner());
             let needs_rebuild = guard
@@ -2660,6 +2659,86 @@ mod tests {
     }
 
     #[test]
+    fn test_measure_keeps_anchor_margins_out_of_content_height() {
+        let mut line = CaptionLine {
+            text: "caption content".into(),
+            words: vec![],
+            start_sec: 0.0,
+            end_sec: 5.0,
+        };
+        auto_time_words(&mut line);
+        let mut node = CaptionNode::new(vec![line], test_font_collection());
+        let known = Size {
+            width: Some(400.0),
+            height: None,
+        };
+        let available = Size {
+            width: AvailableSpace::Definite(400.0),
+            height: AvailableSpace::Definite(1920.0),
+        };
+        let original = node.measure(known, available);
+        assert!(original.height > 0.0);
+        for position in [CaptionPosition::Top, CaptionPosition::Bottom] {
+            for margin in [0.0, 110.0, 300.0] {
+                node.style.top_margin = margin;
+                node.style.bottom_margin = margin;
+                node.set_position(position.clone());
+                node.rebuild_layout_style();
+                node.after_style_changed();
+                assert_eq!(node.measure(known, available), original);
+                let insets = node.layout_style().inset;
+                let actual = if position == CaptionPosition::Top {
+                    insets.top
+                } else {
+                    insets.bottom
+                };
+                assert_eq!(actual, taffy::style::LengthPercentageAuto::length(margin));
+            }
+        }
+    }
+
+    #[test]
+    fn test_narrow_caption_measure_and_render_share_block_width() {
+        let mut line = CaptionLine {
+            text: "narrow caption".into(),
+            words: vec![],
+            start_sec: 0.0,
+            end_sec: 5.0,
+        };
+        auto_time_words(&mut line);
+        let mut node = CaptionNode::new(vec![line], test_font_collection());
+        node.update(0.5);
+        for width in [10.0, 25.0, 400.0] {
+            let measured = node.measure(
+                Size {
+                    width: Some(width),
+                    height: None,
+                },
+                Size {
+                    width: AvailableSpace::Definite(width),
+                    height: AvailableSpace::Definite(1920.0),
+                },
+            );
+            assert!(measured.height > 0.0);
+            let measured_block_width = node.block_layout.lock().unwrap().as_ref().unwrap().width;
+            let expected_width = (width * node.style.layout_width_fraction).max(20.0);
+            assert_eq!(measured_block_width, expected_width);
+            let mut surface = skia_safe::surfaces::raster_n32_premul((500, 500)).unwrap();
+            node.render(
+                surface.canvas(),
+                Rect::from_xywh(0.0, 0.0, width, measured.height),
+                1.0,
+                &mut |_| {},
+            )
+            .unwrap();
+            let guard = node.block_layout.lock().unwrap();
+            let rendered = guard.as_ref().unwrap();
+            assert_eq!(rendered.width, measured_block_width);
+            assert_eq!(rendered.total_height, measured.height);
+        }
+    }
+
+    #[test]
     fn test_measure_height_matches_block_layout() {
         let fc = test_font_collection();
         let long_text = "The quick brown fox jumps over the lazy dog repeatedly";
@@ -2688,7 +2767,8 @@ mod tests {
         );
 
         let layout = node.build_block_layout(block_width, canvas_h, node.style.text_shadow_color);
-        let expected_h = layout.total_height + layout_style.bottom_margin;
+        // Insets position the box; they are not part of its content height.
+        let expected_h = layout.total_height;
         assert!(
             (measured.height - expected_h).abs() < 0.5,
             "measure height {:.1} should match block layout {:.1}",

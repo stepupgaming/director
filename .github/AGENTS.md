@@ -18,6 +18,7 @@
 
 - Update workflow commands when package names, feature flags, or test entry points change.
 - Prefer explicit setup steps for external binary/font dependencies needed by tests.
+- The CI test matrix installs FFmpeg and verifies both `ffmpeg` and `ffprobe` on Linux, Windows, and macOS. Real decoder tests fail when those tools are unavailable.
 - To re-enable auto CI, restore `push` / `pull_request` triggers on `ci.yml` and `visual_regression.yml`.
 
 ## Verification

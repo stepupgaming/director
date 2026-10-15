@@ -67,7 +67,8 @@ update(time, dirty?) → layout → post_layout → render → (mix_audio / enco
 | Item | Contract | Status (2026-07-19) |
 |------|----------|---------------------|
 | Full vs incremental | Same pixels for same scene+time after public mutations | **Done** — `tests/pipeline_equivalence.rs` |
-| Static cache | Auto-invalidated via `note_mutation` / `invalidate`; dirty static nodes never serve cache hits | **Done** |
+| Static cache | Auto-invalidated via `note_mutation` / `invalidate`; dirty static nodes never serve cache hits. Full passes currently re-rasterize static subtrees. | Correctness covered; full-pass reuse remains a performance gap |
+| Layout cache | Unchanged ordered children/masks and non-measured styles do not dirty Taffy. Dirty intrinsic content still invalidates measure even when Style is unchanged. | Covered by layout unit tests and persistent/fresh pixel equivalence |
 | Dirty expansion | Ancestors, descendants, mask subtrees, reverse mask users; drop stale ids | **Done** |
 | Uncompiled graph | Incremental falls back to full (`!is_compiled()` ⇒ dirty `None`) | **Done** |
 | Mutation hook | Public pixel/layout mutations call `Director::note_mutation` | **Done** (color, mask, set_static, invalidate) |
@@ -116,12 +117,12 @@ See plan **05** (implemented). Acceptance: `tests/project_roundtrip.rs` Plan 05 
 |------|----------|--------|
 | Fonts | Roboto R/B/I, Inter R/B, Poppins Bold required; export fails via `ensure_required_fonts` | **Locked** (plan 06) |
 | RNG | `rand_float` / `set_seed` use process `StdRng` default `0xC0FFEE`; no `thread_rng` in lib | **Locked** |
-| Video seek | **Floor** onto the probed source frame grid (`video_seek_time` / `video_source_frame_index`); 30 FPS fallback when probing fails; freeze pins local time | **Locked** |
-| Video decode | Reuse a persistent FFmpeg pipe for sequential reads; cache up to 8 frames; restart on backward or >60-frame seeks | **Implemented** |
+| Video seek | **Floor** onto the probed source frame grid (`video_seek_time` / `video_source_frame_index`); 30 FPS fallback when frame-rate probing fails; freeze pins local time. Exact VFR presentation timestamps are not supported. | **Locked for CFR** |
+| Video decode | Reuse a persistent FFmpeg pipe for sequential reads; cache up to 8 frames; restart on uncached backward or >60-frame seeks. Sessions kill/reap their child on drop; threaded decoders disconnect both channels and join on drop. | **Implemented**; real decode/lifecycle coverage in `video_wrapper::tests` |
 | A/V duration | `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`; the mixer takes per-channel sample frames and emits interleaved stereo | **Locked**; MP4 duration acceptance in CLI `tests/html_export.rs` |
 | GPU export | Supplied Vulkan context requires a GPU target; synchronized direct RGBA readback reuses the export buffer | **Implemented**; live GPU readback test and HTML CPU/GPU parity harness |
 | Native frame sampling | Export and CLI still/preview share `render_sampled_at_time`, including shutter accumulation and transition targets | **Implemented**; CLI renderer sampling parity test |
-| CI | Fonts downloaded on PR/push; visual suite `mock_video` | Present |
+| CI | Manual `workflow_dispatch` only; fonts provisioned by CI; visual suite `mock_video` | Automatic PR/push verification disabled |
 
 See plan **06** (implemented). Acceptance: `tests/determinism_media.rs`.
 

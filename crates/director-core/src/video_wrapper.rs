@@ -643,10 +643,11 @@ impl DecodeSession {
             .stderr(Stdio::null())
             .spawn()
             .with_context(|| format!("Failed to spawn ffmpeg decoder for {}", path.display()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("ffmpeg decoder stdout unavailable"))?;
+        let Some(stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow::anyhow!("ffmpeg decoder stdout unavailable"));
+        };
         Ok(Self {
             child,
             reader: BufReader::new(stdout),
@@ -666,8 +667,10 @@ impl DecodeSession {
         self.next_index += 1;
         Ok(buffer)
     }
+}
 
-    fn shutdown(&mut self) {
+impl Drop for DecodeSession {
+    fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -693,8 +696,9 @@ fn cache_insert(
 
 #[derive(Debug)]
 pub struct ThreadedDecoder {
-    cmd_tx: Sender<VideoCommand>,
-    resp_rx: Receiver<VideoResponse>,
+    cmd_tx: Option<Sender<VideoCommand>>,
+    resp_rx: Option<Receiver<VideoResponse>>,
+    worker: Option<thread::JoinHandle<()>>,
     source_fps: f64,
     _mode: RenderMode,
 }
@@ -713,18 +717,17 @@ impl ThreadedDecoder {
         let (width, height, fps) = (probed.width, probed.height, probed.fps);
         let frame_len = width as usize * height as usize * 4;
 
-        thread::spawn(move || {
+        let worker = thread::spawn(move || {
             let mut session: Option<DecodeSession> = None;
             let mut cache: HashMap<u64, Vec<u8>> = HashMap::new();
             let mut order: VecDeque<u64> = VecDeque::new();
 
-            let restart = |session: &mut Option<DecodeSession>, time: f64, index: u64| -> Result<()> {
-                if let Some(s) = session.as_mut() {
-                    s.shutdown();
-                }
-                *session = Some(DecodeSession::start(&video_path, time, index, frame_len)?);
-                Ok(())
-            };
+            let restart =
+                |session: &mut Option<DecodeSession>, time: f64, index: u64| -> Result<()> {
+                    *session = None;
+                    *session = Some(DecodeSession::start(&video_path, time, index, frame_len)?);
+                    Ok(())
+                };
 
             loop {
                 // Coalesce queued seeks: only the latest scrub position matters.
@@ -736,8 +739,7 @@ impl ThreadedDecoder {
                     target_time = t;
                 }
 
-                let index =
-                    crate::timeline::video_source_frame_index(target_time.max(0.0), fps);
+                let index = crate::timeline::video_source_frame_index(target_time.max(0.0), fps);
                 if let Some(hit) = cache.get(&index) {
                     let _ = resp_tx.send(VideoResponse::Frame(
                         target_time,
@@ -750,9 +752,7 @@ impl ThreadedDecoder {
 
                 let need_restart = match &session {
                     None => true,
-                    Some(s) => {
-                        index < s.next_index || index - s.next_index > MAX_SKIP_AHEAD
-                    }
+                    Some(s) => index < s.next_index || index - s.next_index > MAX_SKIP_AHEAD,
                 };
                 if need_restart {
                     // Seek to the exact frame-grid time, not the raw request time.
@@ -810,8 +810,9 @@ impl ThreadedDecoder {
         });
 
         Ok(Self {
-            cmd_tx,
-            resp_rx,
+            cmd_tx: Some(cmd_tx),
+            resp_rx: Some(resp_rx),
+            worker: Some(worker),
             source_fps: fps,
             _mode: mode,
         })
@@ -823,11 +824,25 @@ impl ThreadedDecoder {
     }
 
     pub fn send_request(&self, time: f64) {
-        let _ = self.cmd_tx.send(VideoCommand::GetFrame(time));
+        if let Some(tx) = &self.cmd_tx {
+            let _ = tx.send(VideoCommand::GetFrame(time));
+        }
     }
 
     pub fn get_response(&self) -> Option<VideoResponse> {
-        self.resp_rx.try_recv().ok()
+        self.resp_rx.as_ref()?.try_recv().ok()
+    }
+}
+
+impl Drop for ThreadedDecoder {
+    fn drop(&mut self) {
+        // Disconnect both channels before joining: the worker may be blocked
+        // receiving a command or sending to a full response queue.
+        self.cmd_tx.take();
+        self.resp_rx.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -911,11 +926,7 @@ pub fn probe_video(path: &Path) -> Result<VideoProbe> {
         let width = parts[0].parse()?;
         let height = parts[1].parse()?;
         let fps = probe_frame_rate(path);
-        Ok(VideoProbe {
-            width,
-            height,
-            fps,
-        })
+        Ok(VideoProbe { width, height, fps })
     } else {
         Err(anyhow::anyhow!("Failed to probe video size"))
     }
@@ -949,14 +960,6 @@ impl std::fmt::Debug for DecodeSession {
     }
 }
 
-impl Drop for SyncDecoder {
-    fn drop(&mut self) {
-        if let Some(s) = self.session.as_mut() {
-            s.shutdown();
-        }
-    }
-}
-
 impl SyncDecoder {
     pub fn new(path: PathBuf) -> Result<Self> {
         let probed = probe_video(&path)?;
@@ -985,9 +988,7 @@ impl SyncDecoder {
     }
 
     fn restart(&mut self, seek_time: f64, index: u64) -> Result<()> {
-        if let Some(s) = self.session.as_mut() {
-            s.shutdown();
-        }
+        self.session = None;
         self.session = Some(DecodeSession::start(
             &self.path,
             seek_time,
@@ -1019,11 +1020,7 @@ impl SyncDecoder {
             if next >= index {
                 break;
             }
-            let discard = self
-                .session
-                .as_mut()
-                .expect("decode session")
-                .read_frame();
+            let discard = self.session.as_mut().expect("decode session").read_frame();
             if let Err(e) = discard {
                 self.session = None;
                 return Err(e);
@@ -1065,8 +1062,14 @@ pub enum VideoLoader {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_frame_rate, FFmpegDriver};
-    use std::process::{Command, Stdio};
+    use super::{
+        parse_frame_rate, DecodeSession, FFmpegDriver, RenderMode, SyncDecoder, ThreadedDecoder,
+        VideoResponse, MAX_CACHED_FRAMES, MAX_SKIP_AHEAD,
+    };
+    use std::process::Command;
+    #[cfg(unix)]
+    use std::process::Stdio;
+    use std::time::Duration;
 
     #[test]
     fn parses_ffprobe_frame_rates() {
@@ -1085,53 +1088,252 @@ mod tests {
         assert!(parse_frame_rate("not-a-rate").is_none());
     }
 
-    #[test]
-    fn sync_decoder_reads_sequential_frames_from_one_pipe() {
-        if FFmpegDriver::ensure_available().is_err() {
-            return;
-        }
-        let dir = std::env::temp_dir().join(format!(
-            "director_decoder_test_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("src.mp4");
-        let status = Command::new(FFmpegDriver::binary())
-            .arg("-y")
-            .arg("-f")
-            .arg("lavfi")
-            .arg("-i")
-            .arg("testsrc=duration=1:size=64x64:rate=30")
-            .arg("-pix_fmt")
-            .arg("yuv420p")
+    const TEST_WIDTH: u32 = 32;
+    const TEST_HEIGHT: u32 = 32;
+    const TEST_FRAME_COUNT: u64 = 90;
+
+    fn expected_frame(index: u64) -> Vec<u8> {
+        [index as u8, 255 - index as u8, 73, 255].repeat((TEST_WIDTH * TEST_HEIGHT) as usize)
+    }
+
+    fn video_fixture(rate: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        FFmpegDriver::ensure_available().expect("decoder tests require FFmpeg in PATH");
+        let dir = tempfile::tempdir().expect("decoder fixture directory");
+        let raw = dir.path().join("frames.rgba");
+        let src = dir.path().join("src.nut");
+        let frames: Vec<u8> = (0..TEST_FRAME_COUNT).flat_map(expected_frame).collect();
+        std::fs::write(&raw, frames).expect("write numbered RGBA frames");
+        let output = Command::new(FFmpegDriver::binary())
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "rawvideo",
+                "-pixel_format",
+                "rgba",
+                "-video_size",
+                "32x32",
+                "-framerate",
+                rate,
+                "-i",
+            ])
+            .arg(raw)
+            .args(["-c:v", "ffv1", "-pix_fmt", "bgr0"])
             .arg(&src)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if !matches!(status, Ok(s) if s.success()) {
-            return;
+            .output()
+            .expect("generate lossless decoder fixture");
+        assert!(
+            output.status.success(),
+            "fixture generation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        (dir, src)
+    }
+
+    // Observe the child independently of the decoder, including after its
+    // owned Child handle has been dropped. No test-only decoder API is needed.
+    fn process_exists(pid: u32) -> bool {
+        #[cfg(windows)]
+        {
+            let output = Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+                .output()
+                .expect("query decoder process");
+            assert!(output.status.success(), "tasklist failed");
+            String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                line.split(',').nth(1).map(|field| field.trim_matches('"'))
+                    == Some(pid.to_string().as_str())
+            })
         }
-        let mut decoder = super::SyncDecoder::new(src).expect("decoder");
-        assert!((decoder.source_fps() - 30.0).abs() < 1e-6);
-        let expected = 64usize * 64 * 4;
-        // Sequential export-order reads: the second/third must not respawn.
-        let (t0, f0, w, h) = decoder.get_frame_at(0.0).expect("frame 0");
-        assert_eq!((w, h), (64, 64));
-        assert_eq!(f0.len(), expected);
-        let _ = t0;
-        let (_, f1, _, _) = decoder.get_frame_at(1.0 / 30.0).expect("frame 1");
-        assert_eq!(f1.len(), expected);
-        assert_ne!(f0, f1, "testsrc frames must advance");
-        // Repeat request hits the frame cache.
-        let (_, f1_again, _, _) = decoder.get_frame_at(1.0 / 30.0).expect("frame 1 again");
-        assert_eq!(f1, f1_again);
-        // Backward jump restarts the pipe and still decodes.
-        let (_, f0_again, _, _) = decoder.get_frame_at(0.0).expect("frame 0 again");
-        assert_eq!(f0, f0_again);
-        let _ = std::fs::remove_dir_all(&dir);
+        #[cfg(unix)]
+        {
+            Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .expect("query decoder process")
+                .success()
+        }
+    }
+
+    fn assert_process_exited(pid: u32) {
+        assert!(
+            !process_exists(pid),
+            "FFmpeg process {pid} survived session cleanup"
+        );
+    }
+
+    fn assert_decoded_frame(decoder: &mut SyncDecoder, index: u64) {
+        let time = index as f64 / decoder.source_fps();
+        let (returned_time, bytes, width, height) = decoder
+            .get_frame_at(time)
+            .unwrap_or_else(|err| panic!("decode frame {index}: {err:#}"));
+        assert_eq!(returned_time, time);
+        assert_eq!((width, height), (TEST_WIDTH, TEST_HEIGHT));
+        assert_eq!(
+            bytes,
+            expected_frame(index),
+            "wrong source frame at {time}s"
+        );
+    }
+
+    fn check_sync_decoder(rate: &str, fps: f64) {
+        let (_dir, src) = video_fixture(rate);
+        let mut decoder = SyncDecoder::new(src).expect("decoder");
+        assert!((decoder.source_fps() - fps).abs() < 1e-6);
+        assert_decoded_frame(&mut decoder, 0);
+        let first_pid = decoder.session.as_ref().unwrap().child.id();
+        for index in 1..=MAX_CACHED_FRAMES as u64 {
+            assert_decoded_frame(&mut decoder, index);
+            assert_eq!(
+                decoder.session.as_ref().unwrap().child.id(),
+                first_pid,
+                "sequential decode must reuse the child process"
+            );
+        }
+        assert_eq!(decoder.cache.len(), MAX_CACHED_FRAMES);
+        assert!(
+            !decoder.cache.contains_key(&0),
+            "backward seek must miss the cache"
+        );
+        let next_index = decoder.session.as_ref().unwrap().next_index;
+        assert_decoded_frame(&mut decoder, MAX_CACHED_FRAMES as u64);
+        assert_eq!(
+            decoder.session.as_ref().unwrap().next_index,
+            next_index,
+            "cache hit must not consume the pipe"
+        );
+        assert_decoded_frame(&mut decoder, 0);
+        let backward_pid = decoder.session.as_ref().unwrap().child.id();
+        assert_ne!(
+            backward_pid, first_pid,
+            "uncached backward seek must restart"
+        );
+        assert_process_exited(first_pid);
+
+        assert_decoded_frame(&mut decoder, 3);
+        assert_eq!(
+            decoder.session.as_ref().unwrap().child.id(),
+            backward_pid,
+            "small forward skip must reuse the pipe"
+        );
+        let far_index = MAX_SKIP_AHEAD + 10;
+        assert_decoded_frame(&mut decoder, far_index);
+        let far_pid = decoder.session.as_ref().unwrap().child.id();
+        assert_ne!(far_pid, backward_pid, "large forward seek must restart");
+        assert_process_exited(backward_pid);
+        assert_decoded_frame(&mut decoder, far_index + 1);
+        assert_eq!(decoder.session.as_ref().unwrap().child.id(), far_pid);
+        drop(decoder);
+        assert_process_exited(far_pid);
+    }
+
+    #[test]
+    fn sync_decoder_reuses_and_seeks_at_24_fps() {
+        check_sync_decoder("24", 24.0);
+    }
+
+    #[test]
+    fn sync_decoder_reuses_and_seeks_at_25_fps() {
+        check_sync_decoder("25", 25.0);
+    }
+
+    #[test]
+    fn sync_decoder_reuses_and_seeks_at_ntsc_fps() {
+        check_sync_decoder("30000/1001", 30000.0 / 1001.0);
+    }
+
+    #[test]
+    fn sync_decoder_reuses_and_seeks_at_30_fps() {
+        check_sync_decoder("30", 30.0);
+    }
+
+    #[test]
+    fn sync_decoder_reuses_and_seeks_at_60_fps() {
+        check_sync_decoder("60", 60.0);
+    }
+
+    #[test]
+    fn decode_session_drop_stops_a_live_child() {
+        let (_dir, src) = video_fixture("30");
+        let session =
+            DecodeSession::start(&src, 0.0, 0, expected_frame(0).len()).expect("decode session");
+        let pid = session.child.id();
+        assert!(process_exists(pid), "session must own a live FFmpeg child");
+        drop(session);
+        assert_process_exited(pid);
+    }
+
+    #[test]
+    fn sync_decoder_cleans_up_read_errors_and_recovers() {
+        let (_dir, src) = video_fixture("30");
+        let mut decoder = SyncDecoder::new(src).expect("decoder");
+        assert_decoded_frame(&mut decoder, TEST_FRAME_COUNT - 1);
+        let pid = decoder.session.as_ref().unwrap().child.id();
+        assert!(decoder
+            .get_frame_at(TEST_FRAME_COUNT as f64 / 30.0)
+            .is_err());
+        assert!(
+            decoder.session.is_none(),
+            "EOF must discard the failed session"
+        );
+        assert_process_exited(pid);
+        assert_decoded_frame(&mut decoder, 0);
+        assert_decoded_frame(&mut decoder, MAX_SKIP_AHEAD);
+        let pid = decoder.session.as_ref().unwrap().child.id();
+        // The same EOF cleanup must apply while discarding skipped frames.
+        assert!(decoder
+            .get_frame_at((TEST_FRAME_COUNT + 1) as f64 / 30.0)
+            .is_err());
+        assert!(decoder.session.is_none());
+        assert_process_exited(pid);
+        assert_decoded_frame(&mut decoder, 1);
+    }
+
+    #[test]
+    fn threaded_decoder_decodes_and_joins_on_drop_with_full_response_queue() {
+        let (_dir, src) = video_fixture("25");
+        // Export mode avoids proxy generation so this tests the worker itself.
+        let decoder = ThreadedDecoder::new(src, RenderMode::Export).expect("threaded decoder");
+        assert!((decoder.source_fps() - 25.0).abs() < 1e-6);
+        decoder.send_request(0.0);
+        let rx = decoder.resp_rx.as_ref().unwrap();
+        match rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("worker response")
+        {
+            VideoResponse::Frame(time, bytes, width, height) => {
+                assert_eq!(time, 0.0);
+                assert_eq!((width, height), (TEST_WIDTH, TEST_HEIGHT));
+                assert_eq!(bytes, expected_frame(0));
+            }
+            VideoResponse::Error(err) => panic!("worker decode failed: {err}"),
+        }
+        // Fill the response queue without draining it. A join before dropping
+        // the receiver would deadlock on the worker's next blocking send.
+        for expected_len in 1..=5 {
+            decoder.send_request(0.0);
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while rx.len() < expected_len {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "worker failed to fill queue"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        decoder.send_request(0.0);
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        let dropper = std::thread::spawn(move || {
+            drop(decoder);
+            done_tx.send(()).unwrap();
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("decoder drop must join without deadlock");
+        dropper.join().unwrap();
     }
 }
 
