@@ -1,7 +1,6 @@
 # director-cli
 
-Command-line interface for rendering Rhai scripts to video and stills.
-HTML/CSS/HyperFrames inputs compile through `director-html`.
+Native CLI and backend for Rhai, HTML/CSS/HyperFrames, sampled captures and portable projects.
 
 Binary name: **`director-engine`**.
 
@@ -80,16 +79,51 @@ Install the optional Node dependencies in `../director-html/tools` for capture. 
 | 2 | Render error |
 
 
-# Live preview (browser)
+## Portable native projects
+
+```bash
+director-engine project pack examples/html/native-motion.html -o target/movie.dirproj
+director-engine inspect target/movie.dirproj -t 1
+director-engine project edit target/movie.dirproj --patch edits.json
+director-engine still target/movie.dirproj --gpu -t 1 -o target/frame.png
+director-engine render target/movie.dirproj --gpu --encoder software -o target/movie.mp4
+```
+
+Packing embeds source and consumed fonts/stylesheets/images/audio/video as deduplicated SHA-256 blobs. The project can move without its original files. Loading recompiles native nodes; it needs no browser. Rhai uses its existing core project contract and is not packaged by `project pack`.
+
+An edit file maps authored element IDs to literal text, CSS overrides and supported attributes:
+
+```json
+{
+  "title": { "text": "Updated title", "styles": { "color": "#ffffff" } },
+  "scene": { "attributes": { "data-duration": "8" } }
+}
+```
+
+Edits validate before atomic save. `-o` writes another project; otherwise the input is replaced. Captures allow text/paint edits but retain fixed geometry and sampled motion. Unsupported edits fail; inspected bounds describe layout rather than final composited pixels.
+
+Top-level `render`, `still`, `inspect` and `preview` accept the same inputs. `html` commands additionally retain compile/capture/benchmark tooling. GPU rendering and encoder choice are independent; explicit GPU requests fail when unavailable.
+
+## Native preview backend
 
 ```bash
 director-engine preview script.rhai
 director-engine preview script.rhai --composition intro --props '{"title":"X"}'
 director-engine preview script.rhai --bind 127.0.0.1:7788 --no-open
+director-engine preview target/movie.dirproj --gpu --no-open
 ```
 
-Opens a minimal player at `http://127.0.0.1:7788/` (scrub, play, reload).
-Endpoints: `GET /api/meta`, `GET /api/frame?t=`, `POST /api/reload`.
+`--no-open` runs just the backend. The existing minimal player remains an optional client. A bounded queue serializes native work on one thread, including Vulkan construction/rendering/destruction. Native input and consumed asset modification time/length are checked before requests; invalid reloads keep the accepted scene and expose `reload_error`. Rhai/core project reload watches the input file.
+
+| Endpoint | Response |
+| --- | --- |
+| `GET /api/meta` | Canvas, timeline, source kind, backend, revision and reload diagnostics |
+| `GET /api/frame?t=1` or `?frame=30` | Native PNG with export shutter sampling and transitions |
+| `GET /api/inspect?t=1` | Layout/timeline, authored IDs, sampled elements and audio metadata |
+| `GET /api/audio` | Full float-stereo WAV mixed on the export clock, cached per revision |
+| `POST /api/reload` | Force compile/load and accept the candidate only on success |
+
+Audio transport is a full cached WAV; streaming and frontend playback controls are separate work. Projects are JSON with base64 media, so large media increases archive and loading memory. Shader/layout/media compatibility remains documented in `director-html`.
 
 ## Installation
 

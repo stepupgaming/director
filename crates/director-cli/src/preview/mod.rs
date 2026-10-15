@@ -1,243 +1,152 @@
-//! Live preview HTTP server: scrubbable frames for a loaded script/composition.
-//!
-//! Endpoints:
-//! - `GET /` — minimal web player
-//! - `GET /api/meta` — width/height/fps/duration + composition list
-//! - `GET /api/frame?t=<secs>` or `?frame=<n>` — PNG frame
-//! - `POST /api/reload` — re-eval script (same path/opts)
+//! Native preview endpoints. The embedded player is an unchanged optional client.
+mod worker;
 
-use crate::run::{eval_script, resolve_movie, ResolveOpts};
-use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
-use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
-use director_core::scripting::MovieHandle;
-use director_core::systems::renderer::render_frame;
-use director_core::video_wrapper::RenderMode;
-use serde::{Deserialize, Serialize};
-use skia_safe::{AlphaType, ColorSpace, ColorType, EncodedImageFormat};
+use crate::input::Input;
+use axum::{
+    extract::{Query, State},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use serde::Deserialize;
 use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
+use worker::Worker;
 
 const PLAYER_HTML: &str = include_str!("player.html");
 
-#[derive(Clone)]
-struct AppState {
-    inner: Arc<Mutex<Session>>,
-}
-
-struct Session {
-    script: PathBuf,
-    composition: Option<String>,
-    props: Option<String>,
-    movie: MovieHandle,
-    /// Registered composition names at last load (empty for legacy scripts).
-    composition_names: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct FrameQuery {
     t: Option<f64>,
     frame: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
-struct MetaResponse {
-    width: i32,
-    height: i32,
-    fps: f64,
-    duration: f64,
-    composition: Option<String>,
-    compositions: Vec<String>,
-    script: String,
-}
-
-#[derive(Debug, Serialize)]
-struct ErrorBody {
-    error: String,
-}
-
 pub struct PreviewArgs {
-    pub script: PathBuf,
-    pub composition: Option<String>,
-    pub props: Option<String>,
+    pub input: Input,
+    pub gpu: bool,
     pub bind: SocketAddr,
     pub open_browser: bool,
 }
 
-/// Load script, start HTTP server, block until Ctrl-C.
 pub async fn run_preview(args: PreviewArgs) -> Result<(), String> {
-    let session = load_session(
-        &args.script,
-        args.composition.as_deref(),
-        args.props.as_deref(),
-    )?;
-    let state = AppState {
-        inner: Arc::new(Mutex::new(session)),
-    };
-
-    let app = Router::new()
-        .route("/", get(player_page))
-        .route("/api/meta", get(api_meta))
-        .route("/api/frame", get(api_frame))
-        .route("/api/reload", post(api_reload))
-        .layer(CorsLayer::permissive())
-        .with_state(state);
-
+    let worker = tokio::task::spawn_blocking(move || Worker::start(args.input, args.gpu))
+        .await
+        .map_err(|e| format!("native worker initialization: {e}"))??;
+    let app = router(worker);
     let listener = tokio::net::TcpListener::bind(args.bind)
         .await
-        .map_err(|e| format!("bind {}: {}", args.bind, e))?;
-    let addr = listener
-        .local_addr()
-        .map_err(|e| format!("local_addr: {}", e))?;
-
-    let url = format!("http://{}/", addr);
-    info!("Preview server listening on {}", url);
-    eprintln!("Preview: {}", url);
-
+        .map_err(|e| format!("bind {}: {e}", args.bind))?;
+    let addr = listener.local_addr().map_err(|e| e.to_string())?;
+    let url = format!("http://{addr}/");
+    eprintln!("Preview: {url}");
     if args.open_browser {
         let _ = open::that(&url);
     }
-
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .map_err(|e| format!("server error: {}", e))?;
-    Ok(())
+        .map_err(|e| format!("server error: {e}"))
 }
 
-fn load_session(
-    script: &std::path::Path,
-    composition: Option<&str>,
-    props: Option<&str>,
-) -> Result<Session, String> {
-    let evaluated = eval_script(script, RenderMode::Preview)?;
-    let names = evaluated.registry.names();
-    let movie = resolve_movie(
-        &evaluated,
-        ResolveOpts {
-            composition,
-            props_spec: props,
-        },
-    )?;
-    Ok(Session {
-        script: script.to_path_buf(),
-        composition: composition.map(|s| s.to_string()),
-        props: props.map(|s| s.to_string()),
-        movie,
-        composition_names: names,
-    })
+fn router(worker: Worker) -> Router {
+    Router::new()
+        .route("/", get(|| async { Html(PLAYER_HTML) }))
+        .route("/api/meta", get(api_meta))
+        .route("/api/frame", get(api_frame))
+        .route("/api/inspect", get(api_inspect))
+        .route("/api/audio", get(api_audio))
+        .route("/api/reload", post(api_reload))
+        .layer(CorsLayer::permissive())
+        .with_state(worker)
 }
 
-async fn player_page() -> Html<&'static str> {
-    Html(PLAYER_HTML)
-}
-
-async fn api_meta(State(state): State<AppState>) -> Result<Json<MetaResponse>, AppError> {
-    let session = state.inner.lock().map_err(|_| AppError::lock())?;
-    let director = session
-        .movie
-        .director
-        .lock()
-        .map_err(|_| AppError::lock())?;
-    let duration = director.timeline_duration().max(0.0);
-    Ok(Json(MetaResponse {
-        width: director.width,
-        height: director.height,
-        fps: director.fps,
-        duration: if duration > 0.0 { duration } else { 5.0 },
-        composition: session.composition.clone(),
-        compositions: session.composition_names.clone(),
-        script: session.script.display().to_string(),
-    }))
+async fn api_meta(State(worker): State<Worker>) -> Result<Json<serde_json::Value>, AppError> {
+    worker
+        .request(|session| session.metadata())
+        .await
+        .map(Json)
+        .map_err(AppError)
 }
 
 async fn api_frame(
-    State(state): State<AppState>,
-    Query(q): Query<FrameQuery>,
+    State(worker): State<Worker>,
+    Query(query): Query<FrameQuery>,
 ) -> Result<Response, AppError> {
-    // Threading invariant (see `unsafe impl Send for Director`): the session
-    // lock is held across the entire render so two frame requests never touch
-    // the same `Director` concurrently.
-    let png = {
-        let session = state.inner.lock().map_err(|_| AppError::lock())?;
-        let mut director = session
-            .movie
-            .director
-            .lock()
-            .map_err(|_| AppError::lock())?;
-
-        let time = if let Some(frame) = q.frame {
-            director_core::timeline::frame_to_time(frame, director.fps)
-        } else {
-            q.t.unwrap_or(0.0).max(0.0)
-        };
-
-        render_png(&mut director, time)?
-    };
-
+    let png = worker
+        .request(move |session| {
+            let fps = session
+                .loaded
+                .movie
+                .director
+                .lock()
+                .map_err(|_| "Director lock poisoned")?
+                .fps;
+            let time = query.frame.map_or(query.t.unwrap_or(0.0), |frame| {
+                director_core::timeline::frame_to_time(frame, fps)
+            });
+            session.frame(time)
+        })
+        .await
+        .map_err(AppError)?;
     Ok((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "no-store")],
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
         png,
     )
         .into_response())
 }
 
-async fn api_reload(State(state): State<AppState>) -> Result<Json<MetaResponse>, AppError> {
-    let (script, composition, props) = {
-        let session = state.inner.lock().map_err(|_| AppError::lock())?;
-        (
-            session.script.clone(),
-            session.composition.clone(),
-            session.props.clone(),
-        )
-    };
-
-    // Reload off the lock so concurrent frame requests aren't blocked during eval.
-    let new_session = tokio::task::spawn_blocking(move || {
-        load_session(
-            &script,
-            composition.as_deref(),
-            props.as_deref(),
-        )
-    })
-    .await
-    .map_err(|e| AppError::msg(format!("reload join: {}", e)))?
-    .map_err(AppError::msg)?;
-
-    {
-        let mut session = state.inner.lock().map_err(|_| AppError::lock())?;
-        *session = new_session;
-    }
-
-    api_meta(State(state)).await
+async fn api_inspect(
+    State(worker): State<Worker>,
+    Query(query): Query<FrameQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    worker
+        .request(move |session| {
+            let fps = session
+                .loaded
+                .movie
+                .director
+                .lock()
+                .map_err(|_| "Director lock poisoned")?
+                .fps;
+            let time = query.frame.map_or(query.t.unwrap_or(0.0), |frame| {
+                director_core::timeline::frame_to_time(frame, fps)
+            });
+            session.loaded.inspect(time)
+        })
+        .await
+        .map(Json)
+        .map_err(AppError)
 }
 
-fn render_png(director: &mut director_core::Director, time: f64) -> Result<Vec<u8>, AppError> {
-    let width = director.width;
-    let height = director.height;
-    let info = skia_safe::ImageInfo::new(
-        (width, height),
-        ColorType::RGBA8888,
-        AlphaType::Premul,
-        Some(ColorSpace::new_srgb()),
-    );
-    let mut surface = skia_safe::surfaces::raster(&info, None, None)
-        .ok_or_else(|| AppError::msg("failed to create Skia surface"))?;
+async fn api_audio(State(worker): State<Worker>) -> Result<Response, AppError> {
+    let audio = worker
+        .request(|session| session.audio())
+        .await
+        .map_err(AppError)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "audio/wav"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        audio,
+    )
+        .into_response())
+}
 
-    render_frame(director, time, surface.canvas())
-        .map_err(|e| AppError::msg(format!("render error at t={}: {}", time, e)))?;
-
-    let image = surface.image_snapshot();
-    let data = image
-        .encode(None, EncodedImageFormat::PNG, 85)
-        .ok_or_else(|| AppError::msg("PNG encode failed"))?;
-    Ok(data.as_bytes().to_vec())
+async fn api_reload(State(worker): State<Worker>) -> Result<Json<serde_json::Value>, AppError> {
+    worker
+        .request(|session| {
+            session.reload()?;
+            session.metadata()
+        })
+        .await
+        .map(Json)
+        .map_err(AppError)
 }
 
 async fn shutdown_signal() {
@@ -246,7 +155,6 @@ async fn shutdown_signal() {
             .await
             .expect("failed to install Ctrl+C handler");
     };
-
     #[cfg(unix)]
     let terminate = async {
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -254,47 +162,178 @@ async fn shutdown_signal() {
             .recv()
             .await;
     };
-
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
+    tokio::select! { _ = ctrl_c => {}, _ = terminate => {} }
     info!("Preview server shutting down");
 }
 
-struct AppError {
-    status: StatusCode,
-    message: String,
-}
-
-impl AppError {
-    fn lock() -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: "session lock poisoned".into(),
-        }
-    }
-
-    fn msg(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            message: message.into(),
-        }
-    }
-}
-
+struct AppError(String);
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        error!("preview error: {}", self.message);
+        error!("preview error: {}", self.0);
         (
-            self.status,
-            Json(ErrorBody {
-                error: self.message,
-            }),
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":self.0})),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::{to_bytes, Body},
+        http::Request,
+    };
+    use tower::ServiceExt;
+
+    async fn get(app: &Router, uri: &str) -> Response {
+        app.clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    async fn bytes(response: Response) -> Vec<u8> {
+        to_bytes(response.into_body(), 16 * 1024 * 1024)
+            .await
+            .unwrap()
+            .to_vec()
+    }
+
+    fn source(directory: &std::path::Path) -> Input {
+        std::fs::write(
+            directory.join("style.css"),
+            "body{margin:0}#box{width:32px;height:32px;background:red}",
+        )
+        .unwrap();
+        let input = directory.join("scene.html");
+        std::fs::write(&input, "<link rel='stylesheet' href='style.css'><main data-composition-id='main' data-width='32' data-height='32' data-duration='.6'><div id='box'></div></main>").unwrap();
+        Input::new(input)
+    }
+
+    #[tokio::test]
+    async fn native_endpoints_reload_dependencies_and_preserve_the_accepted_scene_on_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = router(Worker::start(source(directory.path()), false).unwrap());
+        let initial = bytes(get(&app, "/api/frame?frame=0").await).await;
+        assert_eq!(
+            image::load_from_memory(&initial)
+                .unwrap()
+                .to_rgba8()
+                .get_pixel(16, 16)
+                .0,
+            [255, 0, 0, 255]
+        );
+        let inspection: serde_json::Value =
+            serde_json::from_slice(&bytes(get(&app, "/api/inspect?t=.1").await).await).unwrap();
+        assert!(inspection["element_ids"].get("box").is_some());
+        std::fs::write(
+            directory.path().join("style.css"),
+            "#box{perspective:400px}",
+        )
+        .unwrap();
+        let failed: serde_json::Value =
+            serde_json::from_slice(&bytes(get(&app, "/api/meta").await).await).unwrap();
+        assert_eq!(failed["revision"], 1);
+        assert!(failed["reload_error"]
+            .as_str()
+            .unwrap()
+            .contains("perspective"));
+        assert_eq!(bytes(get(&app, "/api/frame?t=.1").await).await, initial);
+        let rejected = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/reload")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        std::fs::write(
+            directory.path().join("style.css"),
+            "body{margin:0}#box{width:32px;height:32px;background:blue}",
+        )
+        .unwrap();
+        let corrected = bytes(get(&app, "/api/frame?t=.1").await).await;
+        assert_eq!(
+            image::load_from_memory(&corrected)
+                .unwrap()
+                .to_rgba8()
+                .get_pixel(16, 16)
+                .0,
+            [0, 0, 255, 255]
+        );
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&bytes(get(&app, "/api/meta").await).await).unwrap();
+        assert_eq!(metadata["renderer"], "cpu");
+        assert_eq!(metadata["revision"], 2);
+        assert!(metadata["reload_error"].is_null());
+        assert_eq!(
+            get(&app, "/api/frame?t=NaN").await.status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn worker_serializes_requests_and_audio_uses_the_export_clock() {
+        let directory = tempfile::tempdir().unwrap();
+        let worker = Worker::start(source(directory.path()), false).unwrap();
+        let (first, second) = tokio::join!(
+            worker.request(|_| Ok(std::thread::current().id())),
+            worker.request(|_| Ok(std::thread::current().id())),
+        );
+        assert_eq!(first.unwrap(), second.unwrap());
+        let app = router(worker);
+        let audio = bytes(get(&app, "/api/audio").await).await;
+        assert_eq!(&audio[..4], b"RIFF");
+        assert_eq!(audio.len(), 44 + 18 * 1600 * 2 * 4);
+        let decoded = director_core::audio::load_audio_bytes(&audio, 48000).unwrap();
+        assert_eq!(decoded.len(), 18 * 1600 * 2);
+        assert!(decoded.iter().all(|s| *s == 0.0));
+        assert_eq!(audio, bytes(get(&app, "/api/audio").await).await);
+    }
+
+    #[cfg(feature = "vulkan")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires a live Vulkan device; run explicitly"]
+    async fn gpu_preview_worker_keeps_the_context_on_its_owner_thread() {
+        let directory = tempfile::tempdir().unwrap();
+        let worker = Worker::start(source(directory.path()), true).unwrap();
+        worker
+            .request(|session| {
+                let mut director = session
+                    .loaded
+                    .movie
+                    .director
+                    .lock()
+                    .map_err(|_| "Director lock poisoned")?;
+                director.samples_per_frame = 4;
+                director.shutter_angle = 180.0;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let app = router(worker);
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&bytes(get(&app, "/api/meta").await).await).unwrap();
+        assert_eq!(metadata["renderer"], "vulkan");
+        let (first, second) =
+            tokio::join!(get(&app, "/api/frame?t=.1"), get(&app, "/api/frame?t=.4"));
+        let first = bytes(first).await;
+        assert_eq!(first, bytes(second).await);
+        assert_eq!(
+            image::load_from_memory(&first)
+                .unwrap()
+                .to_rgba8()
+                .get_pixel(16, 16)
+                .0,
+            [255, 0, 0, 255]
+        );
     }
 }

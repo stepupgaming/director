@@ -5,7 +5,7 @@
 ## Ownership
 
 - `director-core/` owns the main rendering engine, scene graph, layout, animation, scripting API, media, export, and visual tests.
-- `director-html/` owns HTML/CSS/HyperFrames compilation, native CSS adapters, optional browser extraction, and Hyper CN compatibility/parity tooling.
+- `director-html/` owns HTML/CSS/HyperFrames compilation, native CSS adapters, portable authoring projects and bundled assets, optional browser extraction, and Hyper CN compatibility/parity tooling.
 - `director-cli/` owns command-line rendering tools and helper binaries.
 - `director-schema/` owns schema-facing types and JSON schema reflection.
 - `director-pipeline/` owns asset and pipeline utilities.
@@ -33,7 +33,7 @@
 ## Child DOX Index
 
 - `director-core/AGENTS.md` - Main engine, Rhai API, export, and visual regression contracts.
-- `director-html/AGENTS.md` - HTML compiler, capture format, compatibility corpus, and benchmarks.
+- `director-html/AGENTS.md` - HTML compiler, portable native projects, capture format, compatibility corpus, and benchmarks.
 - `director-cli/AGENTS.md` - CLI binaries and render command behavior.
 - `director-schema/AGENTS.md` - Schema crate and JSON schema reflection.
 - `director-pipeline/AGENTS.md` - Pipeline utility crate.

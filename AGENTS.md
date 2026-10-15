@@ -85,17 +85,18 @@ When the user requests a durable behavior change, record it here or in the relev
 - Never use `pip` for Python package installation; use `uv`.
 - Do not use the phrasing the user has forbidden in project instructions.
 - Director's product goal is to replace HyperFrames, FFrames and Remotion with a superior native video platform. Assess authoring, motion and media quality, preview/editing, agent tooling, deployment and measured rendering efficiency together; compiler throughput alone does not establish product superiority.
-- Core-hardening plans 01–06 are Done. Named compositions + subcommand CLI + live preview are in tree; recipes/agent repair remain later product work.
+- Current product work prioritizes native projects, runtime, CLI and agent tooling. Frontend/editor design and Remotion compatibility are outside this phase; competing with Remotion does not require accepting its source format.
+- Core-hardening plans 01–06 and the implemented scope of plan 07 are Done. Native projects and runtime work follow plan 08; broader production recipes and agent repair remain later product work.
 
 ## Work Guidance
 
 - Use Cargo workspace conventions from `Cargo.toml`; prefer package-scoped checks while iterating and workspace checks before broad closeout.
 - Keep Rust crate ownership clear: public API and shared runtime behavior belong in `crates/director-core`, command-line concerns in `crates/director-cli`, schema reflection in `crates/director-schema`, and Lottie-specific logic in the `lottie-*` crates.
-- `crates/director-html` owns HTML/CSS/HyperFrames compilation and explicit compile-time browser extraction. Native rendering continues through `director-core`; Hyper CN is part of its compatibility corpus.
+- `crates/director-html` owns HTML/CSS/HyperFrames compilation, portable native authoring projects and explicit compile-time browser extraction. Native rendering continues through `director-core`; Hyper CN is part of its compatibility corpus.
 - Rhai examples are executable reference material. Update examples and tests when scripting-facing behavior changes.
 - Generated or downloaded assets should not become durable source unless the relevant AGENTS.md explicitly says they are owned there.
 - For Python scripts, keep dependencies executable through existing tooling and install packages only with `uv` when installation is necessary.
-- **Core hardening (01–06) is Done.** Product surface includes compositions + CLI + live preview; plan 07 stdlib/recipes is in progress (not complete). Still deferred: agent repair loops, separate director-sdk crate (`docs/archive/`). Keep core contracts green when changing engine spines.
+- **Core hardening (01–06) is Done.** Composition CLI, preview and plan 07's motion/component/recipe scope are implemented. Plan 08 owns the native project/runtime phase. Broader recipes, agent repair loops and a separate director-sdk crate remain later work. Keep core contracts green when changing engine spines.
 - Product direction: high-quality native video production for agents and developers, covering short-form and long-form (Shorts, Reels, TikTok, YouTube). Keep preview, editing, inspection and export consistent across supported authoring inputs. Web research as an input belongs at orchestration layers, not in the render core.
 - `vendor/` contains third-party source selected by local Cargo patches. Do not modify vendor sources without updating its `AGENTS.md`; exclude vendored packages from workspace membership.
 - `vendor/skia-safe/` is skia-safe 0.90.0 with two edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.

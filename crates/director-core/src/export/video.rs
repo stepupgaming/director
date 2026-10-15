@@ -15,7 +15,7 @@ use crate::audio::load_audio_bytes;
 use crate::director::Director;
 use crate::errors::RenderError;
 use crate::systems::layout::LayoutEngine;
-use crate::systems::renderer::{render_at_time, GpuContext};
+use crate::systems::renderer::{render_sampled_at_time, GpuContext};
 use crate::video_wrapper::{Encoder, EncoderSettings};
 use anyhow::Result;
 
@@ -126,11 +126,6 @@ pub fn render_export(
 
     let mut layout_engine = LayoutEngine::new();
 
-    let samples = director.samples_per_frame.max(1);
-    let shutter_angle = director.shutter_angle.clamp(0.0, 360.0);
-    let frame_duration = 1.0 / fps;
-    let shutter_duration = frame_duration * (shutter_angle as f64 / 360.0);
-
     // The mixer takes sample frames and emits two interleaved samples per frame.
     let audio_frames_per_video_frame =
         crate::timeline::audio_samples_per_video_frame(director.audio_mixer.sample_rate, fps, 1);
@@ -150,47 +145,14 @@ pub fn render_export(
     let mut pixels = vec![0u8; height as usize * row_bytes];
     for i in 0..total_frames {
         let frame_start_time = crate::timeline::frame_to_time(i as u64, fps);
-        let shutter_start_time = frame_start_time - (shutter_duration / 2.0);
-
-        if samples == 1 {
-            render_at_time(
-                director,
-                &mut layout_engine,
-                frame_start_time,
-                surface.canvas(),
-                &mut transition_surfaces,
-            )?;
-        } else {
-            let scratch_surface = accumulation_surface.as_mut().unwrap();
-
-            for s in 0..samples {
-                let t_offset = if samples > 1 {
-                    (s as f64 / (samples - 1) as f64) * shutter_duration
-                } else {
-                    0.0
-                };
-                let sample_time = shutter_start_time + t_offset;
-
-                render_at_time(
-                    director,
-                    &mut layout_engine,
-                    sample_time,
-                    scratch_surface.canvas(),
-                    &mut transition_surfaces,
-                )?;
-
-                let weight = 1.0 / samples as f32;
-                let mut paint = skia_safe::Paint::default();
-                paint.set_alpha_f(weight);
-                paint.set_blend_mode(skia_safe::BlendMode::Plus);
-                let image = scratch_surface.image_snapshot();
-
-                if s == 0 {
-                    surface.canvas().clear(skia_safe::Color::BLACK);
-                }
-                surface.canvas().draw_image(&image, (0, 0), Some(&paint));
-            }
-        }
+        render_sampled_at_time(
+            director,
+            &mut layout_engine,
+            frame_start_time,
+            &mut surface,
+            &mut accumulation_surface,
+            &mut transition_surfaces,
+        )?;
 
         #[cfg(feature = "vulkan")]
         if let Some(ctx) = gpu_context.as_deref_mut() {

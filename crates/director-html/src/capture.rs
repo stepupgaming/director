@@ -1,6 +1,7 @@
 //! Load an explicit compile-time browser extraction. No browser is used by this module.
 use crate::{
-    compiler::{fit, load_fonts, read_asset, span, text_content, validate_options},
+    assets::AssetStore,
+    compiler::{fit, load_fonts, span, text_content, validate_options},
     css::{diagnostic, Values},
     element::HtmlElement,
     style::{self, Metrics},
@@ -15,7 +16,7 @@ use director_core::{
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::Path,
     sync::{Arc, Mutex},
 };
@@ -68,6 +69,13 @@ pub fn compile_capture_file(path: &Path) -> Result<CompiledHtml, CompileError> {
     compile_capture(capture, path.parent().unwrap_or(Path::new(".")))
 }
 pub fn compile_capture(capture: Capture, base: &Path) -> Result<CompiledHtml, CompileError> {
+    compile_capture_with_assets(capture, Arc::new(AssetStore::local(base, false)))
+}
+
+pub(crate) fn compile_capture_with_assets(
+    mut capture: Capture,
+    assets: Arc<AssetStore>,
+) -> Result<CompiledHtml, CompileError> {
     if capture.format != CAPTURE_FORMAT {
         return Err(CompileError::Input(format!(
             "unsupported capture format '{}'",
@@ -104,15 +112,16 @@ pub fn compile_capture(capture: Capture, base: &Path) -> Result<CompiledHtml, Co
             )));
         }
     }
+    normalize_ids(&mut capture);
     let mut director = Director::new(
         capture.width,
         capture.height,
         capture.fps,
-        Arc::new(crate::compiler::HtmlAssetLoader),
+        assets.clone(),
         director_core::video_wrapper::RenderMode::Export,
         None,
     );
-    load_fonts(&mut director, &capture.fonts, base)?;
+    load_fonts(&mut director, &capture.fonts, &assets)?;
     let metrics = Metrics {
         width: capture.width as f32,
         height: capture.height as f32,
@@ -135,7 +144,7 @@ pub fn compile_capture(capture: Capture, base: &Path) -> Result<CompiledHtml, Co
                 &director,
                 &capture.assets,
                 &mut image_cache,
-                base,
+                &assets,
                 metrics,
                 0,
             )?;
@@ -164,13 +173,78 @@ pub fn compile_capture(capture: Capture, base: &Path) -> Result<CompiledHtml, Co
     let root = director.scene.add_node(Box::new(element));
     director.push_scene_root(root, capture.duration);
     director.compile();
+    let source_inspection = crate::SourceInspection {
+        sample_rate: capture.sample_rate,
+        samples: capture
+            .frames
+            .iter()
+            .map(|frame| {
+                let mut nodes = Vec::new();
+                inspect_node(&frame.root, &mut nodes);
+                nodes
+            })
+            .collect(),
+    };
     Ok(CompiledHtml {
         director,
         element_ids: BTreeMap::new(),
         source_kind: "sampled-dom".into(),
         sample_rate: Some(capture.sample_rate),
         node_count,
+        source_inspection: Some(Arc::new(source_inspection)),
+        assets,
     })
+}
+
+/// Anonymous/ambiguous captured elements use structural paths. Authored unique
+/// IDs remain intact; paths retain identity while the sampled topology is stable.
+pub(crate) fn normalize_ids(capture: &mut Capture) {
+    fn count(node: &CapturedNode, counts: &mut BTreeMap<String, usize>) {
+        *counts.entry(node.id.clone()).or_default() += 1;
+        for child in &node.children {
+            count(child, counts);
+        }
+    }
+    fn rename(node: &mut CapturedNode, ambiguous: &BTreeSet<String>, prefix: &str, path: &str) {
+        if node.id.is_empty() || ambiguous.contains(&node.id) {
+            node.id = format!("{prefix}{path}");
+        }
+        for (index, child) in node.children.iter_mut().enumerate() {
+            rename(child, ambiguous, prefix, &format!("{path}/{index}"));
+        }
+    }
+    let mut observed = BTreeSet::new();
+    let mut ambiguous = BTreeSet::new();
+    for frame in &capture.frames {
+        let mut counts = BTreeMap::new();
+        count(&frame.root, &mut counts);
+        for (id, count) in counts {
+            if count > 1 {
+                ambiguous.insert(id.clone());
+            }
+            observed.insert(id);
+        }
+    }
+    let mut prefix = "@capture".to_owned();
+    while observed.iter().any(|id| id.starts_with(&prefix)) {
+        prefix.push('@');
+    }
+    for frame in &mut capture.frames {
+        rename(&mut frame.root, &ambiguous, &prefix, "/root");
+    }
+}
+
+fn inspect_node(node: &CapturedNode, nodes: &mut Vec<crate::InspectedElement>) {
+    nodes.push(crate::InspectedElement {
+        id: node.id.clone(),
+        tag: node.tag.clone(),
+        bounds: node.rect,
+        text: node.text.clone(),
+        children: node.children.len(),
+    });
+    for child in &node.children {
+        inspect_node(child, nodes);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -180,7 +254,7 @@ fn build(
     director: &Director,
     assets: &BTreeMap<String, String>,
     images: &mut HashMap<String, skia_safe::Image>,
-    base: &Path,
+    store: &AssetStore,
     m: Metrics,
     depth: usize,
 ) -> Result<NodeId, CompileError> {
@@ -220,7 +294,7 @@ fn build(
         let image = if let Some(image) = images.get(src) {
             image.clone()
         } else {
-            let bytes = read_asset(data, base)?;
+            let bytes = store.read(data)?;
             let image = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))
                 .ok_or_else(|| CompileError::Input("invalid captured image".into()))?;
             images.insert(src.clone(), image.clone());
@@ -249,7 +323,7 @@ fn build(
     node.layout_rect = skia_safe::Rect::from_xywh(n.rect[0], n.rect[1], n.rect[2], n.rect[3]);
     node.z_index = paint.z_index;
     for child in &n.children {
-        let child = build(child, scene, director, assets, images, base, m, depth + 1)?;
+        let child = build(child, scene, director, assets, images, store, m, depth + 1)?;
         scene.add_child(id, child);
     }
     Ok(id)

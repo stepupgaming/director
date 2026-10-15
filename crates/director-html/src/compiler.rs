@@ -1,17 +1,17 @@
 use crate::{
     animation,
+    assets::AssetStore,
     css::{diagnostic, Css, Values},
     element::HtmlElement,
     style::{self, Metrics, PaintStyle},
     CompileError, CompileOptions, CompiledHtml,
 };
-use base64::Engine;
 use director_core::{
     element::TextSpan,
     node::{ImageNode, TextNode, VectorNode, VideoNode, VideoSource},
     types::{NodeId, ObjectFit},
     video_wrapper::RenderMode,
-    DefaultAssetLoader, Director, Element,
+    Director, Element,
 };
 use scraper::{ElementRef, Html, Selector};
 use std::{
@@ -20,28 +20,6 @@ use std::{
     sync::Arc,
 };
 
-pub fn read_asset(source: &str, base: &Path) -> Result<Vec<u8>, CompileError> {
-    if let Some(data) = source.strip_prefix("data:") {
-        let (meta, data) = data
-            .split_once(',')
-            .ok_or_else(|| CompileError::Input("invalid data URI".into()))?;
-        if !meta.ends_with(";base64") {
-            return Err(CompileError::Input("data URIs must use base64".into()));
-        }
-        return base64::engine::general_purpose::STANDARD
-            .decode(data)
-            .map_err(|e| CompileError::Input(format!("data URI: {e}")));
-    }
-    if source.contains("://") {
-        return Err(CompileError::Input(format!(
-            "remote asset '{source}' must be downloaded before native compilation"
-        )));
-    }
-    std::fs::read(base.join(source))
-        .map_err(|e| CompileError::Input(format!("asset {}: {e}", base.join(source).display())))
-}
-
-pub(crate) struct HtmlAssetLoader;
 pub(crate) fn validate_svg(source: &str) -> Result<(), CompileError> {
     let dom = Html::parse_fragment(source);
     let selector = Selector::parse(
@@ -56,20 +34,6 @@ pub(crate) fn validate_svg(source: &str) -> Result<(), CompileError> {
     }
     Ok(())
 }
-impl director_core::AssetLoader for HtmlAssetLoader {
-    fn load_bytes(&self, path: &str) -> anyhow::Result<Vec<u8>> {
-        if path.starts_with("fonts/") {
-            let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../director-core/assets")
-                .join(path);
-            if let Ok(bytes) = std::fs::read(bundled) {
-                return Ok(bytes);
-            }
-        }
-        director_core::AssetLoader::load_bytes(&DefaultAssetLoader, path)
-    }
-}
-
 pub fn url(source: &str) -> Result<String, CompileError> {
     let mut input = cssparser::ParserInput::new(source);
     let mut parser = cssparser::Parser::new(&mut input);
@@ -79,17 +43,17 @@ pub fn url(source: &str) -> Result<String, CompileError> {
         .map_err(|e| CompileError::Input(format!("font/image URL: {e:?}")))
 }
 
-pub fn load_fonts(
+pub(crate) fn load_fonts(
     director: &mut Director,
     fonts: &[(String, String)],
-    base: &Path,
+    assets: &AssetStore,
 ) -> Result<(), CompileError> {
     if fonts.is_empty() {
         return Ok(());
     }
     let mut provider = skia_safe::textlayout::TypefaceFontProvider::new();
     for (family, src) in fonts {
-        let bytes = read_asset(&url(src)?, base)?;
+        let bytes = assets.read(&url(src)?)?;
         let bytes = match bytes.get(..4) {
             Some(b"wOF2") => wuff::decompress_woff2(&bytes).map_err(|e| {
                 CompileError::Input(format!("font '{family}': WOFF2 decode: {e:?}"))
@@ -132,7 +96,16 @@ pub fn validate_options(options: &CompileOptions) -> Result<(), CompileError> {
     Ok(())
 }
 
-pub fn compile(source: &str, mut options: CompileOptions) -> Result<CompiledHtml, CompileError> {
+pub fn compile(source: &str, options: CompileOptions) -> Result<CompiledHtml, CompileError> {
+    let assets = Arc::new(AssetStore::local(&options.base_dir, false));
+    compile_with_assets(source, options, assets)
+}
+
+pub(crate) fn compile_with_assets(
+    source: &str,
+    mut options: CompileOptions,
+    assets: Arc<AssetStore>,
+) -> Result<CompiledHtml, CompileError> {
     let dom = Html::parse_document(source);
     let selector = Selector::parse("[data-composition-id]").unwrap();
     let roots: Vec<_> = dom.select(&selector).collect();
@@ -187,7 +160,7 @@ pub fn compile(source: &str, mut options: CompileOptions) -> Result<CompiledHtml
             "style" if !el.ancestors().filter_map(ElementRef::wrap).any(|p|p.value().name()=="svg")=>css.append(&el.text().collect::<String>())?,
             "link" if el.value().attr("rel")==Some("stylesheet")=>{
                 let href=el.value().attr("href").ok_or_else(||CompileError::Input("stylesheet without href".into()))?;
-                let bytes=read_asset(href,&options.base_dir)?;let source=String::from_utf8(bytes).map_err(|e|CompileError::Input(e.to_string()))?;css.append(&source)?;
+                let bytes=assets.read(href)?;let source=String::from_utf8(bytes).map_err(|e|CompileError::Input(e.to_string()))?;css.append(&source)?;
             },
             "script" if !matches!(el.value().attr("type"),Some("application/json"|"application/ld+json"))=>return Err(CompileError::Diagnostics(vec![diagnostic("script","executable JavaScript requires explicit compile-time extraction; run director-engine html capture")])),
             _=>{},
@@ -197,11 +170,11 @@ pub fn compile(source: &str, mut options: CompileOptions) -> Result<CompiledHtml
         options.width,
         options.height,
         options.fps,
-        Arc::new(HtmlAssetLoader),
+        assets.clone(),
         RenderMode::Export,
         None,
     );
-    load_fonts(&mut director, &css.fonts, &options.base_dir)?;
+    load_fonts(&mut director, &css.fonts, &assets)?;
     let mut builder = Builder {
         director,
         css,
@@ -210,6 +183,7 @@ pub fn compile(source: &str, mut options: CompileOptions) -> Result<CompiledHtml
         images: HashMap::new(),
         errors: Vec::new(),
         nodes: 0,
+        assets,
     };
     // Compute inherited values along the full ancestor chain, including body resets.
     let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
@@ -234,6 +208,8 @@ pub fn compile(source: &str, mut options: CompileOptions) -> Result<CompiledHtml
         source_kind: "static".into(),
         sample_rate: None,
         node_count: builder.nodes,
+        source_inspection: None,
+        assets: builder.assets,
     })
 }
 
@@ -245,6 +221,7 @@ struct Builder {
     images: HashMap<String, skia_safe::Image>,
     errors: Vec<crate::Diagnostic>,
     nodes: usize,
+    assets: Arc<AssetStore>,
 }
 
 fn label(el: ElementRef<'_>) -> String {
@@ -499,7 +476,7 @@ impl Builder {
                 let image = if let Some(image) = self.images.get(src) {
                     image.clone()
                 } else {
-                    let bytes = read_asset(src, &self.options.base_dir)?;
+                    let bytes = self.assets.read(src)?;
                     let image =
                         skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))
                             .ok_or_else(|| CompileError::Input(format!("invalid image '{src}'")))?;
@@ -582,13 +559,7 @@ impl Builder {
                     .value()
                     .attr("src")
                     .ok_or_else(|| CompileError::Input("video without src".into()))?;
-                let path = self.options.base_dir.join(src);
-                if !path.is_file() {
-                    return Err(CompileError::Input(format!(
-                        "video file missing: {}",
-                        path.display()
-                    )));
-                }
+                let path = self.assets.media_path(src)?;
                 let mut video = VideoNode::new(VideoSource::Path(path), RenderMode::Export);
                 video.object_fit = fit(&values);
                 Some(Box::new(video))
@@ -598,7 +569,7 @@ impl Builder {
                     .value()
                     .attr("src")
                     .ok_or_else(|| CompileError::Input("audio without src".into()))?;
-                let bytes = read_asset(src, &self.options.base_dir)?;
+                let bytes = self.assets.read(src)?;
                 let mut samples = director_core::audio::load_audio_bytes(&bytes, 48000)
                     .map_err(|e| CompileError::Input(format!("audio '{src}': {e}")))?;
                 let media_start = numeric("data-media-start", 0.0)?;

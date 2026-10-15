@@ -451,6 +451,51 @@ pub fn render_frame(
     Ok(())
 }
 
+/// Render an export-equivalent frame, including shutter sampling and transitions.
+/// Scratch targets inherit the caller's backend and are reused across frames.
+pub fn render_sampled_at_time(
+    director: &mut Director,
+    layout_engine: &mut LayoutEngine,
+    time: f64,
+    surface: &mut skia_safe::Surface,
+    accumulation: &mut Option<skia_safe::Surface>,
+    transitions: &mut Option<(skia_safe::Surface, skia_safe::Surface)>,
+) -> Result<(), RenderError> {
+    let samples = director.samples_per_frame.max(1);
+    if samples == 1 {
+        return render_at_time(director, layout_engine, time, surface.canvas(), transitions);
+    }
+    if accumulation.is_none() {
+        *accumulation = Some(
+            surface
+                .new_surface(&surface.image_info())
+                .ok_or(RenderError::SurfaceFailure)?,
+        );
+    }
+    let scratch = accumulation.as_mut().unwrap();
+    let shutter_duration =
+        (1.0 / director.fps) * (director.shutter_angle.clamp(0.0, 360.0) as f64 / 360.0);
+    let shutter_start = time - shutter_duration / 2.0;
+    let mut paint = skia_safe::Paint::default();
+    paint.set_alpha_f(1.0 / samples as f32);
+    paint.set_blend_mode(skia_safe::BlendMode::Plus);
+    surface.canvas().clear(skia_safe::Color::BLACK);
+    for sample in 0..samples {
+        let sample_time = shutter_start + (sample as f64 / (samples - 1) as f64) * shutter_duration;
+        render_at_time(
+            director,
+            layout_engine,
+            sample_time,
+            scratch.canvas(),
+            transitions,
+        )?;
+        surface
+            .canvas()
+            .draw_image(scratch.image_snapshot(), (0, 0), Some(&paint));
+    }
+    Ok(())
+}
+
 /// Renders a frame at the given time, handling transitions between scenes.
 ///
 /// Used internally by the export pipeline.

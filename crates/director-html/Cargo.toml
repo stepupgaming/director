@@ -8,21 +8,23 @@ description = "HTML, CSS and HyperFrames compiler for Director's native renderer
 [dependencies]
 director-core.workspace = true
 anyhow.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
 thiserror.workspace = true
 skia-safe = { workspace = true, features = ["textlayout"] }
 taffy = "0.9.2"
 scraper = "0.24"
+html5ever = "0.35"
 lightningcss = { version = "1.0.0-alpha.71", default-features = false }
 cssparser = "0.37"
 base64 = "0.22"
 usvg = "0.44"
 wuff = "0.2.9"
+sha2 = "0.10"
+tempfile = "3.23"
 
 [dev-dependencies]
 criterion = "0.5"
-tempfile = "3.23"
 
 [[bench]]
 name = "html"

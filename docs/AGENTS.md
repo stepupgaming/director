@@ -5,7 +5,7 @@
 ## Ownership
 
 - `architecture/` — engine overview and **normative core contracts**.
-- `plans/` — active implementation plans (core hardening program).
+- `plans/` — engineering plans: completed core hardening, motion/recipes, and the native project/runtime phase.
 - `contributing/` — development and documentation workflow.
 - `specs/` — RON / harness-oriented feature specs (see also repo-root `specs/`).
 - `archive/` — superseded or deferred docs (not current contracts).
@@ -31,7 +31,7 @@
 ## Child DOX Index
 
 - `architecture/` — Overview + core contracts.
-- `plans/` — Core hardening plans (00 index + 01–06).
+- `plans/` — Engineering plan index (00), completed core hardening (01–06), motion/recipes (07), and native projects/runtime (08).
 - `contributing/` — Development and documentation workflow.
 - `specs/` — Reserved for docs-local design notes (may be empty; harness RON specs live in repo-root `specs/`).
 - `archive/` — Historical audit and deferred product docs.

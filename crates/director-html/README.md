@@ -11,6 +11,18 @@ director-engine html render examples/html/native-motion.html -o target/native.mp
 
 `compile`, `compile_file`, `compile_capture` and `compile_capture_file` return `CompiledHtml` with a normal `Director`, static HTML ID mappings and metadata. Existing frame/export functions render it. Capture JSON is a separate interchange format; core project serialization does not serialize HTML adapters.
 
+`NativeProject::from_file`, `load`, `compile`, `apply_edits` and `save` own portable authoring projects. `director-native-project/1` stores HTML/options or sampled DOM, validated element-ID edits and deduplicated SHA-256/base64 asset blobs. Packing includes consumed local CSS/fonts/images/audio/video and required bundled fonts. Frozen compilation rejects missing or altered blobs and never consults original files. Video materialization is temporary and survives through the Director asset-loader lifetime.
+
+```bash
+director-engine project pack examples/html/native-motion.html -o target/movie.dirproj
+director-engine inspect target/movie.dirproj -t 1
+director-engine project edit target/movie.dirproj --patch edits.json
+director-engine render target/movie.dirproj --gpu -o target/movie.mp4
+director-engine preview target/movie.dirproj --gpu --no-open
+```
+
+Loading recompiles stored native authoring input; it does not deserialize HTML adapters as core node kinds. HTML edits support literal text, CSS overrides and supported timing/media attributes. Captures retain their sample rate and rectangles; text/paint edits cannot reconstruct uncaptured layout or continuous JS animation. Inspection exposes unique authored IDs and generated structural paths for anonymous/duplicate capture IDs; path identity assumes stable sampled topology. The format embeds media in JSON, with base64 overhead; it is not a binary compiled-scene cache. Rhai remains on the core project contract. See the [native CLI/backend workflow](../director-cli/README.md).
+
 Vulkan rendering and NVIDIA encoding are independent:
 
 ```bash

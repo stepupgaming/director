@@ -120,6 +120,7 @@ See plan **05** (implemented). Acceptance: `tests/project_roundtrip.rs` Plan 05 
 | Video decode | Reuse a persistent FFmpeg pipe for sequential reads; cache up to 8 frames; restart on backward or >60-frame seeks | **Implemented** |
 | A/V duration | `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`; the mixer takes per-channel sample frames and emits interleaved stereo | **Locked**; MP4 duration acceptance in CLI `tests/html_export.rs` |
 | GPU export | Supplied Vulkan context requires a GPU target; synchronized direct RGBA readback reuses the export buffer | **Implemented**; live GPU readback test and HTML CPU/GPU parity harness |
+| Native frame sampling | Export and CLI still/preview share `render_sampled_at_time`, including shutter accumulation and transition targets | **Implemented**; CLI renderer sampling parity test |
 | CI | Fonts downloaded on PR/push; visual suite `mock_video` | Present |
 
 See plan **06** (implemented). Acceptance: `tests/determinism_media.rs`.

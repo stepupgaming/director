@@ -1,19 +1,21 @@
 mod gpu;
 mod html;
+mod input;
 mod preview;
+mod project;
+mod renderer;
 mod run;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use director_core::export::render_export;
 use director_core::scripting::MovieHandle;
-use director_core::systems::renderer::{render_frame, GpuContext};
 use director_core::video_wrapper::RenderMode;
-use run::{default_video_output, eval_script, resolve_movie, ResolveOpts};
-use skia_safe::{AlphaType, ColorSpace, ColorType, EncodedImageFormat};
+use input::{Encoder, Input};
+use run::{default_video_output, eval_script};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Parser, Debug)]
@@ -74,6 +76,10 @@ struct Cli {
 enum Commands {
     /// Compile HTML/CSS/HyperFrames to native scenes, capture dynamic input, or render
     Html(html::HtmlArgs),
+    /// Pack or edit a portable native project
+    Project(project::ProjectArgs),
+    /// Inspect source IDs, layout, timeline and audio as JSON
+    Inspect(InspectArgs),
     /// Render a script (or named composition) to video
     Render(RenderArgs),
     /// Render a single still frame to PNG
@@ -86,20 +92,15 @@ enum Commands {
 
 #[derive(Parser, Debug)]
 struct RenderArgs {
-    /// Path to the Rhai script
-    script: PathBuf,
+    #[command(flatten)]
+    input: Input,
 
     /// Output video path
     #[arg(short = 'o', long)]
     output: Option<PathBuf>,
 
-    /// Named composition to build
-    #[arg(long)]
-    composition: Option<String>,
-
-    /// Props JSON file path or inline object string
-    #[arg(long)]
-    props: Option<String>,
+    #[arg(long, value_enum, default_value_t = Encoder::Software)]
+    encoder: Encoder,
 
     /// Enable alpha-channel output (VP9/WebM with transparency)
     #[arg(long, default_value_t = false)]
@@ -120,8 +121,8 @@ struct RenderArgs {
 
 #[derive(Parser, Debug)]
 struct StillArgs {
-    /// Path to the Rhai script
-    script: PathBuf,
+    #[command(flatten)]
+    input: Input,
 
     /// Output PNG path
     #[arg(short = 'o', long)]
@@ -135,13 +136,16 @@ struct StillArgs {
     #[arg(long)]
     frame: Option<u64>,
 
-    /// Named composition to build
     #[arg(long)]
-    composition: Option<String>,
+    gpu: bool,
+}
 
-    /// Props JSON file path or inline object string
-    #[arg(long)]
-    props: Option<String>,
+#[derive(Parser, Debug)]
+struct InspectArgs {
+    #[command(flatten)]
+    input: Input,
+    #[arg(short = 't', long, default_value_t = 0.0)]
+    time: f64,
 }
 
 #[derive(Parser, Debug)]
@@ -156,16 +160,10 @@ struct CompositionsArgs {
 
 #[derive(Parser, Debug)]
 struct CliPreviewArgs {
-    /// Path to the Rhai script
-    script: PathBuf,
-
-    /// Named composition to build
+    #[command(flatten)]
+    input: Input,
     #[arg(long)]
-    composition: Option<String>,
-
-    /// Props JSON file path or inline object string
-    #[arg(long)]
-    props: Option<String>,
+    gpu: bool,
 
     /// Bind address (default 127.0.0.1:7788)
     #[arg(long, default_value = "127.0.0.1:7788")]
@@ -227,31 +225,6 @@ fn init_logging(level: LogLevel, format: LogFormat) {
     }
 }
 
-fn maybe_gpu(enable: bool) -> Option<GpuContext> {
-    if !enable {
-        return None;
-    }
-    #[cfg(feature = "vulkan")]
-    {
-        match gpu::create_vulkan_context() {
-            Some(ctx) => {
-                info!("Vulkan GPU acceleration enabled");
-                Some(ctx)
-            }
-            None => {
-                warn!("Failed to initialize Vulkan, falling back to software rendering");
-                None
-            }
-        }
-    }
-    #[cfg(not(feature = "vulkan"))]
-    {
-        warn!("Vulkan support not compiled. Rebuild with --features=vulkan");
-        let _ = gpu::create_vulkan_context();
-        None
-    }
-}
-
 fn write_manifest(movie: &MovieHandle, path: &PathBuf, time: f64) -> Result<(), String> {
     let mut director = movie
         .director
@@ -264,135 +237,111 @@ fn write_manifest(movie: &MovieHandle, path: &PathBuf, time: f64) -> Result<(), 
 }
 
 fn cmd_render(args: RenderArgs) {
-    info!("Initializing Director Engine...");
-    info!("Script: {:?}", args.script);
-
-    let evaluated = match eval_script(&args.script, RenderMode::Export) {
-        Ok(e) => e,
-        Err(e) => {
-            error!("{}", e);
-            std::process::exit(1);
-        }
-    };
-
-    let movie = match resolve_movie(
-        &evaluated,
-        ResolveOpts {
-            composition: args.composition.as_deref(),
-            props_spec: args.props.as_deref(),
-        },
-    ) {
-        Ok(m) => m,
-        Err(e) => {
-            error!("{}", e);
-            std::process::exit(1);
-        }
-    };
-
-    let output_path = args.output.unwrap_or_else(|| {
-        default_video_output(&args.script, args.composition.as_deref(), args.alpha)
+    if args.alpha && matches!(args.encoder, Encoder::Nvenc) {
+        eprintln!("alpha export requires VP9/WebM; --encoder nvenc selects H.264 without alpha");
+        std::process::exit(1);
+    }
+    let loaded = args.input.load(RenderMode::Export).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
     });
-    info!("Output: {:?}", output_path);
-
-    if let Some(manifest_path) = &args.manifest {
-        if let Err(e) = write_manifest(&movie, manifest_path, args.manifest_time) {
-            error!("{}", e);
+    let output = args.output.unwrap_or_else(|| {
+        default_video_output(
+            &args.input.input,
+            args.input.composition.as_deref(),
+            args.alpha,
+        )
+    });
+    if let Some(path) = &args.manifest {
+        if let Err(e) = write_manifest(&loaded.movie, path, args.manifest_time) {
+            eprintln!("{e}");
             std::process::exit(1);
         }
     }
-
-    let mut gpu_context = maybe_gpu(args.gpu);
-    let mut director = movie.director.lock().unwrap();
-    match render_export(
+    let mut context = gpu::required_context(args.gpu).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+    let mut director = loaded.movie.director.lock().unwrap_or_else(|_| {
+        eprintln!("Director lock poisoned");
+        std::process::exit(2);
+    });
+    director.encoder_mode = args.encoder.mode();
+    if let Err(e) = render_export(
         &mut director,
-        output_path,
-        gpu_context.as_mut(),
+        output.clone(),
+        context.as_mut(),
         None,
         args.alpha,
     ) {
-        Ok(_) => info!("Render complete."),
-        Err(e) => {
-            error!("Render failed: {}", e);
-            std::process::exit(2);
-        }
+        eprintln!("{e}");
+        std::process::exit(2);
     }
+    drop(director);
+    drop(loaded);
+    drop(context);
+    println!("{}", output.display());
 }
 
 fn cmd_still(args: StillArgs) {
-    let evaluated = match eval_script(&args.script, RenderMode::Preview) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-    };
-
-    let movie = match resolve_movie(
-        &evaluated,
-        ResolveOpts {
-            composition: args.composition.as_deref(),
-            props_spec: args.props.as_deref(),
-        },
-    ) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-    };
-
-    let mut director = movie.director.lock().unwrap();
-    let time = if let Some(frame) = args.frame {
-        director_core::timeline::frame_to_time(frame, director.fps)
-    } else {
-        args.time
-    };
-
-    let output_path = args.output.unwrap_or_else(|| {
-        let time_label = format!("{:.3}", time).replace('.', "_");
-        let mut p = args.script.clone();
-        let stem = p
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "frame".into());
-        let suffix = args
-            .composition
-            .as_deref()
-            .map(|c| format!("_{}", c))
-            .unwrap_or_default();
-        p.set_file_name(format!("frame_{}{}_{}.png", stem, suffix, time_label));
-        p
+    let loaded = args.input.load(RenderMode::Export).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
     });
-
-    let width = director.width;
-    let height = director.height;
-    let info = skia_safe::ImageInfo::new(
-        (width, height),
-        ColorType::RGBA8888,
-        AlphaType::Premul,
-        Some(ColorSpace::new_srgb()),
-    );
-    let mut surface =
-        skia_safe::surfaces::raster(&info, None, None).expect("Failed to create Skia surface");
-
-    if let Err(e) = render_frame(&mut director, time, surface.canvas()) {
-        eprintln!("Render error at t={}: {}", time, e);
+    let mut director = loaded.movie.director.lock().unwrap_or_else(|_| {
+        eprintln!("Director lock poisoned");
+        std::process::exit(2);
+    });
+    let time = args.frame.map_or(args.time, |f| {
+        director_core::timeline::frame_to_time(f, director.fps)
+    });
+    let output = args.output.unwrap_or_else(|| {
+        let time_label = format!("{time:.3}").replace('.', "_");
+        let stem = args
+            .input
+            .input
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let suffix = args
+            .input
+            .composition
+            .as_ref()
+            .map(|c| format!("_{c}"))
+            .unwrap_or_default();
+        args.input
+            .input
+            .with_file_name(format!("frame_{stem}{suffix}_{time_label}.png"))
+    });
+    let mut renderer = renderer::Renderer::new(args.gpu).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+    let png = renderer.png(&mut director, time).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+    if let Err(e) = fs::write(&output, png) {
+        eprintln!("{e}");
         std::process::exit(2);
     }
-
-    let image = surface.image_snapshot();
-    let data = image
-        .encode(None, EncodedImageFormat::PNG, 100)
-        .expect("Failed to encode PNG");
-
-    if let Err(e) = fs::write(&output_path, data.as_bytes()) {
-        eprintln!("Failed to write {}: {}", output_path.display(), e);
-        std::process::exit(2);
-    }
-
-    println!("Frame at t={} saved to {:?}", time, output_path);
+    drop(director);
+    drop(loaded);
+    drop(renderer);
+    println!("{}", output.display());
 }
 
+fn cmd_inspect(args: InspectArgs) {
+    let inspection = args
+        .input
+        .load(RenderMode::Export)
+        .and_then(|loaded| loaded.inspect(args.time))
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        });
+    println!("{inspection}");
+}
 fn cmd_compositions(args: CompositionsArgs) {
     let evaluated = match eval_script(&args.script, RenderMode::Preview) {
         Ok(e) => e,
@@ -445,9 +394,8 @@ fn cmd_preview(args: CliPreviewArgs) {
         }
     };
     if let Err(e) = rt.block_on(preview::run_preview(preview::PreviewArgs {
-        script: args.script,
-        composition: args.composition,
-        props: args.props,
+        input: args.input,
+        gpu: args.gpu,
         bind,
         open_browser,
     })) {
@@ -467,6 +415,8 @@ fn main() {
         Some(Commands::Compositions(args)) => cmd_compositions(args),
         Some(Commands::Preview(args)) => cmd_preview(args),
         Some(Commands::Html(args)) => html::run(args),
+        Some(Commands::Project(args)) => project::run(args),
+        Some(Commands::Inspect(args)) => cmd_inspect(args),
         None => {
             let script = match cli.script {
                 Some(s) => s,
@@ -481,10 +431,13 @@ fn main() {
                 }
             };
             cmd_render(RenderArgs {
-                script,
+                input: Input {
+                    composition: cli.composition,
+                    props: cli.props,
+                    ..Input::new(script)
+                },
                 output: cli.output,
-                composition: cli.composition,
-                props: cli.props,
+                encoder: Encoder::Software,
                 alpha: cli.alpha,
                 gpu: cli.gpu,
                 manifest: cli.manifest,

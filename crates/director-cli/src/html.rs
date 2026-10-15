@@ -1,5 +1,5 @@
-use clap::{Args, Subcommand, ValueEnum};
-use director_html::{CompileOptions, CompiledHtml};
+use crate::input::{Encoder, Input};
+use clap::{Args, Subcommand};
 use std::{path::PathBuf, time::Instant};
 
 #[derive(Debug, Args)]
@@ -70,57 +70,8 @@ struct Rendering {
     #[arg(long)]
     gpu: bool,
     /// MP4 encoder, independent of the rendering backend
-    #[arg(long, value_enum, default_value_t = HtmlEncoder::Software)]
-    encoder: HtmlEncoder,
-}
-#[derive(Debug, ValueEnum, Clone, Copy, Default)]
-enum HtmlEncoder {
-    #[default]
-    Software,
-    Nvenc,
-}
-impl HtmlEncoder {
-    fn mode(self) -> director_core::video_wrapper::EncoderMode {
-        match self {
-            Self::Software => director_core::video_wrapper::EncoderMode::Software,
-            Self::Nvenc => director_core::video_wrapper::EncoderMode::Nvenc,
-        }
-    }
-    fn codec(self) -> &'static str {
-        director_core::video_wrapper::get_encoder_codec(self.mode())
-    }
-}
-#[derive(Debug, Args, Clone)]
-struct Input {
-    /// HTML or capture JSON. Authored/stored metadata determines canvas and duration
-    input: PathBuf,
-    #[arg(long, default_value_t = 1920)]
-    width: i32,
-    #[arg(long, default_value_t = 1080)]
-    height: i32,
-    #[arg(long, default_value_t = 30.0)]
-    fps: f64,
-    #[arg(long, default_value_t = 5.0)]
-    duration: f64,
-    #[arg(long)]
-    composition: Option<String>,
-}
-fn compile(input: Input) -> Result<CompiledHtml, director_html::CompileError> {
-    if input.input.extension().is_some_and(|s| s == "json") {
-        director_html::compile_capture_file(&input.input)
-    } else {
-        director_html::compile_file(
-            &input.input,
-            CompileOptions {
-                width: input.width,
-                height: input.height,
-                fps: input.fps,
-                duration: input.duration,
-                composition: input.composition,
-                ..Default::default()
-            },
-        )
-    }
+    #[arg(long, value_enum, default_value_t = Encoder::Software)]
+    encoder: Encoder,
 }
 pub fn run(args: HtmlArgs) {
     if let Err((code, error)) = execute(args.command) {
@@ -206,7 +157,7 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
         HtmlCommand::Capture { .. } | HtmlCommand::Benchmark { .. } => unreachable!(),
     };
     let started = Instant::now();
-    let mut compiled = compile(input).map_err(|e| (1, e.to_string()))?;
+    let mut compiled = input.load_html().map_err(|e| (1, e.to_string()))?;
     let compile_ms = started.elapsed().as_secs_f64() * 1000.0;
     if let Some(output) = output {
         compiled.director.encoder_mode = rendering.encoder.mode();
@@ -248,6 +199,8 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
                 started.elapsed().as_secs_f64() * 1000.0
             );
         }
+        drop(compiled);
+        drop(context);
         println!("{}", output.display());
     } else {
         println!(
@@ -270,7 +223,7 @@ fn benchmark(
         return Err((1, "runs must be in 1..100".into()));
     }
     let started = Instant::now();
-    let mut compiled = compile(input.clone()).map_err(|e| (1, e.to_string()))?;
+    let mut compiled = input.load_html().map_err(|e| (1, e.to_string()))?;
     let compile_ms = started.elapsed().as_secs_f64() * 1000.0;
     compiled.director.encoder_mode = rendering.encoder.mode();
     let setup = Instant::now();
@@ -335,7 +288,7 @@ fn benchmark(
         measurements.push(serde_json::json!({"kind":if run==0{"first"}else{"warm"},"frames":count,"render_ms":render_seconds*1000.0,"readback_ms":readback_seconds*1000.0,"fps":count as f64/render_seconds,"wall_ms":wall.elapsed().as_secs_f64()*1000.0}));
     }
     let warm_started = Instant::now();
-    let warm = compile(input).map_err(|e| (1, e.to_string()))?;
+    let warm = input.load_html().map_err(|e| (1, e.to_string()))?;
     let warm_compile_ms = warm_started.elapsed().as_secs_f64() * 1000.0;
     drop(warm);
     let export_ms = if let Some(path) = export {
@@ -356,6 +309,10 @@ fn benchmark(
         "{}",
         serde_json::json!({"width":compiled.director.width,"height":compiled.director.height,"fps":compiled.director.fps,"duration":duration,"source_kind":compiled.source_kind,"sample_rate":compiled.sample_rate,"nodes":compiled.node_count,"compile_ms":compile_ms,"warm_compile_ms":warm_compile_ms,"render_setup_ms":render_setup_ms,"renderer":renderer,"encoder":rendering.encoder.codec(),"timing_scope":"layout, paint, submission and RGBA readback; excludes PNG encoding","runs":measurements,"export_ms":export_ms,"peak_renderer_rss_bytes":peak_memory(),"browser_required_for_render":false})
     );
+    drop(compiled);
+    drop(surfaces);
+    drop(surface);
+    drop(context);
     Ok(())
 }
 
@@ -364,14 +321,8 @@ fn write_png(
     pixels: &[u8],
     output: &std::path::Path,
 ) -> Result<(), (i32, String)> {
-    let row_bytes = info.width() as usize * 4;
-    let image =
-        skia_safe::images::raster_from_data(&info, skia_safe::Data::new_copy(pixels), row_bytes)
-            .ok_or((2, "PNG raster allocation failed".into()))?;
-    let data = image
-        .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
-        .ok_or((2, "PNG encoding failed".into()))?;
-    std::fs::write(output, data.as_bytes()).map_err(|e| (2, e.to_string()))
+    let data = crate::renderer::encode_png(info, pixels).map_err(|e| (2, e))?;
+    std::fs::write(output, data).map_err(|e| (2, e.to_string()))
 }
 
 #[cfg(windows)]
@@ -441,7 +392,7 @@ mod tests {
         match cli.html.command {
             HtmlCommand::Render { rendering, .. } => {
                 assert!(!rendering.gpu);
-                assert!(matches!(rendering.encoder, HtmlEncoder::Nvenc));
+                assert!(matches!(rendering.encoder, Encoder::Nvenc));
             }
             _ => panic!("expected render"),
         }
@@ -449,7 +400,7 @@ mod tests {
         match cli.html.command {
             HtmlCommand::Benchmark { rendering, .. } => {
                 assert!(rendering.gpu);
-                assert!(matches!(rendering.encoder, HtmlEncoder::Software));
+                assert!(matches!(rendering.encoder, Encoder::Software));
             }
             _ => panic!("expected benchmark"),
         }
