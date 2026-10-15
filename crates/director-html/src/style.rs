@@ -1,16 +1,29 @@
 use crate::css::{split, Values};
 use director_core::{animation::Animated, node::BoxNode, types::Color};
 use lightningcss::{
-    properties::transform::{Transform, TransformList},
+    properties::transform::{Matrix3d, Transform, TransformList},
     traits::{Parse, ToCss},
     values::{
+        angle::Angle,
         color::CssColor,
-        length::{LengthPercentage as CssLength, LengthValue},
+        length::{Length, LengthPercentage as CssLength, LengthValue},
     },
 };
-use skia_safe::Matrix;
+use skia_safe::{M44, Matrix};
 use taffy::prelude::*;
 use taffy::style::Overflow;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderLine {
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+pub enum CanvasTransform {
+    Affine(Matrix),
+    Projective(M44),
+}
 
 pub trait LengthParts {
     fn value(self) -> f32;
@@ -56,7 +69,10 @@ pub struct PaintStyle {
     pub mask: Option<crate::gradient::NativeGradient>,
     pub corners: [(LengthPercentage, LengthPercentage); 4],
     pub border_colors: [Color; 4],
-    pub border_pattern: Option<bool>,
+    pub border_lines: [BorderLine; 4],
+    pub perspective: Option<f32>,
+    pub perspective_origin: (LengthPercentage, LengthPercentage),
+    pub backface_hidden: bool,
     pub filter: Option<skia_safe::ImageFilter>,
     pub blend_mode: skia_safe::BlendMode,
     pub shadows: Vec<Shadow>,
@@ -297,7 +313,10 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
         mask: None,
         corners: [(zero(), zero()); 4],
         border_colors: [Color::BLACK; 4],
-        border_pattern: None,
+        border_lines: [BorderLine::Solid; 4],
+        perspective: None,
+        perspective_origin: (percent(0.5_f32), percent(0.5_f32)),
+        backface_hidden: false,
         filter: Default::default(),
         blend_mode: skia_safe::BlendMode::SrcOver,
         shadows: Vec::new(),
@@ -526,12 +545,20 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                     color(s, paint.color)?;
                 }
                 n if n.starts_with("border-") && n.ends_with("-style") => {
-                    if !matches!(s, "solid" | "none" | "dashed" | "dotted") {
-                        return Err("only solid/dashed/dotted borders supported".into());
-                    }
-                    if matches!(s, "dashed" | "dotted") {
-                        paint.border_pattern = Some(s == "dotted");
-                    }
+                    let line = match s {
+                        "none" | "solid" => BorderLine::Solid,
+                        "dashed" => BorderLine::Dashed,
+                        "dotted" => BorderLine::Dotted,
+                        _ => return Err("only solid/dashed/dotted borders supported".into()),
+                    };
+                    let index = match n {
+                        "border-top-style" => 0,
+                        "border-right-style" => 1,
+                        "border-bottom-style" => 2,
+                        "border-left-style" => 3,
+                        _ => return Err("unsupported border style".into()),
+                    };
+                    paint.border_lines[index] = line;
                 }
                 n if n.starts_with("border-") && n.ends_with("-radius") => {
                     let radii = split(s, false);
@@ -600,45 +627,52 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                             Transform::TranslateX(x) | Transform::TranslateY(x) => {
                                 convert_length(x, m)?;
                             }
+                            Transform::TranslateZ(z) => {
+                                absolute_px(z, m)?;
+                            }
+                            Transform::Translate3d(x, y, z) => {
+                                convert_length(x, m)?;
+                                convert_length(y, m)?;
+                                absolute_px(z, m)?;
+                            }
+                            Transform::Perspective(z) => {
+                                let distance = absolute_px(z, m)?;
+                                if distance <= 0.0 {
+                                    return Err("perspective distance must be positive".into());
+                                }
+                            }
                             _ => {}
-                        }
-                        if matches!(
-                            t,
-                            Transform::TranslateZ(_)
-                                | Transform::Translate3d(..)
-                                | Transform::ScaleZ(_)
-                                | Transform::Scale3d(..)
-                                | Transform::RotateX(_)
-                                | Transform::RotateY(_)
-                                | Transform::Rotate3d(..)
-                                | Transform::Perspective(_)
-                                | Transform::Matrix3d(_)
-                        ) {
-                            return Err("3D transform unsupported".into());
                         }
                     }
                 }
-                "transform-origin" => {
-                    let v = split(s, false);
-                    if v.len() > 2 || v.is_empty() {
-                        return Err("3D transform origin unsupported".into());
-                    };
-                    let axis = |s: &str| -> Result<LengthPercentage, String> {
-                        match s {
-                            "center" => Ok(percent(0.5_f32)),
-                            "left" | "top" => Ok(percent(0.0_f32)),
-                            "right" | "bottom" => Ok(percent(1.0_f32)),
-                            _ => length(s, m),
+                "perspective" => {
+                    paint.perspective = if s == "none" {
+                        None
+                    } else {
+                        let distance = px(s, m)?;
+                        if distance <= 0.0 {
+                            return Err("perspective distance must be positive".into());
                         }
+                        Some(distance)
                     };
-                    paint.origin = (
-                        axis(&v[0])?,
-                        if v.len() == 2 {
-                            axis(&v[1])?
-                        } else {
-                            percent(0.5_f32)
-                        },
-                    );
+                }
+                "perspective-origin" => {
+                    paint.perspective_origin = origin_pair(s, m)?;
+                }
+                "transform-style" => {
+                    if !matches!(s, "flat" | "preserve-3d") {
+                        return Err("unsupported transform-style".into());
+                    }
+                }
+                "backface-visibility" => {
+                    paint.backface_hidden = match s {
+                        "visible" => false,
+                        "hidden" => true,
+                        _ => return Err("unsupported backface-visibility".into()),
+                    };
+                }
+                "transform-origin" => {
+                    paint.origin = origin_pair(s, m)?;
                 }
                 "font-family" => {
                     paint.font_family = split(s, true)
@@ -801,15 +835,6 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
             paint.align = skia_safe::textlayout::TextAlign::Left;
         }
     }
-    if paint.border_pattern.is_some()
-        && (widths.iter().any(|w| *w != widths[0])
-            || paint
-                .border_colors
-                .iter()
-                .any(|c| *c != paint.border_colors[0]))
-    {
-        errors.push("dashed/dotted borders must have uniform widths and colors".into());
-    }
     paint.box_node.style = style.clone();
     if errors.is_empty() {
         Ok((style, paint))
@@ -899,6 +924,153 @@ fn filter(s: &str, m: Metrics) -> Result<Option<skia_safe::ImageFilter>, String>
         }
     }
     Ok(chain)
+}
+
+fn absolute_px(l: &Length, m: Metrics) -> Result<f32, String> {
+    px(
+        &l.to_css_string(Default::default())
+            .map_err(|e| e.to_string())?,
+        m,
+    )
+}
+
+fn origin_pair(s: &str, m: Metrics) -> Result<(LengthPercentage, LengthPercentage), String> {
+    let v = split(s, false);
+    if v.len() > 2 || v.is_empty() {
+        return Err("3D transform origin unsupported".into());
+    }
+    let axis = |s: &str| -> Result<LengthPercentage, String> {
+        match s {
+            "center" => Ok(percent(0.5_f32)),
+            "left" | "top" => Ok(percent(0.0_f32)),
+            "right" | "bottom" => Ok(percent(1.0_f32)),
+            _ => length(s, m),
+        }
+    };
+    Ok((
+        axis(&v[0])?,
+        if v.len() == 2 {
+            axis(&v[1])?
+        } else {
+            percent(0.5_f32)
+        },
+    ))
+}
+
+fn wrap_turn(angle: &mut Angle) {
+    let degrees = angle.to_degrees().rem_euclid(360.0);
+    *angle = Angle::Deg(if degrees == 360.0 { 0.0 } else { degrees });
+}
+
+fn is_projective(transform: &Transform) -> bool {
+    matches!(
+        transform,
+        Transform::TranslateZ(_)
+            | Transform::Translate3d(..)
+            | Transform::ScaleZ(_)
+            | Transform::Scale3d(..)
+            | Transform::RotateX(_)
+            | Transform::RotateY(_)
+            | Transform::Rotate3d(..)
+            | Transform::Perspective(_)
+            | Transform::Matrix3d(_)
+    )
+}
+
+fn prepare_projective(list: &TransformList, m: Metrics, size: (f32, f32)) -> TransformList {
+    let mut resolved = list.clone();
+    let length_px = |value: &mut CssLength, basis: f32| {
+        if let Ok(length) = convert_length(value, m) {
+            *value = CssLength::px(resolve(length, basis));
+        }
+    };
+    for transform in &mut resolved.0 {
+        match transform {
+            Transform::Translate(x, y) => {
+                length_px(x, size.0);
+                length_px(y, size.1);
+            }
+            Transform::TranslateX(x) => length_px(x, size.0),
+            Transform::TranslateY(y) => length_px(y, size.1),
+            Transform::TranslateZ(z) | Transform::Perspective(z) => {
+                if let Ok(value) = absolute_px(z, m) {
+                    *z = Length::px(value);
+                }
+            }
+            Transform::Translate3d(x, y, z) => {
+                length_px(x, size.0);
+                length_px(y, size.1);
+                if let Ok(value) = absolute_px(z, m) {
+                    *z = Length::px(value);
+                }
+            }
+            Transform::Rotate(angle)
+            | Transform::RotateX(angle)
+            | Transform::RotateY(angle)
+            | Transform::RotateZ(angle)
+            | Transform::Rotate3d(_, _, _, angle) => wrap_turn(angle),
+            _ => {}
+        }
+    }
+    resolved
+}
+
+fn affine_from(matrix: &Matrix3d<f32>) -> Matrix {
+    Matrix::new_all(
+        matrix.m11,
+        matrix.m21,
+        matrix.m41,
+        matrix.m12,
+        matrix.m22,
+        matrix.m42,
+        0.0,
+        0.0,
+        1.0,
+    )
+}
+
+fn m44_from(matrix: &Matrix3d<f32>) -> M44 {
+    M44::row_major(&[
+        matrix.m11,
+        matrix.m21,
+        matrix.m31,
+        matrix.m41,
+        matrix.m12,
+        matrix.m22,
+        matrix.m32,
+        matrix.m42,
+        matrix.m13,
+        matrix.m23,
+        matrix.m33,
+        matrix.m43,
+        matrix.m14,
+        matrix.m24,
+        matrix.m34,
+        matrix.m44,
+    ])
+}
+
+pub fn shows_backface(list: &TransformList, m: Metrics, size: (f32, f32)) -> bool {
+    prepare_projective(list, m, size)
+        .to_matrix()
+        .is_some_and(|matrix| matrix.m33 < 0.0)
+}
+
+pub fn perspective_matrix(distance: f32) -> M44 {
+    m44_from(&Matrix3d::perspective(distance))
+}
+
+pub fn canvas_transform(list: &TransformList, m: Metrics, size: (f32, f32)) -> CanvasTransform {
+    if list.0.iter().any(is_projective) {
+        if let Some(matrix) = prepare_projective(list, m, size).to_matrix() {
+            return if matrix.is_2d() {
+                CanvasTransform::Affine(affine_from(&matrix))
+            } else {
+                CanvasTransform::Projective(m44_from(&matrix))
+            };
+        }
+    }
+    CanvasTransform::Affine(transform_matrix(list, m, size))
 }
 
 pub fn transform_matrix(list: &TransformList, m: Metrics, size: (f32, f32)) -> Matrix {

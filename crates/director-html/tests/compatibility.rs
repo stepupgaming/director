@@ -180,6 +180,85 @@ fn malformed_and_cyclic_styles_are_errors() {
     }
 }
 #[test]
+fn repeating_gradients_tile_before_the_box_ends() {
+    let conic = "<style>body{margin:0}div{width:64px;height:64px;background:repeating-conic-gradient(red 0deg,red 10deg,blue 10deg,blue 20deg)}</style><div></div>";
+    let p = frame(conic, 0.0);
+    assert!(pixel(&p, 34, 8)[0] > 200, "5deg should stay in the red wedge");
+    assert!(pixel(&p, 38, 9)[2] > 200, "15deg should stay in the blue wedge");
+    let linear = "<style>body{margin:0}div{width:64px;height:64px;background:repeating-linear-gradient(90deg,red 0px,red 8px,blue 8px,blue 16px)}</style><div></div>";
+    let p = frame(linear, 0.0);
+    assert!(pixel(&p, 4, 32)[0] > 200);
+    assert!(pixel(&p, 12, 32)[2] > 200);
+    assert!(pixel(&p, 20, 32)[0] > 200);
+    let radial = "<style>body{margin:0}div{width:64px;height:64px;background:repeating-radial-gradient(circle,red 0px,red 8px,blue 8px,blue 16px)}</style><div></div>";
+    let p = frame(radial, 0.0);
+    assert!(pixel(&p, 32, 32)[0] > 200, "radial center {:?}", pixel(&p, 32, 32));
+    assert!(pixel(&p, 44, 32)[2] > 200, "radial 12px {:?}", pixel(&p, 44, 32));
+    assert!(pixel(&p, 52, 32)[0] > 200, "radial 20px {:?}", pixel(&p, 52, 32));
+}
+
+#[test]
+fn nonuniform_dashed_borders_keep_each_side() {
+    let html = "<style>body{margin:0}div{width:64px;height:64px;box-sizing:border-box;background:white;border-top:4px dashed red;border-right:8px solid blue;border-bottom:4px dotted green;border-left:6px solid black}</style><div></div>";
+    let p = frame(html, 0.0);
+    assert_eq!(pixel(&p, 8, 2), [255, 0, 0, 255]);
+    assert_eq!(pixel(&p, 18, 2), [255, 255, 255, 255]);
+    assert_eq!(pixel(&p, 60, 32), [0, 0, 255, 255]);
+    assert_eq!(pixel(&p, 3, 32), [0, 0, 0, 255]);
+    // CSS named green is #008000, so a solid dot is [0, 128, 0, 255].
+    let green = (0..64).any(|x| pixel(&p, x, 62) == [0, 128, 0, 255]);
+    assert!(
+        green,
+        "bottom dots missing: {:?}",
+        (0..64).step_by(4).map(|x| pixel(&p, x, 62)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn perspective_changes_a_rotate_y_card_and_backface_can_hide_it() {
+    let card = "<style>body{margin:0}.stage{width:64px;height:64px;perspective:PERSP}.card{position:absolute;left:8px;top:16px;width:48px;height:32px;background:red;transform:rotateY(60deg)}</style><div class='stage'><div class='card'></div></div>";
+    let with = frame(&card.replace("PERSP", "80px"), 0.0);
+    let without = frame(&card.replace("PERSP", "none"), 0.0);
+    assert_ne!(with, without);
+    assert_eq!(pixel(&with, 32, 32), [255, 0, 0, 255]);
+    let hidden = "<style>body{margin:0}div{width:64px;height:64px;background:red;transform:rotateY(180deg);backface-visibility:hidden}</style><div></div>";
+    assert_eq!(pixel(&frame(hidden, 0.0), 32, 32), [0, 0, 0, 255]);
+    let spin = "<style>body{margin:0}.stage{width:64px;height:64px;perspective:120px}.card{width:64px;height:64px;background:red;animation:spin 1s linear both}@keyframes spin{from{transform:rotateY(0deg)}to{transform:rotateY(70deg)}}</style><div class='stage'><div class='card'></div></div>";
+    assert_eq!(pixel(&frame(spin, 0.0), 4, 32), [255, 0, 0, 255]);
+    assert_eq!(pixel(&frame(spin, 1.0), 4, 32), [0, 0, 0, 255]);
+}
+
+#[test]
+fn svg_stylesheet_filters_and_blend_modes_reach_usvg() {
+    let blur = "<style>body{margin:0}svg .box{filter:blur(4px)}</style><svg width='64' height='64' xmlns='http://www.w3.org/2000/svg'><rect class='box' x='22' y='22' width='20' height='20' fill='red'/></svg>";
+    let p = frame(blur, 0.0);
+    assert!(pixel(&p, 32, 32)[0] > 200);
+    assert!(
+        pixel(&p, 16, 32)[0] > 20,
+        "blur should spill red, got {:?}",
+        pixel(&p, 16, 32)
+    );
+    assert_eq!(pixel(&p, 0, 0), &[0, 0, 0, 255], "far corner {:?}", pixel(&p, 0, 0));
+    let multiply = "<style>body{margin:0}svg .top{mix-blend-mode:multiply}</style><svg width='64' height='64' xmlns='http://www.w3.org/2000/svg'><rect width='64' height='64' fill='blue'/><rect class='top' width='64' height='64' fill='red'/></svg>";
+    let p = frame(multiply, 0.0);
+    assert!(
+        pixel(&p, 32, 32)[0] < 20 && pixel(&p, 32, 32)[2] < 20,
+        "multiply red over blue should go dark, got {:?}",
+        pixel(&p, 32, 32)
+    );
+    // The default filter region is only 10% past the object box, which stops at x=20 here.
+    let primitive = "<style>body{margin:0}</style><svg width='64' height='64' xmlns='http://www.w3.org/2000/svg'><filter id='b' x='-50%' y='-50%' width='200%' height='200%'><feGaussianBlur stdDeviation='3'/></filter><rect x='22' y='22' width='20' height='20' fill='red' filter='url(#b)'/></svg>";
+    let p = frame(primitive, 0.0);
+    assert!(pixel(&p, 32, 32)[0] > 200, "center {:?}", pixel(&p, 32, 32));
+    // stdDeviation 3 falls off faster than CSS blur(4px). x=16 is 6px outside the rect.
+    assert!(
+        pixel(&p, 16, 32)[0] > 5,
+        "filter primitive should spill red, got {:?}",
+        pixel(&p, 16, 32)
+    );
+}
+
+#[test]
 fn radial_conic_and_gradient_mask_paint_natively() {
     let radial="<style>body{margin:0}div{width:64px;height:64px;background:radial-gradient(circle,white 0%,black 100%)}</style><div></div>";
     let p = frame(radial, 0.0);

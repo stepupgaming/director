@@ -2,7 +2,7 @@
 
 > **Status:** Plans 01–06 implemented (2026-07-19) — core hardening program complete
 > **Priority:** Engine solidity over product surface  
-> **Post-core product:** compositions, motion/recipes and CLI landed; native projects/runtime follow [plan 08](08-native-projects-and-runtime.md). Broader recipes, agent repair and SDK layers remain later work.
+> **Post-core product:** compositions, motion/recipes and CLI landed. Native projects and runtime are [plan 08](08-native-projects-and-runtime.md) (**Done**). Native paint and media fidelity follow [plan 09](09-native-fidelity.md). Static-subtree paint reuse is issue #2. Agent production workflows are issue #3. Broader recipes and SDK layers remain later work.
 
 ## Goal
 
@@ -67,6 +67,7 @@ Do not schedule under this program:
 | 6 | [06-determinism-and-media.md](06-determinism-and-media.md) | Same script → same pixels/audio clock | **Done** |
 | 7 | [07-stdlib-and-recipes.md](07-stdlib-and-recipes.md) | L1 verbs + L2 contract + L3 recipes | **Done (v1 stop-line)** |
 | 8 | [08-native-projects-and-runtime.md](08-native-projects-and-runtime.md) | Portable native projects, common loading, headless inspection/edits and GPU backend | **Done** |
+| 9 | [09-native-fidelity.md](09-native-fidelity.md) | Repeating gradients, per-side dashes, perspective, SVG filter and blend. Later: registry re-audit, shaders, timelines, captured media | **In progress** |
 
 **Dependency order:** `01` first (everything samples time). `02` before trusting incremental edit. `03` can start once dirty APIs are understood; finish after `01`–`02`. `04` parallel after `01` time helpers exist. `05` after identity stabilizes. `06` continuous background; fonts/CI can land anytime.
 
@@ -102,4 +103,4 @@ cargo test -p director-core --test visual_suite --no-default-features --features
 
 ## Next action
 
-Core hardening plans 01–06, plan 07's implemented scope and [plan 08](08-native-projects-and-runtime.md) are **Done**. Native project, CLI and backend execution now share loading and frame sampling, with Hyper CN as compatibility material. Next product work should expand native motion/media fidelity and agent production workflows. Frontend/editor design, Remotion source compatibility and a separate SDK remain outside the current focus.
+Core hardening plans 01–06, plan 07's implemented scope and [plan 08](08-native-projects-and-runtime.md) are **Done**. [Plan 09](09-native-fidelity.md) slice 1 translates repeating gradients, per-side dashed and dotted borders, perspective without a shared depth sort, and SVG `filter` / `mix-blend-mode` from an external stylesheet. The Hyper CN smoke count stays 205/239 until that audit is run again. Next, re-run the registry smoke and keep the WebGL and shader refusals as the following slice. Issue #2 tracks static-subtree paint reuse. Issue #3 tracks agent production workflows. Frontend/editor design, Remotion source compatibility and a separate SDK remain outside the current focus.

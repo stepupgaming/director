@@ -42,10 +42,10 @@ director-engine html benchmark examples/html/native-motion.html --gpu --export t
 | Cascade | Servo selectors, specificity/source order, inline style, important, inheritance and custom properties substituted before shorthand ranking |
 | Layout | Block/Flexbox/Grid via Taffy; dimensions/min/max, spacing, relative/absolute positioning, grow/shrink/wrap, numeric tracks/repeat/minmax/placement; px/percent/em/rem/viewport/absolute units |
 | Typography | Bundled fonts and local/embedded font-face, WOFF/WOFF2 decoding, weight/italic/size/line-height/spacing/alignment, whitespace and uppercase |
-| Paint | Multiple linear/radial/conic gradients, elliptical corner radii, solid and uniform dashed/dotted borders, outer/inset shadows and spread, grouped opacity, percentage polygon clips, overflow clips and alpha gradient masks |
+| Paint | Multiple linear/radial/conic gradients, including repeating gradients without color hints, elliptical corner radii, solid borders and per-side dashed or dotted borders, outer/inset shadows and spread, grouped opacity, percentage polygon clips, overflow clips and alpha gradient masks |
 | Effects | Ordered blur/brightness/contrast/saturation/grayscale/hue/drop-shadow filters, backdrop blur, common blend modes |
-| Transforms | 2D lists/matrices in authored order, origin and percentage translation |
-| CSS animation | Opacity/color/background-color, matching translate/scale/rotate lists, px width/height/left/top and uniform radius; cubic/steps easing, delay, fractional/infinite iterations, direction and fill |
+| Transforms | 2D and 3D lists in authored order, origin, percentage translation on X and Y, absolute px on Z and perspective. Parent perspective projects descendants. Backface hiding uses the element's own matrix. No shared depth sort |
+| CSS animation | Opacity/color/background-color, matching translate/scale/rotate lists including rotateX/Y/Z, translateZ, translate3d and perspective, px width/height/left/top and uniform radius; cubic/steps easing, delay, fractional/infinite iterations, direction and fill |
 | HyperFrames | Numeric start/duration/end, composition-local timing, hidden clips, dimensions/FPS, `data-no-timeline`, source start and constant positive video rate. Track indexes do not set paint order |
 
 CSS animations evaluate immutable tracks at arbitrary times. Paint-only animation does not dirty Taffy. Paragraphs, decoded images and SVG rasters retain native caches. Compilation uses native adapters within the existing core pipeline. Native defaults use Roboto. Ship exact fonts and author a sized root with explicit backgrounds and body margin reset for Chromium comparisons.
@@ -70,9 +70,9 @@ Standalone/template blocks and one-level external template assembly with numeric
 
 - Static JS, dynamic transitions, CSS nesting/media queries and unsupported properties require explicit extraction when its DOM subset covers the result.
 - Canvas/WebGL/Three.js/shader blocks need native translators. Extraction refuses screenshots as scene content.
-- General 3D/perspective, named grid areas, auto-fit/auto-fill, mixed inline/block formatting, interactive scrolling/fixed/sticky, mixed calc/clamp lengths, general stacking-context escapes and browser margin collapsing are outside the static subset.
-- Repeating gradients/hints, non-alpha masks, text decoration and image backgrounds are not translated.
-- SVG text, foreignObject, SMIL, scripts and nested images are rejected. External stylesheet paint rules for vector internals are diagnosed. SVG attributes, inline/internal styles and inherited currentColor use usvg/resvg. Extraction resolves SVG colors and planar child transforms.
+- Named grid areas, auto-fit/auto-fill, mixed inline/block formatting, interactive scrolling/fixed/sticky, mixed calc/clamp lengths, general stacking-context escapes and browser margin collapsing are outside the static subset. Perspective does not depth-sort, and a three-value transform-origin fails.
+- Gradient color hints, non-alpha masks, text decoration and image backgrounds are not translated.
+- SVG text, foreignObject, SMIL, scripts and nested images are rejected. An external stylesheet may set `filter` and `mix-blend-mode` on SVG descendants. Other external SVG presentation properties are diagnosed. SVG attributes, inline/internal styles and inherited currentColor use usvg/resvg. Extraction resolves SVG colors and planar child transforms.
 - Captured media still needs integration; static native media works. Video loops and audio rate changes are rejected.
 - Font metrics/rasterization and complex stacking can differ from Chromium. Compilation success is not a parity certificate.
 
@@ -144,7 +144,7 @@ Automatic HyperFrames rendering selected three workers. Both MP4s contain 90 fra
 | Hyper CN `blur-in`, original 1280x720 | 40 | .998416 | .067675 | Pass |
 | Hyper CN `blur-in`, portrait 1080x1920 | 40 | .997298 | .150835 | Pass |
 
-The Hyper CN captures cover the complete 1.333-second animation at 30fps. Extraction took 1.490 s for original and 1.479 s for portrait before native compilation. Original native paint/layout ran at 127.61/130.29 FPS; portrait at 68.27/70.97 FPS. Captured-scene export times exclude extraction, so a single conversion/export can cost more than reusing an existing capture. The registry smoke audit renders 205/239 original and 205/239 portrait files at 2fps. The remaining 34 per profile are diagnosed, including WebGL/shaders, perspective, some SVG filters/blending, a nonuniform dashed border and a repeating conic gradient. Smoke coverage is not a visual parity claim.
+The Hyper CN captures cover the complete 1.333-second animation at 30fps. Extraction took 1.490 s for original and 1.479 s for portrait before native compilation. Original native paint/layout ran at 127.61/130.29 FPS; portrait at 68.27/70.97 FPS. Captured-scene export times exclude extraction, so a single conversion/export can cost more than reusing an existing capture. The registry smoke audit renders 205/239 original and 205/239 portrait files at 2fps. The remaining 34 per profile were diagnosed as WebGL/shaders, perspective, some SVG filters/blending, a nonuniform dashed border and a repeating conic gradient. Plan 09 slice 1 translates those paint cases. The 205/239 count stands until the audit is run again. Smoke coverage is not a visual parity claim.
 
 Criterion with 10 samples, one-second warm-up and two-second measurement reported compile time 8.067 ms and native frame time 7.510 ms, with intervals 7.888–8.160 ms and 6.675–8.224 ms. Raw local artifacts are in `target/html-criterion-final.log`, `target/html-hf-auto-final`, `target/html-hf-engine-final`, `target/html-parity-native-final`, `target/html-parity-hypercn-final`, `target/html-parity-portrait-final`, `target/html-hypercn-verified` and `target/html-hypercn-portrait`.
 

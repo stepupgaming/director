@@ -5,7 +5,7 @@
 ## Ownership
 
 - `architecture/` — engine overview, **normative core contracts**, and reproducible measurements plus the baseline-tracking workflow in `render-performance.md`.
-- `plans/` — engineering plans: completed core hardening, motion/recipes, and the native project/runtime phase.
+- `plans/` — engineering plans: completed core hardening, motion/recipes, native projects/runtime, and the native fidelity phase.
 - `contributing/` — development and documentation workflow.
 - `specs/` — RON / harness-oriented feature specs (see also repo-root `specs/`).
 - `archive/` — superseded or deferred docs (not current contracts).
@@ -31,7 +31,7 @@
 ## Child DOX Index
 
 - `architecture/` — Overview, core contracts, and render performance measurements. Raw benchmark outputs stay under ignored `target/`.
-- `plans/` — Engineering plan index (00), completed core hardening (01–06), motion/recipes (07), and native projects/runtime (08).
+- `plans/` — Engineering plan index (00), completed core hardening (01–06), motion/recipes (07), native projects/runtime (08), and native fidelity (09, slice 1 implemented).
 - `contributing/` — Development and documentation workflow.
 - `specs/` — Reserved for docs-local design notes (may be empty; harness RON specs live in repo-root `specs/`).
 - `archive/` — Historical audit and deferred product docs.

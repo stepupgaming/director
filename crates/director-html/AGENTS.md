@@ -25,6 +25,11 @@
 - Preserve unique authored capture IDs. Anonymous/duplicate IDs receive noncolliding structural paths, stable while sampled topology is stable; expose those paths in inspection and store them in packed captures.
 - Keep extracted media files alive through the Director asset-loader lifetime, even when the project or compiler wrapper is dropped.
 - Share immutable source and encoded blobs across edit candidates; validation must not clone entire media payloads merely to change an edit map.
+- Repeating linear, radial, and conic gradients expand stops across the box and clamp. Color hints and vendor gradients fail.
+- Uniform dashed and dotted borders stay one inset stroke. Mixed side styles clip to the border ring and stroke each dashed or dotted side on its midline.
+- Parent `perspective` projects descendants only. `transform-style` parses and does not depth-sort. `backface-visibility: hidden` skips an element whose own matrix faces away. A three-value `transform-origin` fails. Perspective distance and `translateZ` are absolute px.
+- An external stylesheet may set SVG `filter` and `mix-blend-mode`. Other external SVG presentation properties fail. SVG text, foreignObject, SMIL, scripts, and nested images stay rejected.
+- Captured style edits do not accept perspective, transforms, or border-style. Authored HTML recompiles those properties.
 
 ## Work Guidance
 

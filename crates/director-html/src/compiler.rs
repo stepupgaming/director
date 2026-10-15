@@ -13,12 +13,85 @@ use director_core::{
     video_wrapper::RenderMode,
     Director, Element,
 };
-use scraper::{ElementRef, Html, Selector};
+use scraper::{node::Node, ElementRef, Html, Selector};
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
     sync::Arc,
 };
+
+fn escape_xml(value: &str, attr: bool) -> String {
+    let mut escaped = value.replace('&', "&amp;").replace('<', "&lt;");
+    if attr {
+        escaped = escaped.replace('"', "&quot;");
+    }
+    escaped
+}
+
+fn serialize_svg_children(
+    el: ElementRef<'_>,
+    css: &Css,
+    parent: &Values,
+) -> Result<String, CompileError> {
+    let mut out = String::new();
+    write_svg_children(el, css, parent, &mut out)?;
+    Ok(out)
+}
+
+fn write_svg_children(
+    el: ElementRef<'_>,
+    css: &Css,
+    parent: &Values,
+    out: &mut String,
+) -> Result<(), CompileError> {
+    for child in el.children() {
+        match child.value() {
+            Node::Text(text) => out.push_str(&escape_xml(text, false)),
+            Node::Element(_) => {
+                let child = ElementRef::wrap(child).unwrap();
+                let values = css.cascade(child, parent)?;
+                let mut extra = String::new();
+                for name in ["filter", "mix-blend-mode"] {
+                    if css.has_stylesheet_property(child, name) {
+                        if let Some(value) = values.get(name) {
+                            extra.push_str(name);
+                            extra.push(':');
+                            extra.push_str(value);
+                            extra.push(';');
+                        }
+                    }
+                }
+                let tag = child.value().name();
+                out.push('<');
+                out.push_str(tag);
+                let mut wrote_style = false;
+                for (name, value) in child.value().attrs() {
+                    if name == "style" && !extra.is_empty() {
+                        let mut style = value.to_string();
+                        if !style.is_empty() && !style.trim_end().ends_with(';') {
+                            style.push(';');
+                        }
+                        style.push_str(&extra);
+                        out.push_str(&format!(" {name}=\"{}\"", escape_xml(&style, true)));
+                        wrote_style = true;
+                    } else {
+                        out.push_str(&format!(" {name}=\"{}\"", escape_xml(value, true)));
+                    }
+                }
+                if !wrote_style && !extra.is_empty() {
+                    out.push_str(&format!(" style=\"{}\"", escape_xml(&extra, true)));
+                }
+                out.push('>');
+                write_svg_children(child, css, &values, out)?;
+                out.push_str("</");
+                out.push_str(tag);
+                out.push('>');
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
 
 pub(crate) fn validate_svg(source: &str) -> Result<(), CompileError> {
     let dom = Html::parse_fragment(source);
@@ -505,8 +578,6 @@ impl Builder {
                         "stroke-dashoffset",
                         "opacity",
                         "transform",
-                        "filter",
-                        "mix-blend-mode",
                         "clip-path",
                         "animation",
                     ] {
@@ -534,7 +605,7 @@ impl Builder {
                     paint.color.b * 255.0,
                     paint.color.a
                 ));
-                markup.push_str(&el.inner_html());
+markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                 markup.push_str("</svg>");
                 let vector = usvg::Tree::from_data(markup.as_bytes(), &usvg::Options::default())
                     .map_err(|e| CompileError::Input(format!("{context}: invalid SVG: {e}")))?;

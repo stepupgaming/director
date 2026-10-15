@@ -7,7 +7,8 @@
 - `00-core-hardening-index.md` — master sequence, **verified truth snapshot**, non-goals, definition of done. Truth pass is complete; do not re-open product scope from `docs/archive/` without updating 00.
 - `01`–`06` — time, identity, pipeline, animation eval, scene model, determinism/media. **Done.**
 - `07-stdlib-and-recipes.md` — L1 motion stdlib + L2 component contract + L3 recipes on the current stack (no SDK crate).
-- `08-native-projects-and-runtime.md` — portable HTML/capture projects, validated CLI edits, common input loading and native backend execution. Frontend/editor design and Remotion compatibility are outside its scope.
+- `08-native-projects-and-runtime.md` — portable HTML/capture projects, validated CLI edits, common input loading and native backend execution. Frontend/editor design and Remotion compatibility are outside its scope. **Done.**
+- `09-native-fidelity.md` — native paint fidelity, then registry re-audit, shader translation, continuous timelines and captured media. Slice 1 is implemented. Static-subtree reuse is issue #2. Agent production workflows are issue #3.
 
 ## Local Contracts
 

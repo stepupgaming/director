@@ -1,6 +1,9 @@
 use crate::{
     animation::Animation,
-    style::{resolve, transform_matrix, LengthParts, Metrics, PaintStyle},
+    style::{
+        canvas_transform, perspective_matrix, resolve, shows_backface, BorderLine, CanvasTransform,
+        LengthParts, Metrics, PaintStyle,
+    },
 };
 use director_core::{Element, RenderError};
 use skia_safe::{Canvas, Rect};
@@ -230,6 +233,12 @@ impl Element for HtmlElement {
             || self.time < self.start
             || self.time >= self.end
             || self.paint.opacity <= 0.0
+            || (self.paint.backface_hidden
+                && shows_backface(
+                    &self.paint.transform,
+                    self.metrics,
+                    (rect.width(), rect.height()),
+                ))
         {
             return Ok(());
         }
@@ -238,12 +247,16 @@ impl Element for HtmlElement {
             resolve(self.paint.origin.0, rect.width()),
             resolve(self.paint.origin.1, rect.height()),
         );
+        let size = (rect.width(), rect.height());
         canvas.translate(origin);
-        canvas.concat(&transform_matrix(
-            &self.paint.transform,
-            self.metrics,
-            (rect.width(), rect.height()),
-        ));
+        match canvas_transform(&self.paint.transform, self.metrics, size) {
+            CanvasTransform::Affine(matrix) => {
+                canvas.concat(&matrix);
+            }
+            CanvasTransform::Projective(matrix) => {
+                canvas.concat_44(&matrix);
+            }
+        }
         canvas.translate((-origin.0, -origin.1));
         if let Some(points) = &self.paint.box_node.clip_path {
             if let Some(first) = points.first() {
@@ -351,87 +364,33 @@ impl Element for HtmlElement {
             }
         }
         let mut content_error = Ok(());
-        let mut children = |canvas: &Canvas| {
-            if let Some(content) = &self.content {
-                content_error = content.render(canvas, self.content_rect(rect), 1.0, &mut |_| {});
-            }
-            if content_error.is_ok() {
+        if let Some(content) = &self.content {
+            content_error = content.render(canvas, self.content_rect(rect), 1.0, &mut |_| {});
+        }
+        if content_error.is_ok() {
+            if let Some(distance) = self.paint.perspective {
+                let origin = (
+                    resolve(self.paint.perspective_origin.0, rect.width()),
+                    resolve(self.paint.perspective_origin.1, rect.height()),
+                );
+                canvas.save();
+                canvas.translate(origin);
+                canvas.concat_44(&perspective_matrix(distance));
+                canvas.translate((-origin.0, -origin.1));
+                draw_children(canvas);
+                canvas.restore();
+            } else {
                 draw_children(canvas);
             }
-        };
-        children(canvas);
+        }
         canvas.restore();
-        let [top, right, bottom, left] = [
+        let widths = [
             self.style.border.top.value(),
             self.style.border.right.value(),
             self.style.border.bottom.value(),
             self.style.border.left.value(),
         ];
-        if let Some(dotted) = self.paint.border_pattern {
-            if top > 0.0 {
-                let mut stroke = outer;
-                stroke.inset((top / 2.0, top / 2.0));
-                let mut p = skia_safe::Paint::default();
-                p.set_anti_alias(true);
-                p.set_color4f(self.paint.border_colors[0].to_color4f(), None);
-                p.set_style(skia_safe::PaintStyle::Stroke);
-                p.set_stroke_width(top);
-                p.set_path_effect(skia_safe::PathEffect::dash(
-                    &if dotted {
-                        [0.0, top * 2.0]
-                    } else {
-                        [top * 3.0, top * 3.0]
-                    },
-                    0.0,
-                ));
-                if dotted {
-                    p.set_stroke_cap(skia_safe::paint::Cap::Round);
-                }
-                canvas.draw_rrect(stroke, &p);
-            }
-        } else if top + right + bottom + left > 0.0 {
-            let inner_rect = Rect::new(
-                left,
-                top,
-                (rect.right - right).max(left),
-                (rect.bottom - bottom).max(top),
-            );
-            let inner_radii = [
-                skia_safe::Point::new((radii[0].x - left).max(0.0), (radii[0].y - top).max(0.0)),
-                skia_safe::Point::new((radii[1].x - right).max(0.0), (radii[1].y - top).max(0.0)),
-                skia_safe::Point::new(
-                    (radii[2].x - right).max(0.0),
-                    (radii[2].y - bottom).max(0.0),
-                ),
-                skia_safe::Point::new((radii[3].x - left).max(0.0), (radii[3].y - bottom).max(0.0)),
-            ];
-            canvas.save();
-            canvas.clip_rrect(outer, skia_safe::ClipOp::Intersect, true);
-            canvas.clip_rrect(
-                skia_safe::RRect::new_rect_radii(inner_rect, &inner_radii),
-                skia_safe::ClipOp::Difference,
-                true,
-            );
-            let center = (rect.width() / 2.0, rect.height() / 2.0);
-            let polys = [
-                [(0.0, 0.0), (rect.width(), 0.0), center],
-                [(rect.width(), 0.0), (rect.width(), rect.height()), center],
-                [(rect.width(), rect.height()), (0.0, rect.height()), center],
-                [(0.0, rect.height()), (0.0, 0.0), center],
-            ];
-            for (i, points) in polys.into_iter().enumerate() {
-                let mut path = skia_safe::Path::new();
-                path.move_to(points[0]);
-                for p in &points[1..] {
-                    path.line_to(*p);
-                }
-                path.close();
-                let mut p = skia_safe::Paint::default();
-                p.set_color4f(self.paint.border_colors[i].to_color4f(), None);
-                canvas.draw_path(&path, &p);
-            }
-            canvas.restore();
-        }
+        paint_borders(canvas, rect, &self.paint, widths, &radii, outer);
         if let Some(mask) = &self.paint.mask {
             let mut p = skia_safe::Paint::default();
             p.set_blend_mode(skia_safe::BlendMode::DstIn);
@@ -462,4 +421,133 @@ impl Element for HtmlElement {
             rate,
         )
     }
+}
+
+fn paint_borders(
+    canvas: &Canvas,
+    rect: Rect,
+    paint: &PaintStyle,
+    widths: [f32; 4],
+    radii: &[skia_safe::Point; 4],
+    outer: skia_safe::RRect,
+) {
+    let [top, right, bottom, left] = widths;
+    if top + right + bottom + left <= 0.0 {
+        return;
+    }
+    let lines = paint.border_lines;
+    let uniform = lines.iter().all(|line| *line == lines[0])
+        && widths.iter().all(|width| *width == widths[0])
+        && paint
+            .border_colors
+            .iter()
+            .all(|color| *color == paint.border_colors[0])
+        && lines[0] != BorderLine::Solid
+        && top > 0.0;
+    if uniform {
+        let mut stroke = outer;
+        stroke.inset((top / 2.0, top / 2.0));
+        let mut p = skia_safe::Paint::default();
+        p.set_anti_alias(true);
+        p.set_color4f(paint.border_colors[0].to_color4f(), None);
+        p.set_style(skia_safe::PaintStyle::Stroke);
+        p.set_stroke_width(top);
+        let dotted = lines[0] == BorderLine::Dotted;
+        p.set_path_effect(skia_safe::PathEffect::dash(
+            &if dotted {
+                [0.0, top * 2.0]
+            } else {
+                [top * 3.0, top * 3.0]
+            },
+            0.0,
+        ));
+        if dotted {
+            p.set_stroke_cap(skia_safe::paint::Cap::Round);
+        }
+        canvas.draw_rrect(stroke, &p);
+        return;
+    }
+    let inner_rect = Rect::new(
+        left,
+        top,
+        (rect.right - right).max(left),
+        (rect.bottom - bottom).max(top),
+    );
+    let inner_radii = [
+        skia_safe::Point::new((radii[0].x - left).max(0.0), (radii[0].y - top).max(0.0)),
+        skia_safe::Point::new((radii[1].x - right).max(0.0), (radii[1].y - top).max(0.0)),
+        skia_safe::Point::new(
+            (radii[2].x - right).max(0.0),
+            (radii[2].y - bottom).max(0.0),
+        ),
+        skia_safe::Point::new((radii[3].x - left).max(0.0), (radii[3].y - bottom).max(0.0)),
+    ];
+    canvas.save();
+    canvas.clip_rrect(outer, skia_safe::ClipOp::Intersect, true);
+    canvas.clip_rrect(
+        skia_safe::RRect::new_rect_radii(inner_rect, &inner_radii),
+        skia_safe::ClipOp::Difference,
+        true,
+    );
+    let center = (rect.width() / 2.0, rect.height() / 2.0);
+    let polys = [
+        [(0.0, 0.0), (rect.width(), 0.0), center],
+        [(rect.width(), 0.0), (rect.width(), rect.height()), center],
+        [(rect.width(), rect.height()), (0.0, rect.height()), center],
+        [(0.0, rect.height()), (0.0, 0.0), center],
+    ];
+    for (i, points) in polys.into_iter().enumerate() {
+        if lines[i] != BorderLine::Solid || widths[i] <= 0.0 {
+            continue;
+        }
+        let mut path = skia_safe::Path::new();
+        path.move_to(points[0]);
+        for p in &points[1..] {
+            path.line_to(*p);
+        }
+        path.close();
+        let mut p = skia_safe::Paint::default();
+        p.set_anti_alias(true);
+        p.set_color4f(paint.border_colors[i].to_color4f(), None);
+        canvas.draw_path(&path, &p);
+    }
+    let sides = [
+        [(0.0, top / 2.0), (rect.width(), top / 2.0)],
+        [
+            (rect.width() - right / 2.0, 0.0),
+            (rect.width() - right / 2.0, rect.height()),
+        ],
+        [
+            (rect.width(), rect.height() - bottom / 2.0),
+            (0.0, rect.height() - bottom / 2.0),
+        ],
+        [(left / 2.0, rect.height()), (left / 2.0, 0.0)],
+    ];
+    for (i, [start, end]) in sides.into_iter().enumerate() {
+        if widths[i] <= 0.0 || lines[i] == BorderLine::Solid {
+            continue;
+        }
+        let mut path = skia_safe::Path::new();
+        path.move_to(start);
+        path.line_to(end);
+        let mut p = skia_safe::Paint::default();
+        p.set_anti_alias(true);
+        p.set_color4f(paint.border_colors[i].to_color4f(), None);
+        p.set_style(skia_safe::PaintStyle::Stroke);
+        p.set_stroke_width(widths[i]);
+        let dotted = lines[i] == BorderLine::Dotted;
+        p.set_path_effect(skia_safe::PathEffect::dash(
+            &if dotted {
+                [0.0, widths[i] * 2.0]
+            } else {
+                [widths[i] * 3.0, widths[i] * 3.0]
+            },
+            0.0,
+        ));
+        if dotted {
+            p.set_stroke_cap(skia_safe::paint::Cap::Round);
+        }
+        canvas.draw_path(&path, &p);
+    }
+    canvas.restore();
 }

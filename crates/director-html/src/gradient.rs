@@ -18,6 +18,7 @@ use taffy::LengthPercentage;
 #[derive(Debug, Clone)]
 pub struct NativeGradient {
     kind: Kind,
+    repeating: bool,
     colors: Vec<skia_safe::Color>,
     stops: Vec<Option<LengthPercentage>>,
 }
@@ -112,6 +113,18 @@ pub fn parse_list(s: &str, m: Metrics, current: Color) -> Result<Vec<NativeGradi
 impl NativeGradient {
     pub fn parse(s: &str, m: Metrics, current: Color) -> Result<Self, String> {
         let gradient = Gradient::parse_string(s).map_err(|e| format!("gradient: {e:?}"))?;
+        let repeating = matches!(
+            gradient,
+            Gradient::RepeatingLinear(_)
+                | Gradient::RepeatingRadial(_)
+                | Gradient::RepeatingConic(_)
+        );
+        let gradient = match gradient {
+            Gradient::RepeatingLinear(g) => Gradient::Linear(g),
+            Gradient::RepeatingRadial(g) => Gradient::Radial(g),
+            Gradient::RepeatingConic(g) => Gradient::Conic(g),
+            other => other,
+        };
         let (kind, colors, positions) = match gradient {
             Gradient::Linear(g) => {
                 let angle = match g.direction {
@@ -176,13 +189,90 @@ impl NativeGradient {
                     positions,
                 )
             }
-            _ => return Err("repeating/vendor gradients unsupported".into()),
+            _ => return Err("vendor gradients unsupported".into()),
         };
         Ok(Self {
             kind,
+            repeating,
             colors,
             stops: positions,
         })
+    }
+    fn cover(&self, positions: &[f32]) -> (Vec<skia_safe::Color>, Vec<f32>) {
+        if !self.repeating {
+            return (self.colors.clone(), positions.to_vec());
+        }
+        let first = positions[0];
+        let last = *positions.last().unwrap();
+        let period = last - first;
+        if !period.is_finite() || period < 1.0e-4 {
+            let color = *self.colors.last().unwrap();
+            return (vec![color, color], vec![0.0, 1.0]);
+        }
+        let mut colors = Vec::new();
+        let mut pos = Vec::new();
+        let end = ((1.0 - first) / period).ceil() as i32 + 1;
+        let start = (((-last) / period).floor() as i32 - 1).max(end - 240);
+        for k in start..=end {
+            let shift = k as f32 * period;
+            for (color, stop) in self.colors.iter().zip(positions) {
+                let at = stop + shift;
+                if !(-0.001..=1.001).contains(&at) {
+                    continue;
+                }
+                if pos
+                    .last()
+                    .is_some_and(|prev| at + 1.0e-5 < *prev)
+                {
+                    continue;
+                }
+                colors.push(*color);
+                pos.push(at.clamp(0.0, 1.0));
+                if colors.len() == 720 {
+                    break;
+                }
+            }
+            if colors.len() == 720 {
+                break;
+            }
+        }
+        if colors.len() < 2 {
+            let color = *self.colors.last().unwrap();
+            return (vec![color, color], vec![0.0, 1.0]);
+        }
+        if pos[0] > 0.0 {
+            colors.insert(0, colors[0]);
+            pos.insert(0, 0.0);
+        }
+        if *pos.last().unwrap() < 1.0 {
+            let color = *colors.last().unwrap();
+            colors.push(color);
+            pos.push(1.0);
+        }
+        let mut out_colors = Vec::new();
+        let mut out_pos = Vec::new();
+        for (color, at) in colors.into_iter().zip(pos) {
+            if let Some(prev) = out_pos.last().copied() {
+                if at + 1.0e-6 < prev {
+                    continue;
+                }
+                if (at - prev).abs() <= 1.0e-6 {
+                    if out_colors.last() == Some(&color) {
+                        continue;
+                    }
+                    out_colors.push(color);
+                    out_pos.push(prev + 1.0e-4);
+                    continue;
+                }
+            }
+            out_colors.push(color);
+            out_pos.push(at);
+        }
+        if out_colors.len() < 2 {
+            let color = *self.colors.last().unwrap();
+            return (vec![color, color], vec![0.0, 1.0]);
+        }
+        (out_colors, out_pos)
     }
     fn positions(&self, basis: f32) -> Vec<f32> {
         let mut pos: Vec<Option<f32>> = self
@@ -225,10 +315,12 @@ impl NativeGradient {
                 let center = rect.center();
                 let start = (center.x - dx * extent / 2.0, center.y - dy * extent / 2.0);
                 let end = (center.x + dx * extent / 2.0, center.y + dy * extent / 2.0);
+                let stops = self.positions(extent);
+                let (colors, stops) = self.cover(&stops);
                 skia_safe::gradient_shader::linear(
                     (start, end),
-                    self.colors.as_slice(),
-                    self.positions(extent).as_slice(),
+                    colors.as_slice(),
+                    stops.as_slice(),
                     TileMode::Clamp,
                     None,
                     None,
@@ -289,11 +381,13 @@ impl NativeGradient {
                     return None;
                 }
                 let matrix = Matrix::new_all(rx, 0.0, cx, 0.0, ry, cy, 0.0, 0.0, 1.0);
+                let stops = self.positions(rx);
+                let (colors, stops) = self.cover(&stops);
                 skia_safe::gradient_shader::radial(
                     (0.0, 0.0),
                     1.0,
-                    self.colors.as_slice(),
-                    self.positions(rx).as_slice(),
+                    colors.as_slice(),
+                    stops.as_slice(),
                     TileMode::Clamp,
                     None,
                     Some(&matrix),
@@ -306,10 +400,12 @@ impl NativeGradient {
                 );
                 let mut matrix = Matrix::new_identity();
                 matrix.set_rotate(*angle - 90.0, Some(c.into()));
+                let stops = self.positions(1.0);
+                let (colors, stops) = self.cover(&stops);
                 skia_safe::gradient_shader::sweep(
                     c,
-                    self.colors.as_slice(),
-                    self.positions(1.0).as_slice(),
+                    colors.as_slice(),
+                    stops.as_slice(),
                     TileMode::Clamp,
                     Some((0.0, 360.0)),
                     None,

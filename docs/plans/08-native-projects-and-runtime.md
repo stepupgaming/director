@@ -49,6 +49,6 @@ Acceptance checks pass, including portable real media and a live Vulkan worker w
 
 ## Remaining product work
 
-- Continuous editable translation of dynamic JS timelines and additional native shader/layout/media features.
+- Continuous editable JS timelines, native shader translation, and captured media continue in [plan 09](09-native-fidelity.md). Plan 09 slice 1 covers repeating gradients, per-side dashes, perspective, and SVG filter/blend.
 - Better component and production recipe coverage, agent quality/repair tooling, packaging and batch/deployed rendering.
 - Preview delivery performance and streaming audio; this phase exposes backend endpoints without redesigning their client.

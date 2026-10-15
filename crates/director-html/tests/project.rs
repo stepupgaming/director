@@ -96,7 +96,7 @@ fn validated_edits_change_paint_and_timing_and_reject_invalid_candidates() {
         BTreeMap::from([(
             "box".into(),
             ElementEdit {
-                styles: BTreeMap::from([("perspective".into(), "400px".into())]),
+                styles: BTreeMap::from([("transform-origin".into(), "50% 50% 0px".into())]),
                 ..Default::default()
             },
         )]),

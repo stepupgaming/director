@@ -6,7 +6,11 @@ use director_core::{animation::EasingType, types::Color};
 use lightningcss::{
     properties::transform::{Transform, TransformList},
     traits::Parse,
-    values::{length::LengthPercentage, percentage::NumberOrPercentage},
+    values::{
+        angle::Angle,
+        length::{Length, LengthPercentage},
+        percentage::NumberOrPercentage,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -320,6 +324,13 @@ fn mix_length(
         _ => Err("animated transform units must agree".into()),
     }
 }
+fn mix_abs(a: &Length, b: &Length, t: f32) -> Result<Length, String> {
+    Ok(Length::px(mix(
+        a.to_px().ok_or("animated transform requires px units")?,
+        b.to_px().ok_or("animated transform requires px units")?,
+        t,
+    )))
+}
 fn mix_number(a: &NumberOrPercentage, b: &NumberOrPercentage, t: f32) -> NumberOrPercentage {
     let n = |n: &NumberOrPercentage| match n {
         NumberOrPercentage::Number(n) => *n,
@@ -340,7 +351,17 @@ fn identity(t: &Transform) -> Result<Transform, String> {
         ),
         Transform::ScaleX(_) => Transform::ScaleX(NumberOrPercentage::Number(1.0)),
         Transform::ScaleY(_) => Transform::ScaleY(NumberOrPercentage::Number(1.0)),
-        Transform::Rotate(_) => Transform::Rotate(lightningcss::values::angle::Angle::Deg(0.0)),
+        Transform::Rotate(_) => Transform::Rotate(Angle::Deg(0.0)),
+        Transform::RotateX(_) => Transform::RotateX(Angle::Deg(0.0)),
+        Transform::RotateY(_) => Transform::RotateY(Angle::Deg(0.0)),
+        Transform::RotateZ(_) => Transform::RotateZ(Angle::Deg(0.0)),
+        Transform::TranslateZ(_) => Transform::TranslateZ(Length::px(0.0)),
+        Transform::Translate3d(..) => Transform::Translate3d(
+            LengthPercentage::px(0.0),
+            LengthPercentage::px(0.0),
+            Length::px(0.0),
+        ),
+        Transform::Perspective(_) => Transform::Perspective(Length::px(1.0e6)),
         _ => {
             return Err(
                 "transform interpolation requires matching translate/scale/rotate functions".into(),
@@ -389,7 +410,13 @@ fn interpolate(a: &Value, b: &Value, t: f32) -> Result<Value, String> {
                 (Transform::TranslateY(a),Transform::TranslateY(b))=>Transform::TranslateY(mix_length(a,b,t)?),
                 (Transform::Scale(ax,ay),Transform::Scale(bx,by))=>Transform::Scale(mix_number(ax,bx,t),mix_number(ay,by,t)),
                 (Transform::ScaleX(a),Transform::ScaleX(b))=>Transform::ScaleX(mix_number(a,b,t)),(Transform::ScaleY(a),Transform::ScaleY(b))=>Transform::ScaleY(mix_number(a,b,t)),
-                (Transform::Rotate(a),Transform::Rotate(b))=>Transform::Rotate(lightningcss::values::angle::Angle::Deg(mix(a.to_degrees(),b.to_degrees(),t))),
+                (Transform::Rotate(a),Transform::Rotate(b))=>Transform::Rotate(Angle::Deg(mix(a.to_degrees(),b.to_degrees(),t))),
+                (Transform::RotateX(a),Transform::RotateX(b))=>Transform::RotateX(Angle::Deg(mix(a.to_degrees(),b.to_degrees(),t))),
+                (Transform::RotateY(a),Transform::RotateY(b))=>Transform::RotateY(Angle::Deg(mix(a.to_degrees(),b.to_degrees(),t))),
+                (Transform::RotateZ(a),Transform::RotateZ(b))=>Transform::RotateZ(Angle::Deg(mix(a.to_degrees(),b.to_degrees(),t))),
+                (Transform::TranslateZ(a),Transform::TranslateZ(b))=>Transform::TranslateZ(mix_abs(a,b,t)?),
+                (Transform::Translate3d(ax,ay,az),Transform::Translate3d(bx,by,bz))=>Transform::Translate3d(mix_length(ax,bx,t)?,mix_length(ay,by,t)?,mix_abs(az,bz,t)?),
+                (Transform::Perspective(a),Transform::Perspective(b))=>Transform::Perspective(mix_abs(a,b,t)?),
                 _=>return Err("transform interpolation requires matching translate/scale/rotate functions".into()),
             });
             }
