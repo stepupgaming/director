@@ -12,10 +12,19 @@ Slice 1, implemented in `director-html`:
 - Perspective, 3D transforms, and backface visibility, without a shared depth sort.
 - SVG `filter` and `mix-blend-mode` from an external stylesheet, plus inline filter primitives usvg already parses.
 
+Recorded on 2026-10-15, after slice 1, at 2 fps with the release `director-engine`:
+
+- Original and portrait both render 207 of 239. The reports are `target/hypercn-audit-slice1` and `target/hypercn-audit-slice1-portrait`.
+- The same 32 names fail in both profiles, and every failure is at capture extraction.
+- Twenty-six are canvas or WebGL: the `shader-*` blocks and eight `trans-*` dissolves or wipes.
+- Three SVG CSS filters or blends: `animated-bar-chart`, `animated-line-chart`, `data-flow-pipes`.
+- Three perspective blocks: `perspective-marquee`, `rolodex-flip`, `x-followers-overview`.
+- The previous dashed-border and repeating-conic refusals now render. `claude-code` and `live-code-compilation` are in the rendered set.
+
 Later slices of this plan:
 
-- Re-run the Hyper CN registry smoke and record the new render and refusal counts.
-- Native translators for canvas, WebGL, and shader blocks.
+- Teach `tools/browser.mjs` to forward computed `perspective` and SVG-descendant `filter` / `mix-blend-mode` into the capture, then re-smoke those six blocks.
+- Native translators for the 26 canvas, WebGL, and shader blocks.
 - Continuous editable GSAP and JS timelines.
 - Captured video and audio.
 - Gradient color hints, shared 3D occlusion, and the remaining external SVG presentation properties.
@@ -42,7 +51,7 @@ Pixel checks in `crates/director-html/tests/compatibility.rs`:
 3. `perspective: 80px` plus `rotateY(60deg)` differs from `perspective: none`, and the card center stays red. `rotateY(180deg)` with `backface-visibility: hidden` clears the center. An animated `rotateY` from `0deg` to `70deg` under a parent perspective is red at the left edge at t=0 and black at t=1.
 4. An external `svg .box { filter: blur(4px) }` spills red outside the shape and leaves the far corner black. `mix-blend-mode: multiply` of red over blue goes dark. An inline `feGaussianBlur` with an expanded filter region spills red outside the rect.
 
-The last registry smoke remains 205/239 original and 205/239 portrait at 2 fps. Those counts stay until the audit is run again. Smoke is still not visual parity.
+The 2026-10-15 smoke is 207/239 original and 207/239 portrait at 2 fps. Smoke is still not visual parity.
 
 ## Verification
 
@@ -55,4 +64,4 @@ Package media tests need FFmpeg and ffprobe. Do not treat a green `director-html
 
 ## Next action
 
-Re-run the Hyper CN registry smoke, record which of the previous 34 refusals now render, and keep the WebGL and shader refusals as the following slice.
+Forward perspective and SVG filter/blend through capture extraction, re-smoke the six blocks that still die there, then translate the 26 canvas and shader blocks.
