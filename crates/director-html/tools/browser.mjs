@@ -127,7 +127,13 @@ export async function extract(page) {
       const css = getComputedStyle(el); const values = Object.fromEntries(props.map(p => [p, css.getPropertyValue(p)]));
       if (css.display === 'none') values.visibility = 'hidden';
       if (css.visibility !== 'visible') values.visibility = 'hidden';
-      for (const property of ['text-decoration-line', 'background-blend-mode', 'perspective']) {
+      const perspective = css.getPropertyValue('perspective');
+      if (perspective && perspective !== 'none') {
+        values.perspective = perspective;
+        values['perspective-origin'] = css.getPropertyValue('perspective-origin');
+      }
+      if (css.getPropertyValue('backface-visibility') === 'hidden') values['backface-visibility'] = 'hidden';
+      for (const property of ['text-decoration-line', 'background-blend-mode']) {
         const value = css.getPropertyValue(property);
         if (value && !value.split(',').every(v=>['none','normal'].includes(v.trim()))) unsupported.push(`${el.id || el.tagName}: ${property}: ${value}`);
       }
@@ -150,7 +156,11 @@ export async function extract(page) {
       for (let i = 0; i < original.length; i++) {
         const css = getComputedStyle(original[i]);
         for (const p of ['fill','fill-opacity','stroke','stroke-width','stroke-opacity','stroke-linecap','stroke-linejoin','stroke-dasharray','stroke-dashoffset','opacity','color']) {const value=css.getPropertyValue(p);copies[i].setAttribute(p,['fill','stroke','color'].includes(p)?resolvedColor(value,css.color):value);copies[i].style.removeProperty(p);}
-        if(i>0&&(css.filter!=='none'||css.mixBlendMode!=='normal'))unsupported.push(`${original[i].id||'svg child'}: CSS filters/blending inside SVG require native translation`);
+        if (i > 0 && css.filter !== 'none') {
+          copies[i].removeAttribute('filter');
+          copies[i].style.filter = css.filter;
+        }
+        if (i > 0 && css.mixBlendMode !== 'normal') copies[i].style.mixBlendMode = css.mixBlendMode;
         if (i > 0 && css.transform !== 'none') {
           const matrix = new DOMMatrix(css.transform);
           if (!matrix.is2D) unsupported.push(`${original[i].id || 'svg child'}: 3D transform inside SVG`);

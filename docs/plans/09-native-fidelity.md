@@ -21,9 +21,14 @@ Recorded on 2026-10-15, after slice 1, at 2 fps with the release `director-engin
 - Three perspective blocks: `perspective-marquee`, `rolodex-flip`, `x-followers-overview`.
 - The previous dashed-border and repeating-conic refusals now render. `claude-code` and `live-code-compilation` are in the rendered set.
 
+Capture forwarding, after that smoke:
+
+- `tools/browser.mjs` stores a non-none computed `perspective` and its origin, stores `backface-visibility: hidden`, and writes SVG-descendant `filter` and `mix-blend-mode` into the captured markup.
+- Re-smoke of `perspective-marquee`, `rolodex-flip`, `x-followers-overview`, `animated-bar-chart`, `animated-line-chart`, and `data-flow-pipes` rendered 6/6 original and 6/6 portrait. Reports are `target/hypercn-audit-forward` and `target/hypercn-audit-forward-portrait`.
+- The other 207 blocks were not re-run. The union is 213/239. The remaining refusals are the 26 canvas and WebGL blocks.
+
 Later slices of this plan:
 
-- Teach `tools/browser.mjs` to forward computed `perspective` and SVG-descendant `filter` / `mix-blend-mode` into the capture, then re-smoke those six blocks.
 - Native translators for the 26 canvas, WebGL, and shader blocks.
 - Continuous editable GSAP and JS timelines.
 - Captured video and audio.
@@ -51,7 +56,7 @@ Pixel checks in `crates/director-html/tests/compatibility.rs`:
 3. `perspective: 80px` plus `rotateY(60deg)` differs from `perspective: none`, and the card center stays red. `rotateY(180deg)` with `backface-visibility: hidden` clears the center. An animated `rotateY` from `0deg` to `70deg` under a parent perspective is red at the left edge at t=0 and black at t=1.
 4. An external `svg .box { filter: blur(4px) }` spills red outside the shape and leaves the far corner black. `mix-blend-mode: multiply` of red over blue goes dark. An inline `feGaussianBlur` with an expanded filter region spills red outside the rect.
 
-The 2026-10-15 smoke is 207/239 original and 207/239 portrait at 2 fps. Smoke is still not visual parity.
+The carried-forward smoke is 213/239 on each profile: 207 from the full run plus the six re-smoked CSS blocks. Smoke is still not visual parity.
 
 ## Verification
 
@@ -64,4 +69,4 @@ Package media tests need FFmpeg and ffprobe. Do not treat a green `director-html
 
 ## Next action
 
-Forward perspective and SVG filter/blend through capture extraction, re-smoke the six blocks that still die there, then translate the 26 canvas and shader blocks.
+Translate the 26 canvas and shader blocks that the smoke still refuses.

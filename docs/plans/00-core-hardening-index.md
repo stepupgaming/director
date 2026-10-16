@@ -67,7 +67,7 @@ Do not schedule under this program:
 | 6 | [06-determinism-and-media.md](06-determinism-and-media.md) | Same script → same pixels/audio clock | **Done** |
 | 7 | [07-stdlib-and-recipes.md](07-stdlib-and-recipes.md) | L1 verbs + L2 contract + L3 recipes | **Done (v1 stop-line)** |
 | 8 | [08-native-projects-and-runtime.md](08-native-projects-and-runtime.md) | Portable native projects, common loading, headless inspection/edits and GPU backend | **Done** |
-| 9 | [09-native-fidelity.md](09-native-fidelity.md) | Slice 1 paint is in. Smoke is 207/239. Next: capture forwarding for 6 CSS blocks, then 26 shader translators | **In progress** |
+| 9 | [09-native-fidelity.md](09-native-fidelity.md) | Slice 1 paint and capture forwarding are in. Carried-forward smoke is 213/239. Next: 26 shader translators | **In progress** |
 
 **Dependency order:** `01` first (everything samples time). `02` before trusting incremental edit. `03` can start once dirty APIs are understood; finish after `01`–`02`. `04` parallel after `01` time helpers exist. `05` after identity stabilizes. `06` continuous background; fonts/CI can land anytime.
 
@@ -103,4 +103,4 @@ cargo test -p director-core --test visual_suite --no-default-features --features
 
 ## Next action
 
-Core hardening plans 01–06, plan 07's implemented scope and [plan 08](08-native-projects-and-runtime.md) are **Done**. [Plan 09](09-native-fidelity.md) slice 1 is implemented. The 2026-10-15 Hyper CN smoke renders 207/239 original and 207/239 portrait at 2 fps. Thirty-two blocks still fail at capture extraction: 26 canvas/WebGL, 3 perspective, and 3 SVG filter or blend. Next, forward those six CSS cases through extraction and re-smoke them, then translate the 26 shader blocks. Issue #2 tracks static-subtree paint reuse. Issue #3 tracks agent production workflows. Frontend/editor design, Remotion source compatibility and a separate SDK remain outside the current focus.
+Core hardening plans 01–06, plan 07's implemented scope and [plan 08](08-native-projects-and-runtime.md) are **Done**. [Plan 09](09-native-fidelity.md) slice 1 and capture forwarding are implemented. The carried-forward Hyper CN smoke is 213/239 original and 213/239 portrait: the full run rendered 207, and the six re-smoked CSS blocks now render. Twenty-six canvas/WebGL blocks remain. Next, translate those shader blocks. Issue #2 tracks static-subtree paint reuse. Issue #3 tracks agent production workflows. Frontend/editor design, Remotion source compatibility and a separate SDK remain outside the current focus.

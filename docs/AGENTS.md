@@ -31,7 +31,7 @@
 ## Child DOX Index
 
 - `architecture/` — Overview, core contracts, and render performance measurements. Raw benchmark outputs stay under ignored `target/`.
-- `plans/` — Engineering plan index (00), completed core hardening (01–06), motion/recipes (07), native projects/runtime (08), and native fidelity (09, slice 1 implemented).
+- `plans/` — Engineering plan index (00), completed core hardening (01–06), motion/recipes (07), native projects/runtime (08), and native fidelity (09, slice 1 and capture forwarding implemented).
 - `contributing/` — Development and documentation workflow.
 - `specs/` — Reserved for docs-local design notes (may be empty; harness RON specs live in repo-root `specs/`).
 - `archive/` — Historical audit and deferred product docs.
