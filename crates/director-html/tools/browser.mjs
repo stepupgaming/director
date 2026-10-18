@@ -262,6 +262,17 @@ export function capturedMaskMode(mode, image) {
 
 export async function extract(page) {
   return page.evaluate(() => {
+    function firstCssListItem(value) {
+      let depth = 0;
+      let out = '';
+      for (const ch of value) {
+        if (ch === '(') depth++;
+        else if (ch === ')' && depth > 0) depth--;
+        else if (ch === ',' && depth === 0) return out.trim();
+        out += ch;
+      }
+      return out.trim();
+    }
     const root = document.querySelector('[data-director-root]');
     const time = Number(window.__directorTime || 0);
     for (const host of document.querySelectorAll('[data-paper-shader]')) {
@@ -274,13 +285,16 @@ export async function extract(page) {
       else if (typeof mount.render === 'function') mount.render(0);
     }
     const unsupported = [];
-    const props = ['background-color', 'background-image', 'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'white-space', 'text-transform', 'overflow-wrap', 'word-break', 'direction', 'opacity', 'transform', 'transform-origin', 'filter', 'backdrop-filter', 'mask-image', 'mix-blend-mode', 'overflow-x', 'overflow-y', 'box-shadow', 'clip-path', 'z-index', 'object-fit', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
+    const props = ['background-color', 'background-image', 'background-size', 'background-position-x', 'background-position-y', 'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-variant-numeric', 'line-height', 'letter-spacing', 'text-align', 'text-indent', 'white-space', 'text-transform', 'overflow-wrap', 'word-break', 'text-overflow', '-webkit-text-stroke', '-webkit-text-stroke-width', '-webkit-text-stroke-color', 'background-clip', 'direction', 'opacity', 'transform', 'transform-origin', 'filter', 'backdrop-filter', 'mask-image', 'mix-blend-mode', 'overflow-x', 'overflow-y', 'box-shadow', 'text-shadow', 'clip-path', 'z-index', 'object-fit', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
     for (const side of ['top','right','bottom','left']) for (const suffix of ['width','style','color']) props.push(`border-${side}-${suffix}`);
     for (const corner of ['top-left','top-right','bottom-right','bottom-left']) props.push(`border-${corner}-radius`);
     const nodes = [root, ...root.querySelectorAll('*')].filter(el => !el.closest('svg') || el === el.closest('svg'));
     const saved = new Map(); const styles = new Map();
     for (const el of nodes) {
       const css = getComputedStyle(el); const values = Object.fromEntries(props.map(p => [p, css.getPropertyValue(p)]));
+      for (const name of ['background-size', 'background-position-x', 'background-position-y', 'text-shadow']) {
+        if (values[name]) values[name] = firstCssListItem(values[name]);
+      }
       if (css.display === 'none') values.visibility = 'hidden';
       if (css.visibility !== 'visible') values.visibility = 'hidden';
       const perspective = css.getPropertyValue('perspective');
@@ -408,7 +422,7 @@ export async function extract(page) {
           if (node.nodeType === Node.ELEMENT_NODE) { const child = walk(node, rect); if (child) item.children.push(child); }
           else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
             const range = document.createRange(); range.selectNodeContents(node); const r = range.getBoundingClientRect();
-            const textStyles = Object.fromEntries(['color','font-family','font-size','font-weight','font-style','line-height','letter-spacing','text-align','white-space','text-transform','overflow-wrap','word-break','direction'].map(p => [p, values[p]]));
+            const textStyles = Object.fromEntries(['color','font-family','font-size','font-weight','font-style','font-variant-numeric','line-height','letter-spacing','text-align','text-indent','white-space','text-transform','overflow-wrap','word-break','text-overflow','-webkit-text-stroke','-webkit-text-stroke-width','-webkit-text-stroke-color','direction'].map(p => [p, values[p]]));
             item.children.push({ tag:'text',id:`${item.id}:text`,rect:[r.x-rect.x,r.y-rect.y,r.width,r.height],styles:textStyles,text:node.textContent.replace(/\s+/g,' '),children:[] });
           }
         }

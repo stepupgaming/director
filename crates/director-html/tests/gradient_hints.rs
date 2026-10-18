@@ -158,3 +158,41 @@ fn orphan_color_hint_fails() {
     .to_string();
     assert!(error.contains("color hint"), "{error}");
 }
+
+#[test]
+fn corner_linear_gradient_hits_the_opposite_corners() {
+    let wide = |gradient: &str| {
+        format!(
+            "<style>body{{margin:0}}div{{width:64px;height:32px;background:{gradient}}}</style><div></div>"
+        )
+    };
+    let corner = frame(&wide("linear-gradient(to bottom right, red, blue)"), 0.0);
+    let swapped = frame(&wide("linear-gradient(to right bottom, red, blue)"), 0.0);
+    let angled = frame(&wide("linear-gradient(45deg, red, blue)"), 0.0);
+    let top_left = pixel(&corner, 1, 1);
+    assert!(top_left[0] > 200 && top_left[2] < 40, "{top_left:?}");
+    let bottom_right = pixel(&corner, 62, 30);
+    assert!(
+        bottom_right[2] > 200 && bottom_right[0] < 40,
+        "{bottom_right:?}"
+    );
+    assert_eq!(corner, swapped);
+    assert_ne!(corner, angled, "corner matched 45deg");
+    let square = |gradient: &str| {
+        format!(
+            "<style>body{{margin:0}}div{{width:64px;height:64px;background:{gradient}}}</style><div></div>"
+        )
+    };
+    let diagonal = frame(&square("linear-gradient(to bottom right, red, blue)"), 0.0);
+    let deg = frame(&square("linear-gradient(135deg, red, blue)"), 0.0);
+    for (x, y) in [(1usize, 1usize), (32, 32), (62, 62)] {
+        let a = pixel(&diagonal, x, y);
+        let b = pixel(&deg, x, y);
+        for channel in 0..3 {
+            assert!(
+                (a[channel] as i16 - b[channel] as i16).abs() <= 8,
+                "{x},{y} {a:?} vs {b:?}"
+            );
+        }
+    }
+}

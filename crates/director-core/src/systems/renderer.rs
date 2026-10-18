@@ -273,11 +273,234 @@ fn static_cache_key(
     StaticCacheKey { time, ..spatial }
 }
 
+/// Paint descendants, or only this element's own plane.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChildDraw {
+    /// Normal child paint. Preserve-3d parents hoist sharing descendants.
+    Normal,
+    /// This preserve-3d element was hoisted. Its descendants are other planes.
+    Skip,
+}
+
+/// One sorted plane in a preserve-3d context.
+///
+/// `chain` starts at a direct child of the sorting element and ends at the
+/// plane. Sharing elements along that chain are not flattened groups.
+struct DepthPlane {
+    depth: f32,
+    z_index: i32,
+    source: u32,
+    chain: Vec<NodeId>,
+}
+
+/// Direct children of a preserve-3d element, with nested sharing descendants
+/// lifted into the same list. Depth is the sum of `view_depth` down the
+/// preserve-3d chain. A child that does not `shares_3d` is one plane.
+fn collect_3d_planes(scene: &SceneGraph, parent_id: NodeId) -> Vec<DepthPlane> {
+    let mut planes = Vec::new();
+    let mut source = 0u32;
+    let mut prefix = Vec::new();
+    let children = scene
+        .get_node(parent_id)
+        .map(|node| node.children.clone())
+        .unwrap_or_default();
+    for child_id in children {
+        push_3d_plane(
+            scene,
+            child_id,
+            0.0,
+            &mut prefix,
+            &mut source,
+            &mut planes,
+        );
+    }
+    planes.sort_by(|a, b| {
+        a.depth
+            .total_cmp(&b.depth)
+            .then(a.z_index.cmp(&b.z_index))
+            .then(a.source.cmp(&b.source))
+    });
+    planes
+}
+
+fn push_3d_plane(
+    scene: &SceneGraph,
+    node_id: NodeId,
+    ancestor_depth: f32,
+    prefix: &mut Vec<NodeId>,
+    source: &mut u32,
+    planes: &mut Vec<DepthPlane>,
+) {
+    let (depth, z_index, shares, children) = {
+        let Some(node) = scene.get_node(node_id) else {
+            return;
+        };
+        (
+            ancestor_depth
+                + node
+                    .element
+                    .view_depth(node.layout_rect.width(), node.layout_rect.height()),
+            node.z_index,
+            node.element.shares_3d(),
+            node.children.clone(),
+        )
+    };
+    let order = *source;
+    *source += 1;
+    prefix.push(node_id);
+    planes.push(DepthPlane {
+        depth,
+        z_index,
+        source: order,
+        chain: prefix.clone(),
+    });
+    if shares {
+        for child_id in children {
+            push_3d_plane(scene, child_id, depth, prefix, source, planes);
+        }
+    }
+    prefix.pop();
+}
+
+/// Same local transform order as the non-static path of `render_recursive`.
+fn apply_node_scene_transform(canvas: &skia_safe::Canvas, node: &SceneNode) {
+    let width = node.layout_rect.width();
+    let height = node.layout_rect.height();
+    let pivot_x = width * node.transform.pivot_x;
+    let pivot_y = height * node.transform.pivot_y;
+    canvas.translate((
+        node.layout_rect.left + node.transform.translate_x.current_value,
+        node.layout_rect.top + node.transform.translate_y.current_value,
+    ));
+    canvas.translate((pivot_x, pivot_y));
+    canvas.rotate(node.transform.rotation.current_value, None);
+    canvas.scale((
+        node.transform.scale_x.current_value,
+        node.transform.scale_y.current_value,
+    ));
+    canvas.skew((
+        node.transform.skew_x.current_value.to_radians().tan(),
+        node.transform.skew_y.current_value.to_radians().tan(),
+    ));
+    canvas.translate((-pivot_x, -pivot_y));
+}
+
+/// Run `paint_descendants` in this element's child space without keeping its pixels.
+///
+/// Descendant planes are sorted outside this element, so its background must
+/// not be redrawn on their pass. `Element::render` still applies the local
+/// matrix, perspective, and backface skip. An empty clip drops that pass's paint.
+fn enter_preserve_3d_child<F>(
+    scene: &SceneGraph,
+    node_id: NodeId,
+    canvas: &skia_safe::Canvas,
+    parent_opacity: f32,
+    paint_descendants: F,
+) -> Result<(), RenderError>
+where
+    F: FnOnce(&skia_safe::Canvas) -> Result<(), RenderError>,
+{
+    canvas.save();
+    let mut child_matrix = None;
+    let rendered = if let Some(node) = scene.get_node(node_id) {
+        apply_node_scene_transform(canvas, node);
+        let local_rect =
+            skia_safe::Rect::from_wh(node.layout_rect.width(), node.layout_rect.height());
+        canvas.save();
+        canvas.clip_rect(
+            skia_safe::Rect::new_empty(),
+            skia_safe::ClipOp::Intersect,
+            false,
+        );
+        let rendered = node.element.render(
+            canvas,
+            local_rect,
+            parent_opacity,
+            &mut |child_canvas| {
+                child_matrix = Some(child_canvas.local_to_device());
+            },
+        );
+        canvas.restore();
+        rendered
+    } else {
+        canvas.restore();
+        return Ok(());
+    };
+    let result = if let Ok(()) = rendered {
+        if let Some(matrix) = child_matrix {
+            canvas.set_matrix(&matrix);
+            paint_descendants(canvas)
+        } else {
+            Ok(())
+        }
+    } else {
+        rendered
+    };
+    canvas.restore();
+    result
+}
+
+fn paint_depth_chain<C: StaticSubtreeCache>(
+    scene: &SceneGraph,
+    assets: &AssetManager,
+    static_cache: &mut C,
+    chain: &[NodeId],
+    index: usize,
+    canvas: &skia_safe::Canvas,
+    parent_opacity: f32,
+    depth: usize,
+    dirty_nodes: Option<&HashSet<NodeId>>,
+) -> Result<(), RenderError> {
+    if depth > 100 {
+        return Err(RenderError::RecursionLimit);
+    }
+    let Some(node_id) = chain.get(index).copied() else {
+        return Ok(());
+    };
+    if index + 1 == chain.len() {
+        let skip = scene
+            .get_node(node_id)
+            .is_some_and(|node| node.element.shares_3d());
+        return render_recursive_inner(
+            scene,
+            assets,
+            static_cache,
+            node_id,
+            canvas,
+            parent_opacity,
+            depth,
+            dirty_nodes,
+            if skip {
+                ChildDraw::Skip
+            } else {
+                ChildDraw::Normal
+            },
+        );
+    }
+    enter_preserve_3d_child(scene, node_id, canvas, parent_opacity, |child_canvas| {
+        paint_depth_chain(
+            scene,
+            assets,
+            static_cache,
+            chain,
+            index + 1,
+            child_canvas,
+            parent_opacity,
+            depth + 1,
+            dirty_nodes,
+        )
+    })
+}
+
 /// Renders a node's element and children to the given canvas. The caller is
 /// responsible for setting up the canvas transform.
 ///
 /// If `dirty_nodes` is `Some`, only nodes in the set are rendered; this is
 /// used after `Director::invalidate()` to incrementally re-render changed nodes.
+///
+/// A preserve-3d element sorts one shared list: ascending summed `view_depth`,
+/// then z-index, then source order. A direct child that `shares_3d` puts its
+/// descendants in that list. A child that does not stays one plane.
 fn render_node_subtree<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,
@@ -287,6 +510,7 @@ fn render_node_subtree<C: StaticSubtreeCache>(
     parent_opacity: f32,
     depth: usize,
     dirty_nodes: Option<&std::collections::HashSet<NodeId>>,
+    child_draw: ChildDraw,
 ) -> Result<(), RenderError> {
     let node = match scene.get_node(node_id) {
         Some(n) => n,
@@ -296,45 +520,26 @@ fn render_node_subtree<C: StaticSubtreeCache>(
     let local_rect = skia_safe::Rect::from_wh(node.layout_rect.width(), node.layout_rect.height());
 
     let shares_3d = node.element.shares_3d();
-    let depth_order: Vec<NodeId> = if shares_3d {
-        let mut order = Vec::with_capacity(node.children.len());
-        for (index, &child_id) in node.children.iter().enumerate() {
-            if let Some(child) = scene.get_node(child_id) {
-                order.push((
-                    child
-                        .element
-                        .view_depth(child.layout_rect.width(), child.layout_rect.height()),
-                    child.z_index,
-                    index,
-                    child_id,
-                ));
-            }
-        }
-        order.sort_by(|a, b| {
-            a.0.total_cmp(&b.0)
-                .then(a.1.cmp(&b.1))
-                .then(a.2.cmp(&b.2))
-        });
-        order.into_iter().map(|(_, _, _, id)| id).collect()
-    } else {
-        Vec::new()
-    };
 
     let mut last_error = Ok(());
     let mut draw_children = |canvas: &skia_safe::Canvas| {
+        if child_draw == ChildDraw::Skip {
+            return;
+        }
         if shares_3d {
-            for &child_id in &depth_order {
-                if let Err(e) = render_recursive(
+            for plane in collect_3d_planes(scene, node_id) {
+                if let Err(error) = paint_depth_chain(
                     scene,
                     assets,
                     static_cache,
-                    child_id,
+                    &plane.chain,
+                    0,
                     canvas,
                     parent_opacity,
                     depth + 1,
                     dirty_nodes,
                 ) {
-                    last_error = Err(e);
+                    last_error = Err(error);
                 }
             }
             return;
@@ -431,6 +636,30 @@ pub fn render_recursive<C: StaticSubtreeCache>(
     depth: usize,
     dirty_nodes: Option<&std::collections::HashSet<NodeId>>,
 ) -> Result<(), RenderError> {
+    render_recursive_inner(
+        scene,
+        assets,
+        static_cache,
+        node_id,
+        canvas,
+        parent_opacity,
+        depth,
+        dirty_nodes,
+        ChildDraw::Normal,
+    )
+}
+
+fn render_recursive_inner<C: StaticSubtreeCache>(
+    scene: &SceneGraph,
+    assets: &AssetManager,
+    static_cache: &mut C,
+    node_id: NodeId,
+    canvas: &skia_safe::Canvas,
+    parent_opacity: f32,
+    depth: usize,
+    dirty_nodes: Option<&std::collections::HashSet<NodeId>>,
+    child_draw: ChildDraw,
+) -> Result<(), RenderError> {
     if depth > 100 {
         return Err(RenderError::RecursionLimit);
     }
@@ -480,7 +709,8 @@ pub fn render_recursive<C: StaticSubtreeCache>(
     let tan_skew_x = skew_x.to_radians().tan();
     let tan_skew_y = skew_y.to_radians().tan();
 
-    if is_static {
+    // A skipped preserve-3d shell must not reuse or store a flattened subtree.
+    if is_static && child_draw == ChildDraw::Normal {
         let full_pass = dirty_nodes.is_none();
         let is_dirty = dirty_nodes.is_some_and(|set| set.contains(&node_id));
         let key = static_cache_key(
@@ -538,6 +768,7 @@ pub fn render_recursive<C: StaticSubtreeCache>(
             parent_opacity,
             depth,
             dirty_nodes,
+            child_draw,
         )?;
 
         offscreen.restore();
@@ -583,6 +814,7 @@ pub fn render_recursive<C: StaticSubtreeCache>(
         parent_opacity,
         depth,
         dirty_nodes,
+        child_draw,
     )?;
 
     canvas.restore();

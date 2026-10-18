@@ -133,6 +133,60 @@ fn external_clip_path_uses_an_svg_url() {
 }
 
 #[test]
+fn external_fill_opacity_longhand_halves_red() {
+    let p = frame(
+        &svg_doc(
+            "svg .box{fill:red;fill-opacity:0.5}",
+            "<rect class='box' width='64' height='64'/>",
+        ),
+        0.0,
+    );
+    let center = pixel(&p, 32, 32);
+    assert!(
+        (center[0] as i16 - 128).abs() <= 2 && center[1] == 0 && center[2] == 0,
+        "{center:?}"
+    );
+}
+
+#[test]
+fn external_stroke_opacity_halves_the_stroke() {
+    let p = frame(
+        &svg_doc(
+            "svg .box{fill:none;stroke:blue;stroke-width:8px;stroke-opacity:0.5}",
+            "<rect class='box' x='8' y='8' width='48' height='48'/>",
+        ),
+        0.0,
+    );
+    let edge = pixel(&p, 32, 8);
+    assert!(
+        (edge[2] as i16 - 128).abs() <= 8 && edge[0] <= 15 && edge[1] <= 15,
+        "{edge:?}"
+    );
+    assert_eq!(pixel(&p, 32, 32), [0, 0, 0, 255]);
+}
+
+#[test]
+fn external_fill_rule_evenodd_punches_the_hole() {
+    let even = frame(
+        &svg_doc(
+            "svg .box{fill:red;fill-rule:evenodd}",
+            "<path class='box' d='M0 0 H64 V64 H0 Z M16 16 H48 V48 H16 Z'/>",
+        ),
+        0.0,
+    );
+    let solid = frame(
+        &svg_doc(
+            "svg .box{fill:red}",
+            "<path class='box' d='M0 0 H64 V64 H0 Z M16 16 H48 V48 H16 Z'/>",
+        ),
+        0.0,
+    );
+    assert_eq!(pixel(&even, 4, 4), [255, 0, 0, 255]);
+    assert_eq!(pixel(&even, 32, 32), [0, 0, 0, 255]);
+    assert_eq!(pixel(&solid, 32, 32), [255, 0, 0, 255]);
+}
+
+#[test]
 fn external_animation_is_refused() {
     assert_compile_contains(
         &svg_doc(

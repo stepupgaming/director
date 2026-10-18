@@ -1,0 +1,53 @@
+use director_core::systems::renderer::render_frame;
+use director_html::{compile, CompileOptions};
+
+fn frame(source: &str) -> Vec<u8> {
+    let mut c = compile(
+        source,
+        CompileOptions {
+            width: 64,
+            height: 64,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
+    render_frame(&mut c.director, 0.0, surface.canvas()).unwrap();
+    let info = skia_safe::ImageInfo::new(
+        (64, 64),
+        skia_safe::ColorType::RGBA8888,
+        skia_safe::AlphaType::Unpremul,
+        None,
+    );
+    let mut pixels = vec![0; 64 * 64 * 4];
+    assert!(surface.read_pixels(&info, &mut pixels, 64 * 4, (0, 0)));
+    pixels
+}
+
+fn pixel(p: &[u8], x: usize, y: usize) -> &[u8] {
+    &p[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4]
+}
+
+fn red(sample: &[u8]) -> bool {
+    sample[0] > 200 && sample[1] < 40 && sample[2] < 40
+}
+
+fn dark(sample: &[u8]) -> bool {
+    sample[0] < 20 && sample[1] < 20 && sample[2] < 20
+}
+
+#[test]
+fn sized_linear_gradient_repeats_across_the_box() {
+    let source = |size: &str| {
+        format!(
+            "<style>body{{margin:0}}div{{width:64px;height:64px;background-image:linear-gradient(to right, red 2px, transparent 2px);{size}}}</style><div></div>"
+        )
+    };
+    let tiled = frame(&source("background-size:16px 16px"));
+    let full = frame(&source(""));
+    assert!(red(pixel(&tiled, 1, 32)), "first stripe {:?}", pixel(&tiled, 1, 32));
+    assert!(dark(pixel(&tiled, 8, 32)), "gap {:?}", pixel(&tiled, 8, 32));
+    assert!(red(pixel(&tiled, 17, 32)), "second stripe {:?}", pixel(&tiled, 17, 32));
+    assert!(dark(pixel(&full, 17, 32)), "unsized stripe repeated");
+}

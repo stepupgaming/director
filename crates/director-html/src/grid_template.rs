@@ -4,8 +4,12 @@
 //! (`AutoFit`, `AutoFill`, `Count`). It has no `GridTrackRepetition` type.
 //! Line names live on `GridTemplateRepetition::line_names`: one set per grid line,
 //! `line_names[i]` before track `i` and the last set after the final track.
+//! A child custom ident resolves against the parent axis to the same 1-based
+//! line index Taffy uses for a numeric grid line. An auto repeat keeps the name
+//! for Taffy, because the repetition count is not known until layout.
 
 use crate::style::{self, LengthParts, Metrics};
+use std::cell::RefCell;
 use taffy::style::{GridTemplateComponent, GridTemplateRepetition, RepetitionCount, TrackSizingFunction};
 
 pub fn grid_template(
@@ -57,19 +61,57 @@ enum Part {
     Repeat(GridTemplateRepetition<String>),
 }
 
+/// Top-level `[name]` groups may be glued to a track. Brackets inside `()` stay in that piece.
+fn explode_glued(token: &str) -> Vec<&str> {
+    if !token.contains('[') {
+        return vec![token];
+    }
+    let mut pieces = Vec::new();
+    let mut depth = 0u32;
+    let mut start = 0usize;
+    let mut rest = token.char_indices();
+    while let Some((index, ch)) = rest.next() {
+        match ch {
+            '(' => depth = depth.saturating_add(1),
+            ')' => depth = depth.saturating_sub(1),
+            '[' if depth == 0 => {
+                let Some((end, _)) = rest.find(|(_, next)| *next == ']') else {
+                    return vec![token];
+                };
+                if index > start {
+                    pieces.push(&token[start..index]);
+                }
+                pieces.push(&token[index..=end]);
+                start = end + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < token.len() {
+        pieces.push(&token[start..]);
+    }
+    if pieces.is_empty() {
+        vec![token]
+    } else {
+        pieces
+    }
+}
+
 fn parse_parts(source: &str, metrics: Metrics) -> Result<Vec<Part>, String> {
     let mut parts = Vec::new();
     for token in crate::css::split(source, false) {
-        if token.eq_ignore_ascii_case("subgrid") {
-            return Err("subgrid requires extraction".into());
-        } else if token.starts_with('[') {
-            parts.push(Part::Names(line_names(&token)?));
-        } else if token.starts_with("repeat(") {
-            parts.push(Part::Repeat(parse_repeat(&token, metrics)?));
-        } else if bare_line_name(&token) {
-            return Err("named grid lines require extraction".into());
-        } else {
-            parts.push(Part::Track(grid_track(&token, metrics)?));
+        for piece in explode_glued(&token) {
+            if piece.eq_ignore_ascii_case("subgrid") {
+                return Err("subgrid requires extraction".into());
+            } else if piece.starts_with('[') {
+                parts.push(Part::Names(line_names(piece)?));
+            } else if piece.starts_with("repeat(") {
+                parts.push(Part::Repeat(parse_repeat(piece, metrics)?));
+            } else if bare_line_name(piece) {
+                return Err("named grid lines require extraction".into());
+            } else {
+                parts.push(Part::Track(grid_track(piece, metrics)?));
+            }
         }
     }
     Ok(parts)
@@ -131,7 +173,7 @@ fn bare_line_name(token: &str) -> bool {
     !matches!(token, "auto" | "min-content" | "max-content" | "none") && is_custom_ident(token)
 }
 
-fn is_custom_ident(name: &str) -> bool {
+pub(crate) fn is_custom_ident(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -179,10 +221,11 @@ impl Acc {
         if !names.is_empty() {
             self.saw = true;
         }
-        if matches!(self.state, LineState::Named(_)) {
-            return Err("named grid lines require extraction".into());
+        // Adjacent `[a] [b]` groups are one line. CSS joins them.
+        match &mut self.state {
+            LineState::Named(pending) => pending.extend(names),
+            LineState::Ready => self.state = LineState::Named(names),
         }
-        self.state = LineState::Named(names);
         Ok(())
     }
 
@@ -426,6 +469,225 @@ fn expand_count(
     Ok((out_tracks, out_names))
 }
 
+/// A resolved custom ident. `Line` is the 1-based index a numeric line would use.
+/// `Named` is an auto repeat: Taffy still has to pick the copy.
+pub(crate) enum NamedPlacement {
+    Line(i16),
+    Named(String, i16),
+}
+
+#[derive(Default)]
+struct AxisMap {
+    lines: Vec<Vec<String>>,
+    tracks: u16,
+    auto: bool,
+    known: Vec<String>,
+}
+
+#[derive(Default)]
+struct Frame {
+    columns: AxisMap,
+    rows: AxisMap,
+}
+
+struct Slot {
+    compile_id: usize,
+    stack: Vec<Frame>,
+    /// The top frame belongs to the element currently being translated.
+    open: bool,
+}
+
+thread_local! {
+    static LINES: RefCell<Slot> = RefCell::new(Slot {
+        compile_id: 0,
+        stack: Vec::new(),
+        open: false,
+    });
+}
+
+/// A new element. The previous element's template becomes the parent axis.
+pub(crate) fn begin_element(compile_id: usize) {
+    LINES.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.compile_id != compile_id {
+            slot.compile_id = compile_id;
+            slot.stack.clear();
+            slot.open = false;
+        } else if slot.open {
+            slot.open = false;
+        }
+    });
+}
+
+/// Store line names for later child placement and give Taffy one empty name
+/// slot per component so it walks `repeat` line names.
+pub(crate) fn install_tracks(
+    columns: bool,
+    mut tracks: Vec<GridTemplateComponent<String>>,
+) -> (Vec<GridTemplateComponent<String>>, Vec<Vec<String>>) {
+    for component in &mut tracks {
+        if let GridTemplateComponent::Repeat(rep) = component {
+            if rep.line_names.is_empty() && !rep.tracks.is_empty() {
+                rep.line_names.resize(rep.tracks.len() + 1, Vec::new());
+            }
+        }
+    }
+    let map = axis_map(&tracks);
+    LINES.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if !slot.open {
+            slot.stack.push(Frame::default());
+            slot.open = true;
+        }
+        if let Some(frame) = slot.stack.last_mut() {
+            if columns {
+                frame.columns = map;
+            } else {
+                frame.rows = map;
+            }
+        }
+    });
+    let slots = vec![Vec::new(); tracks.len()];
+    (tracks, slots)
+}
+
+pub(crate) fn resolve_named(columns: bool, name: &str, nth: i16) -> Result<NamedPlacement, String> {
+    LINES.with(|slot| {
+        let slot = slot.borrow();
+        let frame = parent_frame(&slot)?;
+        let axis = if columns { &frame.columns } else { &frame.rows };
+        if !axis.known.iter().any(|known| known == name) {
+            return Err("named grid lines require extraction".into());
+        }
+        if axis.auto {
+            let nth = if nth == 0 { 1 } else { nth };
+            return Ok(NamedPlacement::Named(name.to_string(), nth));
+        }
+        Ok(NamedPlacement::Line(line_at(
+            &axis.lines,
+            axis.tracks,
+            name,
+            nth,
+        )?))
+    })
+}
+
+fn parent_frame(slot: &Slot) -> Result<&Frame, String> {
+    let frame = if slot.open {
+        slot.stack.get(slot.stack.len().wrapping_sub(2))
+    } else {
+        slot.stack.last()
+    };
+    frame.ok_or_else(|| "named grid lines require extraction".to_string())
+}
+
+fn axis_map(components: &[GridTemplateComponent<String>]) -> AxisMap {
+    let mut lines = Vec::new();
+    let mut known = Vec::new();
+    let mut auto = false;
+    let mut tracks: u16 = 0;
+    let mut current_line: i16 = 0;
+    for component in components {
+        current_line += 1;
+        match component {
+            GridTemplateComponent::Single(_) => tracks = tracks.saturating_add(1),
+            GridTemplateComponent::Repeat(rep) => {
+                let times = match rep.count {
+                    RepetitionCount::Count(count) => count,
+                    RepetitionCount::AutoFit | RepetitionCount::AutoFill => {
+                        auto = true;
+                        for set in &rep.line_names {
+                            record(&mut lines, &mut known, 0, set);
+                        }
+                        continue;
+                    }
+                };
+                tracks = tracks.saturating_add(times.saturating_mul(rep.tracks.len() as u16));
+                let sets: Vec<Vec<String>> = if rep.line_names.is_empty() {
+                    vec![Vec::new(); rep.tracks.len() + 1]
+                } else {
+                    rep.line_names.clone()
+                };
+                for _ in 0..times {
+                    for set in &sets {
+                        record(&mut lines, &mut known, current_line, set);
+                        current_line = current_line.saturating_add(1);
+                    }
+                    current_line = current_line.saturating_sub(1);
+                }
+                current_line = current_line.saturating_sub(1);
+            }
+        }
+    }
+    AxisMap {
+        lines,
+        tracks,
+        auto,
+        known,
+    }
+}
+
+fn record(lines: &mut Vec<Vec<String>>, known: &mut Vec<String>, line: i16, names: &[String]) {
+    if line > 0 {
+        let index = (line as usize) - 1;
+        if lines.len() <= index {
+            lines.resize(index + 1, Vec::new());
+        }
+        for name in names {
+            if !lines[index].iter().any(|existing| existing == name) {
+                lines[index].push(name.clone());
+            }
+        }
+    }
+    for name in names {
+        if !name.is_empty() && !known.iter().any(|existing| existing == name) {
+            known.push(name.clone());
+        }
+    }
+}
+
+/// 1-based line index for `name`, or the Taffy fallback when the nth copy is missing.
+fn line_at(lines: &[Vec<String>], tracks: u16, name: &str, nth: i16) -> Result<i16, String> {
+    let mut found = Vec::new();
+    for (index, set) in lines.iter().enumerate() {
+        if set.iter().any(|candidate| candidate == name) {
+            found.push((index as i16) + 1);
+        }
+    }
+    if found.is_empty() {
+        return Err("named grid lines require extraction".into());
+    }
+    let nth = if nth == 0 { 1 } else { nth };
+    let abs = usize::from(nth.unsigned_abs());
+    if abs == 0 || abs > found.len() {
+        let explicit = i16::try_from(tracks).unwrap_or(i16::MAX);
+        let remaining = (abs as i16 - found.len() as i16) * nth.signum();
+        return Ok(if nth > 0 {
+            (explicit + 1) + remaining
+        } else {
+            -((explicit + 1) + remaining)
+        });
+    }
+    if nth > 0 {
+        Ok(found[abs - 1])
+    } else {
+        Ok(found[found.len() - abs])
+    }
+}
+
+#[cfg(test)]
+fn line_index(
+    components: &[GridTemplateComponent<String>],
+    name: &str,
+    nth: i16,
+) -> Result<i16, String> {
+    let axis = axis_map(components);
+    if axis.auto || !axis.known.iter().any(|known| known == name) {
+        return Err("named grid lines require extraction".into());
+    }
+    line_at(&axis.lines, axis.tracks, name, nth)
+}
+
 fn attach_names(rep: &mut GridTemplateRepetition<String>, at_start: bool, names: Vec<String>) {
     if names.is_empty() {
         return;
@@ -611,9 +873,46 @@ mod tests {
     }
 
     #[test]
-    fn bare_name_requires_extraction() {
-        let err = grid_template("sidebar", metrics()).unwrap_err();
-        assert_eq!(err, "named grid lines require extraction");
+    fn named_lines_are_stored() {
+        let tracks = grid_template("[sidebar] 32px [end]", metrics()).unwrap();
+        assert_eq!(
+            tracks,
+            vec![GridTemplateComponent::Repeat(GridTemplateRepetition {
+                count: RepetitionCount::Count(1),
+                tracks: vec![px(32.0)],
+                line_names: vec![vec!["sidebar".to_string()], vec!["end".to_string()]],
+            })]
+        );
+        assert_eq!(super::line_index(&tracks, "sidebar", 1).unwrap(), 1);
+        assert_eq!(super::line_index(&tracks, "end", 1).unwrap(), 2);
+        let missing = grid_template("[main] 32px [side] 32px", metrics()).unwrap();
+        assert_eq!(super::line_index(&missing, "side", 1).unwrap(), 2);
+        let err = super::line_index(&missing, "missing", 1).unwrap_err();
+        assert!(err.contains("named grid lines"), "{err}");
+    }
+
+    #[test]
+    fn glued_named_lines_are_stored() {
+        let tracks = grid_template("[main] 32px[side] 32px", metrics()).unwrap();
+        assert_eq!(
+            tracks,
+            vec![GridTemplateComponent::Repeat(GridTemplateRepetition {
+                count: RepetitionCount::Count(1),
+                tracks: vec![px(32.0), px(32.0)],
+                line_names: vec![vec!["main".to_string()], vec!["side".to_string()], Vec::new()],
+            })]
+        );
+        assert_eq!(super::line_index(&tracks, "main", 1).unwrap(), 1);
+        assert_eq!(super::line_index(&tracks, "side", 1).unwrap(), 2);
+        let tracks = grid_template("32px[side]", metrics()).unwrap();
+        assert_eq!(
+            tracks,
+            vec![GridTemplateComponent::Repeat(GridTemplateRepetition {
+                count: RepetitionCount::Count(1),
+                tracks: vec![px(32.0)],
+                line_names: vec![Vec::new(), vec!["side".to_string()]],
+            })]
+        );
     }
 
     #[test]

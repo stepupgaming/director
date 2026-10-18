@@ -64,6 +64,17 @@ impl HtmlElement {
             baseline_offset: 0.0,
         }
     }
+    fn ellipsizes(&self) -> bool {
+        if self.paint.line_clamp.is_some() {
+            return true;
+        }
+        self.paint.no_wrap
+            && matches!(
+                self.paint.text_overflow,
+                crate::style::TextOverflow::Ellipsis
+            )
+            && self.style.overflow.x == taffy::style::Overflow::Hidden
+    }
     fn content_rect(&self, rect: Rect) -> Rect {
         let left = resolve(self.style.padding.left, rect.width()) + self.style.border.left.value();
         let top = resolve(self.style.padding.top, rect.width()) + self.style.border.top.value();
@@ -77,7 +88,7 @@ impl HtmlElement {
             (rect.width() - left - right).max(0.0),
             (rect.height() - top - bottom).max(0.0),
         );
-        if self.paint.no_wrap {
+        if !self.ellipsizes() && self.paint.no_wrap {
             if let Some(text) = &self.content {
                 if text.kind() == "text" {
                     let measured = text.measure(
@@ -110,7 +121,10 @@ impl HtmlElement {
                 .downcast_ref::<director_core::node::TextNode>()
             {
                 let used = crate::compiler::layout_paragraph(node, &self.paint, content.width());
-                if used.is_finite() && used > content.width() + 0.5 {
+                if self.paint.line_clamp.is_none()
+                    && used.is_finite()
+                    && used > content.width() + 0.5
+                {
                     content = Rect::from_xywh(content.left, content.top, used, content.height());
                 }
             }
@@ -380,6 +394,10 @@ impl Element for HtmlElement {
         if let Some(clip) = background_clip_rect(rect, &self.style, self.paint.background_clip) {
             canvas.clip_rect(clip, skia_safe::ClipOp::Intersect, false);
         }
+        let clip_text = self.paint.background_clip == crate::box_edges::BoxEdge::Text;
+        if clip_text {
+            canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default());
+        }
         bg.render(canvas, rect, 1.0, &mut |_| {})?;
         let gradient_rect = inset_rect(
             rect,
@@ -390,11 +408,26 @@ impl Element for HtmlElement {
             for layer in self.paint.layers.iter().rev() {
                 match layer {
                     BackgroundLayer::Gradient(gradient) => {
-                        if let Some(shader) = gradient.shader(gradient_rect) {
+                        let tile_rect = gradient_tile(gradient_rect, &self.paint);
+                        let custom = (tile_rect.left() - gradient_rect.left()).abs() > 0.5
+                            || (tile_rect.top() - gradient_rect.top()).abs() > 0.5
+                            || (tile_rect.width() - gradient_rect.width()).abs() > 0.5
+                            || (tile_rect.height() - gradient_rect.height()).abs() > 0.5;
+                        let repeats = self.paint.background_repeat.0 != AxisRepeat::NoRepeat
+                            || self.paint.background_repeat.1 != AxisRepeat::NoRepeat;
+                        let shader = if custom && repeats {
+                            gradient.shader_with(tile_rect, TileMode::Repeat)
+                        } else if custom {
+                            gradient.shader(tile_rect)
+                        } else {
+                            gradient.shader(gradient_rect)
+                        };
+                        if let Some(shader) = shader {
                             let mut p = skia_safe::Paint::default();
                             p.set_shader(shader);
                             p.set_anti_alias(true);
-                            canvas.draw_rect(rect, &p);
+                            let dest = if custom && !repeats { tile_rect } else { rect };
+                            canvas.draw_rect(dest, &p);
                         }
                     }
                     BackgroundLayer::Image(image) => {
@@ -402,6 +435,10 @@ impl Element for HtmlElement {
                     }
                 }
             }
+        }
+        if clip_text {
+            paint_text_clip_mask(canvas, self, rect);
+            canvas.restore();
         }
         canvas.restore();
         for shadow in self.paint.shadows.iter().rev().filter(|s| s.inset) {
@@ -566,7 +603,7 @@ fn paint_borders(
             .border_colors
             .iter()
             .all(|color| *color == paint.border_colors[0])
-        && lines[0] != BorderLine::Solid
+        && matches!(lines[0], BorderLine::Dashed | BorderLine::Dotted)
         && top > 0.0;
     if uniform {
         let mut stroke = outer;
@@ -648,7 +685,7 @@ fn paint_borders(
         [(left / 2.0, rect.height()), (left / 2.0, 0.0)],
     ];
     for (i, [start, end]) in sides.into_iter().enumerate() {
-        if widths[i] <= 0.0 || lines[i] == BorderLine::Solid {
+        if widths[i] <= 0.0 || !matches!(lines[i], BorderLine::Dashed | BorderLine::Dotted) {
             continue;
         }
         let mut path = skia_safe::Path::new();
@@ -673,7 +710,167 @@ fn paint_borders(
         }
         canvas.draw_path(&path, &p);
     }
+    paint_styled_borders(canvas, rect, paint, widths);
     canvas.restore();
+}
+
+fn paint_styled_borders(canvas: &Canvas, rect: Rect, paint: &PaintStyle, widths: [f32; 4]) {
+    let polys = side_polygons(rect);
+    for (i, points) in polys.into_iter().enumerate() {
+        if widths[i] <= 0.0 {
+            continue;
+        }
+        let color = paint.border_colors[i];
+        match paint.border_lines[i] {
+            BorderLine::Double => paint_double(canvas, rect, i, widths[i], color),
+            BorderLine::Inset => fill_poly(canvas, points, bevel_color(color, i, true), true),
+            BorderLine::Outset => fill_poly(canvas, points, bevel_color(color, i, false), true),
+            BorderLine::Groove => paint_halves(canvas, rect, points, i, widths[i], color, true),
+            BorderLine::Ridge => paint_halves(canvas, rect, points, i, widths[i], color, false),
+            BorderLine::Solid | BorderLine::Dashed | BorderLine::Dotted => {}
+        }
+    }
+}
+
+fn side_polygons(rect: Rect) -> [[(f32, f32); 3]; 4] {
+    let (x0, y0, x1, y1) = (rect.left(), rect.top(), rect.right(), rect.bottom());
+    let center = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+    [
+        [(x0, y0), (x1, y0), center],
+        [(x1, y0), (x1, y1), center],
+        [(x1, y1), (x0, y1), center],
+        [(x0, y1), (x0, y0), center],
+    ]
+}
+
+/// Outer and inner stripe thicknesses. Under 3px, `inner == 0` is one solid band.
+/// `ceil(width / 3)` on each stripe leaves the remainder as the middle gap.
+/// 8px is 3 + 2 + 3, so the empty rows are the ones that start at y = 3.
+fn double_stripes(width: f32) -> (f32, f32) {
+    if width < 3.0 {
+        return (width, 0.0);
+    }
+    let stripe = (width / 3.0).ceil();
+    if stripe * 2.0 < width {
+        return (stripe, stripe);
+    }
+    let stripe = (width / 3.0).floor().max(1.0);
+    if stripe * 2.0 < width {
+        (stripe, stripe)
+    } else {
+        (width, 0.0)
+    }
+}
+
+fn paint_double(
+    canvas: &Canvas,
+    rect: Rect,
+    side: usize,
+    width: f32,
+    color: director_core::types::Color,
+) {
+    let (outer, inner) = double_stripes(width);
+    fill_rect(canvas, edge_band(rect, side, 0.0, outer), color);
+    if inner > 0.0 {
+        fill_rect(
+            canvas,
+            edge_band(rect, side, width - inner, width),
+            color,
+        );
+    }
+}
+
+fn paint_halves(
+    canvas: &Canvas,
+    rect: Rect,
+    points: [(f32, f32); 3],
+    side: usize,
+    width: f32,
+    color: director_core::types::Color,
+    groove: bool,
+) {
+    let half = width * 0.5;
+    // Groove is inset on the outside and outset on the inside. Ridge swaps that.
+    fill_clipped_poly(
+        canvas,
+        points,
+        edge_band(rect, side, 0.0, half),
+        bevel_color(color, side, groove),
+    );
+    fill_clipped_poly(
+        canvas,
+        points,
+        edge_band(rect, side, half, width),
+        bevel_color(color, side, !groove),
+    );
+}
+
+fn edge_band(rect: Rect, side: usize, from: f32, to: f32) -> Rect {
+    let (x0, y0, x1, y1) = (rect.left(), rect.top(), rect.right(), rect.bottom());
+    match side {
+        0 => Rect::new(x0, y0 + from, x1, y0 + to),
+        1 => Rect::new(x1 - to, y0, x1 - from, y1),
+        2 => Rect::new(x0, y1 - to, x1, y1 - from),
+        _ => Rect::new(x0 + from, y0, x0 + to, y1),
+    }
+}
+
+/// Top and left are lighter for outset and darker for inset. The other sides swap.
+fn bevel_color(
+    color: director_core::types::Color,
+    side: usize,
+    inset: bool,
+) -> director_core::types::Color {
+    let lighten = matches!(side, 0 | 3) != inset;
+    let toward = if lighten { 1.0 } else { 0.0 };
+    director_core::types::Color {
+        r: color.r + (toward - color.r) * 0.5,
+        g: color.g + (toward - color.g) * 0.5,
+        b: color.b + (toward - color.b) * 0.5,
+        a: color.a,
+    }
+}
+
+fn fill_rect(canvas: &Canvas, band: Rect, color: director_core::types::Color) {
+    if band.width() <= 0.0 || band.height() <= 0.0 {
+        return;
+    }
+    let mut p = skia_safe::Paint::default();
+    p.set_anti_alias(false);
+    p.set_color4f(color.to_color4f(), None);
+    canvas.draw_rect(band, &p);
+}
+
+fn fill_clipped_poly(
+    canvas: &Canvas,
+    points: [(f32, f32); 3],
+    band: Rect,
+    color: director_core::types::Color,
+) {
+    if band.width() <= 0.0 || band.height() <= 0.0 {
+        return;
+    }
+    canvas.save();
+    canvas.clip_rect(band, skia_safe::ClipOp::Intersect, false);
+    fill_poly(canvas, points, color, false);
+    canvas.restore();
+}
+
+fn fill_poly(
+    canvas: &Canvas,
+    points: [(f32, f32); 3],
+    color: director_core::types::Color,
+    anti_alias: bool,
+) {
+    let mut path = skia_safe::Path::new();
+    path.move_to(points[0]);
+    path.line_to(points[1]);
+    path.line_to(points[2]);
+    path.close();
+    let mut p = skia_safe::Paint::default();
+    p.set_anti_alias(anti_alias);
+    p.set_color4f(color.to_color4f(), None);
+    canvas.draw_path(&path, &p);
 }
 
 fn origin_edge(origin: BackgroundOrigin) -> BoxEdge {
@@ -705,10 +902,51 @@ fn inset_rect(rect: Rect, layout: &Style, edge: BoxEdge) -> Rect {
 }
 
 fn background_clip_rect(rect: Rect, layout: &Style, clip: BoxEdge) -> Option<Rect> {
-    if clip == BoxEdge::BorderBox {
+    if clip == BoxEdge::BorderBox || clip == BoxEdge::Text {
         return None;
     }
     Some(inset_rect(rect, layout, clip))
+}
+
+fn paint_text_clip_mask(canvas: &Canvas, element: &HtmlElement, rect: Rect) {
+    let Some(content) = &element.content else {
+        return;
+    };
+    let Some(node) = content
+        .as_any()
+        .downcast_ref::<director_core::node::TextNode>()
+    else {
+        return;
+    };
+    let content_rect = element.content_rect(rect);
+    let paragraph = crate::compiler::glyph_mask(node, &element.paint, content_rect.width());
+    let mut mask = skia_safe::Paint::default();
+    mask.set_blend_mode(skia_safe::BlendMode::DstIn);
+    canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&mask));
+    paragraph.paint(canvas, (content_rect.x(), content_rect.y()));
+    canvas.restore();
+}
+
+fn gradient_tile(area: Rect, paint: &PaintStyle) -> Rect {
+    let (tw, th) = match paint.background_size {
+        BackgroundFit::Lengths(width, height) => {
+            let across = |value: Option<taffy::LengthPercentage>, basis: f32| {
+                value
+                    .map(|value| resolve(value, basis))
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .unwrap_or(basis)
+            };
+            (across(width, area.width()), across(height, area.height()))
+        }
+        _ => (area.width(), area.height()),
+    };
+    let x = area.left()
+        + (area.width() - tw) * paint.background_position.0.percent
+        + paint.background_position.0.length;
+    let y = area.top()
+        + (area.height() - th) * paint.background_position.1.percent
+        + paint.background_position.1.length;
+    Rect::from_xywh(x, y, tw.max(1.0), th.max(1.0))
 }
 
 fn paint_background_image(
@@ -1056,7 +1294,7 @@ fn paint_text_lines(canvas: &Canvas, element: &HtmlElement, rect: Rect) {
                 &paint,
                 element.paint.decoration_style,
                 x,
-                under,
+                under + element.paint.text_underline_offset,
                 w,
                 thickness,
             );

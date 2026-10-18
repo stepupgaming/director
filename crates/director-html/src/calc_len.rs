@@ -1,12 +1,13 @@
 //! Resolve lightningcss `<length-percentage>` values, including calc/min/max/clamp.
 use std::cmp::Ordering;
 
+use lightningcss::traits::Parse;
 use lightningcss::values::calc::{Calc, MathFunction};
 use lightningcss::values::length::{LengthPercentage as CssLength, LengthValue};
 
 use crate::style::Metrics;
 
-const MIXED_BASIS: &str = "mixed calc() requires a length basis";
+pub(crate) const MIXED_BASIS: &str = "mixed calc() requires a length basis";
 
 /// Resolved `<length-percentage>`.
 ///
@@ -31,6 +32,112 @@ pub fn resolve_length(
     percent_basis: Option<f32>,
 ) -> Result<ResolvedLength, String> {
     resolve_value(value, metrics, percent_basis)?.finish(percent_basis)
+}
+
+/// `calc(<percent> + <px>)` or `calc(<px> + <percent>)` only.
+/// Any other string, including other mixed calc forms, is `None`.
+pub(crate) fn parse_simple_mixed_stop(css: &str) -> Option<CssLength> {
+    if !is_simple_mixed_stop(css) {
+        return None;
+    }
+    CssLength::parse_string(css.trim()).ok()
+}
+
+/// Resolve a mixed stop against a positive pixel basis.
+/// Zero, negative, and non-finite bases keep [`MIXED_BASIS`] instead of dividing.
+pub(crate) fn resolve_stop_basis(value: &CssLength, basis: f32) -> Result<f32, String> {
+    let basis = if basis.is_finite() && basis > 0.0 {
+        Some(basis)
+    } else {
+        None
+    };
+    match resolve_length(
+        value,
+        Metrics {
+            width: 0.0,
+            height: 0.0,
+            font_size: 0.0,
+        },
+        basis,
+    )? {
+        ResolvedLength::Length(px) => Ok(px),
+        ResolvedLength::Percent(_) => Err(MIXED_BASIS.to_string()),
+    }
+}
+
+fn is_simple_mixed_stop(css: &str) -> bool {
+    let css = css.trim();
+    let Some(inner) = css.strip_prefix("calc(").and_then(|rest| rest.strip_suffix(')')) else {
+        return false;
+    };
+    let inner = inner.trim();
+    if inner
+        .bytes()
+        .any(|byte| matches!(byte, b'(' | b')' | b'*' | b'/'))
+    {
+        return false;
+    }
+    let Some((left, right)) = split_one_plus(inner) else {
+        return false;
+    };
+    matches!(
+        (mixed_term(left), mixed_term(right)),
+        (Some(MixedTerm::Px), Some(MixedTerm::Percent))
+            | (Some(MixedTerm::Percent), Some(MixedTerm::Px))
+    )
+}
+
+fn split_one_plus(inner: &str) -> Option<(&str, &str)> {
+    let mut at = None;
+    for (index, ch) in inner.char_indices() {
+        if ch == '+' {
+            if at.is_some() {
+                return None;
+            }
+            at = Some(index);
+        }
+    }
+    let index = at?;
+    let left = inner[..index].trim();
+    let right = inner[index + 1..].trim();
+    if left.is_empty() || right.is_empty() {
+        None
+    } else {
+        Some((left, right))
+    }
+}
+
+enum MixedTerm {
+    Px,
+    Percent,
+}
+
+fn mixed_term(raw: &str) -> Option<MixedTerm> {
+    if let Some(number) = raw.strip_suffix('%') {
+        css_number(number)?;
+        return Some(MixedTerm::Percent);
+    }
+    if let Some(number) = raw.strip_suffix("px") {
+        css_number(number)?;
+        return Some(MixedTerm::Px);
+    }
+    None
+}
+
+fn css_number(raw: &str) -> Option<f32> {
+    if raw.is_empty()
+        || !raw
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'+' | b'-' | b'.'))
+    {
+        return None;
+    }
+    let value = raw.parse::<f32>().ok()?;
+    if value.is_finite() {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -257,7 +364,7 @@ mod tests {
     use lightningcss::traits::Parse;
     use lightningcss::values::length::LengthPercentage as CssLength;
 
-    use super::{resolve_length, ResolvedLength};
+    use super::{parse_simple_mixed_stop, resolve_length, resolve_stop_basis, ResolvedLength};
     use crate::style::Metrics;
 
     const EPS: f32 = 1.0e-4;
@@ -450,6 +557,41 @@ mod tests {
         for css in ["1ex", "calc(1ch + 1px)"] {
             let err = resolve_at(css, metrics_at(16.0), None).expect_err(css);
             assert!(err.contains("unsupported length unit"), "{css}: {err}");
+        }
+    }
+
+    #[test]
+    fn simple_mixed_stop_uses_the_line_basis() {
+        let forward = parse_simple_mixed_stop("calc(50% + 10px)").expect("percent + px");
+        let backward = parse_simple_mixed_stop("calc(10px + 50%)").expect("px + percent");
+        match resolve_stop_basis(&forward, 100.0) {
+            Ok(px) => assert!((px - 60.0).abs() < EPS, "{px}"),
+            Err(err) => panic!("{err}"),
+        }
+        match resolve_stop_basis(&backward, 100.0) {
+            Ok(px) => assert!((px - 60.0).abs() < EPS, "{px}"),
+            Err(err) => panic!("{err}"),
+        }
+        for basis in [0.0, -0.0, -8.0, f32::NAN, f32::INFINITY] {
+            let err = resolve_stop_basis(&forward, basis).expect_err("zero line");
+            assert!(
+                err.contains("mixed calc() requires a length basis"),
+                "{basis}: {err}"
+            );
+        }
+        for css in [
+            "50%",
+            "10px",
+            "calc(10px + 20px)",
+            "calc(25% + 25%)",
+            "calc(50% - 10px)",
+            "calc(50% + 10px + 1em)",
+            "calc(50% + 1em)",
+            "min(10px, 50%)",
+            "max(10px, 50%)",
+            "clamp(10px, 50%, 20px)",
+        ] {
+            assert!(parse_simple_mixed_stop(css).is_none(), "{css}");
         }
     }
 }

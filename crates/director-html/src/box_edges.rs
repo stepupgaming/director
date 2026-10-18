@@ -6,6 +6,8 @@ pub enum BoxEdge {
     BorderBox,
     PaddingBox,
     ContentBox,
+    /// `background-clip: text`. Not a rectangular inset.
+    Text,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -21,6 +23,7 @@ pub fn parse_box_edge(source: &str) -> Result<BoxEdge, String> {
         "border-box" => Ok(BoxEdge::BorderBox),
         "padding-box" => Ok(BoxEdge::PaddingBox),
         "content-box" => Ok(BoxEdge::ContentBox),
+        "text" => Ok(BoxEdge::Text),
         trimmed => Err(format!("unsupported box edge '{trimmed}'")),
     }
 }
@@ -49,7 +52,7 @@ pub fn edge_insets(
             right: border_right,
             bottom: border_bottom,
         },
-        BoxEdge::ContentBox => Insets {
+        BoxEdge::ContentBox | BoxEdge::Text => Insets {
             left: border_left + padding_left,
             top: border_top + padding_top,
             right: border_right + padding_right,

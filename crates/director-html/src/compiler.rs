@@ -38,6 +38,11 @@ const SVG_EXTERNAL_PRESENTATION: &[&str] = &[
     "stroke-linejoin",
     "stroke-dasharray",
     "stroke-dashoffset",
+    "stroke-opacity",
+    "stroke-miterlimit",
+    "fill-opacity",
+    "fill-rule",
+    "clip-rule",
     "opacity",
     "transform",
     "clip-path",
@@ -265,13 +270,13 @@ pub(crate) fn compile_with_assets(
     validate_options(&options)?;
     let mut css = Css::default();
     // Explicit video-authoring UA defaults. No host/browser-dependent styles.
-    css.append("html, body { display:block; font-size:16px; color:black; font-family:Roboto; } body { margin:8px; } div,section,article,main,header,footer,p,h1,h2,h3,ul,li { display:block; } h1 {font-size:2em;font-weight:bold;margin-top:.67em;margin-bottom:.67em} h2 {font-size:1.5em;font-weight:bold;margin-top:.83em;margin-bottom:.83em} p {margin-top:1em;margin-bottom:1em} b,strong {font-weight:bold} em,i {font-style:italic} img,svg,video {display:block}")?;
+    css.append("html, body { display:block; font-size:16px; color:black; font-family:Roboto; } body { margin:8px; } div,section,article,main,header,footer,p,h1,h2,h3,ul,li { display:block; } h1 {font-size:2em;font-weight:bold;margin-top:.67em;margin-bottom:.67em} h2 {font-size:1.5em;font-weight:bold;margin-top:.83em;margin-bottom:.83em} p {margin-top:1em;margin-bottom:1em} b,strong {font-weight:bold} em,i {font-style:italic} img,svg,video {display:block}", options.width, options.height)?;
     for el in dom.select(&Selector::parse("style, link, script").unwrap()) {
         match el.value().name() {
-            "style" if !el.ancestors().filter_map(ElementRef::wrap).any(|p|p.value().name()=="svg")=>css.append(&el.text().collect::<String>())?,
+            "style" if !el.ancestors().filter_map(ElementRef::wrap).any(|p|p.value().name()=="svg")=>css.append(&el.text().collect::<String>(), options.width, options.height)?,
             "link" if el.value().attr("rel")==Some("stylesheet")=>{
                 let href=el.value().attr("href").ok_or_else(||CompileError::Input("stylesheet without href".into()))?;
-                let bytes=assets.read(href)?;let source=String::from_utf8(bytes).map_err(|e|CompileError::Input(e.to_string()))?;css.append(&source)?;
+                let bytes=assets.read(href)?;let source=String::from_utf8(bytes).map_err(|e|CompileError::Input(e.to_string()))?;css.append(&source, options.width, options.height)?;
             },
             "script" if !matches!(el.value().attr("type"),Some("application/json"|"application/ld+json"))=>return Err(CompileError::Diagnostics(vec![diagnostic("script","executable JavaScript requires explicit compile-time extraction; run director-engine html capture")])),
             _=>{},
@@ -370,9 +375,30 @@ fn build_paragraph(
     paint: &PaintStyle,
     width: f32,
 ) -> skia_safe::textlayout::Paragraph {
+    build_paragraph_colored(node, paint, width, false)
+}
+
+fn build_paragraph_colored(
+    node: &TextNode,
+    paint: &PaintStyle,
+    width: f32,
+    force_white: bool,
+) -> skia_safe::textlayout::Paragraph {
     use skia_safe::textlayout::{ParagraphBuilder, ParagraphStyle, StrutStyle, TextStyle};
     let mut paragraph = ParagraphStyle::new();
     paragraph.set_text_align(paint.align);
+    // ParagraphStyle has no text indent. A leading placeholder shifts only the first line.
+    let text_indent = style::resolve(
+        paint.text_indent,
+        if width.is_finite() { width } else { 0.0 },
+    );
+    if let Some(lines) = paint.line_clamp {
+        paragraph.set_ellipsis("\u{2026}");
+        paragraph.set_max_lines(lines as usize);
+    } else if paint.no_wrap && matches!(paint.text_overflow, style::TextOverflow::Ellipsis) {
+        paragraph.set_ellipsis("\u{2026}");
+        paragraph.set_max_lines(1);
+    }
     paragraph.set_text_direction(if paint.rtl {
         skia_safe::textlayout::TextDirection::RTL
     } else {
@@ -387,6 +413,9 @@ fn build_paragraph(
     default_text.set_font_size(paint.font_size);
     default_text.set_font_families(&[paint.font_family.as_str()]);
     default_text.set_font_style(font_style);
+    if paint.tabular_nums {
+        default_text.add_font_feature("tnum", 1);
+    }
     paragraph.set_text_style(&default_text);
     let mut collection = node.font_collection.lock().unwrap().clone();
     let normal_height = collection
@@ -406,6 +435,15 @@ fn build_paragraph(
     strut.set_leading(0.0);
     paragraph.set_strut_style(strut);
     let mut builder = ParagraphBuilder::new(&paragraph, collection.clone());
+    if text_indent != 0.0 {
+        builder.add_placeholder(&skia_safe::textlayout::PlaceholderStyle::new(
+            text_indent,
+            0.0,
+            skia_safe::textlayout::PlaceholderAlignment::Baseline,
+            skia_safe::textlayout::TextBaseline::Alphabetic,
+            0.0,
+        ));
+    }
     let soft = style::soft_wrap(paint) && !paint.no_wrap;
     let mut line_width = 0.0;
     let mut line_empty = true;
@@ -430,6 +468,8 @@ fn build_paragraph(
             spacing,
             &mut line_width,
             &mut line_empty,
+            paint.break_all,
+            paint.pre_line,
             |sample| {
                 if sample.is_empty() {
                     return 0.0;
@@ -444,15 +484,60 @@ fn build_paragraph(
         );
         let mut text = TextStyle::new();
         text.set_font_size(size);
-        text.set_color(span.color.unwrap_or(paint.color).to_skia());
+        let css_color = span.color.unwrap_or(paint.color);
+        let color = if force_white {
+            director_core::types::Color::WHITE
+        } else {
+            css_color
+        };
+        text.set_color(color.to_skia());
         text.set_font_families(&[family]);
         text.set_font_style(style);
         text.set_letter_spacing(spacing);
+        if paint.tabular_nums {
+            text.add_font_feature("tnum", 1);
+        }
+        if paint.text_stroke_width > 0.0 {
+            // One paragraph paint. Transparent fill is stroke-only.
+            // An opaque fill uses stroke-and-fill in that color so the fill still inks.
+            let mut ink = skia_safe::Paint::default();
+            ink.set_anti_alias(true);
+            ink.set_stroke_width(paint.text_stroke_width);
+            ink.set_stroke_join(skia_safe::PaintJoin::Round);
+            if css_color.a == 0.0 {
+                ink.set_style(skia_safe::PaintStyle::Stroke);
+                let stroke_color = if force_white {
+                    color
+                } else {
+                    paint.text_stroke_color.unwrap_or(css_color)
+                };
+                ink.set_color(stroke_color.to_skia());
+            } else {
+                ink.set_style(skia_safe::PaintStyle::StrokeAndFill);
+                ink.set_color(color.to_skia());
+            }
+            text.set_foreground_paint(&ink);
+        }
         builder.push_style(&text);
         builder.add_text(&piece);
         builder.pop();
     }
     builder.build()
+}
+
+pub fn glyph_mask(
+    node: &TextNode,
+    paint: &PaintStyle,
+    width: f32,
+) -> skia_safe::textlayout::Paragraph {
+    let mut paragraph = build_paragraph_colored(node, paint, width, true);
+    let layout_width = if width.is_finite() && width > 0.0 {
+        width
+    } else {
+        f32::INFINITY
+    };
+    paragraph.layout(layout_width);
+    paragraph
 }
 
 pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
@@ -463,12 +548,18 @@ pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
 
 /// Skia breaks a cluster wider than the layout width. Wrap to `width` first.
 /// Left alignment then lays out at least as wide as the longest line, so a token
-/// that CSS would overflow stays on one line.
+/// that CSS would overflow stays on one line. An ellipsized nowrap line, and a
+/// line-clamp, keep `width`, so the ellipsis stays inside the box.
 pub fn layout_paragraph(node: &TextNode, paint: &PaintStyle, width: f32) -> f32 {
     let mut paragraph = build_paragraph(node, paint, width);
     let finite = width.is_finite() && width > 0.0;
+    let ellipsis = paint.no_wrap && matches!(paint.text_overflow, style::TextOverflow::Ellipsis);
+    let clamped = paint.line_clamp.is_some();
     let used = if !finite {
         paragraph.layout(f32::INFINITY);
+        width
+    } else if ellipsis || clamped {
+        paragraph.layout(width);
         width
     } else if paint.align == skia_safe::textlayout::TextAlign::Left {
         paragraph.layout(f32::INFINITY);
@@ -976,6 +1067,8 @@ pub fn fit(values: &Values) -> ObjectFit {
     match values.get("object-fit").map(String::as_str) {
         Some("contain") => ObjectFit::Contain,
         Some("cover") => ObjectFit::Cover,
+        Some("none") => ObjectFit::None,
+        Some("scale-down") => ObjectFit::ScaleDown,
         _ => ObjectFit::Fill,
     }
 }

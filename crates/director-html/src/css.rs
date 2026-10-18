@@ -1,8 +1,12 @@
 use crate::{CompileError, Diagnostic};
 use lightningcss::{
     declaration::DeclarationBlock,
+    media_query::{
+        MediaCondition, MediaFeature, MediaFeatureComparison, MediaFeatureId, MediaFeatureName,
+        MediaFeatureValue, MediaList, MediaQuery, MediaType, Operator, Qualifier,
+    },
     properties::Property,
-    rules::{keyframes::KeyframeSelector, style::StyleRule, CssRule},
+    rules::{keyframes::KeyframeSelector, style::StyleRule, supports::SupportsCondition, CssRule},
     selector::SelectorList,
     stylesheet::{ParserOptions, PrinterOptions, StyleSheet},
     traits::ToCss,
@@ -37,6 +41,8 @@ pub struct Css {
     rules: Vec<Rule>,
     pub keyframes: BTreeMap<String, Vec<Keyframe>>,
     pub fonts: Vec<(String, String)>,
+    width: f32,
+    height: f32,
 }
 
 fn expanded(property: &Property<'_>, important: bool) -> Result<Vec<Declaration>, CompileError> {
@@ -194,7 +200,9 @@ impl Css {
                 .and_then(|s| parse_inline(s).ok())
                 .is_some_and(|ds| ds.iter().any(|d| d.name == name))
     }
-    pub fn append(&mut self, source: &str) -> Result<(), CompileError> {
+    pub fn append(&mut self, source: &str, width: i32, height: i32) -> Result<(), CompileError> {
+        self.width = width as f32;
+        self.height = height as f32;
         let sheet = StyleSheet::parse(source, ParserOptions::default())
             .map_err(|e| CompileError::Input(format!("CSS stylesheet: {e}")))?;
         for rule in sheet.rules.0 {
@@ -309,12 +317,23 @@ impl Css {
                 }
                 Ok(())
             }
-            CssRule::Media(_) => Err(CompileError::Input(
-                "CSS nesting of @media requires compile-time extraction".into(),
-            )),
-            CssRule::Supports(_) => Err(CompileError::Input(
-                "CSS nesting of @supports requires compile-time extraction".into(),
-            )),
+            // A true condition is inlined. A false one is dropped. Unknown stays an error.
+            CssRule::Media(rule) => {
+                if media_matches(&rule.query, self.width, self.height)? {
+                    for nested in &rule.rules.0 {
+                        self.append_nested(parents, nested)?;
+                    }
+                }
+                Ok(())
+            }
+            CssRule::Supports(rule) => {
+                if supports_matches(&rule.condition)? {
+                    for nested in &rule.rules.0 {
+                        self.append_nested(parents, nested)?;
+                    }
+                }
+                Ok(())
+            }
             _ => Err(CompileError::Input(
                 "CSS nesting requires compile-time extraction".into(),
             )),
@@ -432,6 +451,262 @@ impl Css {
         }
         Ok(values)
     }
+}
+
+fn media_matches(list: &MediaList<'_>, width: f32, height: f32) -> Result<bool, CompileError> {
+    if list.media_queries.is_empty() {
+        return Ok(true);
+    }
+    let mut matched = false;
+    for query in &list.media_queries {
+        if media_query_matches(query, width, height)? {
+            matched = true;
+        }
+    }
+    Ok(matched)
+}
+
+fn media_query_matches(
+    query: &MediaQuery<'_>,
+    width: f32,
+    height: f32,
+) -> Result<bool, CompileError> {
+    let type_matches = match &query.media_type {
+        MediaType::All | MediaType::Screen => true,
+        MediaType::Print => false,
+        MediaType::Custom(name) => {
+            return Err(CompileError::Input(format!(
+                "unsupported CSS media type: {name}"
+            )));
+        }
+    };
+    let condition_matches = match &query.condition {
+        Some(condition) => media_condition_matches(condition, width, height)?,
+        None => true,
+    };
+    let matches = type_matches && condition_matches;
+    Ok(match query.qualifier {
+        Some(Qualifier::Not) => !matches,
+        Some(Qualifier::Only) | None => matches,
+    })
+}
+
+fn media_condition_matches(
+    condition: &MediaCondition<'_>,
+    width: f32,
+    height: f32,
+) -> Result<bool, CompileError> {
+    match condition {
+        MediaCondition::Feature(feature) => media_feature_matches(feature, width, height),
+        MediaCondition::Not(inner) => Ok(!media_condition_matches(inner, width, height)?),
+        MediaCondition::Operation { operator, conditions } => {
+            let mut matched = !matches!(operator, Operator::Or);
+            for condition in conditions {
+                let part = media_condition_matches(condition, width, height)?;
+                matched = match operator {
+                    Operator::And => matched && part,
+                    Operator::Or => matched || part,
+                };
+            }
+            Ok(matched)
+        }
+        MediaCondition::Unknown(_) => Err(CompileError::Input(
+            "unsupported CSS media condition".into(),
+        )),
+    }
+}
+
+fn media_feature_matches(
+    feature: &MediaFeature<'_>,
+    width: f32,
+    height: f32,
+) -> Result<bool, CompileError> {
+    let axis = |name: &MediaFeatureName<'_, MediaFeatureId>| match name {
+        MediaFeatureName::Standard(MediaFeatureId::Width) => Ok(width),
+        MediaFeatureName::Standard(MediaFeatureId::Height) => Ok(height),
+        _ => Err(CompileError::Input(format!(
+            "unsupported CSS media feature {}",
+            css_text(feature)
+        ))),
+    };
+    match feature {
+        MediaFeature::Boolean { name } => Ok(axis(name)? > 0.0),
+        MediaFeature::Plain { name, value } => match name {
+            MediaFeatureName::Standard(MediaFeatureId::Orientation) => {
+                orientation_matches(value, width, height)
+            }
+            MediaFeatureName::Standard(MediaFeatureId::AspectRatio) => Ok(compare_px(
+                MediaFeatureComparison::Equal,
+                canvas_aspect(width, height)?,
+                media_ratio(value)?,
+            )),
+            _ => Ok(compare_px(
+                MediaFeatureComparison::Equal,
+                axis(name)?,
+                media_px(value)?,
+            )),
+        },
+        MediaFeature::Range {
+            name,
+            operator,
+            value,
+        } => match name {
+            MediaFeatureName::Standard(MediaFeatureId::AspectRatio) => Ok(compare_px(
+                *operator,
+                canvas_aspect(width, height)?,
+                media_ratio(value)?,
+            )),
+            _ => Ok(compare_px(*operator, axis(name)?, media_px(value)?)),
+        },
+        MediaFeature::Interval {
+            name,
+            start,
+            start_operator,
+            end,
+            end_operator,
+        } => {
+            let (actual, start, end) = match name {
+                MediaFeatureName::Standard(MediaFeatureId::AspectRatio) => (
+                    canvas_aspect(width, height)?,
+                    media_ratio(start)?,
+                    media_ratio(end)?,
+                ),
+                _ => (axis(name)?, media_px(start)?, media_px(end)?),
+            };
+            Ok(compare_px(*start_operator, start, actual)
+                && compare_px(*end_operator, actual, end))
+        }
+    }
+}
+
+fn orientation_matches(
+    value: &MediaFeatureValue<'_>,
+    width: f32,
+    height: f32,
+) -> Result<bool, CompileError> {
+    match value {
+        MediaFeatureValue::Ident(ident) if ident.eq_ignore_ascii_case("landscape") => {
+            Ok(width >= height)
+        }
+        MediaFeatureValue::Ident(ident) if ident.eq_ignore_ascii_case("portrait") => {
+            Ok(height > width)
+        }
+        _ => Err(CompileError::Input(
+            "unsupported CSS media feature value".into(),
+        )),
+    }
+}
+
+fn canvas_aspect(width: f32, height: f32) -> Result<f32, CompileError> {
+    let ratio = width / height;
+    if ratio.is_finite() {
+        Ok(ratio)
+    } else {
+        Err(CompileError::Input(
+            "unsupported CSS media feature value".into(),
+        ))
+    }
+}
+
+fn media_ratio(value: &MediaFeatureValue<'_>) -> Result<f32, CompileError> {
+    match value {
+        MediaFeatureValue::Ratio(ratio) => {
+            let ratio = ratio.0 / ratio.1;
+            if ratio.is_finite() {
+                Ok(ratio)
+            } else {
+                Err(CompileError::Input(
+                    "unsupported CSS media feature value".into(),
+                ))
+            }
+        }
+        _ => Err(CompileError::Input(
+            "unsupported CSS media feature value".into(),
+        )),
+    }
+}
+
+fn media_px(value: &MediaFeatureValue<'_>) -> Result<f32, CompileError> {
+    match value {
+        MediaFeatureValue::Length(length) => length
+            .to_px()
+            .ok_or_else(|| CompileError::Input("unsupported CSS media length".into())),
+        _ => Err(CompileError::Input(
+            "unsupported CSS media feature value".into(),
+        )),
+    }
+}
+
+fn compare_px(operator: MediaFeatureComparison, left: f32, right: f32) -> bool {
+    match operator {
+        MediaFeatureComparison::Equal => (left - right).abs() <= 0.01,
+        MediaFeatureComparison::GreaterThan => left > right,
+        MediaFeatureComparison::GreaterThanEqual => left >= right,
+        MediaFeatureComparison::LessThan => left < right,
+        MediaFeatureComparison::LessThanEqual => left <= right,
+    }
+}
+
+fn supports_matches(condition: &SupportsCondition<'_>) -> Result<bool, CompileError> {
+    match condition {
+        SupportsCondition::Declaration { property_id, value } => {
+            let name = property_id.name();
+            let value = value.trim();
+            if supports_declaration(name, value) {
+                Ok(true)
+            } else {
+                Err(CompileError::Input(format!(
+                    "unsupported CSS supports condition ({name}: {value})"
+                )))
+            }
+        }
+        SupportsCondition::Not(inner) => Ok(!supports_matches(inner)?),
+        SupportsCondition::And(parts) => {
+            let mut matched = true;
+            for part in parts {
+                matched &= supports_matches(part)?;
+            }
+            Ok(matched)
+        }
+        SupportsCondition::Or(parts) => {
+            let mut matched = false;
+            for part in parts {
+                matched |= supports_matches(part)?;
+            }
+            Ok(matched)
+        }
+        SupportsCondition::Selector(_) | SupportsCondition::Unknown(_) => Err(CompileError::Input(
+            "unsupported CSS supports condition".into(),
+        )),
+    }
+}
+
+fn supports_declaration(name: &str, value: &str) -> bool {
+    let keyword = |items: &[&str]| items.iter().any(|item| value.eq_ignore_ascii_case(item));
+    if name.eq_ignore_ascii_case("display") {
+        keyword(&["block", "flex", "grid", "inline", "inline-block", "none"])
+    } else if name.eq_ignore_ascii_case("background-clip") {
+        keyword(&["text", "border-box", "padding-box", "content-box"])
+    } else if name.eq_ignore_ascii_case("text-overflow") {
+        keyword(&["ellipsis", "clip"])
+    } else if name.eq_ignore_ascii_case("object-fit") {
+        keyword(&["fill", "cover", "contain", "none", "scale-down"])
+    } else if name.eq_ignore_ascii_case("position") {
+        keyword(&["static", "relative", "absolute"])
+    } else if name.eq_ignore_ascii_case("overflow-x")
+        || name.eq_ignore_ascii_case("overflow-y")
+        || name.eq_ignore_ascii_case("overflow")
+    {
+        keyword(&["visible", "hidden", "clip"])
+    } else {
+        false
+    }
+}
+
+fn css_text(value: &impl ToCss) -> String {
+    value
+        .to_css_string(PrinterOptions::default())
+        .unwrap_or_else(|_| "condition".into())
 }
 
 fn insert_winner(

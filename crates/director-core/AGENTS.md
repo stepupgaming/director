@@ -245,10 +245,14 @@ key. Image-only caches (composition surfaces, captured HTML frames)
 still miss on every full pass. Acceptance: `tests/pipeline_equivalence.rs`
 and `tests/static_reuse.rs`.
 `Element::shares_3d` defaults false and `view_depth` defaults to 0.
-When `shares_3d` is true, `render_node_subtree` sorts direct children by
-ascending `view_depth`, then z-index, then source order. HtmlElement
-reports the Z of the element center after its own local matrix. Parent
-perspective is not part of that Z. Composition clip order is unchanged.
+When `shares_3d` is true, `render_node_subtree` collects one depth list.
+A direct child that also shares 3d contributes its descendants. Depth
+sums `view_depth` along that chain. A non-sharing child stays one plane.
+The list sorts by ascending depth, then z-index, then source order.
+HtmlElement reports the Z of the element center after its own local
+matrix. Parent perspective is not part of that Z. Crossing `rotateX`
+planes and a software z-buffer stay out. Composition clip order is
+unchanged.
 
 Layout synchronization: compare child order including masks before calling Taffy
 `set_children`; identical lists must not invalidate the layout cache. Compare

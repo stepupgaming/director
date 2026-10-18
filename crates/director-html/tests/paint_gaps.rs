@@ -322,13 +322,85 @@ fn overflow_wrap_breaks_a_long_token() {
     .to_string();
     assert!(err.contains("unsupported overflow-wrap"), "{err}");
     let err = compile(
-        "<style>div{word-break:break-all}</style><div>ab</div>",
+        "<style>div{word-break:keep-all}</style><div>ab</div>",
         options,
     )
     .err()
     .unwrap()
     .to_string();
     assert!(err.contains("unsupported word-break"), "{err}");
+}
+
+#[test]
+fn text_overflow_ellipsis_changes_the_line_end() {
+    let source = |extra: &str, text: &str| {
+        format!(
+            "<style>body{{margin:0}}div{{width:32px;height:64px;color:white;font-size:16px;line-height:1;white-space:nowrap;{extra}}}</style><div>{text}</div>"
+        )
+    };
+    let word = "MMMMMMMMMMMMMMMMMMMMMMMM";
+    let dots = frame(&source("overflow:hidden;text-overflow:ellipsis", word));
+    let clip = frame(&source("overflow:hidden;text-overflow:clip", word));
+    assert_ne!(dots, clip, "ellipsis matched clip");
+    assert!(ink_bottom(&dots) < 20 && ink_bottom(&clip) < 20, "wrapped");
+    let right_differs = (12..32).any(|x| (0..20).any(|y| pixel(&dots, x, y) != pixel(&clip, x, y)));
+    assert!(right_differs, "right edge matched");
+    let spilled = frame(&source("text-overflow:ellipsis", word));
+    let spill = (40..64).any(|x| (0..24).any(|y| pixel(&spilled, x, y)[0] > 40));
+    assert!(spill, "visible overflow was ellipsized");
+    assert_eq!(
+        frame(&source("overflow:hidden;text-overflow:ellipsis", "M")),
+        frame(&source("overflow:hidden;text-overflow:clip", "M"))
+    );
+    let err = compile(
+        "<style>div{text-overflow:fade}</style><div>ab</div>",
+        CompileOptions {
+            width: 64,
+            height: 64,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(err.contains("unsupported text-overflow"), "{err}");
+}
+
+#[test]
+fn background_clip_text_keeps_the_gradient_inside_the_glyph() {
+    let source = |clip: &str| {
+        format!(
+            "<style>body{{margin:0}}div{{width:64px;height:64px;color:transparent;font-size:48px;line-height:1;background-image:linear-gradient(red,red);background-clip:{clip}}}</style><div>M</div>"
+        )
+    };
+    let text = frame(&source("text"));
+    let boxed = frame(&source("border-box"));
+    let corner = pixel(&text, 2, 2);
+    assert!(
+        corner[0] < 20 && corner[1] < 20 && corner[2] < 20,
+        "corner {corner:?}"
+    );
+    let box_corner = pixel(&boxed, 2, 2);
+    assert!(box_corner[0] > 200, "box corner {box_corner:?}");
+    assert!(
+        text.chunks(4)
+            .any(|sample| sample[0] > 200 && sample[1] < 40 && sample[2] < 40),
+        "no red glyph"
+    );
+    let err = compile(
+        "<style>div{background-clip:margin-box}</style><div>ab</div>",
+        CompileOptions {
+            width: 64,
+            height: 64,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(err.contains("unsupported background-clip"), "{err}");
 }
 
 fn text_box(text: &str, transform: &str) -> String {

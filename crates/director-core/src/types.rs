@@ -33,6 +33,11 @@ pub enum ObjectFit {
     /// The content is sized to fill the element's content box. The entire object will completely fill the box.
     /// If the object's aspect ratio does not match the aspect ratio of its box, then the object will be stretched to fit.
     Fill,
+    /// The content keeps its intrinsic pixel size. It is not scaled.
+    /// `object-position` places that size in the content box. Overflow is clipped.
+    None,
+    /// The smaller concrete size of [`ObjectFit::None`] and [`ObjectFit::Contain`].
+    ScaleDown,
 }
 
 impl Default for ObjectFit {
@@ -450,10 +455,15 @@ impl CanTween for Color {
     }
 }
 
+fn filter_opacity_one() -> f32 {
+    1.0
+}
+
 /// CSS-like image filter configuration applied to a node during rendering.
 ///
 /// Filters are applied via `canvas.save_layer()` so they affect the entire
 /// subtree (element + children), matching CSS `filter` semantics.
+/// One config is one function. Callers compose configs left to right.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FilterConfig {
     /// Gaussian blur sigma (0.0 = no blur).
@@ -466,6 +476,15 @@ pub struct FilterConfig {
     pub saturation: f32,
     /// Hue rotation in degrees (0.0 = unchanged).
     pub hue_rotate: f32,
+    /// Invert amount (0.0 = unchanged, 1.0 = fully inverted). CSS clamps to this range.
+    #[serde(default)]
+    pub invert: f32,
+    /// Sepia amount (0.0 = unchanged, 1.0 = fully sepia). CSS clamps to this range.
+    #[serde(default)]
+    pub sepia: f32,
+    /// Filter opacity (1.0 = unchanged, 0.0 = transparent). Not the opacity property.
+    #[serde(default = "filter_opacity_one")]
+    pub opacity: f32,
 }
 
 impl Default for FilterConfig {
@@ -476,6 +495,9 @@ impl Default for FilterConfig {
             contrast: 1.0,
             saturation: 1.0,
             hue_rotate: 0.0,
+            invert: 0.0,
+            sepia: 0.0,
+            opacity: 1.0,
         }
     }
 }
@@ -488,9 +510,16 @@ impl FilterConfig {
             || self.contrast != 1.0
             || self.saturation != 1.0
             || self.hue_rotate != 0.0
+            || self.invert != 0.0
+            || self.sepia != 0.0
+            || self.opacity != 1.0
     }
 
     /// Builds a Skia `ImageFilter` chain from this configuration.
+    ///
+    /// Color matrices multiply in this order: brightness, contrast, saturation,
+    /// hue-rotate, sepia, invert, opacity. Blur is last. A CSS filter list is
+    /// not one config; each function is its own config, composed left to right.
     pub fn to_image_filter(&self) -> Option<ImageFilter> {
         if !self.has_effects() {
             return None;
@@ -510,6 +539,15 @@ impl FilterConfig {
         }
         if self.hue_rotate != 0.0 {
             matrix = multiply_color_matrices(&hue_rotate_matrix(self.hue_rotate), &matrix);
+        }
+        if self.sepia != 0.0 {
+            matrix = multiply_color_matrices(&sepia_matrix(self.sepia), &matrix);
+        }
+        if self.invert != 0.0 {
+            matrix = multiply_color_matrices(&invert_matrix(self.invert), &matrix);
+        }
+        if self.opacity != 1.0 {
+            matrix = multiply_color_matrices(&opacity_matrix(self.opacity), &matrix);
         }
 
         let mut filter: Option<ImageFilter> = None;
@@ -607,6 +645,55 @@ fn hue_rotate_matrix(degrees: f32) -> [f32; 20] {
         0.0,
         1.0,
         0.0,
+    ]
+}
+
+/// CSS `invert(amount)` on unpremultiplied RGB.
+/// `C' = amount + (1 - 2 * amount) * C`.
+fn invert_matrix(amount: f32) -> [f32; 20] {
+    let scale = 1.0 - 2.0 * amount;
+    [
+        scale, 0.0, 0.0, 0.0, amount, // R
+        0.0, scale, 0.0, 0.0, amount, // G
+        0.0, 0.0, scale, 0.0, amount, // B
+        0.0, 0.0, 0.0, 1.0, 0.0, // A
+    ]
+}
+
+/// CSS `sepia(amount)` color matrix.
+fn sepia_matrix(amount: f32) -> [f32; 20] {
+    let a = amount;
+    [
+        1.0 - 0.607 * a,
+        0.769 * a,
+        0.189 * a,
+        0.0,
+        0.0,
+        0.349 * a,
+        1.0 - 0.314 * a,
+        0.168 * a,
+        0.0,
+        0.0,
+        0.272 * a,
+        0.534 * a,
+        1.0 - 0.869 * a,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+    ]
+}
+
+/// CSS `opacity(amount)` as a filter: `A' = amount * A` in unpremultiplied space.
+fn opacity_matrix(amount: f32) -> [f32; 20] {
+    [
+        1.0, 0.0, 0.0, 0.0, 0.0, // R
+        0.0, 1.0, 0.0, 0.0, 0.0, // G
+        0.0, 0.0, 1.0, 0.0, 0.0, // B
+        0.0, 0.0, 0.0, amount, 0.0, // A
     ]
 }
 

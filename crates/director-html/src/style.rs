@@ -27,6 +27,11 @@ pub enum BorderLine {
     Solid,
     Dashed,
     Dotted,
+    Double,
+    Groove,
+    Ridge,
+    Inset,
+    Outset,
 }
 
 pub enum CanvasTransform {
@@ -52,6 +57,12 @@ pub enum OverflowWrap {
     Normal,
     BreakWord,
     Anywhere,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextOverflow {
+    Clip,
+    Ellipsis,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,13 +101,24 @@ pub struct PaintStyle {
     pub font_weight: u16,
     pub font_style: String,
     pub letter_spacing: f32,
+    /// First-line `text-indent`. A percent is a fraction of the text box width.
+    pub text_indent: LengthPercentage,
+    /// `font-variant-numeric: tabular-nums` enables OpenType `tnum`.
+    pub tabular_nums: bool,
     pub line_height: Option<f32>,
     pub align: skia_safe::textlayout::TextAlign,
     pub preserve_space: bool,
     pub no_wrap: bool,
+    /// `white-space: pre-line`. Spaces and tabs collapse; hard newlines stay.
+    pub pre_line: bool,
     pub overflow_wrap: OverflowWrap,
-    /// `word-break: break-word`. Wrapping matches `overflow-wrap`, and other values stay errors.
+    /// `word-break: break-word`. Wrapping matches `overflow-wrap: break-word`.
     pub break_word: bool,
+    /// `word-break: break-all`. An overflowing token breaks between characters.
+    pub break_all: bool,
+    pub text_overflow: TextOverflow,
+    /// `line-clamp` and `-webkit-line-clamp`. `None` is `none`.
+    pub line_clamp: Option<u32>,
     pub text_transform: TextTransform,
     pub rtl: bool,
     pub z_index: i32,
@@ -113,6 +135,8 @@ pub struct PaintStyle {
     pub decoration_thickness: crate::decoration_value::DecorationThickness,
     /// `None` means `currentColor`.
     pub decoration_color: Option<Color>,
+    /// Extra underline shift in px. `auto` and a missing offset are `0`.
+    pub text_underline_offset: f32,
     pub object_position: ObjectPosition,
     pub corners: [(LengthPercentage, LengthPercentage); 4],
     pub border_colors: [Color; 4],
@@ -126,6 +150,10 @@ pub struct PaintStyle {
     pub shadows: Vec<Shadow>,
     /// One CSS `text-shadow`. `None` is `none`. A list or a non-zero spread stays an error.
     pub text_shadow: Option<director_core::element::TextShadow>,
+    /// `-webkit-text-stroke` width in px. `0` or `none` paints no stroke.
+    pub text_stroke_width: f32,
+    /// Stroke color. `None` is currentColor.
+    pub text_stroke_color: Option<Color>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -246,7 +274,64 @@ fn split_tokens(text: &str) -> Vec<String> {
     tokens
 }
 
+/// Collapse spaces and tabs. Hard newlines stay, including blank lines.
+fn collapse_pre_line(text: &str) -> String {
+    let mut out = String::new();
+    let mut pending_space = false;
+    let mut at_break = true;
+    for c in text.chars() {
+        if c == '\n' {
+            pending_space = false;
+            at_break = true;
+            out.push('\n');
+        } else if c.is_whitespace() {
+            if !at_break {
+                pending_space = true;
+            }
+        } else {
+            if pending_space {
+                out.push(' ');
+            }
+            pending_space = false;
+            at_break = false;
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Fill the current line, then later lines, breaking between characters.
+fn place_break_all(
+    out: &mut String,
+    token: &str,
+    max_width: f32,
+    letter_spacing: f32,
+    line_width: &mut f32,
+    line_empty: &mut bool,
+    width_of: &mut impl FnMut(&str) -> f32,
+) {
+    for ch in token.chars() {
+        let piece = ch.to_string();
+        let alone = width_of(&piece);
+        let mut char_width = alone;
+        if !*line_empty {
+            char_width += letter_spacing;
+        }
+        if !*line_empty && *line_width + char_width > max_width {
+            out.push('\n');
+            *line_width = 0.0;
+            *line_empty = true;
+            char_width = alone;
+        }
+        out.push(ch);
+        *line_width += char_width;
+        *line_empty = false;
+    }
+}
+
 /// Greedy line break. `soft` splits a token wider than `max_width`. A fitting token stays whole.
+/// `break_all` also splits when the token overflows the space left on the line.
+/// `pre_line` collapses spaces and tabs and keeps newlines.
 pub fn append_wrapped(
     out: &mut String,
     text: &str,
@@ -255,8 +340,17 @@ pub fn append_wrapped(
     letter_spacing: f32,
     line_width: &mut f32,
     line_empty: &mut bool,
+    break_all: bool,
+    pre_line: bool,
     mut width_of: impl FnMut(&str) -> f32,
 ) {
+    let collapsed;
+    let text = if pre_line {
+        collapsed = collapse_pre_line(text);
+        collapsed.as_str()
+    } else {
+        text
+    };
     if text.is_empty() {
         return;
     }
@@ -280,12 +374,24 @@ pub fn append_wrapped(
             *line_empty = false;
             continue;
         }
+        let whitespace = token.chars().all(|c| c.is_whitespace());
+        if break_all && !whitespace && (!*line_empty || natural > max_width) {
+            place_break_all(
+                out,
+                &token,
+                max_width,
+                letter_spacing,
+                line_width,
+                line_empty,
+                &mut width_of,
+            );
+            continue;
+        }
         if !*line_empty {
             out.push('\n');
             *line_width = 0.0;
             *line_empty = true;
         }
-        let whitespace = token.chars().all(|c| c.is_whitespace());
         if whitespace || !soft || natural <= max_width {
             out.push_str(&token);
             *line_width = natural;
@@ -438,17 +544,91 @@ fn grid_track(s: &str, m: Metrics) -> Result<TrackSizingFunction, String> {
 fn grid(s: &str, m: Metrics) -> Result<Vec<GridTemplateComponent<String>>, String> {
     crate::grid_template::grid_template(s, m)
 }
-fn placement(s: &str) -> Result<GridPlacement, String> {
-    if s == "auto" {
-        Ok(auto())
-    } else if let Some(n) = s.strip_prefix("span ") {
-        Ok(span(n.parse::<u16>().map_err(|_| "invalid grid span")?))
-    } else {
-        Ok(line(
-            s.parse::<i16>()
-                .map_err(|_| "named grid lines require extraction")?,
-        ))
+fn placement(s: &str, columns: bool) -> Result<GridPlacement, String> {
+    let parts = split(s.trim(), false);
+    if parts.len() == 1 && parts[0] == "auto" {
+        return Ok(auto());
     }
+    if parts.first().is_some_and(|part| part == "span") {
+        return span_placement(&parts[1..], columns);
+    }
+    line_placement(&parts, columns)
+}
+
+fn line_ident(token: &str) -> bool {
+    token != "span" && token != "auto" && crate::grid_template::is_custom_ident(token)
+}
+
+fn line_placement(parts: &[String], columns: bool) -> Result<GridPlacement, String> {
+    match parts {
+        [token] => {
+            if let Ok(index) = token.parse::<i16>() {
+                return Ok(line(index));
+            }
+            if line_ident(token) {
+                return named_line(columns, token, 1);
+            }
+        }
+        [index, name] if line_ident(name) => {
+            if let Ok(nth) = index.parse::<i16>() {
+                return named_line(columns, name, nth);
+            }
+        }
+        [name, index] if line_ident(name) => {
+            if let Ok(nth) = index.parse::<i16>() {
+                return named_line(columns, name, nth);
+            }
+        }
+        _ => {}
+    }
+    Err("named grid lines require extraction".into())
+}
+
+fn span_placement(parts: &[String], columns: bool) -> Result<GridPlacement, String> {
+    match parts {
+        [token] => {
+            if let Ok(count) = token.parse::<u16>() {
+                if count == 0 {
+                    return Err("named grid lines require extraction".into());
+                }
+                return Ok(span(count));
+            }
+            if line_ident(token) {
+                return named_span(columns, token, 1);
+            }
+        }
+        [index, name] if line_ident(name) => {
+            if let Ok(count) = index.parse::<u16>() {
+                return named_span(columns, name, count);
+            }
+        }
+        [name, index] if line_ident(name) => {
+            if let Ok(count) = index.parse::<u16>() {
+                return named_span(columns, name, count);
+            }
+        }
+        _ => {}
+    }
+    Err("named grid lines require extraction".into())
+}
+
+fn named_line(columns: bool, name: &str, nth: i16) -> Result<GridPlacement, String> {
+    match crate::grid_template::resolve_named(columns, name, nth)? {
+        crate::grid_template::NamedPlacement::Line(index) => Ok(line(index)),
+        crate::grid_template::NamedPlacement::Named(name, nth) => {
+            Ok(GridPlacement::NamedLine(name, nth))
+        }
+    }
+}
+
+fn named_span(columns: bool, name: &str, count: u16) -> Result<GridPlacement, String> {
+    if count == 0 {
+        return Err("named grid lines require extraction".into());
+    }
+    // The span is relative to the other edge. Taffy applies it after the name exists.
+    let nth = i16::try_from(count).map_err(|_| "named grid lines require extraction".to_string())?;
+    crate::grid_template::resolve_named(columns, name, nth)?;
+    Ok(GridPlacement::NamedSpan(name.to_string(), count))
 }
 
 pub fn translate(
@@ -456,6 +636,7 @@ pub fn translate(
     mut m: Metrics,
     assets: &crate::assets::AssetStore,
 ) -> Result<(Style, PaintStyle), Vec<String>> {
+    crate::grid_template::begin_element(assets as *const crate::assets::AssetStore as usize);
     let mut errors = Vec::new();
     let mut style = Style {
         display: Display::Block,
@@ -475,12 +656,18 @@ pub fn translate(
         font_weight: 400,
         font_style: "normal".into(),
         letter_spacing: 0.0,
+        text_indent: zero(),
+        tabular_nums: false,
         line_height: None,
         align: skia_safe::textlayout::TextAlign::Left,
         preserve_space: false,
         no_wrap: false,
+        pre_line: false,
         overflow_wrap: OverflowWrap::Normal,
         break_word: false,
+        break_all: false,
+        text_overflow: TextOverflow::Clip,
+        line_clamp: None,
         text_transform: TextTransform::None,
         rtl: false,
         z_index: 0,
@@ -505,6 +692,7 @@ pub fn translate(
         decoration_style: crate::decoration_marks::DecorationStyle::Solid,
         decoration_thickness: crate::decoration_value::DecorationThickness::Auto,
         decoration_color: None,
+        text_underline_offset: 0.0,
         object_position: ObjectPosition::default(),
         corners: [(zero(), zero()); 4],
         border_colors: [Color::BLACK; 4],
@@ -517,6 +705,8 @@ pub fn translate(
         blend_mode: skia_safe::BlendMode::SrcOver,
         shadows: Vec::new(),
         text_shadow: None,
+        text_stroke_width: 0.0,
+        text_stroke_color: None,
     };
     if let Some(s) = values.get("font-size") {
         match px(s, m) {
@@ -630,8 +820,16 @@ pub fn translate(
                 }
                 "justify-content" => style.justify_content = Some(content(s)?),
                 "align-content" => style.align_content = Some(content(s)?),
-                "grid-template-columns" => style.grid_template_columns = grid(s, m)?,
-                "grid-template-rows" => style.grid_template_rows = grid(s, m)?,
+                "grid-template-columns" => {
+                    let (tracks, names) = crate::grid_template::install_tracks(true, grid(s, m)?);
+                    style.grid_template_columns = tracks;
+                    style.grid_template_column_names = names;
+                }
+                "grid-template-rows" => {
+                    let (tracks, names) = crate::grid_template::install_tracks(false, grid(s, m)?);
+                    style.grid_template_rows = tracks;
+                    style.grid_template_row_names = names;
+                }
                 "grid-auto-columns" => {
                     style.grid_auto_columns = split(s, false)
                         .iter()
@@ -653,10 +851,10 @@ pub fn translate(
                         _ => return Err("invalid grid-auto-flow".into()),
                     }
                 }
-                "grid-column-start" => style.grid_column.start = placement(s)?,
-                "grid-column-end" => style.grid_column.end = placement(s)?,
-                "grid-row-start" => style.grid_row.start = placement(s)?,
-                "grid-row-end" => style.grid_row.end = placement(s)?,
+                "grid-column-start" => style.grid_column.start = placement(s, true)?,
+                "grid-column-end" => style.grid_column.end = placement(s, true)?,
+                "grid-row-start" => style.grid_row.start = placement(s, false)?,
+                "grid-row-end" => style.grid_row.end = placement(s, false)?,
                 "aspect-ratio" => {
                     if s != "auto" {
                         let v = split(s, false);
@@ -680,6 +878,10 @@ pub fn translate(
                 }
                 "background-position-y" => {
                     paint.background_position.1 = vertical_position(s, m)?;
+                }
+                "background-position" => {
+                    let (x, y) = background_position(s, m)?;
+                    paint.background_position = (x, y);
                 }
                 "background-size" => paint.background_size = background_size(s, m)?,
                 "background-repeat" => paint.background_repeat = background_repeat(s)?,
@@ -747,9 +949,14 @@ pub fn translate(
                 }
                 n if n.starts_with("border-") && n.ends_with("-style") => {
                     let line = match s {
-                        "none" | "solid" => BorderLine::Solid,
+                        "none" | "hidden" | "solid" => BorderLine::Solid,
                         "dashed" => BorderLine::Dashed,
                         "dotted" => BorderLine::Dotted,
+                        "double" => BorderLine::Double,
+                        "groove" => BorderLine::Groove,
+                        "ridge" => BorderLine::Ridge,
+                        "inset" => BorderLine::Inset,
+                        "outset" => BorderLine::Outset,
                         _ => return Err("only solid/dashed/dotted borders supported".into()),
                     };
                     let index = match n {
@@ -907,6 +1114,13 @@ pub fn translate(
                         return Err("oblique font style unsupported".into());
                     }
                 }
+                "font-variant-numeric" => {
+                    paint.tabular_nums = match s.trim() {
+                        "normal" => false,
+                        "tabular-nums" => true,
+                        _ => return Err("unsupported font-variant-numeric".into()),
+                    }
+                }
                 "letter-spacing" => {
                     paint.letter_spacing = if s == "normal" { 0.0 } else { px(s, m)? }
                 }
@@ -926,10 +1140,30 @@ pub fn translate(
                         _ => return Err("unsupported text-align".into()),
                     }
                 }
+                "text-indent" => {
+                    let parsed = lightningcss::properties::text::TextIndent::parse_string(s)
+                        .map_err(|_| "unsupported text-indent".to_string())?;
+                    if parsed.hanging || parsed.each_line {
+                        return Err("unsupported text-indent".into());
+                    }
+                    paint.text_indent = convert_length(&parsed.value, m)?;
+                }
+                "text-overflow" => {
+                    paint.text_overflow = match s.trim() {
+                        "clip" => TextOverflow::Clip,
+                        "ellipsis" => TextOverflow::Ellipsis,
+                        _ => return Err("unsupported text-overflow".into()),
+                    }
+                }
+                "line-clamp" | "-webkit-line-clamp" => {
+                    paint.line_clamp = parse_line_clamp(s)?;
+                }
                 "white-space" => {
+                    // pre-line skips normalize so hard newlines stay. The wrap path collapses spaces.
+                    paint.pre_line = s == "pre-line";
                     paint.preserve_space = match s {
                         "normal" | "nowrap" => false,
-                        "pre" | "pre-wrap" => true,
+                        "pre" | "pre-wrap" | "pre-line" => true,
                         _ => return Err("unsupported whitespace mode".into()),
                     };
                     paint.no_wrap = matches!(s, "nowrap" | "pre");
@@ -943,10 +1177,11 @@ pub fn translate(
                     }
                 }
                 "word-break" => {
-                    paint.break_word = match s.trim() {
-                        "normal" => false,
-                        "break-word" => true,
-                        _ => return Err("unsupported word-break".into()),
+                    let mode = s.trim();
+                    paint.break_word = mode == "break-word";
+                    paint.break_all = mode == "break-all";
+                    if !matches!(mode, "normal" | "break-word" | "break-all") {
+                        return Err("unsupported word-break".into());
                     }
                 }
                 "text-transform" => {
@@ -986,8 +1221,63 @@ pub fn translate(
                 "text-decoration-thickness" => {
                     paint.decoration_thickness = crate::decoration_value::parse_thickness(s, m)?;
                 }
+                "text-underline-offset" => {
+                    paint.text_underline_offset = parse_underline_offset(s, m)?;
+                }
                 "text-shadow" => {
                     paint.text_shadow = text_shadow(s, m, paint.color)?;
+                }
+                "-webkit-text-stroke"
+                | "-webkit-text-stroke-width"
+                | "-webkit-text-stroke-color" => {
+                    let current = paint.color;
+                    let width_of = |token: &str| -> Result<f32, String> {
+                        if token.eq_ignore_ascii_case("none") {
+                            return Ok(0.0);
+                        }
+                        let width =
+                            px(token, m).map_err(|_| "unsupported text-stroke".to_string())?;
+                        if width < 0.0 {
+                            return Err("unsupported text-stroke".into());
+                        }
+                        Ok(width)
+                    };
+                    let ink_of = |token: &str| -> Result<Option<Color>, String> {
+                        if token.eq_ignore_ascii_case("currentcolor") {
+                            Ok(None)
+                        } else {
+                            color(token, current)
+                                .map(Some)
+                                .map_err(|_| "unsupported text-stroke".to_string())
+                        }
+                    };
+                    match name.as_str() {
+                        "-webkit-text-stroke-width" => {
+                            let parts = split(s, false);
+                            if parts.len() != 1 {
+                                return Err("unsupported text-stroke".into());
+                            }
+                            paint.text_stroke_width = width_of(&parts[0])?;
+                        }
+                        "-webkit-text-stroke-color" => {
+                            let parts = split(s, false);
+                            if parts.len() != 1 {
+                                return Err("unsupported text-stroke".into());
+                            }
+                            paint.text_stroke_color = ink_of(&parts[0])?;
+                        }
+                        _ => match split(s, false).as_slice() {
+                            [width] => {
+                                paint.text_stroke_width = width_of(width)?;
+                                paint.text_stroke_color = None;
+                            }
+                            [width, ink] => {
+                                paint.text_stroke_width = width_of(width)?;
+                                paint.text_stroke_color = ink_of(ink)?;
+                            }
+                            _ => return Err("unsupported text-stroke".into()),
+                        },
+                    }
                 }
                 "direction" => {
                     if !matches!(s, "ltr" | "rtl") {
@@ -1003,7 +1293,7 @@ pub fn translate(
                     }
                 }
                 "object-fit" => {
-                    if !matches!(s, "fill" | "cover" | "contain") {
+                    if !matches!(s, "fill" | "cover" | "contain" | "none" | "scale-down") {
                         return Err("unsupported object-fit".into());
                     }
                 }
@@ -1018,23 +1308,27 @@ pub fn translate(
                 }
                 "clip-path" => {
                     if s != "none" {
-                        let content = s
+                        let points = if let Some(content) = s
                             .strip_prefix("polygon(")
                             .and_then(|s| s.strip_suffix(')'))
-                            .ok_or("only polygon clip-path supported")?;
-                        let mut points = Vec::new();
-                        for point in split(content, true) {
-                            let xy = split(&point, false);
-                            if xy.len() != 2 {
-                                return Err("invalid polygon point".into());
-                            };
-                            let x = length(&xy[0], m)?;
-                            let y = length(&xy[1], m)?;
-                            if !x.is_percent() || !y.is_percent() {
-                                return Err("polygon points must be percentages".into());
-                            };
-                            points.push((x.value(), y.value()));
-                        }
+                        {
+                            let mut points = Vec::new();
+                            for point in split(content, true) {
+                                let xy = split(&point, false);
+                                if xy.len() != 2 {
+                                    return Err("invalid polygon point".into());
+                                };
+                                let x = length(&xy[0], m)?;
+                                let y = length(&xy[1], m)?;
+                                if !x.is_percent() || !y.is_percent() {
+                                    return Err("polygon points must be percentages".into());
+                                };
+                                points.push((x.value(), y.value()));
+                            }
+                            points
+                        } else {
+                            clip_shape_points(s, values, m)?
+                        };
                         paint.box_node.clip_path = Some(points);
                     }
                 }
@@ -1071,7 +1365,7 @@ pub fn translate(
     for side in ["top", "right", "bottom", "left"] {
         let disabled = values
             .get(&format!("border-{side}-style"))
-            .is_none_or(|s| s == "none");
+            .is_none_or(|s| s == "none" || s == "hidden");
         let w = if disabled {
             0.0
         } else {
@@ -1187,6 +1481,18 @@ fn filter(s: &str, m: Metrics) -> Result<Option<skia_safe::ImageFilter>, String>
                 number(args)
             }
         };
+        // Omitted amount is the CSS default (1). Amounts outside 0..=1 clamp.
+        let unit = |empty: f32| -> Result<f32, String> {
+            let args = args.trim();
+            let amount = if args.is_empty() {
+                empty
+            } else if let Some(n) = args.strip_suffix('%') {
+                number(n.trim())? / 100.0
+            } else {
+                number(args)?
+            };
+            Ok(amount.clamp(0.0, 1.0))
+        };
         let mut shadow = None;
         match name {
             "blur" => f.blur = px(args, m)?,
@@ -1218,6 +1524,9 @@ fn filter(s: &str, m: Metrics) -> Result<Option<skia_safe::ImageFilter>, String>
                     None,
                 );
             }
+            "invert" => f.invert = unit(1.0)?,
+            "sepia" => f.sepia = unit(1.0)?,
+            "opacity" => f.opacity = unit(1.0)?,
             _ => return Err(format!("unsupported filter '{name}'")),
         }
         let filter = shadow.or_else(|| f.to_image_filter());
@@ -1447,6 +1756,59 @@ fn decode_background_url(
         .ok_or_else(|| format!("invalid image '{url}'"))
 }
 
+fn background_position(s: &str, m: Metrics) -> Result<(AxisPos, AxisPos), String> {
+    let parts = split(s.trim(), false);
+    let center = AxisPos {
+        percent: 0.5,
+        length: 0.0,
+    };
+    match parts.as_slice() {
+        [one] => {
+            if one.eq_ignore_ascii_case("top") || one.eq_ignore_ascii_case("bottom") {
+                Ok((center, vertical_position(one, m)?))
+            } else {
+                Ok((horizontal_position(one, m)?, center))
+            }
+        }
+        [x, y] => Ok((horizontal_position(x, m)?, vertical_position(y, m)?)),
+        _ => Err(format!("unsupported background-position '{s}'")),
+    }
+}
+
+fn parse_line_clamp(source: &str) -> Result<Option<u32>, String> {
+    let trimmed = source.trim();
+    if trimmed.eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+    if !trimmed.is_empty() && trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
+        if let Ok(n) = trimmed.parse::<u32>() {
+            if n > 0 {
+                return Ok(Some(n));
+            }
+        }
+    }
+    Err(format!("unsupported line-clamp '{source}'"))
+}
+
+fn parse_underline_offset(source: &str, m: Metrics) -> Result<f32, String> {
+    let trimmed = source.trim();
+    if trimmed.eq_ignore_ascii_case("auto") {
+        return Ok(0.0);
+    }
+    let parsed = length(trimmed, m)
+        .map_err(|_| format!("unsupported text-underline-offset '{source}'"))?;
+    let px = if parsed.is_percent() {
+        parsed.value() * m.font_size
+    } else {
+        parsed.value()
+    };
+    if px.is_finite() {
+        Ok(px)
+    } else {
+        Err(format!("unsupported text-underline-offset '{source}'"))
+    }
+}
+
 fn horizontal_position(s: &str, m: Metrics) -> Result<AxisPos, String> {
     let parsed = HorizontalPosition::parse_string(s)
         .map_err(|_| format!("unsupported background-position '{s}'"))?;
@@ -1544,6 +1906,198 @@ fn size_component(
 
 fn background_repeat(s: &str) -> Result<(AxisRepeat, AxisRepeat), String> {
     crate::background_box::parse_repeat(s)
+}
+
+fn clip_shape_points(s: &str, values: &Values, m: Metrics) -> Result<Vec<(f32, f32)>, String> {
+    if let Some(inner) = s.trim().strip_prefix("inset(") {
+        if inner.to_ascii_lowercase().contains("round") {
+            return Err("inset round clip-path is unsupported".into());
+        }
+    }
+    let clip = lightningcss::properties::masking::ClipPath::parse_string(s)
+        .map_err(|_| "only polygon clip-path supported".to_string())?;
+    match clip {
+        lightningcss::properties::masking::ClipPath::Shape {
+            shape,
+            reference_box,
+        } => {
+            if reference_box != lightningcss::properties::masking::GeometryBox::BorderBox {
+                return Err("only polygon clip-path supported".into());
+            }
+            match *shape {
+                lightningcss::values::shape::BasicShape::Circle(circle) => {
+                    circle_clip_points(&circle, values, m)
+                }
+                lightningcss::values::shape::BasicShape::Ellipse(ellipse) => {
+                    ellipse_clip_points(&ellipse, values, m)
+                }
+                lightningcss::values::shape::BasicShape::Inset(inset) => {
+                    if inset.radius != Default::default() {
+                        return Err("inset round clip-path is unsupported".into());
+                    }
+                    inset_clip_points(&inset, values, m)
+                }
+                _ => Err("only polygon clip-path supported".into()),
+            }
+        }
+        _ => Err("only polygon clip-path supported".into()),
+    }
+}
+
+fn circle_clip_points(
+    circle: &lightningcss::values::shape::Circle,
+    values: &Values,
+    m: Metrics,
+) -> Result<Vec<(f32, f32)>, String> {
+    let box_width = definite_px(values, "width", m).unwrap_or(m.width);
+    let box_height = definite_px(values, "height", m).unwrap_or(m.height);
+    let cx = position_fraction(&circle.position.x, m, box_width, |side| {
+        matches!(side, HorizontalPositionKeyword::Right)
+    })?;
+    let cy = position_fraction(&circle.position.y, m, box_height, |side| {
+        matches!(side, VerticalPositionKeyword::Bottom)
+    })?;
+    let radius = match &circle.radius {
+        lightningcss::values::shape::ShapeRadius::ClosestSide => side_radius(cx, cy, false),
+        lightningcss::values::shape::ShapeRadius::FarthestSide => side_radius(cx, cy, true),
+        lightningcss::values::shape::ShapeRadius::LengthPercentage(value) => {
+            match crate::calc_len::resolve_length(value, m, None)? {
+                crate::calc_len::ResolvedLength::Percent(fraction) => fraction,
+                crate::calc_len::ResolvedLength::Length(px) => {
+                    // A length radius is a percentage of the box width; the painter only has percentages, so Y uses that same fraction of height.
+                    if box_width <= 0.0 {
+                        return Err("clip-path circle radius needs a box width".into());
+                    }
+                    px / box_width
+                }
+            }
+        }
+    };
+    Ok(circle_polygon(cx, cy, radius))
+}
+
+fn ellipse_clip_points(
+    ellipse: &lightningcss::values::shape::Ellipse,
+    values: &Values,
+    m: Metrics,
+) -> Result<Vec<(f32, f32)>, String> {
+    let box_width = definite_px(values, "width", m).unwrap_or(m.width);
+    let box_height = definite_px(values, "height", m).unwrap_or(m.height);
+    let cx = position_fraction(&ellipse.position.x, m, box_width, |side| {
+        matches!(side, HorizontalPositionKeyword::Right)
+    })?;
+    let cy = position_fraction(&ellipse.position.y, m, box_height, |side| {
+        matches!(side, VerticalPositionKeyword::Bottom)
+    })?;
+    let rx = ellipse_radius(&ellipse.radius_x, cx, box_width, m)?;
+    let ry = ellipse_radius(&ellipse.radius_y, cy, box_height, m)?;
+    Ok(ellipse_polygon(cx, cy, rx, ry))
+}
+
+fn ellipse_radius(
+    radius: &lightningcss::values::shape::ShapeRadius,
+    center: f32,
+    axis: f32,
+    m: Metrics,
+) -> Result<f32, String> {
+    match radius {
+        lightningcss::values::shape::ShapeRadius::ClosestSide => {
+            Ok(center.min(1.0 - center).max(0.0))
+        }
+        lightningcss::values::shape::ShapeRadius::FarthestSide => {
+            Ok(center.max(1.0 - center).max(0.0))
+        }
+        lightningcss::values::shape::ShapeRadius::LengthPercentage(value) => {
+            axis_fraction(value, m, axis)
+        }
+    }
+}
+
+fn ellipse_polygon(cx: f32, cy: f32, rx: f32, ry: f32) -> Vec<(f32, f32)> {
+    const STEPS: usize = 24;
+    (0..STEPS)
+        .map(|step| {
+            let angle = step as f32 * std::f32::consts::TAU / STEPS as f32;
+            (cx + rx * angle.cos(), cy + ry * angle.sin())
+        })
+        .collect()
+}
+
+fn inset_clip_points(
+    inset: &lightningcss::values::shape::InsetRect,
+    values: &Values,
+    m: Metrics,
+) -> Result<Vec<(f32, f32)>, String> {
+    let box_width = definite_px(values, "width", m).unwrap_or(m.width);
+    let box_height = definite_px(values, "height", m).unwrap_or(m.height);
+    let lightningcss::values::rect::Rect(top, right, bottom, left) = &inset.rect;
+    let top = axis_fraction(top, m, box_height)?;
+    let right = axis_fraction(right, m, box_width)?;
+    let bottom = axis_fraction(bottom, m, box_height)?;
+    let left = axis_fraction(left, m, box_width)?;
+    Ok(vec![
+        (left, top),
+        (1.0 - right, top),
+        (1.0 - right, 1.0 - bottom),
+        (left, 1.0 - bottom),
+    ])
+}
+
+fn circle_polygon(cx: f32, cy: f32, radius: f32) -> Vec<(f32, f32)> {
+    const STEPS: usize = 24;
+    (0..STEPS)
+        .map(|step| {
+            let angle = step as f32 * std::f32::consts::TAU / STEPS as f32;
+            (cx + radius * angle.cos(), cy + radius * angle.sin())
+        })
+        .collect()
+}
+
+fn side_radius(cx: f32, cy: f32, farthest: bool) -> f32 {
+    let sides = [cx, 1.0 - cx, cy, 1.0 - cy];
+    let radius = if farthest {
+        sides.into_iter().fold(f32::MIN, f32::max)
+    } else {
+        sides.into_iter().fold(f32::MAX, f32::min)
+    };
+    radius.max(0.0)
+}
+
+fn position_fraction<S>(
+    value: &PositionComponent<S>,
+    m: Metrics,
+    axis: f32,
+    from_end: impl Fn(&S) -> bool,
+) -> Result<f32, String> {
+    match value {
+        PositionComponent::Center => Ok(0.5),
+        PositionComponent::Length(value) => axis_fraction(value, m, axis),
+        PositionComponent::Side { side, offset } => {
+            let extra = match offset {
+                Some(value) => axis_fraction(value, m, axis)?,
+                None => 0.0,
+            };
+            Ok(if from_end(side) { 1.0 - extra } else { extra })
+        }
+    }
+}
+
+fn axis_fraction(value: &CssLength, m: Metrics, axis: f32) -> Result<f32, String> {
+    match crate::calc_len::resolve_length(value, m, None)? {
+        crate::calc_len::ResolvedLength::Percent(fraction) => Ok(fraction),
+        crate::calc_len::ResolvedLength::Length(px) => {
+            if axis <= 0.0 {
+                return Err("clip-path length needs a box size".into());
+            }
+            Ok(px / axis)
+        }
+    }
+}
+
+fn definite_px(values: &Values, name: &str, m: Metrics) -> Option<f32> {
+    let raw = values.get(name)?;
+    let px = px(raw, m).ok()?;
+    (px > 0.0).then_some(px)
 }
 
 

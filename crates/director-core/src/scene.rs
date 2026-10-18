@@ -166,6 +166,9 @@ impl SceneNode {
         self.filter.contrast.to_bits().hash(&mut hasher);
         self.filter.saturation.to_bits().hash(&mut hasher);
         self.filter.hue_rotate.to_bits().hash(&mut hasher);
+        self.filter.invert.to_bits().hash(&mut hasher);
+        self.filter.sepia.to_bits().hash(&mut hasher);
+        self.filter.opacity.to_bits().hash(&mut hasher);
         hasher.finish()
     }
 

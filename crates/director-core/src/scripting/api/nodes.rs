@@ -86,6 +86,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
                     contrast: contrast as f32,
                     saturation: saturation as f32,
                     hue_rotate: hue_rotate as f32,
+                    ..Default::default()
                 };
             }
             Ok(())
@@ -1624,6 +1625,7 @@ fn parse_filter_config(props: &rhai::Map) -> FilterConfig {
             .get("filter_hue_rotate")
             .and_then(|v| v.as_float().ok())
             .unwrap_or(0.0) as f32,
+        ..Default::default()
     }
 }
 

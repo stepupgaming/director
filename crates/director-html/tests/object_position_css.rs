@@ -90,6 +90,43 @@ fn object_position_zero_percent() {
     assert_left_top(&frame(&contain_img(Some("0% 0%"))));
 }
 
+fn sized_img(object_fit: &str, width: i32, height: i32) -> String {
+    format!(
+        "<style>body{{margin:0}}img{{width:{width}px;height:{height}px;object-fit:{object_fit};}}</style><img src=\"data:image/png;base64,{RED_PNG}\">"
+    )
+}
+
+fn assert_intrinsic_centered(pixels: &[u8]) {
+    assert_red(pixel(pixels, 16, 8));
+    assert_red(pixel(pixels, 13, 5));
+    assert_red(pixel(pixels, 18, 10));
+    assert_empty(pixel(pixels, 4, 8));
+    assert_empty(pixel(pixels, 10, 8));
+    assert_empty(pixel(pixels, 21, 8));
+    assert_empty(pixel(pixels, 28, 8));
+    assert_empty(pixel(pixels, 16, 2));
+    assert_empty(pixel(pixels, 16, 13));
+}
+
+#[test]
+fn object_fit_none_centers_intrinsic_pixels() {
+    assert_intrinsic_centered(&frame(&sized_img("none", 32, 16)));
+}
+
+#[test]
+fn object_fit_scale_down_matches_none_when_intrinsic_is_smaller() {
+    let none = frame(&sized_img("none", 32, 16));
+    let scaled = frame(&sized_img("scale-down", 32, 16));
+    assert_eq!(scaled, none);
+    assert_intrinsic_centered(&scaled);
+}
+
+#[test]
+fn object_fit_scale_down_center_stays_red_when_intrinsic_is_larger() {
+    let pixels = frame(&sized_img("scale-down", 4, 4));
+    assert_red(pixel(&pixels, 2, 2));
+}
+
 #[test]
 fn object_position_five_tokens_errors() {
     let err = compile(

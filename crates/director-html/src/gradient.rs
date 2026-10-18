@@ -6,6 +6,7 @@ use lightningcss::{
         gradient::{
             Circle, Ellipse, EndingShape, Gradient, GradientItem, LineDirection, ShapeExtent,
         },
+        length::LengthPercentage as CssLength,
         position::Position,
     },
     vendor_prefix::VendorPrefix,
@@ -18,11 +19,22 @@ pub struct NativeGradient {
     kind: Kind,
     repeating: bool,
     colors: Vec<Option<skia_safe::Color>>,
-    stops: Vec<Option<LengthPercentage>>,
+    stops: Vec<Option<StopPos>>,
+}
+#[derive(Debug, Clone)]
+enum StopPos {
+    Fixed(LengthPercentage),
+    Mixed(CssLength),
+}
+#[derive(Debug, Clone)]
+enum LinearTo {
+    Angle(f32),
+    /// `to <side> <side>`. The angle depends on the box being painted.
+    Corner { right: bool, bottom: bool },
 }
 #[derive(Debug, Clone)]
 enum Kind {
-    Linear(f32),
+    Linear(LinearTo),
     Radial {
         center: (LengthPercentage, LengthPercentage),
         radius: Radius,
@@ -38,6 +50,15 @@ enum Radius {
     EllipseExtent(ShapeExtent),
     Circle(f32),
     Ellipse(LengthPercentage, LengthPercentage),
+}
+
+/// CSS `to <corner>` is perpendicular to the line through the two neighboring corners.
+fn corner_angle(right: bool, bottom: bool, width: f32, height: f32) -> f32 {
+    let sx = if right { 1.0 } else { -1.0 };
+    let sy = if bottom { 1.0 } else { -1.0 };
+    let dx = sx * height.max(0.0);
+    let dy = sy * width.max(0.0);
+    dx.atan2(-dy).to_degrees()
 }
 
 fn position(p: &Position, m: Metrics) -> Result<(LengthPercentage, LengthPercentage), String> {
@@ -64,7 +85,7 @@ fn stop_position<D: ToCss>(
     position: &D,
     m: Metrics,
     conic: bool,
-) -> Result<LengthPercentage, String> {
+) -> Result<StopPos, String> {
     let s = position
         .to_css_string(Default::default())
         .map_err(|e| e.to_string())?;
@@ -77,9 +98,18 @@ fn stop_position<D: ToCss>(
                 .to_degrees()
                 / 360.0
         };
-        Ok(LengthPercentage::percent(value))
+        Ok(StopPos::Fixed(LengthPercentage::percent(value)))
     } else {
-        style::length(&s, m)
+        match style::length(&s, m) {
+            Ok(length) => Ok(StopPos::Fixed(length)),
+            Err(err) if err.contains(crate::calc_len::MIXED_BASIS) => {
+                match crate::calc_len::parse_simple_mixed_stop(&s) {
+                    Some(value) => Ok(StopPos::Mixed(value)),
+                    None => Err(err),
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 fn stops<D: ToCss>(
@@ -87,7 +117,7 @@ fn stops<D: ToCss>(
     m: Metrics,
     current: Color,
     conic: bool,
-) -> Result<(Vec<Option<skia_safe::Color>>, Vec<Option<LengthPercentage>>), String> {
+) -> Result<(Vec<Option<skia_safe::Color>>, Vec<Option<StopPos>>), String> {
     let mut colors = Vec::new();
     let mut positions = Vec::new();
     for item in items {
@@ -134,6 +164,27 @@ fn mix(from: skia_safe::Color, to: skia_safe::Color, t: f32) -> skia_safe::Color
         channel(from.g(), to.g()),
         channel(from.b(), to.b()),
     )
+}
+fn stop_offset(stop: &Option<StopPos>, basis: f32) -> Result<Option<f32>, String> {
+    match stop {
+        None => Ok(None),
+        Some(StopPos::Fixed(length)) => Ok(Some(if length.is_percent() {
+            length.value()
+        } else {
+            length.value() / basis.max(0.0001)
+        })),
+        Some(StopPos::Mixed(value)) => {
+            if !(basis.is_finite() && basis > 0.0) {
+                return Err(crate::calc_len::MIXED_BASIS.to_string());
+            }
+            let px = crate::calc_len::resolve_stop_basis(value, basis)?;
+            let at = px / basis;
+            if !at.is_finite() {
+                return Err("non-finite length".into());
+            }
+            Ok(Some(at))
+        }
+    }
 }
 fn expand_hints(
     marks: &[Option<skia_safe::Color>],
@@ -219,32 +270,35 @@ impl NativeGradient {
         }
         let (kind, colors, positions) = match gradient {
             Gradient::Linear(g) => {
-                let angle = match g.direction {
-                    LineDirection::Angle(a) => a.to_degrees(),
+                let direction = match g.direction {
+                    LineDirection::Angle(a) => LinearTo::Angle(a.to_degrees()),
                     LineDirection::Horizontal(h) => {
-                        if h.to_css_string(Default::default())
-                            .map_err(|e| e.to_string())?
-                            == "left"
-                        {
-                            270.0
-                        } else {
-                            90.0
-                        }
+                        let left = h.to_css_string(Default::default()).map_err(|e| e.to_string())?
+                            == "left";
+                        LinearTo::Angle(if left { 270.0 } else { 90.0 })
                     }
                     LineDirection::Vertical(v) => {
-                        if v.to_css_string(Default::default())
-                            .map_err(|e| e.to_string())?
-                            == "top"
-                        {
-                            0.0
-                        } else {
-                            180.0
-                        }
+                        let top = v.to_css_string(Default::default()).map_err(|e| e.to_string())?
+                            == "top";
+                        LinearTo::Angle(if top { 0.0 } else { 180.0 })
                     }
-                    _ => return Err("corner gradients require explicit angle".into()),
+                    LineDirection::Corner {
+                        horizontal,
+                        vertical,
+                    } => {
+                        let right = horizontal
+                            .to_css_string(Default::default())
+                            .map_err(|e| e.to_string())?
+                            == "right";
+                        let bottom = vertical
+                            .to_css_string(Default::default())
+                            .map_err(|e| e.to_string())?
+                            == "bottom";
+                        LinearTo::Corner { right, bottom }
+                    }
                 };
                 let (colors, positions) = stops(g.items, m, current, false)?;
-                (Kind::Linear(angle), colors, positions)
+                (Kind::Linear(direction), colors, positions)
             }
             Gradient::Radial(g) => {
                 let radius = match g.shape {
@@ -370,20 +424,11 @@ impl NativeGradient {
         }
         (out_colors, out_pos)
     }
-    fn positions(&self, basis: f32) -> Vec<f32> {
-        let mut pos: Vec<Option<f32>> = self
-            .stops
-            .iter()
-            .map(|p| {
-                p.map(|p| {
-                    if p.is_percent() {
-                        p.value()
-                    } else {
-                        p.value() / basis.max(0.0001)
-                    }
-                })
-            })
-            .collect();
+    fn positions(&self, basis: f32) -> Result<Vec<f32>, String> {
+        let mut pos = Vec::with_capacity(self.stops.len());
+        for stop in &self.stops {
+            pos.push(stop_offset(stop, basis)?);
+        }
         let n = pos.len();
         pos[0] = Some(pos[0].unwrap_or(0.0));
         pos[n - 1] = Some(pos[n - 1].unwrap_or(1.0));
@@ -401,16 +446,25 @@ impl NativeGradient {
                 previous = next;
             }
         }
-        pos.into_iter().flatten().collect()
+        Ok(pos.into_iter().flatten().collect())
     }
     fn ramp(&self, basis: f32) -> Option<(Vec<skia_safe::Color>, Vec<f32>)> {
-        let positions = self.positions(basis);
+        let positions = self.positions(basis).ok()?;
         let (colors, positions) = expand_hints(&self.colors, &positions).ok()?;
         Some(self.cover(&colors, &positions))
     }
     pub fn shader(&self, rect: Rect) -> Option<Shader> {
+        self.shader_with(rect, TileMode::Clamp)
+    }
+    pub fn shader_with(&self, rect: Rect, tile: TileMode) -> Option<Shader> {
         match &self.kind {
-            Kind::Linear(angle) => {
+            Kind::Linear(direction) => {
+                let angle = match direction {
+                    LinearTo::Angle(angle) => *angle,
+                    LinearTo::Corner { right, bottom } => {
+                        corner_angle(*right, *bottom, rect.width(), rect.height())
+                    }
+                };
                 let (dx, dy) = (angle.to_radians().sin(), -angle.to_radians().cos());
                 let extent = rect.width() * dx.abs() + rect.height() * dy.abs();
                 let center = rect.center();
@@ -421,7 +475,7 @@ impl NativeGradient {
                     (start, end),
                     colors.as_slice(),
                     stops.as_slice(),
-                    TileMode::Clamp,
+                    tile,
                     None,
                     None,
                 )
@@ -497,7 +551,7 @@ impl NativeGradient {
                     1.0,
                     colors.as_slice(),
                     stops.as_slice(),
-                    TileMode::Clamp,
+                    tile,
                     None,
                     Some(&matrix),
                 )
@@ -514,7 +568,7 @@ impl NativeGradient {
                     c,
                     colors.as_slice(),
                     stops.as_slice(),
-                    TileMode::Clamp,
+                    tile,
                     Some((0.0, 360.0)),
                     None,
                     Some(&matrix),
