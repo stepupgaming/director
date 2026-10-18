@@ -326,6 +326,39 @@ fn url_and_gradient_paint_in_css_order() {
     assert!(err.contains("background-image accepts a single url"), "{err}");
 }
 
+#[test]
+fn text_shadow_paints_red_beside_white_text() {
+    let plain = frame(
+        "<style>body{margin:0}div{width:64px;height:64px;color:white;font-size:32px;line-height:1}</style><div>T</div>",
+    );
+    let none = frame(
+        "<style>body{margin:0}div{width:64px;height:64px;color:white;font-size:32px;line-height:1;text-shadow:none}</style><div>T</div>",
+    );
+    assert_eq!(plain, none);
+    assert_eq!(red_pixels(&plain), 0);
+    let marked = frame(
+        "<style>body{margin:0}div{width:64px;height:64px;color:white;font-size:32px;line-height:1;text-shadow:20px 0 0 red}</style><div>T</div>",
+    );
+    assert!(red_pixels(&marked) > 0, "text-shadow painted no red");
+    assert!(
+        marked.chunks(4).any(|sample| sample[0] > 200 && sample[1] > 200 && sample[2] > 200),
+        "white glyph missing"
+    );
+    let err = compile(
+        "<style>div{text-shadow:2px 2px red, 4px 4px blue}</style><div>T</div>",
+        CompileOptions {
+            width: 64,
+            height: 64,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(err.contains("text-shadow accepts a single shadow"), "{err}");
+}
+
 fn red_pixels(pixels: &[u8]) -> usize {
     pixels
         .chunks(4)

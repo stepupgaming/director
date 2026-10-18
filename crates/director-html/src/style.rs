@@ -114,6 +114,8 @@ pub struct PaintStyle {
     pub filter: Option<skia_safe::ImageFilter>,
     pub blend_mode: skia_safe::BlendMode,
     pub shadows: Vec<Shadow>,
+    /// One CSS `text-shadow`. `None` is `none`. A list or a non-zero spread stays an error.
+    pub text_shadow: Option<director_core::element::TextShadow>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -400,6 +402,7 @@ pub fn translate(
         filter: Default::default(),
         blend_mode: skia_safe::BlendMode::SrcOver,
         shadows: Vec::new(),
+        text_shadow: None,
     };
     if let Some(s) = values.get("font-size") {
         match px(s, m) {
@@ -854,6 +857,9 @@ pub fn translate(
                 "text-decoration-thickness" => {
                     paint.decoration_thickness = crate::decoration_value::parse_thickness(s, m)?;
                 }
+                "text-shadow" => {
+                    paint.text_shadow = text_shadow(s, m, paint.color)?;
+                }
                 "direction" => {
                     if !matches!(s, "ltr" | "rtl") {
                         return Err("invalid text direction".into());
@@ -975,6 +981,43 @@ pub fn translate(
     } else {
         Err(errors)
     }
+}
+
+fn text_shadow(
+    s: &str,
+    m: Metrics,
+    current: Color,
+) -> Result<Option<director_core::element::TextShadow>, String> {
+    if s.trim() == "none" {
+        return Ok(None);
+    }
+    let parts = split(s, true);
+    if parts.len() != 1 {
+        return Err("text-shadow accepts a single shadow".into());
+    }
+    let parsed = lightningcss::properties::text::TextShadow::parse_string(&parts[0])
+        .map_err(|e| format!("text-shadow: {e:?}"))?;
+    let spread = shadow_length(&parsed.spread, m)?;
+    if spread != 0.0 {
+        return Err("text-shadow spread is unsupported".into());
+    }
+    Ok(Some(director_core::element::TextShadow {
+        color: css_color(&parsed.color, current)?,
+        blur: shadow_length(&parsed.blur, m)?.max(0.0),
+        offset: (
+            shadow_length(&parsed.x_offset, m)?,
+            shadow_length(&parsed.y_offset, m)?,
+        ),
+    }))
+}
+
+fn shadow_length(length: &lightningcss::values::length::Length, m: Metrics) -> Result<f32, String> {
+    px(
+        &length
+            .to_css_string(Default::default())
+            .map_err(|e| e.to_string())?,
+        m,
+    )
 }
 
 fn shadows(s: &str, m: Metrics, current: Color) -> Result<Vec<Shadow>, String> {
