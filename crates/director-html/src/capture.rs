@@ -373,7 +373,7 @@ fn build(
             n.id
         )));
     }
-    let (style, paint) = style::translate(&n.styles, m).map_err(|e| {
+    let (style, paint) = style::translate(&n.styles, m, store).map_err(|e| {
         CompileError::Diagnostics(e.into_iter().map(|e| diagnostic(&n.id, e)).collect())
     })?;
     let mut paper = None;

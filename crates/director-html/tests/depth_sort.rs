@@ -55,13 +55,44 @@ fn hidden_backface_stays_unpainted() {
 }
 
 #[test]
-fn three_value_transform_origin_fails() {
+fn flat_origin_z_stays_on_the_card() {
+    let html = "<style>body{margin:0}div{width:64px;height:64px;background:red;transform-origin:50% 50% 40px}</style><div></div>";
+    let pixels = frame(html, 0.0);
+    assert_eq!(pixel(&pixels, 2, 2), [255, 0, 0, 255]);
+    assert_eq!(pixel(&pixels, 62, 62), [255, 0, 0, 255]);
+}
+
+#[test]
+fn transform_origin_z_changes_which_sibling_is_in_front() {
+    let source = |z: &str| {
+        format!(
+            "<style>body{{margin:0}}.stage{{position:relative;width:64px;height:64px;perspective:200px;transform-style:preserve-3d}}.card{{position:absolute;top:0;right:0;bottom:0;left:0}}.back{{background:blue;transform:translateZ(40px)}}.spin{{background:red;transform:rotateY(180deg);transform-origin:50% 50% {z}}}</style><div class='stage'><div class='card back'></div><div class='card spin'></div></div>"
+        )
+    };
+    assert_eq!(pixel(&frame(&source("0px"), 0.0), 32, 32), [0, 0, 255, 255]);
+    assert_eq!(pixel(&frame(&source("30px"), 0.0), 32, 32), [255, 0, 0, 255]);
+}
+
+#[test]
+fn percent_transform_origin_z_still_fails() {
     let error = compile(
-        "<div style='transform-origin:50% 50% 10px'></div>",
+        "<div style='transform-origin:50% 50% 10%'></div>",
         CompileOptions::default(),
     )
     .err()
     .unwrap()
     .to_string();
     assert!(error.contains("transform-origin"), "{error}");
+}
+
+#[test]
+fn perspective_origin_z_still_fails() {
+    let error = compile(
+        "<div style='perspective-origin:50% 50% 10px'></div>",
+        CompileOptions::default(),
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.contains("perspective-origin"), "{error}");
 }

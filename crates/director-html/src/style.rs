@@ -61,6 +61,8 @@ pub struct PaintStyle {
     pub visible: bool,
     pub transform: TransformList,
     pub origin: (LengthPercentage, LengthPercentage),
+    /// Absolute z of `transform-origin`. Percent z stays unsupported.
+    pub origin_z: f32,
     pub color: Color,
     pub font_size: f32,
     pub font_family: String,
@@ -298,7 +300,11 @@ fn placement(s: &str) -> Result<GridPlacement, String> {
     }
 }
 
-pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle), Vec<String>> {
+pub fn translate(
+    values: &Values,
+    mut m: Metrics,
+    assets: &crate::assets::AssetStore,
+) -> Result<(Style, PaintStyle), Vec<String>> {
     let mut errors = Vec::new();
     let mut style = Style {
         display: Display::Block,
@@ -311,6 +317,7 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
         visible: true,
         transform: TransformList::default(),
         origin: (percent(0.5_f32), percent(0.5_f32)),
+        origin_z: 0.0,
         color: Color::BLACK,
         font_size: 16.0,
         font_family: "Roboto".into(),
@@ -512,7 +519,7 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                 }
                 "background-image" => {
                     if s != "none" {
-                        let (gradients, image) = background_layers(s, m, paint.color)?;
+                        let (gradients, image) = background_layers(s, m, paint.color, assets)?;
                         paint.gradient = gradients;
                         paint.background_image = image;
                     }
@@ -724,7 +731,9 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                     };
                 }
                 "transform-origin" => {
-                    paint.origin = origin_pair(s, m)?;
+                    let (origin, z) = origin_with_z(s, m)?;
+                    paint.origin = origin;
+                    paint.origin_z = z;
                 }
                 "font-family" => {
                     paint.font_family = split(s, true)
@@ -1023,13 +1032,21 @@ fn absolute_px(l: &Length, m: Metrics) -> Result<f32, String> {
     )
 }
 
-fn origin_pair(s: &str, m: Metrics) -> Result<(LengthPercentage, LengthPercentage), String> {
+fn origin_with_z(
+    s: &str,
+    m: Metrics,
+) -> Result<((LengthPercentage, LengthPercentage), f32), String> {
     let parsed = crate::transform_origin::parse_origin(s, m)?;
-    // A non-zero z is not applied to the canvas matrix yet.
-    if parsed.z != 0.0 {
+    Ok(((parsed.x, parsed.y), parsed.z))
+}
+
+fn origin_pair(s: &str, m: Metrics) -> Result<(LengthPercentage, LengthPercentage), String> {
+    let (origin, z) = origin_with_z(s, m)?;
+    // perspective-origin is a 2D point. A non-zero z stays refused.
+    if z != 0.0 {
         return Err("3D transform origin unsupported".into());
     }
-    Ok((parsed.x, parsed.y))
+    Ok(origin)
 }
 
 fn wrap_turn(angle: &mut Angle) {
@@ -1177,6 +1194,7 @@ fn background_layers(
     s: &str,
     m: Metrics,
     current: Color,
+    assets: &crate::assets::AssetStore,
 ) -> Result<(Vec<crate::gradient::NativeGradient>, Option<skia_safe::Image>), String> {
     let parts = split(s, true);
     let mut url = None;
@@ -1201,7 +1219,7 @@ fn background_layers(
         }
     }
     if let Some(url) = url {
-        return Ok((Vec::new(), Some(decode_background_url(url)?)));
+        return Ok((Vec::new(), Some(decode_background_url(url, assets)?)));
     }
     Ok((crate::gradient::parse_list(s, m, current)?, None))
 }
@@ -1212,16 +1230,17 @@ fn is_css_url(value: &str) -> bool {
         || value.len() >= 5 && value[..5].eq_ignore_ascii_case("data:")
 }
 
-fn decode_background_url(value: &str) -> Result<skia_safe::Image, String> {
+fn decode_background_url(
+    value: &str,
+    assets: &crate::assets::AssetStore,
+) -> Result<skia_safe::Image, String> {
     let value = value.trim();
     let url = if value.len() >= 4 && value[..4].eq_ignore_ascii_case("url(") {
         crate::compiler::url(value).map_err(|e| e.to_string())?
     } else {
         value.to_string()
     };
-    let bytes = crate::assets::AssetStore::local(std::path::Path::new("."), false)
-        .read(&url)
-        .map_err(|e| e.to_string())?;
+    let bytes = assets.read(&url).map_err(|e| e.to_string())?;
     skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))
         .ok_or_else(|| format!("invalid image '{url}'"))
 }

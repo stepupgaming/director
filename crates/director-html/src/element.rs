@@ -237,11 +237,16 @@ impl Element for HtmlElement {
             resolve(self.paint.origin.0, width),
             resolve(self.paint.origin.1, height),
         );
+        let oz = self.paint.origin_z;
         let center = (width / 2.0, height / 2.0);
-        let v = (center.0 - origin.0, center.1 - origin.1);
+        let v = (center.0 - origin.0, center.1 - origin.1, -oz);
         match canvas_transform(&self.paint.transform, self.metrics, (width, height)) {
             CanvasTransform::Projective(matrix) => {
-                matrix.rc(2, 0) * v.0 + matrix.rc(2, 1) * v.1 + matrix.rc(2, 3)
+                matrix.rc(2, 0) * v.0
+                    + matrix.rc(2, 1) * v.1
+                    + matrix.rc(2, 2) * v.2
+                    + matrix.rc(2, 3)
+                    + oz
             }
             CanvasTransform::Affine(_) => 0.0,
         }
@@ -273,16 +278,34 @@ impl Element for HtmlElement {
             resolve(self.paint.origin.1, rect.height()),
         );
         let size = (rect.width(), rect.height());
-        canvas.translate(origin);
-        match canvas_transform(&self.paint.transform, self.metrics, size) {
-            CanvasTransform::Affine(matrix) => {
-                canvas.concat(&matrix);
+        let transform = canvas_transform(&self.paint.transform, self.metrics, size);
+        if self.paint.origin_z == 0.0 {
+            canvas.translate(origin);
+            match transform {
+                CanvasTransform::Affine(matrix) => {
+                    canvas.concat(&matrix);
+                }
+                CanvasTransform::Projective(matrix) => {
+                    canvas.concat_44(&matrix);
+                }
             }
-            CanvasTransform::Projective(matrix) => {
-                canvas.concat_44(&matrix);
+            canvas.translate((-origin.0, -origin.1));
+        } else {
+            canvas.concat_44(&skia_safe::M44::translate(origin.0, origin.1, self.paint.origin_z));
+            match transform {
+                CanvasTransform::Affine(matrix) => {
+                    canvas.concat_44(&m44_from_affine(&matrix));
+                }
+                CanvasTransform::Projective(matrix) => {
+                    canvas.concat_44(&matrix);
+                }
             }
+            canvas.concat_44(&skia_safe::M44::translate(
+                -origin.0,
+                -origin.1,
+                -self.paint.origin_z,
+            ));
         }
-        canvas.translate((-origin.0, -origin.1));
         if let Some(points) = &self.paint.box_node.clip_path {
             if let Some(first) = points.first() {
                 let mut path = skia_safe::Path::new();
@@ -338,12 +361,19 @@ impl Element for HtmlElement {
             canvas.clip_rect(clip, skia_safe::ClipOp::Intersect, false);
         }
         bg.render(canvas, rect, 1.0, &mut |_| {})?;
-        for gradient in self.paint.gradient.iter().rev() {
-            if let Some(shader) = gradient.shader(rect) {
-                let mut p = skia_safe::Paint::default();
-                p.set_shader(shader);
-                p.set_anti_alias(true);
-                canvas.draw_rect(rect, &p);
+        let gradient_rect = inset_rect(
+            rect,
+            &self.style,
+            origin_edge(self.paint.background_origin),
+        );
+        if gradient_rect.width() > 0.0 && gradient_rect.height() > 0.0 {
+            for gradient in self.paint.gradient.iter().rev() {
+                if let Some(shader) = gradient.shader(gradient_rect) {
+                    let mut p = skia_safe::Paint::default();
+                    p.set_shader(shader);
+                    p.set_anti_alias(true);
+                    canvas.draw_rect(rect, &p);
+                }
             }
         }
         paint_background_image(canvas, rect, &self.style, &self.paint);
@@ -468,6 +498,27 @@ impl Element for HtmlElement {
             rate,
         )
     }
+}
+
+fn m44_from_affine(matrix: &Matrix) -> skia_safe::M44 {
+    skia_safe::M44::row_major(&[
+        matrix.scale_x(),
+        matrix.skew_x(),
+        0.0,
+        matrix.translate_x(),
+        matrix.skew_y(),
+        matrix.scale_y(),
+        0.0,
+        matrix.translate_y(),
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    ])
 }
 
 fn paint_borders(
@@ -599,13 +650,18 @@ fn paint_borders(
     canvas.restore();
 }
 
-fn background_clip_rect(rect: Rect, layout: &Style, clip: BoxEdge) -> Option<Rect> {
-    if clip == BoxEdge::BorderBox {
-        return None;
+fn origin_edge(origin: BackgroundOrigin) -> BoxEdge {
+    match origin {
+        BackgroundOrigin::BorderBox => BoxEdge::BorderBox,
+        BackgroundOrigin::PaddingBox => BoxEdge::PaddingBox,
+        BackgroundOrigin::ContentBox => BoxEdge::ContentBox,
     }
+}
+
+fn inset_rect(rect: Rect, layout: &Style, edge: BoxEdge) -> Rect {
     let width = rect.width();
     let insets = edge_insets(
-        clip,
+        edge,
         layout.border.left.value(),
         layout.border.top.value(),
         layout.border.right.value(),
@@ -619,7 +675,14 @@ fn background_clip_rect(rect: Rect, layout: &Style, clip: BoxEdge) -> Option<Rec
     let top = rect.top + insets.top;
     let right = (rect.right - insets.right).max(left);
     let bottom = (rect.bottom - insets.bottom).max(top);
-    Some(Rect::new(left, top, right, bottom))
+    Rect::new(left, top, right, bottom)
+}
+
+fn background_clip_rect(rect: Rect, layout: &Style, clip: BoxEdge) -> Option<Rect> {
+    if clip == BoxEdge::BorderBox {
+        return None;
+    }
+    Some(inset_rect(rect, layout, clip))
 }
 
 fn paint_background_image(canvas: &Canvas, rect: Rect, layout: &Style, paint: &PaintStyle) {

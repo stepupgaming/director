@@ -31,6 +31,39 @@ fn pixel(p: &[u8], x: usize, y: usize) -> &[u8] {
     &p[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4]
 }
 
+#[test]
+fn file_background_uses_compile_base_dir() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let home = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+    let bytes = STANDARD.decode(RED_PNG).unwrap();
+    std::fs::write(home.path().join("spot.png"), &bytes).unwrap();
+    let source = "<style>body{margin:0}div{width:64px;height:64px;background-image:url(\"spot.png\");background-repeat:no-repeat;background-size:auto}</style><div></div>";
+    let mut options = CompileOptions {
+        width: 64,
+        height: 64,
+        duration: 3.0,
+        base_dir: home.path().to_path_buf(),
+        ..Default::default()
+    };
+    let mut compiled = compile(source, options.clone()).unwrap();
+    let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
+    render_frame(&mut compiled.director, 0.0, surface.canvas()).unwrap();
+    let info = skia_safe::ImageInfo::new(
+        (64, 64),
+        skia_safe::ColorType::RGBA8888,
+        skia_safe::AlphaType::Unpremul,
+        None,
+    );
+    let mut pixels = vec![0; 64 * 64 * 4];
+    assert!(surface.read_pixels(&info, &mut pixels, 64 * 4, (0, 0)));
+    let ink = pixel(&pixels, 2, 2);
+    assert!(ink[0] > 200 && ink[1] < 30 && ink[2] < 30, "{ink:?}");
+    options.base_dir = empty.path().to_path_buf();
+    let err = compile(source, options).err().unwrap().to_string();
+    assert!(err.contains("spot.png"), "{err}");
+}
+
 fn image_box(extra: &str) -> String {
     format!(
         "<style>body{{margin:0}}div{{box-sizing:border-box;width:64px;height:64px;background-image:url(\"data:image/png;base64,{RED_PNG}\");{extra}}}</style><div></div>"
@@ -349,4 +382,24 @@ fn repeat_x_inside_a_pair_still_fails() {
     .unwrap()
     .to_string();
     assert!(err.contains("background-repeat"), "{err}");
+}
+
+#[test]
+fn gradient_sizes_to_the_padding_box_and_clamps_across_the_border() {
+    let source = |origin: &str| {
+        format!(
+            "<style>body{{margin:0}}div{{box-sizing:border-box;width:64px;height:64px;border:24px solid transparent;background-image:linear-gradient(90deg,red,blue);{origin}}}</style><div></div>"
+        )
+    };
+    let padding = frame(&source(""));
+    let left = pixel(&padding, 20, 32);
+    let right = pixel(&padding, 44, 32);
+    assert!(left[0] > 240 && left[2] < 20, "{left:?}");
+    assert!(right[0] < 20 && right[2] > 240, "{right:?}");
+    let border = frame(&source("background-origin:border-box"));
+    let mixed = pixel(&border, 20, 32);
+    assert!(
+        mixed[0] > 100 && mixed[2] > 40 && mixed[0] < 220,
+        "{mixed:?}"
+    );
 }

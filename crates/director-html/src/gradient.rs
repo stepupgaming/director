@@ -436,7 +436,7 @@ impl NativeGradient {
                 )
             }
             Kind::Radial { center, radius } => {
-                let (cx, cy) = (
+                let (local_x, local_y) = (
                     style::resolve(center.0, rect.width()),
                     style::resolve(center.1, rect.height()),
                 );
@@ -446,14 +446,14 @@ impl NativeGradient {
                         ShapeExtent::ClosestSide | ShapeExtent::ClosestCorner
                     );
                     let dx = if closest {
-                        cx.min(rect.width() - cx)
+                        local_x.min(rect.width() - local_x)
                     } else {
-                        cx.max(rect.width() - cx)
+                        local_x.max(rect.width() - local_x)
                     };
                     let dy = if closest {
-                        cy.min(rect.height() - cy)
+                        local_y.min(rect.height() - local_y)
                     } else {
-                        cy.max(rect.height() - cy)
+                        local_y.max(rect.height() - local_y)
                     };
                     let corner = matches!(
                         extent,
@@ -489,7 +489,17 @@ impl NativeGradient {
                 if rx <= 0.0 || ry <= 0.0 {
                     return None;
                 }
-                let matrix = Matrix::new_all(rx, 0.0, cx, 0.0, ry, cy, 0.0, 0.0, 1.0);
+                let matrix = Matrix::new_all(
+                    rx,
+                    0.0,
+                    rect.left + local_x,
+                    0.0,
+                    ry,
+                    rect.top + local_y,
+                    0.0,
+                    0.0,
+                    1.0,
+                );
                 let (colors, stops) = self.ramp(rx)?;
                 skia_safe::gradient_shader::radial(
                     (0.0, 0.0),
@@ -503,8 +513,8 @@ impl NativeGradient {
             }
             Kind::Conic { center, angle } => {
                 let c = (
-                    style::resolve(center.0, rect.width()),
-                    style::resolve(center.1, rect.height()),
+                    rect.left + style::resolve(center.0, rect.width()),
+                    rect.top + style::resolve(center.1, rect.height()),
                 );
                 let mut matrix = Matrix::new_identity();
                 matrix.set_rotate(*angle - 90.0, Some(c.into()));

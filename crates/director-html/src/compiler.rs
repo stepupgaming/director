@@ -493,7 +493,7 @@ impl Builder {
             height: self.options.height as f32,
             font_size: parent_size,
         };
-        let (mut layout, paint) = style::translate(&values, metrics).map_err(|errors| {
+        let (mut layout, paint) = style::translate(&values, metrics, &self.assets).map_err(|errors| {
             CompileError::Diagnostics(
                 errors
                     .into_iter()
@@ -867,6 +867,7 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                         height: self.options.height as f32,
                         font_size: paint.font_size,
                     },
+                    &self.assets,
                 )
                 .map_err(|e| CompileError::Input(e.join("; ")))?;
                 let before = spans.len();
