@@ -37,3 +37,12 @@ fn side_line_paints_the_second_column() {
     let dark = pixel(&pixels, 8, 32);
     assert!(dark[0] < 20 && dark[1] < 20 && dark[2] < 20, "{dark:?}");
 }
+
+#[test]
+fn subgrid_places_the_grandchild_on_the_parent_line() {
+    let html = "<style>body{margin:0}.grid{display:grid;width:64px;height:64px;grid-template-columns:[main] 32px [side] 32px}.sub{display:grid;grid-column:span 2;width:64px;height:64px;grid-template-columns:subgrid;grid-template-rows:64px}.cell{grid-column:side;background:red}</style><div class='grid'><div class='sub'><div class='cell'></div></div></div>";
+    let pixels = frame(html, 0.0);
+    assert_eq!(pixel(&pixels, 48, 32), &[255, 0, 0, 255]);
+    let dark = pixel(&pixels, 8, 32);
+    assert!(dark[0] < 20 && dark[1] < 20 && dark[2] < 20, "{dark:?}");
+}

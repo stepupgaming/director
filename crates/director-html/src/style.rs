@@ -818,8 +818,8 @@ fn grid_track(s: &str, m: Metrics) -> Result<TrackSizingFunction, String> {
         }
     }
 }
-fn grid(s: &str, m: Metrics) -> Result<Vec<GridTemplateComponent<String>>, String> {
-    crate::grid_template::grid_template(s, m)
+fn grid(s: &str, m: Metrics, columns: bool) -> Result<Vec<GridTemplateComponent<String>>, String> {
+    crate::grid_template::grid_template_axis(s, m, columns)
 }
 fn placement(s: &str, columns: bool) -> Result<GridPlacement, String> {
     let parts = split(s.trim(), false);
@@ -1096,12 +1096,14 @@ pub fn translate(
                 "justify-content" => style.justify_content = Some(content(s)?),
                 "align-content" => style.align_content = Some(content(s)?),
                 "grid-template-columns" => {
-                    let (tracks, names) = crate::grid_template::install_tracks(true, grid(s, m)?);
+                    let (tracks, names) =
+                        crate::grid_template::install_tracks(true, grid(s, m, true)?);
                     style.grid_template_columns = tracks;
                     style.grid_template_column_names = names;
                 }
                 "grid-template-rows" => {
-                    let (tracks, names) = crate::grid_template::install_tracks(false, grid(s, m)?);
+                    let (tracks, names) =
+                        crate::grid_template::install_tracks(false, grid(s, m, false)?);
                     style.grid_template_rows = tracks;
                     style.grid_template_row_names = names;
                 }

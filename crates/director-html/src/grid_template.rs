@@ -7,20 +7,99 @@
 //! A child custom ident resolves against the parent axis to the same 1-based
 //! line index Taffy uses for a numeric grid line. An auto repeat keeps the name
 //! for Taffy, because the repetition count is not known until layout.
+//! `subgrid` copies the parent axis when that axis has a known track count.
+//! A missing axis, an auto repeat, and `subgrid` inside `repeat()` fail.
 
 use crate::style::{self, LengthParts, Metrics};
 use std::cell::RefCell;
-use taffy::style::{GridTemplateComponent, GridTemplateRepetition, RepetitionCount, TrackSizingFunction};
+use taffy::style::{
+    GridTemplateComponent, GridTemplateRepetition, RepetitionCount, TrackSizingFunction,
+};
 
-pub fn grid_template(
+#[cfg(test)]
+fn grid_template(
     source: &str,
     metrics: Metrics,
+) -> Result<Vec<GridTemplateComponent<String>>, String> {
+    grid_template_axis(source, metrics, true)
+}
+
+pub(crate) fn grid_template_axis(
+    source: &str,
+    metrics: Metrics,
+    columns: bool,
 ) -> Result<Vec<GridTemplateComponent<String>>, String> {
     let source = source.trim();
     if source.is_empty() || source == "none" {
         return Ok(Vec::new());
     }
+    if let Some(tail) = subgrid_tail(source) {
+        return copy_subgrid(tail, columns);
+    }
     components_from_parts(parse_parts(source, metrics)?)
+}
+
+fn subgrid_tail(source: &str) -> Option<&str> {
+    let rest = source.get("subgrid".len()..)?;
+    if !source[.."subgrid".len()].eq_ignore_ascii_case("subgrid") {
+        return None;
+    }
+    if rest.is_empty() || rest.starts_with(char::is_whitespace) || rest.starts_with('[') {
+        Some(rest.trim())
+    } else {
+        None
+    }
+}
+
+fn subgrid_line_names(tail: &str) -> Result<Vec<Vec<String>>, String> {
+    if tail.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut names = Vec::new();
+    for token in crate::css::split(tail, false) {
+        for piece in explode_glued(&token) {
+            if piece.is_empty() {
+                continue;
+            }
+            if piece.starts_with('[') {
+                names.push(line_names(piece)?);
+            } else if piece.eq_ignore_ascii_case("subgrid") || piece.starts_with("repeat(") {
+                return Err("subgrid requires extraction".into());
+            } else {
+                return Err("named grid lines require extraction".into());
+            }
+        }
+    }
+    if names.is_empty() {
+        return Err("named grid lines require extraction".into());
+    }
+    Ok(names)
+}
+
+fn copy_subgrid(tail: &str, columns: bool) -> Result<Vec<GridTemplateComponent<String>>, String> {
+    let extra = subgrid_line_names(tail)?;
+    let template = parent_definite(columns)?;
+    if extra.is_empty() {
+        return Ok(template);
+    }
+    let (tracks, mut names) = expand_template(&template)?;
+    if names.len() != extra.len() {
+        return Err("named grid lines require extraction".into());
+    }
+    for (line, more) in names.iter_mut().zip(extra) {
+        for name in more {
+            if !line.iter().any(|existing| existing == &name) {
+                line.push(name);
+            }
+        }
+    }
+    Ok(vec![GridTemplateComponent::Repeat(
+        GridTemplateRepetition {
+            count: RepetitionCount::Count(1),
+            tracks,
+            line_names: names,
+        },
+    )])
 }
 
 fn grid_track(source: &str, metrics: Metrics) -> Result<TrackSizingFunction, String> {
@@ -28,9 +107,9 @@ fn grid_track(source: &str, metrics: Metrics) -> Result<TrackSizingFunction, Str
         "auto" => Ok(taffy::prelude::auto()),
         "min-content" => Ok(taffy::prelude::min_content()),
         "max-content" => Ok(taffy::prelude::max_content()),
-        _ if source.ends_with("fr") => {
-            Ok(taffy::prelude::fr(style::number(source.trim_end_matches("fr"))?))
-        }
+        _ if source.ends_with("fr") => Ok(taffy::prelude::fr(style::number(
+            source.trim_end_matches("fr"),
+        )?)),
         _ if source.starts_with("minmax(") => {
             let inner = source
                 .strip_prefix("minmax(")
@@ -332,13 +411,18 @@ impl Acc {
             return Ok(Vec::new());
         }
         if line_names.is_empty() {
-            return Ok(tracks.into_iter().map(GridTemplateComponent::Single).collect());
+            return Ok(tracks
+                .into_iter()
+                .map(GridTemplateComponent::Single)
+                .collect());
         }
-        Ok(vec![GridTemplateComponent::Repeat(GridTemplateRepetition {
-            count: RepetitionCount::Count(1),
-            tracks,
-            line_names,
-        })])
+        Ok(vec![GridTemplateComponent::Repeat(
+            GridTemplateRepetition {
+                count: RepetitionCount::Count(1),
+                tracks,
+                line_names,
+            },
+        )])
     }
 
     fn emit_repeat(
@@ -414,7 +498,9 @@ fn components_from_parts(parts: Vec<Part>) -> Result<Vec<GridTemplateComponent<S
     Ok(out)
 }
 
-fn tracks_from_parts(parts: Vec<Part>) -> Result<(Vec<TrackSizingFunction>, Vec<Vec<String>>), String> {
+fn tracks_from_parts(
+    parts: Vec<Part>,
+) -> Result<(Vec<TrackSizingFunction>, Vec<Vec<String>>), String> {
     let mut acc = Acc::default();
     for part in parts {
         match part {
@@ -482,6 +568,7 @@ struct AxisMap {
     tracks: u16,
     auto: bool,
     known: Vec<String>,
+    template: Vec<GridTemplateComponent<String>>,
 }
 
 #[derive(Default)]
@@ -581,6 +668,21 @@ fn parent_frame(slot: &Slot) -> Result<&Frame, String> {
     frame.ok_or_else(|| "named grid lines require extraction".to_string())
 }
 
+fn parent_definite(columns: bool) -> Result<Vec<GridTemplateComponent<String>>, String> {
+    LINES.with(|slot| {
+        let slot = slot.borrow();
+        let frame = match parent_frame(&slot) {
+            Ok(frame) => frame,
+            Err(_) => return Err("subgrid requires a definite parent grid".into()),
+        };
+        let axis = if columns { &frame.columns } else { &frame.rows };
+        if axis.auto || axis.tracks == 0 || axis.template.is_empty() {
+            return Err("subgrid requires a definite parent grid".into());
+        }
+        Ok(axis.template.clone())
+    })
+}
+
 fn axis_map(components: &[GridTemplateComponent<String>]) -> AxisMap {
     let mut lines = Vec::new();
     let mut known = Vec::new();
@@ -624,7 +726,55 @@ fn axis_map(components: &[GridTemplateComponent<String>]) -> AxisMap {
         tracks,
         auto,
         known,
+        template: components.to_vec(),
     }
+}
+
+/// Expand a definite template into one track list and one name set per line.
+fn expand_template(
+    components: &[GridTemplateComponent<String>],
+) -> Result<(Vec<TrackSizingFunction>, Vec<Vec<String>>), String> {
+    let mut tracks = Vec::new();
+    let mut names = Vec::new();
+    for component in components {
+        let (more_tracks, more_names) = match component {
+            GridTemplateComponent::Single(track) => (vec![*track], vec![Vec::new(), Vec::new()]),
+            GridTemplateComponent::Repeat(rep) => {
+                let times = match rep.count {
+                    RepetitionCount::Count(times) => times,
+                    RepetitionCount::AutoFit | RepetitionCount::AutoFill => {
+                        return Err("subgrid requires a definite parent grid".into());
+                    }
+                };
+                let (more_tracks, more_names) = expand_count(times, &rep.tracks, &rep.line_names)?;
+                if more_names.is_empty() {
+                    let slots = vec![Vec::new(); more_tracks.len() + 1];
+                    (more_tracks, slots)
+                } else {
+                    (more_tracks, more_names)
+                }
+            }
+        };
+        if more_tracks.is_empty() {
+            continue;
+        }
+        if names.is_empty() {
+            names = more_names;
+        } else {
+            let mut more_names = more_names.into_iter();
+            if let Some(first) = more_names.next() {
+                if let Some(last) = names.last_mut() {
+                    last.extend(first);
+                }
+            }
+            names.extend(more_names);
+        }
+        tracks.extend(more_tracks);
+    }
+    if tracks.is_empty() {
+        return Err("subgrid requires a definite parent grid".into());
+    }
+    Ok((tracks, names))
 }
 
 fn record(lines: &mut Vec<Vec<String>>, known: &mut Vec<String>, line: i16, names: &[String]) {
@@ -698,7 +848,11 @@ fn attach_names(rep: &mut GridTemplateRepetition<String>, at_start: bool, names:
     if rep.line_names.is_empty() {
         return;
     }
-    let index = if at_start { 0 } else { rep.line_names.len() - 1 };
+    let index = if at_start {
+        0
+    } else {
+        rep.line_names.len() - 1
+    };
     if at_start {
         let mut merged = names;
         merged.append(&mut rep.line_names[index]);
@@ -867,9 +1021,100 @@ mod tests {
     }
 
     #[test]
-    fn subgrid_is_rejected() {
-        let err = grid_template("subgrid", metrics()).unwrap_err();
+    fn subgrid_copies_definite_parent_tracks() {
+        super::begin_element(11);
+        let parent = grid_template("[main] 32px [side] 32px", metrics()).unwrap();
+        super::install_tracks(true, parent.clone());
+        super::begin_element(11);
+        let child = super::grid_template_axis("subgrid", metrics(), true).unwrap();
+        assert_eq!(child, parent);
+        super::install_tracks(true, child.clone());
+        super::begin_element(11);
+        let grandchild = super::grid_template_axis("subgrid", metrics(), true).unwrap();
+        assert_eq!(grandchild, child);
+        match super::resolve_named(true, "side", 1).unwrap() {
+            super::NamedPlacement::Line(index) => assert_eq!(index, 2),
+            super::NamedPlacement::Named(_, _) => panic!("side resolved as an auto repeat"),
+        }
+    }
+
+    #[test]
+    fn subgrid_copies_parent_rows() {
+        super::begin_element(18);
+        let parent = grid_template("[top] 16px [bottom] 16px", metrics()).unwrap();
+        super::install_tracks(false, parent.clone());
+        super::begin_element(18);
+        let child = super::grid_template_axis("subgrid", metrics(), false).unwrap();
+        assert_eq!(child, parent);
+    }
+
+    #[test]
+    fn subgrid_without_a_parent_errors() {
+        super::begin_element(12);
+        let err = super::grid_template_axis("subgrid", metrics(), true).unwrap_err();
         assert!(err.to_ascii_lowercase().contains("subgrid"), "{err}");
+    }
+
+    #[test]
+    fn subgrid_on_an_auto_repeat_errors() {
+        super::begin_element(13);
+        let parent = grid_template("repeat(auto-fit, 20px)", metrics()).unwrap();
+        super::install_tracks(true, parent);
+        super::begin_element(13);
+        let err = super::grid_template_axis("subgrid", metrics(), true).unwrap_err();
+        assert!(err.to_ascii_lowercase().contains("subgrid"), "{err}");
+    }
+
+    #[test]
+    fn subgrid_inside_repeat_errors() {
+        super::begin_element(14);
+        let err = grid_template("repeat(2, subgrid)", metrics()).unwrap_err();
+        assert!(err.to_ascii_lowercase().contains("subgrid"), "{err}");
+    }
+
+    #[test]
+    fn subgrid_adds_line_names() {
+        super::begin_element(15);
+        let parent = grid_template("[main] 32px [side] 32px", metrics()).unwrap();
+        super::install_tracks(true, parent);
+        super::begin_element(15);
+        let child = super::grid_template_axis("subgrid [a] [b] [c]", metrics(), true).unwrap();
+        super::install_tracks(true, child);
+        super::begin_element(15);
+        let line = |name: &str| match super::resolve_named(true, name, 1).unwrap() {
+            super::NamedPlacement::Line(index) => index,
+            super::NamedPlacement::Named(_, _) => panic!("{name} resolved as an auto repeat"),
+        };
+        assert_eq!(line("a"), 1);
+        assert_eq!(line("side"), 2);
+        assert_eq!(line("b"), 2);
+        assert_eq!(line("c"), 3);
+    }
+
+    #[test]
+    fn subgrid_name_count_must_match() {
+        super::begin_element(16);
+        let parent = grid_template("32px 32px", metrics()).unwrap();
+        super::install_tracks(true, parent);
+        super::begin_element(16);
+        let err = super::grid_template_axis("subgrid [only]", metrics(), true).unwrap_err();
+        assert!(err.contains("named grid lines"), "{err}");
+    }
+
+    #[test]
+    fn subgrid_rows_do_not_read_columns() {
+        super::begin_element(17);
+        let parent = grid_template("32px 32px", metrics()).unwrap();
+        super::install_tracks(true, parent);
+        super::begin_element(17);
+        let err = super::grid_template_axis("subgrid", metrics(), false).unwrap_err();
+        assert!(err.to_ascii_lowercase().contains("subgrid"), "{err}");
+    }
+
+    #[test]
+    fn bare_ident_still_requires_extraction() {
+        let err = grid_template("sidebar", metrics()).unwrap_err();
+        assert!(err.contains("named grid lines"), "{err}");
     }
 
     #[test]
@@ -899,7 +1144,11 @@ mod tests {
             vec![GridTemplateComponent::Repeat(GridTemplateRepetition {
                 count: RepetitionCount::Count(1),
                 tracks: vec![px(32.0), px(32.0)],
-                line_names: vec![vec!["main".to_string()], vec!["side".to_string()], Vec::new()],
+                line_names: vec![
+                    vec!["main".to_string()],
+                    vec!["side".to_string()],
+                    Vec::new()
+                ],
             })]
         );
         assert_eq!(super::line_index(&tracks, "main", 1).unwrap(), 1);
