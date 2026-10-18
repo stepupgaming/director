@@ -84,9 +84,73 @@ fn external_marker_end_paints_a_blue_cap() {
 }
 
 #[test]
-fn foreign_object_stays_rejected() {
-    let message = compile(
+fn foreign_object_paints_red_over_blue() {
+    let p = frame(
+        &svg_doc(
+            "",
+            "<rect width='64' height='32' fill='#0000ff'/><foreignObject x='4' y='6' width='20' height='12'><div style='background:#ff0000;width:20px;height:12px'></div></foreignObject>",
+        ),
+        0.0,
+    );
+    let ink = pixel(&p, 6, 8);
+    let left = pixel(&p, 2, 2);
+    let right = pixel(&p, 30, 8);
+    let below = pixel(&p, 6, 22);
+    assert!(is_red(ink), "html {ink:?}");
+    assert!(is_blue(left), "left {left:?}");
+    assert!(is_blue(right), "right {right:?}");
+    assert!(is_blue(below), "below {below:?}");
+}
+
+#[test]
+fn empty_foreign_object_compiles() {
+    compile(
         "<svg><foreignObject></foreignObject></svg>",
+        CompileOptions {
+            width: WIDTH,
+            height: HEIGHT,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn smil_and_nested_image_stay_rejected() {
+    for markup in [
+        "<svg><animate></animate></svg>",
+        "<svg><set></set></svg>",
+        "<svg><image href='a.png'></image></svg>",
+    ] {
+        let message = compile(
+            markup,
+            CompileOptions {
+                width: WIDTH,
+                height: HEIGHT,
+                duration: 3.0,
+                ..Default::default()
+            },
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            message.contains(
+                "SVG SMIL, scripts, and nested images require native translation"
+            ),
+            "{markup} {message}"
+        );
+    }
+}
+
+#[test]
+fn transformed_foreign_object_requires_extraction() {
+    let message = compile(
+        &svg_doc(
+            "",
+            "<foreignObject transform='translate(1 1)' x='0' y='0' width='10' height='10'><div></div></foreignObject>",
+        ),
         CompileOptions {
             width: WIDTH,
             height: HEIGHT,
@@ -98,9 +162,7 @@ fn foreign_object_stays_rejected() {
     .unwrap()
     .to_string();
     assert!(
-        message.contains(
-            "SVG foreignObject, SMIL, scripts, and nested images require native translation"
-        ),
+        message.contains("transformed foreignObject requires extraction"),
         "{message}"
     );
 }

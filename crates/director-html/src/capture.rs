@@ -406,7 +406,7 @@ fn build(
     paint.box_node.style = style.clone();
     let mut paper = None;
     let content: Option<Box<dyn Element>> = if let Some(svg) = &n.svg {
-        crate::compiler::validate_svg(svg)?;
+        crate::compiler::validate_captured_svg(svg)?;
         let fonts = cached_svg_fonts(svg_fonts, store, font_faces)?;
         Some(Box::new(VectorNode::from_tree(parse_svg(svg, &n.id, &fonts)?)))
     } else if let Some(text) = &n.text {

@@ -152,17 +152,171 @@ fn write_svg_children(
 }
 
 pub(crate) fn validate_svg(source: &str) -> Result<(), CompileError> {
-    let dom = Html::parse_fragment(source);
-    let selector = Selector::parse(
-        "foreignObject, animate, animateTransform, animateMotion, set, script, image",
+    reject_svg(
+        source,
+        &["animate", "animateTransform", "animateMotion", "set", "script", "image"],
+        "SVG SMIL, scripts, and nested images require native translation",
     )
-    .unwrap();
+}
+
+pub(crate) fn validate_captured_svg(source: &str) -> Result<(), CompileError> {
+    reject_svg(
+        source,
+        &[
+            "foreignObject",
+            "animate",
+            "animateTransform",
+            "animateMotion",
+            "set",
+            "script",
+            "image",
+        ],
+        "SVG foreignObject, SMIL, scripts, and nested images require native translation",
+    )
+}
+
+fn reject_svg(source: &str, names: &[&str], message: &str) -> Result<(), CompileError> {
+    let dom = Html::parse_fragment(source);
+    let selector = Selector::parse(&names.join(", ")).unwrap();
     if dom.select(&selector).next().is_some() {
-        return Err(CompileError::Input(
-            "SVG foreignObject, SMIL, scripts, and nested images require native translation".into(),
-        ));
+        return Err(CompileError::Input(message.into()));
     }
     Ok(())
+}
+
+struct SvgSpace {
+    viewport_w: f32,
+    viewport_h: f32,
+    min_x: f32,
+    min_y: f32,
+    scale_x: f32,
+    scale_y: f32,
+}
+
+enum SvgLen {
+    User(f32),
+    Percent(f32),
+}
+
+fn parse_svg_len(raw: &str) -> Result<SvgLen, CompileError> {
+    let raw = raw.trim();
+    if let Some(number) = raw.strip_suffix('%') {
+        let value: f32 = number.trim().parse().map_err(|_| {
+            CompileError::Input(
+                "foreignObject length requires a number, px, or a percent".into(),
+            )
+        })?;
+        if !value.is_finite() {
+            return Err(CompileError::Input(
+                "foreignObject length requires a number, px, or a percent".into(),
+            ));
+        }
+        return Ok(SvgLen::Percent(value / 100.0));
+    }
+    let number = raw.strip_suffix("px").unwrap_or(raw).trim();
+    let value: f32 = number.parse().map_err(|_| {
+        CompileError::Input("foreignObject length requires a number, px, or a percent".into())
+    })?;
+    if !value.is_finite() {
+        return Err(CompileError::Input(
+            "foreignObject length requires a number, px, or a percent".into(),
+        ));
+    }
+    Ok(SvgLen::User(value))
+}
+
+fn svg_space(svg: ElementRef<'_>, viewport: (f32, f32)) -> Result<SvgSpace, CompileError> {
+    let (min_x, min_y, width, height) = if let Some(raw) = svg.value().attr("viewBox") {
+        let parts: Vec<f32> = raw
+            .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                part.parse::<f32>().map_err(|_| {
+                    CompileError::Input("foreignObject viewBox requires four numbers".into())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if parts.len() != 4
+            || !parts.iter().all(|value| value.is_finite())
+            || parts[2] <= 0.0
+            || parts[3] <= 0.0
+        {
+            return Err(CompileError::Input(
+                "foreignObject viewBox requires four numbers".into(),
+            ));
+        }
+        (parts[0], parts[1], parts[2], parts[3])
+    } else {
+        (0.0, 0.0, viewport.0, viewport.1)
+    };
+    Ok(SvgSpace {
+        viewport_w: viewport.0,
+        viewport_h: viewport.1,
+        min_x,
+        min_y,
+        scale_x: viewport.0 / width,
+        scale_y: viewport.1 / height,
+    })
+}
+
+fn resolve_svg_x(len: SvgLen, space: &SvgSpace) -> f32 {
+    match len {
+        SvgLen::Percent(fraction) => fraction * space.viewport_w,
+        SvgLen::User(user) => (user - space.min_x) * space.scale_x,
+    }
+}
+
+fn resolve_svg_y(len: SvgLen, space: &SvgSpace) -> f32 {
+    match len {
+        SvgLen::Percent(fraction) => fraction * space.viewport_h,
+        SvgLen::User(user) => (user - space.min_y) * space.scale_y,
+    }
+}
+
+fn resolve_svg_width(len: SvgLen, space: &SvgSpace) -> f32 {
+    match len {
+        SvgLen::Percent(fraction) => fraction * space.viewport_w,
+        SvgLen::User(user) => user * space.scale_x,
+    }
+}
+
+fn resolve_svg_height(len: SvgLen, space: &SvgSpace) -> f32 {
+    match len {
+        SvgLen::Percent(fraction) => fraction * space.viewport_h,
+        SvgLen::User(user) => user * space.scale_y,
+    }
+}
+
+fn definite_svg_axis(
+    raw: Option<&String>,
+    fallback: f32,
+    metrics: Metrics,
+) -> Result<f32, CompileError> {
+    let Some(raw) = raw else {
+        if fallback.is_finite() && fallback > 0.0 {
+            return Ok(fallback);
+        }
+        return Err(CompileError::Input(
+            "foreignObject requires a definite SVG viewport".into(),
+        ));
+    };
+    style::px(raw, metrics).map_err(|_| {
+        CompileError::Input("foreignObject requires a definite SVG viewport".into())
+    })
+}
+
+fn specifies_transform(css: &Css, el: ElementRef<'_>) -> Result<bool, CompileError> {
+    if el.value().attr("transform").is_some_and(|value| {
+        let value = value.trim();
+        !value.is_empty() && value != "none"
+    }) {
+        return Ok(true);
+    }
+    if !css.has_local_property(el, "transform") {
+        return Ok(false);
+    }
+    let values = css.cascade(el, &Values::new())?;
+    Ok(values.get("transform").is_some_and(|value| value != "none"))
 }
 
 const SVG_FONT_FILES: &[&str] = &[
@@ -829,6 +983,7 @@ impl Builder {
                 "{context}: invalid clip window [{start}, {end})"
             )));
         }
+        let mut svg_viewport: Option<(f32, f32)> = None;
         let content: Option<Box<dyn Element>> = match tag {
             "img" => {
                 let src = el
@@ -891,6 +1046,8 @@ impl Builder {
                 markup.push_str("</svg>");
                 let fonts = self.ensure_svg_fonts()?;
                 let vector = parse_svg(&markup, &context, &fonts)?;
+                let size = vector.size();
+                svg_viewport = Some((size.width(), size.height()));
                 if !values.contains_key("width") {
                     layout.size.width = taffy::prelude::length(vector.size().width());
                 }
@@ -958,6 +1115,11 @@ impl Builder {
                     track.loop_audio = el.value().attr("loop").is_some();
                 }
                 None
+            }
+            "foreignobject" => {
+                return Err(CompileError::Input(
+                    "nested foreignObject requires extraction".into(),
+                ));
             }
             "canvas" | "iframe" | "object" | "embed" => {
                 return Err(CompileError::Diagnostics(vec![diagnostic(
@@ -1118,7 +1280,212 @@ impl Builder {
                 }
             }
         }
+        if let Some(fallback) = svg_viewport {
+            let next_start = if !root && el.value().attr("data-composition-id").is_some() {
+                start
+            } else {
+                composition_start
+            };
+            self.place_foreign_objects(el, id, &values, fallback, next_start, depth)?;
+        }
         Ok(id)
+    }
+
+    fn place_foreign_objects(
+        &mut self,
+        svg: ElementRef<'_>,
+        parent: NodeId,
+        svg_values: &Values,
+        fallback: (f32, f32),
+        start: f64,
+        depth: usize,
+    ) -> Result<(), CompileError> {
+        let selector = Selector::parse("foreignObject").unwrap();
+        if svg.select(&selector).next().is_none() {
+            return Ok(());
+        }
+        let font_size = svg_values
+            .get("font-size")
+            .and_then(|size| {
+                style::px(
+                    size,
+                    Metrics {
+                        width: fallback.0,
+                        height: fallback.1,
+                        font_size: 16.0,
+                    },
+                )
+                .ok()
+            })
+            .unwrap_or(16.0);
+        let metrics = Metrics {
+            width: fallback.0,
+            height: fallback.1,
+            font_size,
+        };
+        let viewport = (
+            definite_svg_axis(svg_values.get("width"), fallback.0, metrics)?,
+            definite_svg_axis(svg_values.get("height"), fallback.1, metrics)?,
+        );
+        let space = svg_space(svg, viewport)?;
+        for foreign in svg.select(&selector) {
+            self.place_one_foreign(svg, foreign, parent, svg_values, &space, start, depth)?;
+        }
+        Ok(())
+    }
+
+    fn place_one_foreign(
+        &mut self,
+        svg: ElementRef<'_>,
+        foreign: ElementRef<'_>,
+        parent: NodeId,
+        svg_values: &Values,
+        space: &SvgSpace,
+        start: f64,
+        depth: usize,
+    ) -> Result<(), CompileError> {
+        for ancestor in foreign.ancestors().filter_map(ElementRef::wrap) {
+            if ancestor.id() == svg.id() {
+                break;
+            }
+            let name = ancestor.value().name();
+            if name == "foreignobject" {
+                return Err(CompileError::Input(
+                    "nested foreignObject requires extraction".into(),
+                ));
+            }
+            if name == "svg" {
+                return Err(CompileError::Input(
+                    "foreignObject in a nested svg requires extraction".into(),
+                ));
+            }
+            if matches!(
+                name,
+                "symbol" | "defs" | "marker" | "pattern" | "clippath" | "mask"
+            ) {
+                return Err(CompileError::Input(
+                    "foreignObject in a reusable SVG fragment requires extraction".into(),
+                ));
+            }
+            if specifies_transform(&self.css, ancestor)? {
+                return Err(CompileError::Input(
+                    "transformed foreignObject requires extraction".into(),
+                ));
+            }
+        }
+        if specifies_transform(&self.css, foreign)? {
+            return Err(CompileError::Input(
+                "transformed foreignObject requires extraction".into(),
+            ));
+        }
+        let cascaded = self.css.cascade(foreign, svg_values)?;
+        let geometry = |name: &str, default: &str| -> Result<SvgLen, CompileError> {
+            let raw = cascaded
+                .get(name)
+                .map(String::as_str)
+                .or_else(|| foreign.value().attr(name))
+                .unwrap_or(default);
+            parse_svg_len(raw)
+        };
+        let x = resolve_svg_x(geometry("x", "0")?, space);
+        let y = resolve_svg_y(geometry("y", "0")?, space);
+        let width = resolve_svg_width(geometry("width", "0")?, space);
+        let height = resolve_svg_height(geometry("height", "0")?, space);
+        if !width.is_finite() || !height.is_finite() || !x.is_finite() || !y.is_finite() {
+            return Err(CompileError::Input(
+                "foreignObject length requires a number, px, or a percent".into(),
+            ));
+        }
+        if width <= 0.0 || height <= 0.0 {
+            return Ok(());
+        }
+        if foreign
+            .children()
+            .any(|node| node.value().as_text().is_some_and(|text| !text.trim().is_empty()))
+        {
+            return Err(CompileError::Input(format!(
+                "{}: foreignObject text requires an HTML element",
+                label(foreign)
+            )));
+        }
+        let metrics = Metrics {
+            width,
+            height,
+            font_size: svg_values
+                .get("font-size")
+                .and_then(|size| {
+                    style::px(
+                        size,
+                        Metrics {
+                            width,
+                            height,
+                            font_size: 16.0,
+                        },
+                    )
+                    .ok()
+                })
+                .unwrap_or(16.0),
+        };
+        let (mut layout, mut paint) = style::translate(
+            &Values::new(),
+            metrics,
+            style::ContainingBlock::from_axes(width, height),
+            &self.assets,
+        )
+        .map_err(|errors| {
+            CompileError::Diagnostics(
+                errors
+                    .into_iter()
+                    .map(|error| diagnostic(&label(foreign), error))
+                    .collect(),
+            )
+        })?;
+        layout.position = taffy::style::Position::Absolute;
+        layout.inset = taffy::geometry::Rect {
+            left: taffy::prelude::length(x),
+            right: taffy::prelude::auto(),
+            top: taffy::prelude::length(y),
+            bottom: taffy::prelude::auto(),
+        };
+        layout.size = taffy::geometry::Size {
+            width: taffy::prelude::length(width),
+            height: taffy::prelude::length(height),
+        };
+        layout.margin = taffy::geometry::Rect::zero();
+        layout.overflow = taffy::geometry::Point {
+            x: taffy::style::Overflow::Hidden,
+            y: taffy::style::Overflow::Hidden,
+        };
+        paint.box_node.overflow = "hidden".into();
+        let mut element = HtmlElement::new(layout, paint.clone(), None, metrics);
+        element.start = start;
+        element.end = self.options.duration;
+        let box_id = self.director.scene.add_node(Box::new(element));
+        self.nodes += 1;
+        self.director.scene.get_node_mut(box_id).unwrap().z_index = paint.z_index;
+        if let Some(name) = foreign.value().attr("id") {
+            if self.ids.insert(name.into(), box_id).is_some() {
+                return Err(CompileError::Input(format!("duplicate HTML id '{name}'")));
+            }
+        }
+        self.director.scene.add_child(parent, box_id);
+        let block = style::ContainingBlock::from_axes(width, height);
+        for child in foreign.children().filter_map(ElementRef::wrap) {
+            if matches!(child.value().name(), "script" | "style" | "link") {
+                continue;
+            }
+            let child_id = self.node(child, &cascaded, start, false, block, depth + 1)?;
+            if self.fixed.contains(&child_id) {
+                self.director.scene.add_child(
+                    self.root_id
+                        .expect("composition root exists before a nested fixed box"),
+                    child_id,
+                );
+            } else {
+                self.director.scene.add_child(box_id, child_id);
+            }
+        }
+        Ok(())
     }
     fn rich_text(
         &self,
