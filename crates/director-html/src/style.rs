@@ -86,6 +86,8 @@ pub struct PaintStyle {
     pub decoration: TextLines,
     pub decoration_style: crate::decoration_marks::DecorationStyle,
     pub decoration_thickness: Option<f32>,
+    /// `None` means `currentColor`.
+    pub decoration_color: Option<Color>,
     pub object_position: ObjectPosition,
     pub corners: [(LengthPercentage, LengthPercentage); 4],
     pub border_colors: [Color; 4],
@@ -343,6 +345,7 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
         decoration: TextLines::default(),
         decoration_style: crate::decoration_marks::DecorationStyle::Solid,
         decoration_thickness: None,
+        decoration_color: None,
         object_position: ObjectPosition::default(),
         corners: [(zero(), zero()); 4],
         border_colors: [Color::BLACK; 4],
@@ -796,9 +799,12 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                     paint.decoration_style = crate::decoration_value::parse_style(s)?;
                 }
                 "text-decoration-color" => {
-                    if !s.trim().eq_ignore_ascii_case("currentcolor") {
-                        return Err(format!("unsupported text decoration color '{s}'"));
-                    }
+                    let trimmed = s.trim();
+                    paint.decoration_color = if trimmed.eq_ignore_ascii_case("currentcolor") {
+                        None
+                    } else {
+                        Some(color(trimmed, paint.color)?)
+                    };
                 }
                 "text-decoration-thickness" => {
                     paint.decoration_thickness = crate::decoration_value::parse_thickness(s, m)?;

@@ -91,6 +91,17 @@ pub struct EncoderSettings {
     pub fps: f64,
     pub encoder_mode: EncoderMode,
     pub alpha: bool,
+    /// Software x264 only. Hardware qp and the alpha VP9 path stay put.
+    pub draft: bool,
+}
+
+/// Software x264 preset and CRF. Draft is ultrafast / 30. The default is slow / 18.
+pub fn software_x264_quality(draft: bool) -> (&'static str, &'static str) {
+    if draft {
+        ("ultrafast", "30")
+    } else {
+        ("slow", "18")
+    }
 }
 
 impl EncoderSettings {
@@ -103,6 +114,7 @@ impl EncoderSettings {
             fps: 30.0,
             encoder_mode: EncoderMode::Auto,
             alpha: false,
+            draft: false,
         }
     }
 
@@ -118,6 +130,11 @@ impl EncoderSettings {
 
     pub fn with_alpha(mut self, alpha: bool) -> Self {
         self.alpha = alpha;
+        self
+    }
+
+    pub fn with_draft(mut self, draft: bool) -> Self {
+        self.draft = draft;
         self
     }
 }
@@ -438,8 +455,9 @@ impl Encoder {
                     _ => {}
                 }
             } else {
-                cmd.arg("-preset").arg("slow")
-                    .arg("-crf").arg("18")
+                let (preset, crf) = software_x264_quality(settings.draft);
+                cmd.arg("-preset").arg(preset)
+                    .arg("-crf").arg(crf)
                     .arg("-profile:v").arg("high")
                     .arg("-tune").arg("film");
             }
@@ -1070,6 +1088,15 @@ mod tests {
     #[cfg(unix)]
     use std::process::Stdio;
     use std::time::Duration;
+
+    #[test]
+    fn draft_software_x264_is_ultrafast_crf_30_and_the_default_stays_slow() {
+        assert_eq!(super::software_x264_quality(false), ("slow", "18"));
+        assert_eq!(super::software_x264_quality(true), ("ultrafast", "30"));
+        let settings = super::EncoderSettings::preset_h264_yuv420p(64, 64);
+        assert!(!settings.draft);
+        assert!(settings.with_draft(true).draft);
+    }
 
     #[test]
     fn parses_ffprobe_frame_rates() {

@@ -1,4 +1,5 @@
-//! Canvas-edge findings for a loaded composition. No platform safe-zone inset.
+//! Canvas-edge findings for a loaded composition.
+//! `--safe-zone` adds a warning when text, caption, or smart_caption enters that inset.
 
 use crate::input::Input;
 use clap::{Parser, ValueEnum};
@@ -32,6 +33,9 @@ pub struct CheckArgs {
     pub every: f64,
     #[arg(long, value_enum, default_value_t = FailOn::Error)]
     pub fail_on: FailOn,
+    /// Warn when text, caption, or smart_caption enters this platform inset.
+    #[arg(long)]
+    pub safe_zone: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -107,6 +111,42 @@ pub fn canvas_findings(
     findings
 }
 
+pub fn safe_zone_findings(
+    nodes: &[(u64, &str, f32, f32, f32, f32)],
+    zone: &director_core::types::SafeZone,
+    width: f32,
+    height: f32,
+    time: f64,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for (id, kind, x, y, w, h) in nodes {
+        if !matches!(*kind, "text" | "caption" | "smart_caption") {
+            continue;
+        }
+        if *w <= 0.0 || *h <= 0.0 || !x.is_finite() || !y.is_finite() || !w.is_finite() || !h.is_finite()
+        {
+            continue;
+        }
+        let right = x + w;
+        let bottom = y + h;
+        let outside = *x < zone.left
+            || *y < zone.top
+            || right > width - zone.right
+            || bottom > height - zone.bottom;
+        if !outside {
+            continue;
+        }
+        findings.push(Finding {
+            time,
+            node_id: *id,
+            kind: "safe_zone",
+            severity: "warning",
+            detail: format!("{kind} x={x} y={y} w={w} h={h}"),
+        });
+    }
+    findings
+}
+
 pub fn exit_code(findings: &[Finding], fail_on: FailOn) -> i32 {
     let has_error = findings.iter().any(|finding| finding.severity == "error");
     let has_warning = findings.iter().any(|finding| finding.severity == "warning");
@@ -147,9 +187,19 @@ pub fn run(args: CheckArgs) -> i32 {
         .collect::<Vec<_>>();
     let width = director.width as f32;
     let height = director.height as f32;
+    let zone = match args.safe_zone.as_deref() {
+        None => None,
+        Some(name) => match director_core::node::caption::scaled_safe_zone(name, height) {
+            Some(zone) => Some(zone),
+            None => {
+                eprintln!("unknown safe zone '{name}'");
+                return 1;
+            }
+        },
+    };
     for time in sample_times(duration, args.every) {
         let manifest = build_render_manifest(&mut director, time);
-        let nodes = manifest
+        let canvas_nodes = manifest
             .nodes
             .iter()
             .map(|node| {
@@ -162,7 +212,24 @@ pub fn run(args: CheckArgs) -> i32 {
                 )
             })
             .collect::<Vec<_>>();
-        findings.extend(canvas_findings(&nodes, width, height, time));
+        findings.extend(canvas_findings(&canvas_nodes, width, height, time));
+        if let Some(zone) = &zone {
+            let zoned = manifest
+                .nodes
+                .iter()
+                .map(|node| {
+                    (
+                        node.id.index as u64,
+                        node.kind,
+                        node.bounds.x,
+                        node.bounds.y,
+                        node.bounds.w,
+                        node.bounds.h,
+                    )
+                })
+                .collect::<Vec<_>>();
+            findings.extend(safe_zone_findings(&zoned, zone, width, height, time));
+        }
     }
     let code = exit_code(&findings, args.fail_on);
     let json_findings = findings
@@ -227,5 +294,53 @@ mod tests {
             0.0,
         );
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn agent_check_safe_zone_warns_text_inside_the_inset() {
+        let zone = director_core::node::caption::scaled_safe_zone("tiktok", 1920.0)
+            .expect("tiktok");
+        assert!((zone.top - 100.0).abs() < 0.01);
+        let hit = super::safe_zone_findings(
+            &[
+                (1, "text", 40.0, 10.0, 100.0, 40.0),
+                (2, "caption", 40.0, 10.0, 100.0, 40.0),
+            ],
+            &zone,
+            1080.0,
+            1920.0,
+            0.0,
+        );
+        assert_eq!(hit.len(), 2);
+        assert!(hit.iter().all(|finding| finding.kind == "safe_zone"));
+        assert!(hit.iter().all(|finding| finding.severity == "warning"));
+        let boxed = super::safe_zone_findings(
+            &[(1, "box", 40.0, 10.0, 100.0, 40.0)],
+            &zone,
+            1080.0,
+            1920.0,
+            0.0,
+        );
+        assert!(boxed.is_empty());
+        let inside = super::safe_zone_findings(
+            &[(1, "text", 40.0, 120.0, 100.0, 40.0)],
+            &zone,
+            1080.0,
+            1920.0,
+            0.0,
+        );
+        assert!(inside.is_empty());
+        let skipped = super::safe_zone_findings(
+            &[
+                (1, "text", 0.0, 0.0, 0.0, 10.0),
+                (2, "smart_caption", f32::NAN, 0.0, 10.0, 10.0),
+            ],
+            &zone,
+            1080.0,
+            1920.0,
+            0.0,
+        );
+        assert!(skipped.is_empty());
+        assert!(director_core::node::caption::scaled_safe_zone("nope", 1920.0).is_none());
     }
 }

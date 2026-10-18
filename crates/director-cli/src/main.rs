@@ -141,6 +141,10 @@ struct RenderArgs {
     /// Draft raster scale in (0, 1]. Layout stays at the composition size.
     #[arg(long, default_value_t = 1.0)]
     scale: f32,
+
+    /// Software x264 preset ultrafast and CRF 30. Raster size stays on --scale.
+    #[arg(long, default_value_t = false)]
+    draft_encode: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -320,6 +324,7 @@ fn cmd_render(args: RenderArgs) {
         None,
         args.alpha,
         args.scale,
+        args.draft_encode,
     ) {
         eprintln!("{e}");
         std::process::exit(2);
@@ -636,7 +641,44 @@ fn main() {
                 manifest: cli.manifest,
                 manifest_time: cli.manifest_time,
                 scale: 1.0,
+                draft_encode: false,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod draft_encode_tests {
+    use super::{Cli, Commands};
+    use clap::Parser;
+
+    #[test]
+    fn draft_encode_stays_off_the_scale_flag() {
+        let scaled = Cli::try_parse_from([
+            "director-engine",
+            "render",
+            "shot.html",
+            "--scale",
+            "0.5",
+        ])
+        .expect("scale parse");
+        let Commands::Render(args) = scaled.command.expect("render") else {
+            panic!("render");
+        };
+        assert!(!args.draft_encode);
+        assert!((args.scale - 0.5).abs() < 1e-6);
+
+        let drafted = Cli::try_parse_from([
+            "director-engine",
+            "render",
+            "shot.html",
+            "--draft-encode",
+        ])
+        .expect("draft parse");
+        let Commands::Render(args) = drafted.command.expect("render") else {
+            panic!("render");
+        };
+        assert!(args.draft_encode);
+        assert!((args.scale - 1.0).abs() < 1e-6);
     }
 }

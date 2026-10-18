@@ -334,8 +334,7 @@ impl Element for HtmlElement {
         // Background is clipped to individual corner radii; content clipping follows overflow.
         canvas.save();
         canvas.clip_rrect(outer, skia_safe::ClipOp::Intersect, true);
-        if let Some(clip) = content_box_background_clip(rect, &self.style, self.paint.background_clip)
-        {
+        if let Some(clip) = background_clip_rect(rect, &self.style, self.paint.background_clip) {
             canvas.clip_rect(clip, skia_safe::ClipOp::Intersect, false);
         }
         bg.render(canvas, rect, 1.0, &mut |_| {})?;
@@ -600,13 +599,13 @@ fn paint_borders(
     canvas.restore();
 }
 
-fn content_box_background_clip(rect: Rect, layout: &Style, clip: BoxEdge) -> Option<Rect> {
-    if clip != BoxEdge::ContentBox {
+fn background_clip_rect(rect: Rect, layout: &Style, clip: BoxEdge) -> Option<Rect> {
+    if clip == BoxEdge::BorderBox {
         return None;
     }
     let width = rect.width();
     let insets = edge_insets(
-        BoxEdge::ContentBox,
+        clip,
         layout.border.left.value(),
         layout.border.top.value(),
         layout.border.right.value(),
@@ -949,7 +948,8 @@ fn paint_text_lines(canvas: &Canvas, element: &HtmlElement, rect: Rect) {
     };
     let mut paint = skia_safe::Paint::default();
     paint.set_anti_alias(false);
-    paint.set_color4f(element.paint.color.to_color4f(), None);
+    let ink = element.paint.decoration_color.unwrap_or(element.paint.color);
+    paint.set_color4f(ink.to_color4f(), None);
     for (x, w, under, over, strike) in spans {
         if lines.underline {
             fill_decoration(

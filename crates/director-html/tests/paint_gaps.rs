@@ -161,6 +161,45 @@ fn underline_changes_a_pixel_under_the_glyph() {
 }
 
 #[test]
+fn decoration_color_paints_the_underline_red() {
+    let marked = frame(
+        "<style>body{margin:0}div{width:64px;height:64px;color:white;font-size:32px;line-height:1;text-decoration:underline;text-decoration-color:red}</style><div>T</div>",
+    );
+    let mut left = 64usize;
+    let mut right = 0usize;
+    let mut top = 64usize;
+    let mut bottom = 0usize;
+    let mut seen = false;
+    for y in 0..64 {
+        for x in 0..64 {
+            let sample = pixel(&marked, x, y);
+            if sample[0] > 40 || sample[1] > 40 || sample[2] > 40 {
+                seen = true;
+                left = left.min(x);
+                right = right.max(x);
+                top = top.min(y);
+                bottom = bottom.max(y);
+            }
+        }
+    }
+    assert!(seen, "decorated glyph did not paint");
+    let mut red = false;
+    let mut white = false;
+    for y in top..=bottom {
+        for x in left..=right {
+            let sample = pixel(&marked, x, y);
+            if sample[0] > 200 && sample[1] < 30 && sample[2] < 30 {
+                red = true;
+            }
+            if sample[0] > 200 && sample[1] > 200 && sample[2] > 200 {
+                white = true;
+            }
+        }
+    }
+    assert!(red && white, "red underline or white glyph missing in {top}..={bottom}");
+}
+
+#[test]
 fn luminance_mask_is_more_transparent_on_black_than_alpha() {
     let html = |mode: &str| {
         format!(
@@ -257,6 +296,42 @@ fn content_box_clip_keeps_the_image_origin_and_clears_the_padding() {
     );
     let ink = pixel(&pixels, 26, 26);
     assert!(ink[0] > 200 && ink[1] < 30 && ink[2] < 30, "{ink:?}");
+}
+
+#[test]
+fn padding_box_clip_clears_the_border_and_keeps_the_padding() {
+    let pixels = frame(&image_box(
+        "border:8px solid transparent;padding:16px;background-color:blue;background-repeat:no-repeat;background-position:left top;background-size:auto;background-origin:content-box;background-clip:padding-box",
+    ));
+    let border = pixel(&pixels, 4, 20);
+    assert!(
+        border[0] < 20 && border[1] < 20 && border[2] < 20,
+        "{border:?}"
+    );
+    let padding = pixel(&pixels, 12, 12);
+    assert!(
+        padding[2] > 200 && padding[0] < 30 && padding[1] < 30,
+        "{padding:?}"
+    );
+    let ink = pixel(&pixels, 26, 26);
+    assert!(ink[0] > 200 && ink[1] < 30 && ink[2] < 30, "{ink:?}");
+}
+
+#[test]
+fn border_box_clip_paints_under_a_transparent_border() {
+    let pixels = frame(&image_box(
+        "border:8px solid transparent;padding:16px;background-color:blue;background-repeat:no-repeat;background-position:left top;background-size:auto;background-origin:content-box;background-clip:border-box",
+    ));
+    let border = pixel(&pixels, 4, 20);
+    assert!(
+        border[2] > 200 && border[0] < 30 && border[1] < 30,
+        "{border:?}"
+    );
+    let padding = pixel(&pixels, 12, 12);
+    assert!(
+        padding[2] > 200 && padding[0] < 30 && padding[1] < 30,
+        "{padding:?}"
+    );
 }
 
 #[test]

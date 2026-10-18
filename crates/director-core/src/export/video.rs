@@ -131,10 +131,12 @@ pub fn render_export(
         audio_track_path,
         alpha,
         1.0,
+        false,
     )
 }
 
 /// Same export as [`render_export`] with a draft raster scale. Layout pixels stay unchanged.
+/// `draft` selects software x264 ultrafast and CRF 30. It does not change the raster size.
 #[allow(unused_mut)]
 #[instrument(level = "info", skip(director, gpu_context), fields(width = director.width, height = director.height, fps = director.fps, scale = scale))]
 pub fn render_export_at_scale(
@@ -144,6 +146,7 @@ pub fn render_export_at_scale(
     audio_track_path: Option<PathBuf>,
     alpha: bool,
     scale: f32,
+    draft: bool,
 ) -> Result<()> {
     let previous_x = director.output_scale_x;
     let previous_y = director.output_scale_y;
@@ -156,6 +159,7 @@ pub fn render_export_at_scale(
         alpha,
         out_w,
         out_h,
+        draft,
     );
     director.output_scale_x = previous_x;
     director.output_scale_y = previous_y;
@@ -170,6 +174,7 @@ fn export_scaled(
     alpha: bool,
     out_w: i32,
     out_h: i32,
+    draft: bool,
 ) -> Result<()> {
     // Fail closed on missing bundled fonts (Plan 06 determinism).
     director.ensure_required_fonts()?;
@@ -200,7 +205,8 @@ fn export_scaled(
     let settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
         .with_fps(fps)
         .with_encoder_mode(director.encoder_mode)
-        .with_alpha(alpha);
+        .with_alpha(alpha)
+        .with_draft(draft);
     let mut encoder = Encoder::new(&out_path, settings)?;
 
     let info = skia_safe::ImageInfo::new(
