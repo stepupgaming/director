@@ -458,21 +458,6 @@ fn url_and_gradient_paint_in_css_order() {
         covered[2] > 200 && covered[0] < 30 && covered[1] < 30,
         "{covered:?}"
     );
-    let err = compile(
-        &format!(
-            "<style>div{{background-image:url(\"data:image/png;base64,{RED_PNG}\"),url(\"data:image/png;base64,{RED_PNG}\")}}</style><div></div>"
-        ),
-        CompileOptions {
-            width: 64,
-            height: 64,
-            duration: 3.0,
-            ..Default::default()
-        },
-    )
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(err.contains("background-image accepts a single url"), "{err}");
 }
 
 #[test]

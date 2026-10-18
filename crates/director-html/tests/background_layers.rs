@@ -2,6 +2,7 @@ use director_core::systems::renderer::render_frame;
 use director_html::{compile, CompileOptions};
 
 const RED_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGP4z8DwHx9mGBkKAMLXf4EvceABAAAAAElFTkSuQmCC";
+const BLUE_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAlSURBVChTfcixDQAADMIw/n+aziRSBy9O0v4UpCAFKUhBClKsA0NXf4GI4kbyAAAAAElFTkSuQmCC";
 
 fn frame(source: &str) -> Vec<u8> {
     let mut c = compile(
@@ -74,22 +75,37 @@ fn shorter_background_size_cycles_across_layers() {
 }
 
 #[test]
-fn second_background_url_stays_an_error() {
+fn two_background_urls_paint_their_own_tiles() {
+    let pixels = frame(&format!(
+        "<style>body{{margin:0}}div{{width:64px;height:64px;background-image:url(\"data:image/png;base64,{RED_PNG}\"),url(\"data:image/png;base64,{BLUE_PNG}\");background-repeat:no-repeat;background-size:8px 8px,40px 8px;background-position:0px 0px,0px 0px}}</style><div></div>"
+    ));
+    let top = pixel(&pixels, 2, 2);
+    assert!(red(top), "first url stays on top {top:?}");
+    let second = pixel(&pixels, 20, 2);
+    assert!(blue(second), "second url tile {second:?}");
+    let outside = pixel(&pixels, 50, 2);
+    assert!(dark(outside), "outside both tiles {outside:?}");
+}
+
+#[test]
+fn missing_second_background_file_stays_an_error() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("spot.png"), STANDARD.decode(RED_PNG).unwrap()).unwrap();
     let err = compile(
-        &format!(
-            "<style>div{{background-image:url(\"data:image/png;base64,{RED_PNG}\"),url(\"data:image/png;base64,{RED_PNG}\")}}</style><div></div>"
-        ),
+        "<style>div{background-image:url(\"spot.png\"),url(\"gone.png\")}</style><div></div>",
         CompileOptions {
             width: 64,
             height: 64,
             duration: 3.0,
+            base_dir: home.path().to_path_buf(),
             ..Default::default()
         },
     )
     .err()
     .unwrap()
     .to_string();
-    assert!(err.contains("background-image accepts a single url"), "{err}");
+    assert!(err.contains("gone.png"), "{err}");
 }
 
 #[test]

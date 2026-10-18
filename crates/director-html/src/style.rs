@@ -1767,16 +1767,11 @@ fn background_layers(
 ) -> Result<Vec<BackgroundLayer>, String> {
     let parts = split(s, true);
     let mut layers = Vec::new();
-    let mut images = 0usize;
     for part in &parts {
         if part.eq_ignore_ascii_case("none") {
             continue;
         }
         if is_css_url(part) {
-            images += 1;
-            if images > 1 {
-                return Err("background-image accepts a single url".into());
-            }
             layers.push(BackgroundLayer::Image(decode_background_url(part, assets)?));
         } else {
             layers.push(BackgroundLayer::Gradient(
