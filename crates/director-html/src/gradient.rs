@@ -1,7 +1,4 @@
-use crate::{
-    css::split,
-    style::{self, LengthParts, Metrics},
-};
+use crate::style::{self, LengthParts, Metrics};
 use director_core::types::Color;
 use lightningcss::{
     traits::{Parse, ToCss},
@@ -202,12 +199,6 @@ fn expand_hints(
     Ok((colors, offsets))
 }
 
-pub fn parse_list(s: &str, m: Metrics, current: Color) -> Result<Vec<NativeGradient>, String> {
-    split(s, true)
-        .into_iter()
-        .map(|s| NativeGradient::parse(&s, m, current))
-        .collect()
-}
 impl NativeGradient {
     pub fn parse(s: &str, m: Metrics, current: Color) -> Result<Self, String> {
         let gradient = Gradient::parse_string(s).map_err(|e| format!("gradient: {e:?}"))?;

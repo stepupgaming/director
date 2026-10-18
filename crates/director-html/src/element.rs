@@ -6,7 +6,8 @@ use crate::{
     shader::PaperPaint,
     style::{
         canvas_transform, perspective_matrix, resolve, shows_backface, BackgroundFit,
-        BackgroundOrigin, BorderLine, CanvasTransform, LengthParts, Metrics, PaintStyle,
+        BackgroundLayer, BackgroundOrigin, BorderLine, CanvasTransform, LengthParts, Metrics,
+        PaintStyle,
     },
 };
 use director_core::{Element, RenderError};
@@ -367,16 +368,22 @@ impl Element for HtmlElement {
             origin_edge(self.paint.background_origin),
         );
         if gradient_rect.width() > 0.0 && gradient_rect.height() > 0.0 {
-            for gradient in self.paint.gradient.iter().rev() {
-                if let Some(shader) = gradient.shader(gradient_rect) {
-                    let mut p = skia_safe::Paint::default();
-                    p.set_shader(shader);
-                    p.set_anti_alias(true);
-                    canvas.draw_rect(rect, &p);
+            for layer in self.paint.layers.iter().rev() {
+                match layer {
+                    BackgroundLayer::Gradient(gradient) => {
+                        if let Some(shader) = gradient.shader(gradient_rect) {
+                            let mut p = skia_safe::Paint::default();
+                            p.set_shader(shader);
+                            p.set_anti_alias(true);
+                            canvas.draw_rect(rect, &p);
+                        }
+                    }
+                    BackgroundLayer::Image(image) => {
+                        paint_background_image(canvas, rect, &self.style, &self.paint, image);
+                    }
                 }
             }
         }
-        paint_background_image(canvas, rect, &self.style, &self.paint);
         canvas.restore();
         for shadow in self.paint.shadows.iter().rev().filter(|s| s.inset) {
             canvas.save();
@@ -685,10 +692,13 @@ fn background_clip_rect(rect: Rect, layout: &Style, clip: BoxEdge) -> Option<Rec
     Some(inset_rect(rect, layout, clip))
 }
 
-fn paint_background_image(canvas: &Canvas, rect: Rect, layout: &Style, paint: &PaintStyle) {
-    let Some(image) = &paint.background_image else {
-        return;
-    };
+fn paint_background_image(
+    canvas: &Canvas,
+    rect: Rect,
+    layout: &Style,
+    paint: &PaintStyle,
+    image: &skia_safe::Image,
+) {
     let iw = image.width() as f32;
     let ih = image.height() as f32;
     if iw <= 0.0 || ih <= 0.0 {
@@ -949,9 +959,8 @@ fn paint_text_lines(canvas: &Canvas, element: &HtmlElement, rect: Rect) {
     if count == 0 {
         return;
     }
-    let thickness = element.paint.decoration_thickness.unwrap_or_else(|| {
-        (element.paint.font_size / 16.0).max(1.0).round()
-    });
+    let auto = (element.paint.font_size / 16.0).max(1.0).round();
+    let requested = element.paint.decoration_thickness;
     let spans = {
         let mut guard = match text.paragraph.lock() {
             Ok(guard) => guard,
@@ -966,6 +975,13 @@ fn paint_text_lines(canvas: &Canvas, element: &HtmlElement, rect: Rect) {
             content.width()
         };
         paragraph.layout(layout_width);
+        let thickness = match requested {
+            crate::decoration_value::DecorationThickness::Auto => auto,
+            crate::decoration_value::DecorationThickness::Px(px) => px,
+            crate::decoration_value::DecorationThickness::FromFont => {
+                font_underline_thickness(paragraph).unwrap_or(auto)
+            }
+        };
         let metrics = paragraph.get_line_metrics();
         let boxes = paragraph.get_rects_for_range(
             0..count,
@@ -1007,8 +1023,9 @@ fn paint_text_lines(canvas: &Canvas, element: &HtmlElement, rect: Rect) {
                 content.top + strike,
             ));
         }
-        spans
+        (spans, thickness)
     };
+    let (spans, thickness) = spans;
     let mut paint = skia_safe::Paint::default();
     paint.set_anti_alias(false);
     let ink = element.paint.decoration_color.unwrap_or(element.paint.color);
@@ -1047,6 +1064,24 @@ fn paint_text_lines(canvas: &Canvas, element: &HtmlElement, rect: Rect) {
                 thickness,
             );
         }
+    }
+}
+
+fn font_underline_thickness(paragraph: &skia_safe::textlayout::Paragraph) -> Option<f32> {
+    let lines = paragraph.get_line_metrics();
+    let line = lines.first()?;
+    let end = line
+        .end_including_newline
+        .max(line.end_index)
+        .max(line.start_index.saturating_add(1));
+    let styles = line.get_style_metrics(line.start_index..end);
+    let thickness = styles
+        .first()
+        .and_then(|(_, style)| style.font_metrics.underline_thickness())?;
+    if thickness.is_finite() && thickness > 0.0 {
+        Some(thickness)
+    } else {
+        None
     }
 }
 

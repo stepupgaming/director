@@ -4,12 +4,19 @@ use crate::decoration_marks::DecorationStyle;
 use crate::style::{length, LengthParts, Metrics};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DecorationThickness {
+    Auto,
+    Px(f32),
+    FromFont,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DecorationPaint {
     pub underline: bool,
     pub overline: bool,
     pub line_through: bool,
     pub style: DecorationStyle,
-    pub thickness_px: Option<f32>, // None means CSS auto
+    pub thickness: DecorationThickness,
 }
 
 pub fn parse_lines(source: &str) -> Result<DecorationPaint, String> {
@@ -44,19 +51,19 @@ pub fn parse_style(source: &str) -> Result<DecorationStyle, String> {
     }
 }
 
-pub fn parse_thickness(source: &str, metrics: Metrics) -> Result<Option<f32>, String> {
+pub fn parse_thickness(source: &str, metrics: Metrics) -> Result<DecorationThickness, String> {
     let trimmed = source.trim();
     if trimmed == "auto" {
-        return Ok(None);
+        return Ok(DecorationThickness::Auto);
     }
     if trimmed == "from-font" {
-        return Err(format!("unsupported text decoration thickness '{source}'"));
+        return Ok(DecorationThickness::FromFont);
     }
     let px = resolved_px(trimmed, metrics)?;
     if !px.is_finite() {
         return Err(format!("unsupported text decoration thickness '{source}'"));
     }
-    Ok(Some(px))
+    Ok(DecorationThickness::Px(px))
 }
 
 pub fn parse_shorthand(source: &str, metrics: Metrics) -> Result<DecorationPaint, String> {
@@ -83,7 +90,14 @@ pub fn parse_shorthand(source: &str, metrics: Metrics) -> Result<DecorationPaint
                 if thickness_set {
                     return Err(format!("unsupported text decoration thickness '{token}'"));
                 }
-                paint.thickness_px = None;
+                paint.thickness = DecorationThickness::Auto;
+                thickness_set = true;
+            }
+            "from-font" => {
+                if thickness_set {
+                    return Err(format!("unsupported text decoration thickness '{token}'"));
+                }
+                paint.thickness = DecorationThickness::FromFont;
                 thickness_set = true;
             }
             "none" => return Err(format!("unsupported text decoration 'none'")),
@@ -93,7 +107,7 @@ pub fn parse_shorthand(source: &str, metrics: Metrics) -> Result<DecorationPaint
                     if thickness_set {
                         return Err(format!("unsupported text decoration thickness '{other}'"));
                     }
-                    paint.thickness_px = Some(px);
+                    paint.thickness = DecorationThickness::Px(px);
                     thickness_set = true;
                 }
                 Ok(_) => {
@@ -112,7 +126,7 @@ fn blank() -> DecorationPaint {
         overline: false,
         line_through: false,
         style: DecorationStyle::Solid,
-        thickness_px: None,
+        thickness: DecorationThickness::Auto,
     }
 }
 
@@ -146,7 +160,7 @@ mod tests {
                 overline: true,
                 line_through: false,
                 style: DecorationStyle::Solid,
-                thickness_px: None,
+                thickness: DecorationThickness::Auto,
             }
         );
     }
@@ -174,10 +188,22 @@ mod tests {
     #[test]
     fn thickness_auto_px_percent_and_from_font() {
         let metrics = metrics();
-        assert_eq!(parse_thickness("auto", metrics).unwrap(), None);
-        assert_eq!(parse_thickness("2px", metrics).unwrap(), Some(2.0));
-        assert_eq!(parse_thickness("50%", metrics).unwrap(), Some(8.0));
-        assert!(parse_thickness("from-font", metrics).is_err());
+        assert_eq!(
+            parse_thickness("auto", metrics).unwrap(),
+            DecorationThickness::Auto
+        );
+        assert_eq!(
+            parse_thickness("2px", metrics).unwrap(),
+            DecorationThickness::Px(2.0)
+        );
+        assert_eq!(
+            parse_thickness("50%", metrics).unwrap(),
+            DecorationThickness::Px(8.0)
+        );
+        assert_eq!(
+            parse_thickness("from-font", metrics).unwrap(),
+            DecorationThickness::FromFont
+        );
     }
 
     #[test]
@@ -189,7 +215,7 @@ mod tests {
                 overline: false,
                 line_through: false,
                 style: DecorationStyle::Double,
-                thickness_px: Some(3.0),
+                thickness: DecorationThickness::Px(3.0),
             }
         );
     }
@@ -203,7 +229,7 @@ mod tests {
                 overline: false,
                 line_through: true,
                 style: DecorationStyle::Dotted,
-                thickness_px: None,
+                thickness: DecorationThickness::Auto,
             }
         );
     }

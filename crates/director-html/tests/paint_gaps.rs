@@ -254,11 +254,64 @@ fn luminance_mask_is_more_transparent_on_black_than_alpha() {
     );
 }
 
+fn text_box(text: &str, transform: &str) -> String {
+    format!(
+        "<style>body{{margin:0}}div{{width:64px;height:64px;color:white;font-size:16px;line-height:1;text-transform:{transform}}}</style><div>{text}</div>"
+    )
+}
+
 #[test]
-fn mixed_url_and_gradient_background_errors() {
+fn text_transform_matches_the_authored_case() {
+    let upper = frame(&text_box("ab", "uppercase"));
+    assert_eq!(upper, frame(&text_box("AB", "none")));
+    assert_ne!(upper, frame(&text_box("ab", "none")));
+    assert_eq!(
+        frame(&text_box("AB", "lowercase")),
+        frame(&text_box("ab", "none"))
+    );
+    assert_eq!(
+        frame(&text_box("ab cd", "capitalize")),
+        frame(&text_box("Ab Cd", "none"))
+    );
+    assert_eq!(
+        frame(&text_box("ab CD", "capitalize")),
+        frame(&text_box("Ab CD", "none"))
+    );
+    let err = compile(
+        "<style>div{text-transform:full-width}</style><div>ab</div>",
+        CompileOptions {
+            width: 64,
+            height: 64,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(err.contains("unsupported text-transform"), "{err}");
+}
+
+#[test]
+fn url_and_gradient_paint_in_css_order() {
+    let image_on_top = frame(&format!(
+        "<style>body{{margin:0}}div{{width:64px;height:64px;background-image:url(\"data:image/png;base64,{RED_PNG}\"),linear-gradient(blue,blue);background-repeat:no-repeat;background-position:left top;background-size:auto}}</style><div></div>"
+    ));
+    let top = pixel(&image_on_top, 2, 2);
+    let far = pixel(&image_on_top, 40, 40);
+    assert!(top[0] > 200 && top[1] < 30 && top[2] < 30, "{top:?}");
+    assert!(far[2] > 200 && far[0] < 30 && far[1] < 30, "{far:?}");
+    let gradient_on_top = frame(&format!(
+        "<style>body{{margin:0}}div{{width:64px;height:64px;background-image:linear-gradient(blue,blue),url(\"data:image/png;base64,{RED_PNG}\");background-repeat:no-repeat;background-position:left top;background-size:auto}}</style><div></div>"
+    ));
+    let covered = pixel(&gradient_on_top, 2, 2);
+    assert!(
+        covered[2] > 200 && covered[0] < 30 && covered[1] < 30,
+        "{covered:?}"
+    );
     let err = compile(
         &format!(
-            "<style>body{{margin:0}}div{{width:64px;height:64px;background-image:url(\"data:image/png;base64,{RED_PNG}\"),linear-gradient(red,blue)}}</style><div></div>"
+            "<style>div{{background-image:url(\"data:image/png;base64,{RED_PNG}\"),url(\"data:image/png;base64,{RED_PNG}\")}}</style><div></div>"
         ),
         CompileOptions {
             width: 64,
@@ -270,7 +323,31 @@ fn mixed_url_and_gradient_background_errors() {
     .err()
     .unwrap()
     .to_string();
-    assert!(err.contains("cannot mix"), "{err}");
+    assert!(err.contains("background-image accepts a single url"), "{err}");
+}
+
+fn red_pixels(pixels: &[u8]) -> usize {
+    pixels
+        .chunks(4)
+        .filter(|sample| sample[0] > 200 && sample[1] < 30 && sample[2] < 30)
+        .count()
+}
+
+#[test]
+fn from_font_underline_is_thinner_than_auto() {
+    let source = |thickness: &str| {
+        format!(
+            "<style>body{{margin:0}}div{{width:64px;height:64px;color:white;font-size:64px;line-height:1;text-decoration:underline;text-decoration-color:red;text-decoration-thickness:{thickness}}}</style><div>T</div>"
+        )
+    };
+    let auto = red_pixels(&frame(&source("auto")));
+    let from_font = red_pixels(&frame(&source("from-font")));
+    assert!(auto > 0, "auto underline painted no red");
+    assert!(from_font > 0, "from-font underline painted no red");
+    assert!(
+        from_font < auto,
+        "from-font {from_font} red pixels, auto {auto}"
+    );
 }
 
 #[test]

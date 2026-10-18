@@ -423,11 +423,7 @@ pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
 }
 pub fn span(text: String, paint: &PaintStyle) -> TextSpan {
     TextSpan {
-        text: if paint.uppercase {
-            text.to_uppercase()
-        } else {
-            text
-        },
+        text: style::transform_text(&text, paint.text_transform),
         color: None,
         font_family: Some(paint.font_family.clone()),
         font_weight: Some(paint.font_weight),
@@ -793,8 +789,7 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
             anonymous.corners = [(taffy::prelude::zero(), taffy::prelude::zero()); 4];
             anonymous.filter = Default::default();
             anonymous.shadows.clear();
-            anonymous.gradient.clear();
-            anonymous.background_image = None;
+            anonymous.layers.clear();
             anonymous.decoration = Default::default();
             anonymous.mask = None;
             anonymous.mask_luminance = false;

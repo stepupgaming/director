@@ -47,6 +47,20 @@ impl LengthParts for LengthPercentage {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextTransform {
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
+#[derive(Debug, Clone)]
+pub enum BackgroundLayer {
+    Gradient(crate::gradient::NativeGradient),
+    Image(skia_safe::Image),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Metrics {
     pub width: f32,
@@ -73,11 +87,10 @@ pub struct PaintStyle {
     pub align: skia_safe::textlayout::TextAlign,
     pub preserve_space: bool,
     pub no_wrap: bool,
-    pub uppercase: bool,
+    pub text_transform: TextTransform,
     pub rtl: bool,
     pub z_index: i32,
-    pub gradient: Vec<crate::gradient::NativeGradient>,
-    pub background_image: Option<skia_safe::Image>,
+    pub layers: Vec<BackgroundLayer>,
     pub background_position: (AxisPos, AxisPos),
     pub background_size: BackgroundFit,
     pub background_repeat: (AxisRepeat, AxisRepeat),
@@ -87,7 +100,7 @@ pub struct PaintStyle {
     pub mask_luminance: bool,
     pub decoration: TextLines,
     pub decoration_style: crate::decoration_marks::DecorationStyle,
-    pub decoration_thickness: Option<f32>,
+    pub decoration_thickness: crate::decoration_value::DecorationThickness,
     /// `None` means `currentColor`.
     pub decoration_color: Option<Color>,
     pub object_position: ObjectPosition,
@@ -186,6 +199,30 @@ pub(crate) fn convert_length(l: &CssLength, m: Metrics) -> Result<LengthPercenta
     match crate::calc_len::resolve_length(l, m, None)? {
         crate::calc_len::ResolvedLength::Length(px) => Ok(LengthPercentage::length(px)),
         crate::calc_len::ResolvedLength::Percent(fraction) => Ok(LengthPercentage::percent(fraction)),
+    }
+}
+
+pub fn transform_text(text: &str, transform: TextTransform) -> String {
+    match transform {
+        TextTransform::None => text.to_string(),
+        TextTransform::Uppercase => text.to_uppercase(),
+        TextTransform::Lowercase => text.to_lowercase(),
+        TextTransform::Capitalize => {
+            let mut out = String::with_capacity(text.len());
+            let mut boundary = true;
+            for ch in text.chars() {
+                if ch.is_whitespace() {
+                    boundary = true;
+                    out.push(ch);
+                } else if boundary {
+                    boundary = false;
+                    out.extend(ch.to_uppercase());
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        }
     }
 }
 
@@ -328,11 +365,10 @@ pub fn translate(
         align: skia_safe::textlayout::TextAlign::Left,
         preserve_space: false,
         no_wrap: false,
-        uppercase: false,
+        text_transform: TextTransform::None,
         rtl: false,
         z_index: 0,
-        gradient: Vec::new(),
-        background_image: None,
+        layers: Vec::new(),
         background_position: (
             AxisPos {
                 percent: 0.0,
@@ -351,7 +387,7 @@ pub fn translate(
         mask_luminance: false,
         decoration: TextLines::default(),
         decoration_style: crate::decoration_marks::DecorationStyle::Solid,
-        decoration_thickness: None,
+        decoration_thickness: crate::decoration_value::DecorationThickness::Auto,
         decoration_color: None,
         object_position: ObjectPosition::default(),
         corners: [(zero(), zero()); 4],
@@ -519,9 +555,7 @@ pub fn translate(
                 }
                 "background-image" => {
                     if s != "none" {
-                        let (gradients, image) = background_layers(s, m, paint.color, assets)?;
-                        paint.gradient = gradients;
-                        paint.background_image = image;
+                        paint.layers = background_layers(s, m, paint.color, assets)?;
                     }
                 }
                 "background-position-x" => {
@@ -784,9 +818,11 @@ pub fn translate(
                     paint.no_wrap = matches!(s, "nowrap" | "pre");
                 }
                 "text-transform" => {
-                    paint.uppercase = match s {
-                        "none" => false,
-                        "uppercase" => true,
+                    paint.text_transform = match s {
+                        "none" => TextTransform::None,
+                        "uppercase" => TextTransform::Uppercase,
+                        "lowercase" => TextTransform::Lowercase,
+                        "capitalize" => TextTransform::Capitalize,
                         _ => return Err("unsupported text-transform".into()),
                     }
                 }
@@ -796,7 +832,7 @@ pub fn translate(
                     paint.decoration.overline = parsed.overline;
                     paint.decoration.line_through = parsed.line_through;
                     paint.decoration_style = parsed.style;
-                    paint.decoration_thickness = parsed.thickness_px;
+                    paint.decoration_thickness = parsed.thickness;
                 }
                 "text-decoration-line" => {
                     let parsed = crate::decoration_value::parse_lines(s)?;
@@ -1195,33 +1231,27 @@ fn background_layers(
     m: Metrics,
     current: Color,
     assets: &crate::assets::AssetStore,
-) -> Result<(Vec<crate::gradient::NativeGradient>, Option<skia_safe::Image>), String> {
+) -> Result<Vec<BackgroundLayer>, String> {
     let parts = split(s, true);
-    let mut url = None;
-    let mut gradients = false;
+    let mut layers = Vec::new();
+    let mut images = 0usize;
     for part in &parts {
         if part.eq_ignore_ascii_case("none") {
             continue;
         }
         if is_css_url(part) {
-            if url.is_some() || gradients {
-                return Err(if gradients {
-                    "background-image cannot mix a url and a gradient".into()
-                } else {
-                    "background-image accepts a single url".into()
-                });
+            images += 1;
+            if images > 1 {
+                return Err("background-image accepts a single url".into());
             }
-            url = Some(part.as_str());
-        } else if url.is_some() {
-            return Err("background-image cannot mix a url and a gradient".into());
+            layers.push(BackgroundLayer::Image(decode_background_url(part, assets)?));
         } else {
-            gradients = true;
+            layers.push(BackgroundLayer::Gradient(
+                crate::gradient::NativeGradient::parse(part, m, current)?,
+            ));
         }
     }
-    if let Some(url) = url {
-        return Ok((Vec::new(), Some(decode_background_url(url, assets)?)));
-    }
-    Ok((crate::gradient::parse_list(s, m, current)?, None))
+    Ok(layers)
 }
 
 fn is_css_url(value: &str) -> bool {
