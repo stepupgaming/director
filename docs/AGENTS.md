@@ -31,7 +31,7 @@
 ## Child DOX Index
 
 - `architecture/` — Overview, core contracts, and render performance measurements. Raw benchmark outputs stay under ignored `target/`.
-- `plans/` — Engineering plan index (00), completed core hardening (01–06), motion/recipes (07), native projects/runtime (08), and native fidelity (09: slice 1, capture forwarding, Paper Shader translation, captured muted video and audio, gradient color hints, nested preserve-3d, external SVG presentation, per-layer background lists, basis-backed mixed calc, SVG markers and masks, and the 2026-10-17 release run of lib 101, paint_gaps 22, background_layers 5, mixed_calc 4, and svg_markers 3).
+- `plans/` — Engineering plan index (00), completed core hardening (01–06), motion/recipes (07), native projects/runtime (08), and native fidelity (09: slice 1, capture forwarding, Paper Shader translation, captured muted video and audio, gradient color hints, nested preserve-3d, external SVG presentation, per-layer background lists, containing-block mixed calc, SVG markers and masks, and the 2026-10-17 release run of lib 101, paint_gaps 22, background_layers 5, mixed_calc 4, and svg_markers 3; a 2026-10-18 run passed mixed_calc 12 and gradient_calc 3).
 - `contributing/` — Development and documentation workflow.
 - `specs/` — Reserved for docs-local design notes (may be empty; harness RON specs live in repo-root `specs/`).
 - `archive/` — Historical audit and deferred product docs.

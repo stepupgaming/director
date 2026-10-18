@@ -249,6 +249,7 @@ pub(crate) fn compile_capture_with_assets(
                 &mut videos,
                 &assets,
                 metrics,
+                style::ContainingBlock::from_axes(capture.width as f32, capture.height as f32),
                 0,
             )?;
             node_count += scene.iter_alive().count();
@@ -360,6 +361,7 @@ fn build(
     videos: &mut BTreeMap<String, Arc<Mutex<VideoNode>>>,
     store: &AssetStore,
     m: Metrics,
+    block: style::ContainingBlock,
     depth: usize,
 ) -> Result<NodeId, CompileError> {
     if depth > 256 || scene.nodes.len() > 100000 {
@@ -373,9 +375,29 @@ fn build(
             n.id
         )));
     }
-    let (style, paint) = style::translate(&n.styles, m, store).map_err(|e| {
+    let (mut style, mut paint) = style::translate(&n.styles, m, block, store).map_err(|e| {
         CompileError::Diagnostics(e.into_iter().map(|e| diagnostic(&n.id, e)).collect())
     })?;
+    // Sampled px stays px. A leftover calc uses this node's used size when the style
+    // does not already name a definite content box.
+    let derived = style::content_box(&style, block, false);
+    let own = style::ContainingBlock {
+        width: derived.width.or_else(|| style::axis_basis(n.rect[2])),
+        height: derived.height.or_else(|| style::axis_basis(n.rect[3])),
+    };
+    let gap_metrics = Metrics {
+        font_size: paint.font_size,
+        ..m
+    };
+    style::resolve_gaps(&mut style, &n.styles, gap_metrics, own).map_err(|errors| {
+        CompileError::Diagnostics(
+            errors
+                .into_iter()
+                .map(|error| diagnostic(&n.id, error))
+                .collect(),
+        )
+    })?;
+    paint.box_node.style = style.clone();
     let mut paper = None;
     let content: Option<Box<dyn Element>> = if let Some(svg) = &n.svg {
         crate::compiler::validate_svg(svg)?;
@@ -416,9 +438,10 @@ fn build(
                 "captured canvas requires a native shader translation".to_string(),
             )])
         })?;
-        paper = Some(crate::shader::prepare(shader).map_err(|message| {
-            CompileError::Diagnostics(vec![diagnostic(&n.id, message)])
-        })?);
+        paper = Some(
+            crate::shader::prepare(shader)
+                .map_err(|message| CompileError::Diagnostics(vec![diagnostic(&n.id, message)]))?,
+        );
         None
     } else if n.tag == "video" {
         let src = n
@@ -502,7 +525,16 @@ fn build(
                 continue;
             }
             let child = build(
-                child, scene, director, assets, images, videos, store, m, depth + 1,
+                child,
+                scene,
+                director,
+                assets,
+                images,
+                videos,
+                store,
+                m,
+                own,
+                depth + 1,
             )?;
             scene.add_child(id, child);
         }
@@ -516,7 +548,10 @@ struct MediaSpec {
     media: CapturedMedia,
 }
 
-fn reject_duplicate_media(node: &CapturedNode, seen: &mut BTreeSet<String>) -> Result<(), CompileError> {
+fn reject_duplicate_media(
+    node: &CapturedNode,
+    seen: &mut BTreeSet<String>,
+) -> Result<(), CompileError> {
     if matches!(node.tag.as_str(), "video" | "audio")
         && !node.id.is_empty()
         && !seen.insert(node.id.clone())
@@ -582,7 +617,8 @@ fn media_spec(node: &CapturedNode) -> Result<MediaSpec, CompileError> {
             "audio playback-rate translation unsupported".into(),
         ));
     }
-    if node.tag == "audio" && (!media.volume.is_finite() || media.volume < 0.0 || media.volume > f32::MAX as f64)
+    if node.tag == "audio"
+        && (!media.volume.is_finite() || media.volume < 0.0 || media.volume > f32::MAX as f64)
     {
         return Err(CompileError::Input(
             "audio volume must be finite and nonnegative".into(),

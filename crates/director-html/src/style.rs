@@ -1,7 +1,11 @@
 use crate::background_box::AxisRepeat;
 use crate::box_edges::{parse_box_edge, BoxEdge};
 use crate::css::{split, Values};
-use director_core::{animation::Animated, node::BoxNode, types::{Color, ObjectPosition}};
+use director_core::{
+    animation::Animated,
+    node::BoxNode,
+    types::{Color, ObjectPosition},
+};
 use lightningcss::{
     properties::{
         background::BackgroundSize,
@@ -18,7 +22,7 @@ use lightningcss::{
         },
     },
 };
-use skia_safe::{M44, Matrix};
+use skia_safe::{Matrix, M44};
 use taffy::prelude::*;
 use taffy::style::Overflow;
 
@@ -240,7 +244,9 @@ pub(crate) fn convert_length(l: &CssLength, m: Metrics) -> Result<LengthPercenta
     // The composition size is not the containing block on this path.
     match crate::calc_len::resolve_length(l, m, None)? {
         crate::calc_len::ResolvedLength::Length(px) => Ok(LengthPercentage::length(px)),
-        crate::calc_len::ResolvedLength::Percent(fraction) => Ok(LengthPercentage::percent(fraction)),
+        crate::calc_len::ResolvedLength::Percent(fraction) => {
+            Ok(LengthPercentage::percent(fraction))
+        }
     }
 }
 
@@ -249,24 +255,253 @@ fn length_on(s: &str, m: Metrics, basis: Option<f32>) -> Result<LengthPercentage
     convert_length_with_basis(&l, m, basis)
 }
 
-// Composition axis only. The parent used size is unknown, and a pure percent stays a percent.
+// `basis` is the containing-block axis. A pure percent stays a percent.
 fn convert_length_with_basis(
     l: &CssLength,
     m: Metrics,
     basis: Option<f32>,
 ) -> Result<LengthPercentage, String> {
-    let basis = basis.filter(|value| value.is_finite() && *value > 0.0);
+    let basis = basis.and_then(axis_basis);
     match crate::calc_len::resolve_length(l, m, basis)? {
         crate::calc_len::ResolvedLength::Length(px) => Ok(LengthPercentage::length(px)),
-        crate::calc_len::ResolvedLength::Percent(fraction) => Ok(LengthPercentage::percent(fraction)),
+        crate::calc_len::ResolvedLength::Percent(fraction) => {
+            Ok(LengthPercentage::percent(fraction))
+        }
     }
 }
 
-fn axis_basis(value: f32) -> Option<f32> {
+pub(crate) fn axis_basis(value: f32) -> Option<f32> {
     if value.is_finite() && value > 0.0 {
         Some(value)
     } else {
         None
+    }
+}
+
+/// Definite containing-block axes in px. `None` is indefinite.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ContainingBlock {
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+}
+
+impl ContainingBlock {
+    pub(crate) fn from_axes(width: f32, height: f32) -> Self {
+        Self {
+            width: axis_basis(width),
+            height: axis_basis(height),
+        }
+    }
+}
+
+fn finite_px(value: f32) -> Option<f32> {
+    value.is_finite().then_some(value)
+}
+
+fn dimension_px(value: Dimension, basis: Option<f32>) -> Option<f32> {
+    if value.is_auto() {
+        return None;
+    }
+    match value.tag() {
+        taffy::style::CompactLength::PERCENT_TAG => {
+            basis.and_then(axis_basis).map(|size| size * value.value())
+        }
+        taffy::style::CompactLength::LENGTH_TAG => finite_px(value.value()),
+        _ => None,
+    }
+}
+
+fn length_px(value: LengthPercentage, basis: Option<f32>) -> Option<f32> {
+    if value.is_percent() {
+        basis.and_then(axis_basis).map(|size| size * value.value())
+    } else {
+        finite_px(value.value())
+    }
+}
+
+fn margin_px(value: LengthPercentageAuto, basis: Option<f32>) -> Option<f32> {
+    if value.is_auto() {
+        return Some(0.0);
+    }
+    let raw = value.into_raw();
+    match raw.tag() {
+        taffy::style::CompactLength::PERCENT_TAG => {
+            basis.and_then(axis_basis).map(|size| size * raw.value())
+        }
+        taffy::style::CompactLength::LENGTH_TAG => finite_px(raw.value()),
+        _ => None,
+    }
+}
+
+fn border_px(value: LengthPercentage) -> f32 {
+    if value.is_percent() {
+        0.0
+    } else {
+        value.value().max(0.0)
+    }
+}
+
+fn horizontal_padding(style: &Style, width: Option<f32>) -> Option<f32> {
+    Some(length_px(style.padding.left, width)? + length_px(style.padding.right, width)?)
+}
+
+fn vertical_padding(style: &Style, width: Option<f32>) -> Option<f32> {
+    Some(length_px(style.padding.top, width)? + length_px(style.padding.bottom, width)?)
+}
+
+fn clamp_axis(used: f32, min: Option<f32>, max: Option<f32>) -> f32 {
+    let mut value = used;
+    if let Some(max) = max {
+        value = value.min(max);
+    }
+    if let Some(min) = min {
+        value = value.max(min);
+    }
+    value
+}
+
+/// Content-box size children use as their containing block.
+/// Width `auto` stretches only when `stretch_width` is set. Height `auto` stays indefinite.
+pub(crate) fn content_box(
+    style: &Style,
+    parent: ContainingBlock,
+    stretch_width: bool,
+) -> ContainingBlock {
+    ContainingBlock {
+        width: used_content_width(style, parent, stretch_width),
+        height: used_content_height(style, parent),
+    }
+}
+
+fn used_content_width(style: &Style, parent: ContainingBlock, stretch: bool) -> Option<f32> {
+    let specified = dimension_px(style.size.width, parent.width);
+    let min = dimension_px(style.min_size.width, parent.width);
+    let max = dimension_px(style.max_size.width, parent.width);
+    let border = border_px(style.border.left) + border_px(style.border.right);
+    if let Some(specified) = specified {
+        let used = clamp_axis(specified, min, max);
+        let content = match style.box_sizing {
+            BoxSizing::ContentBox => used,
+            BoxSizing::BorderBox => {
+                let pad = horizontal_padding(style, parent.width)?;
+                used - pad - border
+            }
+        };
+        return axis_basis(content);
+    }
+    if !stretch {
+        return None;
+    }
+    let left = margin_px(style.margin.left, parent.width)?;
+    let right = margin_px(style.margin.right, parent.width)?;
+    let pad = horizontal_padding(style, parent.width)?;
+    let width = parent.width?;
+    let content = match style.box_sizing {
+        BoxSizing::BorderBox => {
+            let border_box = clamp_axis(width - left - right, min, max);
+            border_box - pad - border
+        }
+        BoxSizing::ContentBox => clamp_axis(width - left - right - pad - border, min, max),
+    };
+    axis_basis(content)
+}
+
+fn used_content_height(style: &Style, parent: ContainingBlock) -> Option<f32> {
+    let specified = dimension_px(style.size.height, parent.height)?;
+    let min = dimension_px(style.min_size.height, parent.height);
+    let max = dimension_px(style.max_size.height, parent.height);
+    let used = clamp_axis(specified, min, max);
+    let content = match style.box_sizing {
+        BoxSizing::ContentBox => used,
+        BoxSizing::BorderBox => {
+            let pad = vertical_padding(style, parent.width)?;
+            let border = border_px(style.border.top) + border_px(style.border.bottom);
+            used - pad - border
+        }
+    };
+    axis_basis(content)
+}
+
+/// Width stretches for a block-level static or relative box with `width: auto`.
+/// A row flex item and a grid item stay indefinite. A column flex item stretches on the cross axis.
+pub(crate) fn width_stretches(values: &Values, parent: &Values) -> bool {
+    if values.get("width").is_some_and(|value| value != "auto") {
+        return false;
+    }
+    let position = values
+        .get("position")
+        .map(String::as_str)
+        .unwrap_or("static");
+    if !matches!(position, "static" | "relative") {
+        return false;
+    }
+    let display = values.get("display").map(String::as_str).unwrap_or("block");
+    if matches!(display, "none" | "inline" | "inline-flex" | "inline-grid") {
+        return false;
+    }
+    let parent_display = parent.get("display").map(String::as_str).unwrap_or("block");
+    if matches!(parent_display, "grid" | "inline-grid") {
+        return false;
+    }
+    if matches!(parent_display, "flex" | "inline-flex") {
+        let direction = parent
+            .get("flex-direction")
+            .map(String::as_str)
+            .unwrap_or("row");
+        if !matches!(direction, "column" | "column-reverse") {
+            return false;
+        }
+        if values
+            .get("margin-left")
+            .is_some_and(|value| value == "auto")
+            || values
+                .get("margin-right")
+                .is_some_and(|value| value == "auto")
+        {
+            return false;
+        }
+        let align = values
+            .get("align-self")
+            .map(String::as_str)
+            .filter(|value| *value != "auto")
+            .or_else(|| parent.get("align-items").map(String::as_str))
+            .unwrap_or("stretch");
+        return matches!(align, "stretch" | "normal");
+    }
+    true
+}
+
+pub(crate) fn resolve_gaps(
+    style: &mut Style,
+    values: &Values,
+    m: Metrics,
+    content: ContainingBlock,
+) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+    if let Some(value) = values.get("column-gap") {
+        match gap_length(value, m, content.width) {
+            Ok(length) => style.gap.width = length,
+            Err(error) => errors.push(format!("column-gap: {value}: {error}")),
+        }
+    }
+    if let Some(value) = values.get("row-gap") {
+        match gap_length(value, m, content.height) {
+            Ok(length) => style.gap.height = length,
+            Err(error) => errors.push(format!("row-gap: {value}: {error}")),
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+fn gap_length(value: &str, m: Metrics, basis: Option<f32>) -> Result<LengthPercentage, String> {
+    if value == "normal" {
+        Ok(LengthPercentage::length(0.0))
+    } else {
+        length_on(value, m, basis)
     }
 }
 
@@ -668,7 +903,8 @@ fn named_span(columns: bool, name: &str, count: u16) -> Result<GridPlacement, St
         return Err("named grid lines require extraction".into());
     }
     // The span is relative to the other edge. Taffy applies it after the name exists.
-    let nth = i16::try_from(count).map_err(|_| "named grid lines require extraction".to_string())?;
+    let nth =
+        i16::try_from(count).map_err(|_| "named grid lines require extraction".to_string())?;
     crate::grid_template::resolve_named(columns, name, nth)?;
     Ok(GridPlacement::NamedSpan(name.to_string(), count))
 }
@@ -676,6 +912,7 @@ fn named_span(columns: bool, name: &str, count: u16) -> Result<GridPlacement, St
 pub fn translate(
     values: &Values,
     mut m: Metrics,
+    block: ContainingBlock,
     assets: &crate::assets::AssetStore,
 ) -> Result<(Style, PaintStyle), Vec<String>> {
     crate::grid_template::begin_element(assets as *const crate::assets::AssetStore as usize);
@@ -792,50 +1029,38 @@ pub fn translate(
                         _ => return Err("fixed/sticky positioning requires extraction".into()),
                     }
                 }
-                "width" => style.size.width = dimension_on(s, m, axis_basis(m.width))?,
-                "height" => style.size.height = dimension_on(s, m, axis_basis(m.height))?,
-                "min-width" => style.min_size.width = dimension_on(s, m, axis_basis(m.width))?,
-                "min-height" => style.min_size.height = dimension_on(s, m, axis_basis(m.height))?,
+                "width" => style.size.width = dimension_on(s, m, block.width)?,
+                "height" => style.size.height = dimension_on(s, m, block.height)?,
+                "min-width" => style.min_size.width = dimension_on(s, m, block.width)?,
+                "min-height" => style.min_size.height = dimension_on(s, m, block.height)?,
                 "max-width" => {
                     style.max_size.width = if s == "none" {
                         auto()
                     } else {
-                        dimension_on(s, m, axis_basis(m.width))?
+                        dimension_on(s, m, block.width)?
                     }
                 }
                 "max-height" => {
                     style.max_size.height = if s == "none" {
                         auto()
                     } else {
-                        dimension_on(s, m, axis_basis(m.height))?
+                        dimension_on(s, m, block.height)?
                     }
                 }
-                "left" => style.inset.left = lpa_on(s, m, axis_basis(m.width))?,
-                "right" => style.inset.right = lpa_on(s, m, axis_basis(m.width))?,
-                "top" => style.inset.top = lpa_on(s, m, axis_basis(m.height))?,
-                "bottom" => style.inset.bottom = lpa_on(s, m, axis_basis(m.height))?,
-                "margin-left" => style.margin.left = lpa_on(s, m, axis_basis(m.width))?,
-                "margin-right" => style.margin.right = lpa_on(s, m, axis_basis(m.width))?,
-                "margin-top" => style.margin.top = lpa_on(s, m, axis_basis(m.width))?,
-                "margin-bottom" => style.margin.bottom = lpa_on(s, m, axis_basis(m.width))?,
-                "padding-left" => style.padding.left = length_on(s, m, axis_basis(m.width))?,
-                "padding-right" => style.padding.right = length_on(s, m, axis_basis(m.width))?,
-                "padding-top" => style.padding.top = length_on(s, m, axis_basis(m.width))?,
-                "padding-bottom" => style.padding.bottom = length_on(s, m, axis_basis(m.width))?,
-                "column-gap" => {
-                    style.gap.width = if s == "normal" {
-                        zero()
-                    } else {
-                        length_on(s, m, axis_basis(m.width))?
-                    }
-                }
-                "row-gap" => {
-                    style.gap.height = if s == "normal" {
-                        zero()
-                    } else {
-                        length_on(s, m, axis_basis(m.height))?
-                    }
-                }
+                "left" => style.inset.left = lpa_on(s, m, block.width)?,
+                "right" => style.inset.right = lpa_on(s, m, block.width)?,
+                "top" => style.inset.top = lpa_on(s, m, block.height)?,
+                "bottom" => style.inset.bottom = lpa_on(s, m, block.height)?,
+                "margin-left" => style.margin.left = lpa_on(s, m, block.width)?,
+                "margin-right" => style.margin.right = lpa_on(s, m, block.width)?,
+                "margin-top" => style.margin.top = lpa_on(s, m, block.width)?,
+                "margin-bottom" => style.margin.bottom = lpa_on(s, m, block.width)?,
+                "padding-left" => style.padding.left = length_on(s, m, block.width)?,
+                "padding-right" => style.padding.right = length_on(s, m, block.width)?,
+                "padding-top" => style.padding.top = length_on(s, m, block.width)?,
+                "padding-bottom" => style.padding.bottom = length_on(s, m, block.width)?,
+                // Resolved after the content box is known. Percent gap uses this element's size.
+                "column-gap" | "row-gap" => {}
                 "flex-direction" => {
                     style.flex_direction = match s {
                         "row" => FlexDirection::Row,
@@ -859,7 +1084,7 @@ pub fn translate(
                     style.flex_basis = if s == "auto" || s == "content" {
                         dimension(s, m)?
                     } else {
-                        dimension_on(s, m, axis_basis(m.width))?
+                        dimension_on(s, m, block.width)?
                     }
                 }
                 "align-items" => style.align_items = Some(align(s)?),
@@ -1197,8 +1422,7 @@ pub fn translate(
                     if parsed.hanging || parsed.each_line {
                         return Err("unsupported text-indent".into());
                     }
-                    paint.text_indent =
-                        convert_length_with_basis(&parsed.value, m, axis_basis(m.width))?;
+                    paint.text_indent = convert_length_with_basis(&parsed.value, m, block.width)?;
                 }
                 "text-overflow" => {
                     paint.text_overflow = match s.trim() {
@@ -1360,9 +1584,8 @@ pub fn translate(
                 }
                 "clip-path" => {
                     if s != "none" {
-                        let points = if let Some(content) = s
-                            .strip_prefix("polygon(")
-                            .and_then(|s| s.strip_suffix(')'))
+                        let points = if let Some(content) =
+                            s.strip_prefix("polygon(").and_then(|s| s.strip_suffix(')'))
                         {
                             let mut points = Vec::new();
                             for point in split(content, true) {
@@ -1678,36 +1901,15 @@ fn prepare_projective(list: &TransformList, m: Metrics, size: (f32, f32)) -> Tra
 
 fn affine_from(matrix: &Matrix3d<f32>) -> Matrix {
     Matrix::new_all(
-        matrix.m11,
-        matrix.m21,
-        matrix.m41,
-        matrix.m12,
-        matrix.m22,
-        matrix.m42,
-        0.0,
-        0.0,
-        1.0,
+        matrix.m11, matrix.m21, matrix.m41, matrix.m12, matrix.m22, matrix.m42, 0.0, 0.0, 1.0,
     )
 }
 
 fn m44_from(matrix: &Matrix3d<f32>) -> M44 {
     M44::row_major(&[
-        matrix.m11,
-        matrix.m21,
-        matrix.m31,
-        matrix.m41,
-        matrix.m12,
-        matrix.m22,
-        matrix.m32,
-        matrix.m42,
-        matrix.m13,
-        matrix.m23,
-        matrix.m33,
-        matrix.m43,
-        matrix.m14,
-        matrix.m24,
-        matrix.m34,
-        matrix.m44,
+        matrix.m11, matrix.m21, matrix.m31, matrix.m41, matrix.m12, matrix.m22, matrix.m32,
+        matrix.m42, matrix.m13, matrix.m23, matrix.m33, matrix.m43, matrix.m14, matrix.m24,
+        matrix.m34, matrix.m44,
     ])
 }
 
@@ -1865,8 +2067,8 @@ fn parse_underline_offset(source: &str, m: Metrics) -> Result<f32, String> {
     if trimmed.eq_ignore_ascii_case("auto") {
         return Ok(0.0);
     }
-    let parsed = length(trimmed, m)
-        .map_err(|_| format!("unsupported text-underline-offset '{source}'"))?;
+    let parsed =
+        length(trimmed, m).map_err(|_| format!("unsupported text-underline-offset '{source}'"))?;
     let px = if parsed.is_percent() {
         parsed.value() * m.font_size
     } else {
@@ -2209,8 +2411,7 @@ mod mixed_calc_basis {
             ResolvedLength::Percent(fraction) => assert!((fraction - 0.5).abs() < 1.0e-4),
             ResolvedLength::Length(px) => panic!("50% became {px}px"),
         }
-        let converted =
-            convert_length_with_basis(&value, metrics(), Some(64.0)).expect("convert");
+        let converted = convert_length_with_basis(&value, metrics(), Some(64.0)).expect("convert");
         assert!(converted.is_percent(), "50% was stored as px");
         assert!((converted.value() - 0.5).abs() < 1.0e-4);
     }
@@ -2234,7 +2435,13 @@ mod mixed_calc_basis {
     #[test]
     fn missing_or_non_positive_basis_keeps_the_mixed_error() {
         let value = CssLength::parse_string("calc(50% + 8px)").expect("calc");
-        for basis in [None, Some(0.0), Some(-1.0), Some(f32::NAN), Some(f32::INFINITY)] {
+        for basis in [
+            None,
+            Some(0.0),
+            Some(-1.0),
+            Some(f32::NAN),
+            Some(f32::INFINITY),
+        ] {
             let err = convert_length_with_basis(&value, metrics(), basis).expect_err("basis");
             assert!(
                 err.contains("mixed calc() requires a length basis"),
@@ -2245,6 +2452,3 @@ mod mixed_calc_basis {
         assert!((pure.value() - 12.0).abs() < 1.0e-4);
     }
 }
-
-
-

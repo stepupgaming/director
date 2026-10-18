@@ -321,7 +321,17 @@ pub(crate) fn compile_with_assets(
             parent = builder.css.cascade(ancestor, &parent)?;
         }
     }
-    let root_id = builder.node(root, &parent, 0.0, true, 0)?;
+    let root_id = builder.node(
+        root,
+        &parent,
+        0.0,
+        true,
+        style::ContainingBlock::from_axes(
+            builder.options.width as f32,
+            builder.options.height as f32,
+        ),
+        0,
+    )?;
     if !builder.errors.is_empty() {
         return Err(CompileError::Diagnostics(builder.errors));
     }
@@ -610,6 +620,7 @@ impl Builder {
         parent: &Values,
         composition_start: f64,
         root: bool,
+        containing_block: style::ContainingBlock,
         depth: usize,
     ) -> Result<NodeId, CompileError> {
         if depth > 256 || self.nodes > 100000 {
@@ -657,14 +668,17 @@ impl Builder {
             height: self.options.height as f32,
             font_size: parent_size,
         };
-        let (mut layout, paint) = style::translate(&values, metrics, &self.assets).map_err(|errors| {
-            CompileError::Diagnostics(
-                errors
-                    .into_iter()
-                    .map(|e| diagnostic(&context, e))
-                    .collect(),
-            )
-        })?;
+        let (mut layout, mut paint) =
+            style::translate(&values, metrics, containing_block, &self.assets).map_err(
+                |errors| {
+                    CompileError::Diagnostics(
+                        errors
+                            .into_iter()
+                            .map(|e| diagnostic(&context, e))
+                            .collect(),
+                    )
+                },
+            )?;
         // Store computed font-size to avoid repeated relative-unit multiplication in descendants.
         values.insert("font-size".into(), format!("{}px", paint.font_size));
         if root {
@@ -795,7 +809,7 @@ impl Builder {
                     paint.color.b * 255.0,
                     paint.color.a
                 ));
-markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
+                markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                 markup.push_str("</svg>");
                 let vector = usvg::Tree::from_data(markup.as_bytes(), &usvg::Options::default())
                     .map_err(|e| CompileError::Input(format!("{context}: invalid SVG: {e}")))?;
@@ -824,7 +838,10 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                 video.object_fit = fit(&values);
                 video.object_position = paint.object_position;
                 let video: Box<dyn Element> = if looped {
-                    Box::new(LoopedVideo { node: video, duration })
+                    Box::new(LoopedVideo {
+                        node: video,
+                        duration,
+                    })
                 } else {
                     Box::new(video)
                 };
@@ -881,7 +898,7 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                     .collect();
                 if children.iter().all(|e| inline(e.value().name())) {
                     let mut spans = Vec::new();
-                    self.rich_text(el, &values, &paint, &mut spans)?;
+                    self.rich_text(el, &values, &paint, containing_block, &mut spans)?;
                     normalize(&mut spans, paint.preserve_space);
                     if spans.is_empty() {
                         None
@@ -906,6 +923,21 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                 )))
             }
         };
+        let stretch_width = !root && style::width_stretches(&values, parent);
+        let child_block = style::content_box(&layout, containing_block, stretch_width);
+        let gap_metrics = Metrics {
+            font_size: paint.font_size,
+            ..metrics
+        };
+        style::resolve_gaps(&mut layout, &values, gap_metrics, child_block).map_err(|errors| {
+            CompileError::Diagnostics(
+                errors
+                    .into_iter()
+                    .map(|error| diagnostic(&context, error))
+                    .collect(),
+            )
+        })?;
+        paint.box_node.style = layout.clone();
         let has_content = content.is_some();
         let anonymous_text = has_content
             && matches!(layout.display, taffy::Display::Flex | taffy::Display::Grid)
@@ -988,7 +1020,8 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                 if matches!(child.value().name(), "script" | "style" | "link") {
                     continue;
                 }
-                let child_id = self.node(child, &values, next_start, false, depth + 1)?;
+                let child_id =
+                    self.node(child, &values, next_start, false, child_block, depth + 1)?;
                 self.director.scene.add_child(id, child_id);
             }
         }
@@ -999,6 +1032,7 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
         el: ElementRef<'_>,
         values: &Values,
         paint: &PaintStyle,
+        block: style::ContainingBlock,
         spans: &mut Vec<TextSpan>,
     ) -> Result<(), CompileError> {
         for node in el.children() {
@@ -1030,11 +1064,12 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                         height: self.options.height as f32,
                         font_size: paint.font_size,
                     },
+                    block,
                     &self.assets,
                 )
                 .map_err(|e| CompileError::Input(e.join("; ")))?;
                 let before = spans.len();
-                self.rich_text(child, &child_values, &child_paint, spans)?;
+                self.rich_text(child, &child_values, &child_paint, block, spans)?;
                 if self.css.has_local_property(child, "color") {
                     for span in &mut spans[before..] {
                         if span.color.is_none() {
