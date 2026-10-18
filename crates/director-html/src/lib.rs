@@ -3,15 +3,26 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 mod animation;
 mod assets;
+mod background_box;
+mod background_tiles;
+mod box_edges;
+mod calc_len;
 mod capture;
 mod compiler;
 mod css;
+mod decoration_marks;
+mod decoration_value;
 mod element;
 mod gradient;
+mod grid_template;
+mod object_pos;
 mod project;
+mod shader;
 mod style;
+mod transform_origin;
 pub use capture::{
-    compile_capture, compile_capture_file, Capture, CapturedFrame, CapturedNode, CAPTURE_FORMAT,
+    compile_capture, compile_capture_file, Capture, CapturedFrame, CapturedMedia, CapturedNode,
+    CapturedShader, CapturedShaderImage, CAPTURE_FORMAT,
 };
 pub use compiler::{compile, compile_file};
 pub use project::{ElementEdit, NativeProject, ProjectSource, PROJECT_FORMAT};

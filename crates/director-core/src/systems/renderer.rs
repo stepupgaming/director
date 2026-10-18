@@ -17,15 +17,17 @@
 //! - `export::video` for the full export loop (`render_export`).
 //! - `systems::transitions` for transition shaders.
 
-use crate::director::{Director, TimelineItem};
+use crate::animation::{Animated, EasingType};
+use crate::director::{Director, StaticCacheEntry, StaticCacheKey, TimelineItem};
 use crate::errors::RenderError;
-use crate::scene::SceneGraph;
+use crate::node::{BoxNode, ImageNode, ShapeNode, SpectrumVisualizerNode, TextNode, VectorNode};
+use crate::scene::{SceneGraph, SceneNode};
 use crate::systems::assets::AssetManager;
 use crate::systems::layout::LayoutEngine;
 use crate::systems::transitions::draw_transition;
 use crate::timeline::TrackClip;
-use crate::types::NodeId;
-use std::collections::HashMap;
+use crate::types::{NodeId, Transform};
+use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
 #[cfg(feature = "vulkan")]
@@ -38,15 +40,248 @@ pub type GpuContext = DirectContext;
 /// Placeholder for GPU context when Vulkan feature is disabled.
 pub type GpuContext = ();
 
+/// Static-subtree cache consulted by [`render_recursive`].
+///
+/// Keyed entries reuse a full pass only when the recorded bake key matches.
+/// Image-only maps have no key, so a full pass always misses.
+pub trait StaticSubtreeCache {
+    fn lookup(
+        &mut self,
+        node_id: NodeId,
+        key: &StaticCacheKey,
+        full_pass: bool,
+        is_dirty: bool,
+    ) -> Option<skia_safe::Image>;
+
+    fn store(&mut self, node_id: NodeId, image: skia_safe::Image, key: StaticCacheKey);
+}
+
+impl StaticSubtreeCache for HashMap<NodeId, StaticCacheEntry> {
+    fn lookup(
+        &mut self,
+        node_id: NodeId,
+        key: &StaticCacheKey,
+        full_pass: bool,
+        is_dirty: bool,
+    ) -> Option<skia_safe::Image> {
+        if is_dirty {
+            self.remove(&node_id);
+            return None;
+        }
+        let Some(entry) = self.get(&node_id) else {
+            return None;
+        };
+        if !full_pass || &entry.key == key {
+            return Some(entry.image.clone());
+        }
+        self.remove(&node_id);
+        None
+    }
+
+    fn store(&mut self, node_id: NodeId, image: skia_safe::Image, key: StaticCacheKey) {
+        self.insert(node_id, StaticCacheEntry { image, key });
+    }
+}
+
+impl StaticSubtreeCache for HashMap<NodeId, skia_safe::Image> {
+    fn lookup(
+        &mut self,
+        node_id: NodeId,
+        _key: &StaticCacheKey,
+        full_pass: bool,
+        is_dirty: bool,
+    ) -> Option<skia_safe::Image> {
+        if is_dirty || full_pass {
+            self.remove(&node_id);
+            return None;
+        }
+        self.get(&node_id).cloned()
+    }
+
+    fn store(&mut self, node_id: NodeId, image: skia_safe::Image, _key: StaticCacheKey) {
+        self.insert(node_id, image);
+    }
+}
+
+impl StaticSubtreeCache for std::sync::MutexGuard<'_, HashMap<NodeId, skia_safe::Image>> {
+    fn lookup(
+        &mut self,
+        node_id: NodeId,
+        key: &StaticCacheKey,
+        full_pass: bool,
+        is_dirty: bool,
+    ) -> Option<skia_safe::Image> {
+        <HashMap<NodeId, skia_safe::Image> as StaticSubtreeCache>::lookup(
+            &mut **self,
+            node_id,
+            key,
+            full_pass,
+            is_dirty,
+        )
+    }
+
+    fn store(&mut self, node_id: NodeId, image: skia_safe::Image, key: StaticCacheKey) {
+        <HashMap<NodeId, skia_safe::Image> as StaticSubtreeCache>::store(
+            &mut **self,
+            node_id,
+            image,
+            key,
+        );
+    }
+}
+
+fn channel_depends_on_time<T>(anim: &Animated<T>) -> bool
+where
+    T: Clone + keyframe::CanTween + Default,
+{
+    anim.raw_keyframes.len() > 1
+        || anim
+            .raw_keyframes
+            .iter()
+            .any(|(_, _, ease)| matches!(ease, EasingType::Expression { .. }))
+}
+
+fn opt_channel_depends_on_time<T>(anim: &Option<Animated<T>>) -> bool
+where
+    T: Clone + keyframe::CanTween + Default,
+{
+    anim.as_ref().is_some_and(channel_depends_on_time)
+}
+
+fn transform_depends_on_time(transform: &Transform) -> bool {
+    channel_depends_on_time(&transform.scale_x)
+        || channel_depends_on_time(&transform.scale_y)
+        || channel_depends_on_time(&transform.rotation)
+        || channel_depends_on_time(&transform.skew_x)
+        || channel_depends_on_time(&transform.skew_y)
+        || channel_depends_on_time(&transform.translate_x)
+        || channel_depends_on_time(&transform.translate_y)
+}
+
+fn element_depends_on_time(element: &dyn crate::element::Element) -> bool {
+    if let Some(box_node) = element.as_any().downcast_ref::<BoxNode>() {
+        return opt_channel_depends_on_time(&box_node.bg_color)
+            || channel_depends_on_time(&box_node.opacity)
+            || channel_depends_on_time(&box_node.blur)
+            || opt_channel_depends_on_time(&box_node.shadow_color)
+            || channel_depends_on_time(&box_node.shadow_blur)
+            || channel_depends_on_time(&box_node.shadow_offset_x)
+            || channel_depends_on_time(&box_node.shadow_offset_y)
+            || channel_depends_on_time(&box_node.border_radius)
+            || channel_depends_on_time(&box_node.border_width)
+            || opt_channel_depends_on_time(&box_node.border_color)
+            || channel_depends_on_time(&box_node.backdrop_blur)
+            || box_node.extra_shadows.iter().any(|shadow| {
+                channel_depends_on_time(&shadow.color)
+                    || channel_depends_on_time(&shadow.blur)
+                    || channel_depends_on_time(&shadow.offset_x)
+                    || channel_depends_on_time(&shadow.offset_y)
+            });
+    }
+    if let Some(text) = element.as_any().downcast_ref::<TextNode>() {
+        return channel_depends_on_time(&text.default_font_size)
+            || channel_depends_on_time(&text.default_color)
+            || channel_depends_on_time(&text.opacity)
+            || channel_depends_on_time(&text.counter_value)
+            || text
+                .animators
+                .iter()
+                .any(|animator| channel_depends_on_time(&animator.animation));
+    }
+    if let Some(image) = element.as_any().downcast_ref::<ImageNode>() {
+        return channel_depends_on_time(&image.opacity)
+            || channel_depends_on_time(&image.border_radius);
+    }
+    if let Some(shape) = element.as_any().downcast_ref::<ShapeNode>() {
+        return opt_channel_depends_on_time(&shape.fill_color)
+            || opt_channel_depends_on_time(&shape.stroke_color)
+            || channel_depends_on_time(&shape.stroke_width)
+            || channel_depends_on_time(&shape.opacity);
+    }
+    if let Some(vector) = element.as_any().downcast_ref::<VectorNode>() {
+        return channel_depends_on_time(&vector.opacity);
+    }
+    element
+        .as_any()
+        .downcast_ref::<SpectrumVisualizerNode>()
+        .is_some()
+}
+
+fn node_depends_on_time(node: &SceneNode) -> bool {
+    if matches!(
+        node.element.kind(),
+        "video"
+            | "lottie"
+            | "caption"
+            | "smart_caption"
+            | "active_speaker_camera"
+            | "composition"
+            | "wgpu"
+            | "effect"
+            | "html_capture"
+    ) {
+        return true;
+    }
+    if !node.audio_bindings.is_empty()
+        || transform_depends_on_time(&node.transform)
+        || node
+            .path_animation
+            .as_ref()
+            .is_some_and(|path| channel_depends_on_time(&path.progress))
+        || node
+            .path_morph
+            .as_ref()
+            .is_some_and(|morph| channel_depends_on_time(&morph.progress))
+    {
+        return true;
+    }
+    element_depends_on_time(node.element.as_ref())
+}
+
+fn subtree_depends_on_time(scene: &SceneGraph, root: NodeId) -> bool {
+    let mut stack = vec![root];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(node) = scene.get_node(id) else {
+            continue;
+        };
+        if node_depends_on_time(node) {
+            return true;
+        }
+        stack.extend(node.children.iter().copied());
+        if let Some(mask) = node.mask_node {
+            stack.push(mask);
+        }
+    }
+    false
+}
+
+fn static_cache_key(
+    scene: &SceneGraph,
+    node_id: NodeId,
+    local_time: f64,
+    spatial: StaticCacheKey,
+) -> StaticCacheKey {
+    let time = if subtree_depends_on_time(scene, node_id) {
+        Some(local_time)
+    } else {
+        None
+    };
+    StaticCacheKey { time, ..spatial }
+}
+
 /// Renders a node's element and children to the given canvas. The caller is
 /// responsible for setting up the canvas transform.
 ///
 /// If `dirty_nodes` is `Some`, only nodes in the set are rendered; this is
 /// used after `Director::invalidate()` to incrementally re-render changed nodes.
-fn render_node_subtree(
+fn render_node_subtree<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,
-    static_cache: &mut HashMap<NodeId, skia_safe::Image>,
+    static_cache: &mut C,
     node_id: NodeId,
     canvas: &skia_safe::Canvas,
     parent_opacity: f32,
@@ -60,8 +295,50 @@ fn render_node_subtree(
 
     let local_rect = skia_safe::Rect::from_wh(node.layout_rect.width(), node.layout_rect.height());
 
+    let shares_3d = node.element.shares_3d();
+    let depth_order: Vec<NodeId> = if shares_3d {
+        let mut order = Vec::with_capacity(node.children.len());
+        for (index, &child_id) in node.children.iter().enumerate() {
+            if let Some(child) = scene.get_node(child_id) {
+                order.push((
+                    child
+                        .element
+                        .view_depth(child.layout_rect.width(), child.layout_rect.height()),
+                    child.z_index,
+                    index,
+                    child_id,
+                ));
+            }
+        }
+        order.sort_by(|a, b| {
+            a.0.total_cmp(&b.0)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.cmp(&b.2))
+        });
+        order.into_iter().map(|(_, _, _, id)| id).collect()
+    } else {
+        Vec::new()
+    };
+
     let mut last_error = Ok(());
     let mut draw_children = |canvas: &skia_safe::Canvas| {
+        if shares_3d {
+            for &child_id in &depth_order {
+                if let Err(e) = render_recursive(
+                    scene,
+                    assets,
+                    static_cache,
+                    child_id,
+                    canvas,
+                    parent_opacity,
+                    depth + 1,
+                    dirty_nodes,
+                ) {
+                    last_error = Err(e);
+                }
+            }
+            return;
+        }
         // Z-Index Sorting
         let mut sorted_children: Vec<(NodeId, i32)> = Vec::with_capacity(node.children.len());
         for &child_id in &node.children {
@@ -137,17 +414,17 @@ fn render_node_subtree(
 
 /// Recursively renders a node and its children to the canvas.
 ///
-/// Handles transformation stack, blending modes, masking, and static-subtree
-/// caching. When a node is marked `is_static`, its rasterized output is looked
-/// up in `static_cache`; on a miss the subtree is rendered to an offscreen
-/// surface, stored, and then drawn.
-///
-/// If `dirty_nodes` is `Some`, only nodes in the set are rendered. Nodes not
-/// in the set are skipped entirely, including their children.
-pub fn render_recursive(
+/// Static nodes rasterize into `static_cache`. A full pass (`dirty_nodes ==
+/// None`) reuses that image only when the recorded key matches layout size,
+/// the baked local transform, inherited opacity, and time. Time is part of
+/// the key only when the subtree has time-varying paint, a video, or an
+/// expression. A mismatch drops the entry and re-rasters. An incremental
+/// pass reuses entries for nodes outside the dirty set and never serves a
+/// hit for a dirty static node.
+pub fn render_recursive<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,
-    static_cache: &mut HashMap<NodeId, skia_safe::Image>,
+    static_cache: &mut C,
     node_id: NodeId,
     canvas: &skia_safe::Canvas,
     parent_opacity: f32,
@@ -175,6 +452,7 @@ pub fn render_recursive(
         skew_y,
         pivot_x,
         pivot_y,
+        local_time,
     ) = {
         let node = match scene.get_node(node_id) {
             Some(n) => n,
@@ -195,6 +473,7 @@ pub fn render_recursive(
             node.transform.skew_y.current_value,
             node.layout_rect.width() * node.transform.pivot_x,
             node.layout_rect.height() * node.transform.pivot_y,
+            node.local_time,
         )
     };
 
@@ -202,27 +481,36 @@ pub fn render_recursive(
     let tan_skew_y = skew_y.to_radians().tan();
 
     if is_static {
-        let is_dirty = dirty_nodes.map(|d| d.contains(&node_id)).unwrap_or(true);
-
-        // Cache hit only when the node is not dirty. Dirty static nodes must
-        // re-rasterize so mutations never serve stale pixels (plan 03).
-        if !is_dirty {
-            if let Some(image) = static_cache.get(&node_id) {
-                canvas.save();
-                canvas.translate((layout_x + tx, layout_y + ty));
-                canvas.draw_image(image, (0, 0), None);
-                canvas.restore();
-                return Ok(());
-            }
-            // No cache entry and not dirty: nothing to draw this pass (parent
-            // full frame or prior full pass should have filled the cache).
-            // Fall through to rasterize so the first full frame still works.
-        } else {
-            // Drop any stale entry before re-rasterizing.
-            static_cache.remove(&node_id);
+        let full_pass = dirty_nodes.is_none();
+        let is_dirty = dirty_nodes.is_some_and(|set| set.contains(&node_id));
+        let key = static_cache_key(
+            scene,
+            node_id,
+            local_time,
+            StaticCacheKey {
+                width,
+                height,
+                translate_x: tx,
+                translate_y: ty,
+                scale_x,
+                scale_y,
+                rotation,
+                skew_x,
+                skew_y,
+                pivot_x,
+                pivot_y,
+                parent_opacity,
+                time: None,
+            },
+        );
+        if let Some(image) = static_cache.lookup(node_id, &key, full_pass, is_dirty) {
+            canvas.save();
+            canvas.translate((layout_x + tx, layout_y + ty));
+            canvas.draw_image(&image, (0, 0), None);
+            canvas.restore();
+            return Ok(());
         }
 
-        // Cache miss or dirty: render the subtree to an offscreen surface and cache it.
         let info = skia_safe::ImageInfo::new(
             (width as i32, height as i32),
             skia_safe::ColorType::RGBA8888,
@@ -255,7 +543,7 @@ pub fn render_recursive(
         offscreen.restore();
 
         let image = surface.image_snapshot();
-        static_cache.insert(node_id, image.clone());
+        static_cache.store(node_id, image.clone(), key);
 
         canvas.save();
         canvas.translate((layout_x + tx, layout_y + ty));
@@ -496,6 +784,16 @@ pub fn render_sampled_at_time(
     Ok(())
 }
 
+/// Map layout pixels onto a smaller export surface. Scale 1 leaves the matrix alone.
+fn begin_scene_canvas(canvas: &skia_safe::Canvas, director: &Director) {
+    let sx = director.output_scale_x;
+    let sy = director.output_scale_y;
+    if sx != 1.0 || sy != 1.0 {
+        canvas.reset_matrix();
+        canvas.scale((sx, sy));
+    }
+}
+
 /// Renders a frame at the given time, handling transitions between scenes.
 ///
 /// Used internally by the export pipeline.
@@ -527,6 +825,7 @@ pub fn render_at_time(
     let assets_ref = &director.assets;
 
     canvas.clear(skia_safe::Color::BLACK);
+    begin_scene_canvas(canvas, director);
 
     // Check transition (indices refer to Director::flat_timeline order).
     let transition = director
@@ -557,6 +856,8 @@ pub fn render_at_time(
                         ) {
                             surf_a.canvas().clear(skia_safe::Color::TRANSPARENT);
                             surf_b.canvas().clear(skia_safe::Color::TRANSPARENT);
+                            begin_scene_canvas(surf_a.canvas(), director);
+                            begin_scene_canvas(surf_b.canvas(), director);
 
                             render_recursive(
                                 &director.scene,
@@ -586,15 +887,34 @@ pub fn render_at_time(
                                 ((time - trans.start_time) / trans.duration).clamp(0.0, 1.0) as f32;
                             let val = trans.easing.eval(progress);
 
+                            let scaled =
+                                director.output_scale_x != 1.0 || director.output_scale_y != 1.0;
+                            let (paint_w, paint_h) = if scaled {
+                                (
+                                    (director.width as f32 * director.output_scale_x).round()
+                                        as i32,
+                                    (director.height as f32 * director.output_scale_y).round()
+                                        as i32,
+                                )
+                            } else {
+                                (director.width, director.height)
+                            };
+                            if scaled {
+                                canvas.save();
+                                canvas.reset_matrix();
+                            }
                             draw_transition(
                                 canvas,
                                 &img_a,
                                 &img_b,
                                 val,
                                 &trans.kind,
-                                director.width,
-                                director.height,
+                                paint_w,
+                                paint_h,
                             );
+                            if scaled {
+                                canvas.restore();
+                            }
                         }
                     }
                     drawn_transition = true;

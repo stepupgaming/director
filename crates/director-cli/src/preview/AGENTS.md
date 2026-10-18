@@ -14,7 +14,7 @@
 - Load inputs through `input.rs` with export media semantics. Render PNGs through `renderer.rs` and shared core shutter sampling.
 - Before requests, compare input/native dependency modification time and length. A successful reload replaces the complete scene, resets render targets/audio and advances its revision. A failed reload retains the accepted scene and exposes `reload_error`; forced `/api/reload` returns the error.
 - `/api/meta` reports the actual backend and accepted revision. `/api/inspect` reports layout/timeline, authored IDs, sampled capture elements and audio metadata; these are layout bounds rather than final pixel extents.
-- `/api/audio` builds a full float-stereo WAV in export-sized sample chunks and caches it per revision. Streaming transport and frontend synchronization controls remain separate work.
+- `/api/audio` builds one full float-stereo WAV in export-sized sample chunks and caches it per accepted revision. A request with no Range header returns that body. A single `bytes` range returns 206 and a slice of the same cache. An unsatisfiable range returns 416. Malformed ranges return the full body. `player.html` stays unchanged.
 - Worker teardown closes its queue and joins the owner thread so native resources finish on that thread.
 
 ## Work Guidance

@@ -487,6 +487,10 @@ fn image_props_to_json(node: &ImageNode) -> JsonMap<String, JsonValue> {
         serde_json::to_value(&node.object_fit).unwrap_or_default(),
     );
     p.insert(
+        "object_position".into(),
+        serde_json::to_value(&node.object_position).unwrap_or_default(),
+    );
+    p.insert(
         "border_radius".into(),
         JsonValue::from(node.border_radius.current_value),
     );
@@ -518,6 +522,12 @@ fn rebuild_image_node_from_props(
     if let Some(fit) = props.get("object_fit").and_then(|v| serde_json::from_value(v.clone()).ok()) {
         node.object_fit = fit;
     }
+    if let Some(position) = props
+        .get("object_position")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+    {
+        node.object_position = position;
+    }
     if let Some(v) = props.get("border_radius").and_then(|v| v.as_f64()) {
         node.border_radius = Animated::new(v as f32);
     }
@@ -538,6 +548,10 @@ fn video_props_to_json(node: &VideoNode) -> JsonMap<String, JsonValue> {
     p.insert(
         "object_fit".into(),
         serde_json::to_value(&node.object_fit).unwrap_or_default(),
+    );
+    p.insert(
+        "object_position".into(),
+        serde_json::to_value(&node.object_position).unwrap_or_default(),
     );
     p.insert(
         "border_radius".into(),
@@ -592,6 +606,12 @@ fn rebuild_video_node_from_props(
 
     if let Some(fit) = props.get("object_fit").and_then(|v| serde_json::from_value(v.clone()).ok()) {
         node.object_fit = fit;
+    }
+    if let Some(position) = props
+        .get("object_position")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+    {
+        node.object_position = position;
     }
     if let Some(v) = props.get("border_radius").and_then(|v| v.as_f64()) {
         node.border_radius = Animated::new(v as f32);

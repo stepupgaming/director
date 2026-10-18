@@ -11,6 +11,7 @@ use lightningcss::{
         },
         position::Position,
     },
+    vendor_prefix::VendorPrefix,
 };
 use skia_safe::{Matrix, Rect, Shader, TileMode};
 use taffy::LengthPercentage;
@@ -19,7 +20,7 @@ use taffy::LengthPercentage;
 pub struct NativeGradient {
     kind: Kind,
     repeating: bool,
-    colors: Vec<skia_safe::Color>,
+    colors: Vec<Option<skia_safe::Color>>,
     stops: Vec<Option<LengthPercentage>>,
 }
 #[derive(Debug, Clone)]
@@ -62,46 +63,143 @@ fn position(p: &Position, m: Metrics) -> Result<(LengthPercentage, LengthPercent
         )?,
     ))
 }
+fn stop_position<D: ToCss>(
+    position: &D,
+    m: Metrics,
+    conic: bool,
+) -> Result<LengthPercentage, String> {
+    let s = position
+        .to_css_string(Default::default())
+        .map_err(|e| e.to_string())?;
+    if conic {
+        let value = if let Some(s) = s.strip_suffix('%') {
+            style::number(s)? / 100.0
+        } else {
+            lightningcss::values::angle::Angle::parse_string(&s)
+                .map_err(|e| format!("conic stop: {e:?}"))?
+                .to_degrees()
+                / 360.0
+        };
+        Ok(LengthPercentage::percent(value))
+    } else {
+        style::length(&s, m)
+    }
+}
 fn stops<D: ToCss>(
     items: Vec<GradientItem<D>>,
     m: Metrics,
     current: Color,
     conic: bool,
-) -> Result<(Vec<skia_safe::Color>, Vec<Option<LengthPercentage>>), String> {
+) -> Result<(Vec<Option<skia_safe::Color>>, Vec<Option<LengthPercentage>>), String> {
     let mut colors = Vec::new();
     let mut positions = Vec::new();
     for item in items {
-        let GradientItem::ColorStop(stop) = item else {
-            return Err("gradient color hints unsupported".into());
-        };
-        colors.push(style::css_color(&stop.color, current)?.to_skia());
-        positions.push(
-            stop.position
-                .map(|p| {
-                    let s = p
-                        .to_css_string(Default::default())
-                        .map_err(|e| e.to_string())?;
-                    if conic {
-                        let value = if let Some(s) = s.strip_suffix('%') {
-                            style::number(s)? / 100.0
-                        } else {
-                            lightningcss::values::angle::Angle::parse_string(&s)
-                                .map_err(|e| format!("conic stop: {e:?}"))?
-                                .to_degrees()
-                                / 360.0
-                        };
-                        Ok(LengthPercentage::percent(value))
-                    } else {
-                        style::length(&s, m)
-                    }
-                })
-                .transpose()?,
-        );
+        match item {
+            GradientItem::ColorStop(stop) => {
+                colors.push(Some(style::css_color(&stop.color, current)?.to_skia()));
+                positions.push(
+                    stop.position
+                        .as_ref()
+                        .map(|position| stop_position(position, m, conic))
+                        .transpose()?,
+                );
+            }
+            GradientItem::Hint(hint) => {
+                colors.push(None);
+                positions.push(Some(stop_position(&hint, m, conic)?));
+            }
+        }
     }
-    if colors.len() < 2 {
+    for (i, color) in colors.iter().enumerate() {
+        if color.is_none()
+            && (i == 0
+                || i + 1 == colors.len()
+                || colors[i - 1].is_none()
+                || colors[i + 1].is_none())
+        {
+            return Err("gradient color hint needs two surrounding stops".into());
+        }
+    }
+    if colors.iter().flatten().count() < 2 {
         return Err("gradient needs at least two color stops".into());
     }
     Ok((colors, positions))
+}
+fn mix(from: skia_safe::Color, to: skia_safe::Color, t: f32) -> skia_safe::Color {
+    let channel = |a: u8, b: u8| -> u8 {
+        (f32::from(a) + (f32::from(b) - f32::from(a)) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    skia_safe::Color::from_argb(
+        channel(from.a(), to.a()),
+        channel(from.r(), to.r()),
+        channel(from.g(), to.g()),
+        channel(from.b(), to.b()),
+    )
+}
+fn expand_hints(
+    marks: &[Option<skia_safe::Color>],
+    positions: &[f32],
+) -> Result<(Vec<skia_safe::Color>, Vec<f32>), String> {
+    let mut colors = Vec::new();
+    let mut offsets = Vec::new();
+    for (i, mark) in marks.iter().enumerate() {
+        let Some(color) = mark else {
+            if i == 0 || i + 1 == marks.len() {
+                return Err("gradient color hint needs two surrounding stops".into());
+            }
+            let (Some(previous), Some(next)) = (marks[i - 1], marks[i + 1]) else {
+                return Err("gradient color hint needs two surrounding stops".into());
+            };
+            let offset1 = positions[i - 1];
+            let offset = positions[i];
+            let offset2 = positions[i + 1];
+            if offset - offset1 == offset2 - offset {
+                continue;
+            }
+            if offset1 == offset {
+                colors.push(next);
+                offsets.push(offset);
+                continue;
+            }
+            if offset2 == offset {
+                colors.push(previous);
+                offsets.push(offset);
+                continue;
+            }
+            let midpoint = (offset - offset1) / (offset2 - offset1);
+            let samples = if midpoint > 0.5 {
+                let mut samples = [0.0; 9];
+                for y in 0..7 {
+                    samples[y] = offset1 + (offset - offset1) * (7 + y) as f32 / 13.0;
+                }
+                samples[7] = offset + (offset2 - offset) / 3.0;
+                samples[8] = offset + (offset2 - offset) * 2.0 / 3.0;
+                samples
+            } else {
+                let mut samples = [0.0; 9];
+                samples[0] = offset1 + (offset - offset1) / 3.0;
+                samples[1] = offset1 + (offset - offset1) * 2.0 / 3.0;
+                for y in 0..7 {
+                    samples[y + 2] = offset + (offset2 - offset) * y as f32 / 13.0;
+                }
+                samples
+            };
+            let exponent = 0.5f32.ln() / midpoint.ln();
+            for position in samples {
+                let relative = (position - offset1) / (offset2 - offset1);
+                let t = relative.powf(exponent);
+                let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
+                colors.push(mix(previous, next, t));
+                offsets.push(position);
+            }
+            continue;
+        };
+        colors.push(*color);
+        offsets.push(positions[i]);
+    }
+    Ok((colors, offsets))
 }
 
 pub fn parse_list(s: &str, m: Metrics, current: Color) -> Result<Vec<NativeGradient>, String> {
@@ -125,6 +223,9 @@ impl NativeGradient {
             Gradient::RepeatingConic(g) => Gradient::Conic(g),
             other => other,
         };
+        if gradient.get_vendor_prefix() != VendorPrefix::None {
+            return Err("vendor gradients unsupported".into());
+        }
         let (kind, colors, positions) = match gradient {
             Gradient::Linear(g) => {
                 let angle = match g.direction {
@@ -198,15 +299,19 @@ impl NativeGradient {
             stops: positions,
         })
     }
-    fn cover(&self, positions: &[f32]) -> (Vec<skia_safe::Color>, Vec<f32>) {
+    fn cover(
+        &self,
+        source: &[skia_safe::Color],
+        positions: &[f32],
+    ) -> (Vec<skia_safe::Color>, Vec<f32>) {
         if !self.repeating {
-            return (self.colors.clone(), positions.to_vec());
+            return (source.to_vec(), positions.to_vec());
         }
         let first = positions[0];
         let last = *positions.last().unwrap();
         let period = last - first;
         if !period.is_finite() || period < 1.0e-4 {
-            let color = *self.colors.last().unwrap();
+            let color = *source.last().unwrap();
             return (vec![color, color], vec![0.0, 1.0]);
         }
         let mut colors = Vec::new();
@@ -215,7 +320,7 @@ impl NativeGradient {
         let start = (((-last) / period).floor() as i32 - 1).max(end - 240);
         for k in start..=end {
             let shift = k as f32 * period;
-            for (color, stop) in self.colors.iter().zip(positions) {
+            for (color, stop) in source.iter().zip(positions) {
                 let at = stop + shift;
                 if !(-0.001..=1.001).contains(&at) {
                     continue;
@@ -237,7 +342,7 @@ impl NativeGradient {
             }
         }
         if colors.len() < 2 {
-            let color = *self.colors.last().unwrap();
+            let color = *source.last().unwrap();
             return (vec![color, color], vec![0.0, 1.0]);
         }
         if pos[0] > 0.0 {
@@ -269,7 +374,7 @@ impl NativeGradient {
             out_pos.push(at);
         }
         if out_colors.len() < 2 {
-            let color = *self.colors.last().unwrap();
+            let color = *source.last().unwrap();
             return (vec![color, color], vec![0.0, 1.0]);
         }
         (out_colors, out_pos)
@@ -307,6 +412,11 @@ impl NativeGradient {
         }
         pos.into_iter().flatten().collect()
     }
+    fn ramp(&self, basis: f32) -> Option<(Vec<skia_safe::Color>, Vec<f32>)> {
+        let positions = self.positions(basis);
+        let (colors, positions) = expand_hints(&self.colors, &positions).ok()?;
+        Some(self.cover(&colors, &positions))
+    }
     pub fn shader(&self, rect: Rect) -> Option<Shader> {
         match &self.kind {
             Kind::Linear(angle) => {
@@ -315,8 +425,7 @@ impl NativeGradient {
                 let center = rect.center();
                 let start = (center.x - dx * extent / 2.0, center.y - dy * extent / 2.0);
                 let end = (center.x + dx * extent / 2.0, center.y + dy * extent / 2.0);
-                let stops = self.positions(extent);
-                let (colors, stops) = self.cover(&stops);
+                let (colors, stops) = self.ramp(extent)?;
                 skia_safe::gradient_shader::linear(
                     (start, end),
                     colors.as_slice(),
@@ -381,8 +490,7 @@ impl NativeGradient {
                     return None;
                 }
                 let matrix = Matrix::new_all(rx, 0.0, cx, 0.0, ry, cy, 0.0, 0.0, 1.0);
-                let stops = self.positions(rx);
-                let (colors, stops) = self.cover(&stops);
+                let (colors, stops) = self.ramp(rx)?;
                 skia_safe::gradient_shader::radial(
                     (0.0, 0.0),
                     1.0,
@@ -400,8 +508,7 @@ impl NativeGradient {
                 );
                 let mut matrix = Matrix::new_identity();
                 matrix.set_rotate(*angle - 90.0, Some(c.into()));
-                let stops = self.positions(1.0);
-                let (colors, stops) = self.cover(&stops);
+                let (colors, stops) = self.ramp(1.0)?;
                 skia_safe::gradient_shader::sweep(
                     c,
                     colors.as_slice(),

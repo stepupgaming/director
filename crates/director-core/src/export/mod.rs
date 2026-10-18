@@ -9,4 +9,6 @@
 
 pub mod video;
 
-pub use video::render_export;
+pub use video::{
+    output_dimensions, render_export, render_export_at_scale, set_output_scale, validate_scale,
+};

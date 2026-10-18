@@ -1,7 +1,7 @@
 // NOTE: Custom SkSL shaders are already supported via EffectNode with RuntimeShader.
 // 3D rendering via wgpu: WgpuNode (feature-gated behind "wgpu").
 use crate::animation::EasingType;
-use crate::types::ObjectFit;
+use crate::types::{ObjectFit, ObjectPosition};
 use skia_safe::Rect;
 
 pub mod text;
@@ -103,4 +103,50 @@ pub fn calculate_object_fit_rect(src_w: f32, src_h: f32, dst_rect: Rect, fit: Ob
             Rect::from_xywh(new_x, new_y, new_w, new_h)
         }
     }
+}
+
+/// Same scale as [`calculate_object_fit_rect`], then CSS `object-position`.
+///
+/// Percent consumes leftover space. Fill has none, so only the length offset moves it.
+pub fn calculate_object_fit_rect_at(
+    src_w: f32,
+    src_h: f32,
+    dst_rect: Rect,
+    fit: ObjectFit,
+    position: ObjectPosition,
+) -> Rect {
+    let dst_w = dst_rect.width();
+    let dst_h = dst_rect.height();
+
+    let (new_w, new_h) = match fit {
+        ObjectFit::Fill => (dst_w, dst_h),
+        ObjectFit::Contain | ObjectFit::Cover => {
+            let src_ratio = src_w / src_h;
+            let dst_ratio = dst_w / dst_h;
+
+            let scale = match fit {
+                ObjectFit::Contain => {
+                    if src_ratio > dst_ratio {
+                        dst_w / src_w
+                    } else {
+                        dst_h / src_h
+                    }
+                }
+                ObjectFit::Cover => {
+                    if src_ratio > dst_ratio {
+                        dst_h / src_h
+                    } else {
+                        dst_w / src_w
+                    }
+                }
+                _ => 1.0,
+            };
+
+            (src_w * scale, src_h * scale)
+        }
+    };
+
+    let new_x = dst_rect.left + (dst_w - new_w) * position.x_percent + position.x_offset;
+    let new_y = dst_rect.top + (dst_h - new_h) * position.y_percent + position.y_offset;
+    Rect::from_xywh(new_x, new_y, new_w, new_h)
 }

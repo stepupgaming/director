@@ -1,3 +1,6 @@
+mod audio_report;
+mod batch;
+mod check;
 mod gpu;
 mod html;
 mod input;
@@ -5,6 +8,10 @@ mod preview;
 mod project;
 mod renderer;
 mod run;
+mod onion;
+mod sample_times;
+mod sheet;
+mod snapshot;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use director_core::export::render_export;
@@ -13,8 +20,9 @@ use director_core::video_wrapper::RenderMode;
 use input::{Encoder, Input};
 use run::{default_video_output, eval_script};
 use std::fs;
+use std::io::Write;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{error, info};
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -76,14 +84,26 @@ struct Cli {
 enum Commands {
     /// Compile HTML/CSS/HyperFrames to native scenes, capture dynamic input, or render
     Html(html::HtmlArgs),
-    /// Pack or edit a portable native project
+    /// Pack, edit, or repair a portable native project
     Project(project::ProjectArgs),
     /// Inspect source IDs, layout, timeline and audio as JSON
     Inspect(InspectArgs),
     /// Render a script (or named composition) to video
     Render(RenderArgs),
+    /// Render each input with the software encoder into one directory
+    Batch(BatchArgs),
     /// Render a single still frame to PNG
     Still(StillArgs),
+    /// Render a contact sheet of frames from any loaded input
+    Sheet(sheet::SheetArgs),
+    /// Report loudness, clipping, and silence for loaded audio
+    Audio(audio_report::AudioArgs),
+    /// Report elements outside the canvas and missing fonts
+    Check(check::CheckArgs),
+    /// Compare one frame to a golden PNG
+    Snapshot(snapshot::SnapshotArgs),
+    /// Blend frames so later frames count more
+    Onion(onion::OnionArgs),
     /// List compositions registered by a script
     Compositions(CompositionsArgs),
     /// Live web preview (scrub / play frames in the browser)
@@ -117,6 +137,25 @@ struct RenderArgs {
     /// Timeline instant (seconds) for manifest bounds sampling
     #[arg(long, default_value_t = 0.0)]
     manifest_time: f64,
+
+    /// Draft raster scale in (0, 1]. Layout stays at the composition size.
+    #[arg(long, default_value_t = 1.0)]
+    scale: f32,
+}
+
+#[derive(Parser, Debug)]
+struct BatchArgs {
+    /// Input path. Repeat for each item.
+    #[arg(long, required = true)]
+    input: Vec<PathBuf>,
+
+    /// Directory that receives one software-encoded video per input
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Emit one JSON object instead of ok/fail lines
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -146,6 +185,9 @@ struct InspectArgs {
     input: Input,
     #[arg(short = 't', long, default_value_t = 0.0)]
     time: f64,
+    /// Sample time in seconds. Repeat for a samples array. Omit to inspect --time once.
+    #[arg(long, value_name = "SECONDS", action = clap::ArgAction::Append)]
+    sample: Vec<f64>,
 }
 
 #[derive(Parser, Debug)]
@@ -237,6 +279,10 @@ fn write_manifest(movie: &MovieHandle, path: &PathBuf, time: f64) -> Result<(), 
 }
 
 fn cmd_render(args: RenderArgs) {
+    if let Err(error) = director_core::export::validate_scale(args.scale) {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
     if args.alpha && matches!(args.encoder, Encoder::Nvenc) {
         eprintln!("alpha export requires VP9/WebM; --encoder nvenc selects H.264 without alpha");
         std::process::exit(1);
@@ -267,12 +313,13 @@ fn cmd_render(args: RenderArgs) {
         std::process::exit(2);
     });
     director.encoder_mode = args.encoder.mode();
-    if let Err(e) = render_export(
+    if let Err(e) = director_core::export::render_export_at_scale(
         &mut director,
         output.clone(),
         context.as_mut(),
         None,
         args.alpha,
+        args.scale,
     ) {
         eprintln!("{e}");
         std::process::exit(2);
@@ -281,6 +328,85 @@ fn cmd_render(args: RenderArgs) {
     drop(loaded);
     drop(context);
     println!("{}", output.display());
+}
+
+fn cmd_batch(args: BatchArgs) -> i32 {
+    if let Err(error) = fs::create_dir_all(&args.output) {
+        eprintln!("output {}: {error}", args.output.display());
+        return flush_status(2);
+    }
+    let plans = batch::plan_batch(&args.input, &args.output);
+    let mut items = Vec::with_capacity(plans.len());
+    for plan in plans {
+        let name = plan.input.display().to_string();
+        let output = plan.output.display().to_string();
+        match render_software_item(&plan.input, &plan.output) {
+            Ok(()) => items.push(batch::BatchItem {
+                name,
+                output,
+                error: None,
+                exit_code: 0,
+            }),
+            Err(failure) => items.push(batch::BatchItem {
+                name,
+                output,
+                error: Some(failure.message),
+                exit_code: failure.exit_code,
+            }),
+        }
+    }
+    if args.json {
+        let report = batch::batch_report_json(&items);
+        println!("{}", report.json);
+        return flush_status(report.exit_code);
+    }
+    let report = batch::batch_report(&items);
+    print!("{}", report.text);
+    flush_status(report.exit_code)
+}
+
+struct ItemFailure {
+    exit_code: i32,
+    message: String,
+}
+
+/// Software encoder, CPU paint, no alpha. Same export entry as `render`.
+fn render_software_item(input_path: &Path, output: &Path) -> Result<(), ItemFailure> {
+    let input = Input::new(input_path.to_path_buf());
+    let loaded = input.load(RenderMode::Export).map_err(|message| ItemFailure {
+        exit_code: 1,
+        message,
+    })?;
+    let mut context = gpu::required_context(false).map_err(|message| ItemFailure {
+        exit_code: 2,
+        message,
+    })?;
+    let mut director = loaded.movie.director.lock().map_err(|_| ItemFailure {
+        exit_code: 2,
+        message: "Director lock poisoned".into(),
+    })?;
+    director.encoder_mode = Encoder::Software.mode();
+    render_export(
+        &mut director,
+        output.to_path_buf(),
+        context.as_mut(),
+        None,
+        false,
+    )
+    .map_err(|error| ItemFailure {
+        exit_code: 2,
+        message: error.to_string(),
+    })?;
+    drop(director);
+    drop(loaded);
+    drop(context);
+    Ok(())
+}
+
+fn flush_status(code: i32) -> i32 {
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    code
 }
 
 fn cmd_still(args: StillArgs) {
@@ -332,15 +458,46 @@ fn cmd_still(args: StillArgs) {
 }
 
 fn cmd_inspect(args: InspectArgs) {
-    let inspection = args
-        .input
-        .load(RenderMode::Export)
-        .and_then(|loaded| loaded.inspect(args.time))
-        .unwrap_or_else(|e| {
-            eprintln!("{e}");
+    let plan = match sample_times::check_sample_times(&args.sample) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("{error}");
             std::process::exit(1);
-        });
-    println!("{inspection}");
+        }
+    };
+    match plan {
+        sample_times::SamplePlan::Single => {
+            let inspection = args
+                .input
+                .load(RenderMode::Export)
+                .and_then(|loaded| loaded.inspect(args.time))
+                .unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                });
+            println!("{inspection}");
+        }
+        sample_times::SamplePlan::Repeated(times) => {
+            let loaded = args.input.load(RenderMode::Export).unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1);
+            });
+            let mut samples = Vec::with_capacity(times.len());
+            for time in times {
+                match loaded.inspect(time) {
+                    Ok(inspection) => samples.push(serde_json::json!({
+                        "time": time,
+                        "inspection": inspection,
+                    })),
+                    Err(error) => {
+                        eprintln!("{error}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            println!("{}", serde_json::json!({ "samples": samples }));
+        }
+    }
 }
 fn cmd_compositions(args: CompositionsArgs) {
     let evaluated = match eval_script(&args.script, RenderMode::Preview) {
@@ -411,7 +568,43 @@ fn main() {
 
     match cli.command {
         Some(Commands::Render(args)) => cmd_render(args),
+        Some(Commands::Batch(args)) => {
+            let code = cmd_batch(args);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
         Some(Commands::Still(args)) => cmd_still(args),
+        Some(Commands::Sheet(args)) => {
+            let code = sheet::run(args);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Some(Commands::Audio(args)) => {
+            let code = audio_report::run(args);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Some(Commands::Check(args)) => {
+            let code = check::run(args);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Some(Commands::Snapshot(args)) => {
+            let code = snapshot::run(args);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Some(Commands::Onion(args)) => {
+            let code = onion::run(args);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
         Some(Commands::Compositions(args)) => cmd_compositions(args),
         Some(Commands::Preview(args)) => cmd_preview(args),
         Some(Commands::Html(args)) => html::run(args),
@@ -423,7 +616,7 @@ fn main() {
                 None => {
                     eprintln!(
                         "Usage: director-engine <SCRIPT> [OUTPUT]\n\
-                         Or:    director-engine render|still|compositions|preview --help\n\
+                         Or:    director-engine render|still|sheet|audio|check|snapshot|onion|batch|compositions|preview --help\n\
                          Note: a script named 'render.rhai' needs the explicit form:\n\
                                director-engine render render.rhai"
                     );
@@ -442,6 +635,7 @@ fn main() {
                 gpu: cli.gpu,
                 manifest: cli.manifest,
                 manifest_time: cli.manifest_time,
+                scale: 1.0,
             });
         }
     }

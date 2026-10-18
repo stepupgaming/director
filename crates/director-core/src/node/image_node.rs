@@ -1,8 +1,8 @@
 use crate::animation::Animated;
 use crate::element::Element;
 use crate::errors::RenderError;
-use crate::node::{calculate_object_fit_rect, parse_easing};
-use crate::types::ObjectFit;
+use crate::node::{calculate_object_fit_rect_at, parse_easing};
+use crate::types::{ObjectFit, ObjectPosition};
 use skia_safe::{Canvas, ClipOp, Color4f, Data, Image, Paint, Rect, RRect};
 use std::any::Any;
 use taffy::style::Style;
@@ -15,6 +15,7 @@ pub struct ImageNode {
     pub opacity: Animated<f32>,
     pub style: Style,
     pub object_fit: ObjectFit,
+    pub object_position: ObjectPosition,
     pub border_radius: Animated<f32>,
     /// Original asset path, if loaded from a file or blob path.
     pub source_path: Option<String>,
@@ -28,6 +29,7 @@ impl ImageNode {
             opacity: Animated::new(1.0),
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
+            object_position: ObjectPosition::default(),
             border_radius: Animated::new(0.0),
             source_path: None,
         }
@@ -39,6 +41,7 @@ impl ImageNode {
             opacity: Animated::new(1.0),
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
+            object_position: ObjectPosition::default(),
             border_radius: Animated::new(0.0),
             source_path: None,
         }
@@ -50,6 +53,7 @@ impl ImageNode {
             opacity: Animated::new(1.0),
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
+            object_position: ObjectPosition::default(),
             border_radius: Animated::new(0.0),
             source_path: Some(path.into()),
         }
@@ -103,11 +107,12 @@ impl Element for ImageNode {
                 skia_safe::MipmapMode::Linear,
             );
 
-            let draw_rect = calculate_object_fit_rect(
+            let draw_rect = calculate_object_fit_rect_at(
                 img.width() as f32,
                 img.height() as f32,
                 rect,
                 self.object_fit,
+                self.object_position,
             );
 
             canvas.save();
@@ -115,9 +120,8 @@ impl Element for ImageNode {
             if radius > 0.0 {
                 let rrect = RRect::new_rect_xy(&rect, radius, radius);
                 canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-            } else if self.object_fit == ObjectFit::Cover {
-                canvas.clip_rect(rect, ClipOp::Intersect, true);
             }
+            canvas.clip_rect(rect, ClipOp::Intersect, true);
             canvas.draw_image_rect_with_sampling_options(img, None, draw_rect, sampling, &paint);
             canvas.restore();
         }

@@ -235,7 +235,20 @@ composition ids are arena-local to the inner director.
 Frame pipeline (plan 03): `note_mutation` auto-evicts static/comp caches;
 `render_at_time` falls back to full when uncompiled; dirty static nodes
 never serve cache hits; `expand_dirty_set` includes reverse mask users.
-Acceptance: `tests/pipeline_equivalence.rs`.
+A full pass reuses `static_cache` when `StaticCacheKey` matches: layout
+width and height, the local transform baked into the snapshot, pivot,
+inherited opacity, and time. Time is `None` when the subtree has no
+time-varying paint, video, or expression, so a later frame may hit.
+Time is `Some(local_time)` otherwise, so a later frame misses. An
+incremental pass still hits a clean static node without comparing the
+key. Image-only caches (composition surfaces, captured HTML frames)
+still miss on every full pass. Acceptance: `tests/pipeline_equivalence.rs`
+and `tests/static_reuse.rs`.
+`Element::shares_3d` defaults false and `view_depth` defaults to 0.
+When `shares_3d` is true, `render_node_subtree` sorts direct children by
+ascending `view_depth`, then z-index, then source order. HtmlElement
+reports the Z of the element center after its own local matrix. Parent
+perspective is not part of that Z. Composition clip order is unchanged.
 
 Layout synchronization: compare child order including masks before calling Taffy
 `set_children`; identical lists must not invalidate the layout cache. Compare
@@ -323,8 +336,13 @@ five 640x360 premultiplied RGBA frames per workload via
   tracks, timeline, entity tracks, and node-specific props.
 - Fully round-tripped node kinds: `Box`, `Text`, `SmartCaption`, `Image`,
   `Video`, `Lottie`, `Effect`, `Composition`, and `SpectrumVisualizer`.
-- `Image`/`Video` preserve source path, object fit, border radius, opacity, and
-  render mode; media is reloaded from disk on load when available.
+- `Image`/`Video` preserve source path, object fit, object position, border
+  radius, opacity, and render mode. Object position is a leftover-space
+  fraction plus a pixel offset on each axis. The default is 50% 50% with no
+  offset. A missing `object_position` key stays at that default. Media is
+  reloaded from disk on load when available. Measured 2026-10-17:
+  `cargo test -p director-core --release --test object_position --test project_roundtrip -- object_position contain_offset project_roundtrip_preserves_image project_roundtrip_preserves_video`
+  passed 3 and 2. The pre-existing 26 lib warnings remain.
 - `Lottie` embeds the parsed model JSON and restores speed, loop flag, frame,
   and opacity.
 - `Effect` serializes every `EffectType` variant to JSON and rebuilds the
@@ -360,7 +378,7 @@ five 640x360 premultiplied RGBA frames per workload via
 - **L0** — engine + raw Rhai (`animate`, nodes, timeline).
 - **L1** — `src/scripting/api/stdlib.rs`: `fade_in`/`out`, `pop_in`, `fly_in_*`/`fly_out_*`, `pulse`, `pulse_on_beat`, `typewriter`, `ken_burns`. Catalogued in `RHAI_FUNCTION_CATALOG`.
 - **L2** — `templates.rs` (`add_*` incl. `add_smart_lower_third`) + `register_composition` + shallow props. Catalogued helpers: `add_smart_lower_third`, `register_composition`.
-- **L3** — `examples/recipes/*` (must register compositions): `faceless_short`, `kinetic_lower_third`, `image_beats` (media props). Plan 07 **Done at v1 stop-line** (`docs/plans/07-stdlib-and-recipes.md`).
+- **L3** — `examples/recipes/*` (must register compositions): `faceless_short`, `kinetic_lower_third`, `image_beats` (media props), `stat_count`, `quote_card`, `list_reveal`, `end_card`, `chapter_card`, `countdown`. The 2026-10-17 release `examples` filter `example_recipes_` passed 9, including those three. Plan 07 **Done at v1 stop-line** (`docs/plans/07-stdlib-and-recipes.md`).
 - No separate `director-sdk` crate. TTS Historian, Podcast Clipper, full component library deferred.
 
 ## Named compositions (Rhai)

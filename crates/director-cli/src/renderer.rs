@@ -82,6 +82,37 @@ impl Renderer {
     }
 }
 
+pub const MAX_FRAME_PIXELS: usize = 16 * 1024 * 1024;
+
+pub fn frame_within_limit(width: i32, height: i32) -> Result<(), String> {
+    if width <= 0 || height <= 0 {
+        return Err("frame size must be positive".into());
+    }
+    let pixels = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| format!("frame exceeds {MAX_FRAME_PIXELS} pixels"))?;
+    if pixels > MAX_FRAME_PIXELS {
+        return Err(format!("frame exceeds {MAX_FRAME_PIXELS} pixels"));
+    }
+    Ok(())
+}
+
+pub fn paint_rgba(
+    director: &mut Director,
+    time: f64,
+    gpu: bool,
+) -> Result<(Vec<u8>, u32, u32), String> {
+    frame_within_limit(director.width, director.height)?;
+    let mut renderer = Renderer::new(gpu)?;
+    let png = renderer.png(director, time)?;
+    let image = image::load_from_memory(&png)
+        .map_err(|error| error.to_string())?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    frame_within_limit(width as i32, height as i32)?;
+    Ok((image.into_raw(), width, height))
+}
+
 pub fn encode_png(info: skia_safe::ImageInfo, pixels: &[u8]) -> Result<Vec<u8>, String> {
     let image = skia_safe::images::raster_from_data(
         &info,

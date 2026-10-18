@@ -26,6 +26,12 @@
 - `recipes/faceless_short.rhai` — L3 vertical kinetic explainer.
 - `recipes/kinetic_lower_third.rhai` — L3 16:9 interview package (typewriter + smart lower third).
 - `recipes/image_beats.rhai` — L3 vertical media-prop recipe (image paths + Ken Burns + captions).
+- `recipes/stat_count.rhai` — L3 9:16 stepped count (`stat_count`).
+- `recipes/quote_card.rhai` — L3 9:16 quote and attribution (`quote_card`).
+- `recipes/list_reveal.rhai` — L3 16:9 three-line reveal (`list_reveal`).
+- `recipes/end_card.rhai` — L3 9:16 end card (`end_card`).
+- `recipes/chapter_card.rhai` — L3 16:9 chapter card (`chapter_card`).
+- `recipes/countdown.rhai` — L3 9:16 stepped countdown (`countdown`). The 2026-10-17 release examples filter passed 9 recipe scripts, including these three.
 - `features/smart_lower_third.rhai` — L2 content-reactive lower third demo.
 - Keep test helper behavior deterministic enough for CI or local validation.
 

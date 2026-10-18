@@ -11,10 +11,11 @@ use director_core::{
     node::{ImageNode, TextNode, VectorNode, VideoNode, VideoSource},
     types::{NodeId, ObjectFit},
     video_wrapper::RenderMode,
-    Director, Element,
+    Director, Element, RenderError,
 };
 use scraper::{node::Node, ElementRef, Html, Selector};
 use std::{
+    any::Any,
     collections::{BTreeMap, HashMap},
     path::Path,
     sync::Arc,
@@ -27,6 +28,39 @@ fn escape_xml(value: &str, attr: bool) -> String {
     }
     escaped
 }
+
+const SVG_EXTERNAL_PRESENTATION: &[&str] = &[
+    "fill",
+    "color",
+    "stroke",
+    "stroke-width",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-dasharray",
+    "stroke-dashoffset",
+    "opacity",
+    "transform",
+    "clip-path",
+    "filter",
+    "mix-blend-mode",
+];
+
+const SVG_ANIMATION_PROPERTIES: &[&str] = &[
+    "animation",
+    "animation-name",
+    "animation-duration",
+    "animation-timing-function",
+    "animation-iteration-count",
+    "animation-direction",
+    "animation-play-state",
+    "animation-delay",
+    "animation-fill-mode",
+    "animation-timeline",
+    "animation-composition",
+    "animation-range",
+    "animation-range-start",
+    "animation-range-end",
+];
 
 fn serialize_svg_children(
     el: ElementRef<'_>,
@@ -51,12 +85,16 @@ fn write_svg_children(
                 let child = ElementRef::wrap(child).unwrap();
                 let values = css.cascade(child, parent)?;
                 let mut extra = String::new();
-                for name in ["filter", "mix-blend-mode"] {
+                for name in SVG_EXTERNAL_PRESENTATION {
                     if css.has_stylesheet_property(child, name) {
-                        if let Some(value) = values.get(name) {
+                        if let Some(value) = values.get(*name) {
                             extra.push_str(name);
                             extra.push(':');
-                            extra.push_str(value);
+                            if *name == "transform" {
+                                extra.push_str(&value.replace("px", ""));
+                            } else {
+                                extra.push_str(value);
+                            }
                             extra.push(';');
                         }
                     }
@@ -558,6 +596,7 @@ impl Builder {
                 };
                 let mut image = ImageNode::from_image(Some(image));
                 image.object_fit = fit(&values);
+                image.object_position = paint.object_position;
                 Some(Box::new(image))
             }
             "svg" => {
@@ -567,22 +606,9 @@ impl Builder {
                     .filter_map(ElementRef::wrap)
                     .filter(|child| child.id() != el.id())
                 {
-                    for property in [
-                        "fill",
-                        "color",
-                        "stroke",
-                        "stroke-width",
-                        "stroke-linecap",
-                        "stroke-linejoin",
-                        "stroke-dasharray",
-                        "stroke-dashoffset",
-                        "opacity",
-                        "transform",
-                        "clip-path",
-                        "animation",
-                    ] {
+                    for property in SVG_ANIMATION_PROPERTIES {
                         if self.css.has_stylesheet_property(child, property) {
-                            return Err(CompileError::Input(format!("{}: external stylesheet '{property}' inside SVG requires extraction; author SVG presentation attributes or an internal stylesheet", label(child))));
+                            return Err(CompileError::Input(format!("{}: external stylesheet 'animation' inside SVG requires extraction; author SVG presentation attributes or an internal stylesheet", label(child))));
                         }
                     }
                 }
@@ -623,17 +649,22 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                         "video audio needs an explicit audio element; author muted video".into(),
                     ));
                 }
-                if el.value().attr("loop").is_some() {
-                    return Err(CompileError::Input("video loop requires extraction".into()));
-                }
                 let src = el
                     .value()
                     .attr("src")
                     .ok_or_else(|| CompileError::Input("video without src".into()))?;
                 let path = self.assets.media_path(src)?;
+                let looped = el.value().attr("loop").is_some();
+                let duration = if looped { media_duration(&path)? } else { 0.0 };
                 let mut video = VideoNode::new(VideoSource::Path(path), RenderMode::Export);
                 video.object_fit = fit(&values);
-                Some(Box::new(video))
+                video.object_position = paint.object_position;
+                let video: Box<dyn Element> = if looped {
+                    Box::new(LoopedVideo { node: video, duration })
+                } else {
+                    Box::new(video)
+                };
+                Some(video)
             }
             "audio" => {
                 let src = el
@@ -763,7 +794,10 @@ markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
             anonymous.filter = Default::default();
             anonymous.shadows.clear();
             anonymous.gradient.clear();
+            anonymous.background_image = None;
+            anonymous.decoration = Default::default();
             anonymous.mask = None;
+            anonymous.mask_luminance = false;
             let child = self.director.scene.add_node(Box::new(HtmlElement::new(
                 taffy::Style {
                     display: taffy::Display::Block,
@@ -881,6 +915,106 @@ pub fn fit(values: &Values) -> ObjectFit {
         Some("contain") => ObjectFit::Contain,
         Some("cover") => ObjectFit::Cover,
         _ => ObjectFit::Fill,
+    }
+}
+
+/// File duration for `<video loop>`. Metadata only; the existing decoder seeks.
+pub(crate) fn media_duration(path: &Path) -> Result<f64, CompileError> {
+    let probe = |entries: &[&str]| -> Result<Option<f64>, CompileError> {
+        let output = std::process::Command::new("ffprobe")
+            .arg("-v")
+            .arg("error")
+            .args(entries)
+            .arg("-of")
+            .arg("default=noprint_wrappers=1:nokey=1")
+            .arg(path)
+            .output()
+            .map_err(|error| CompileError::Input(format!("video duration: {error}")))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|line| {
+                let duration = line.trim().parse::<f64>().ok()?;
+                (duration.is_finite() && duration > 0.0).then_some(duration)
+            }))
+    };
+    if let Some(duration) = probe(&["-select_streams", "v:0", "-show_entries", "stream=duration"])?
+    {
+        return Ok(duration);
+    }
+    if let Some(duration) = probe(&["-show_entries", "format=duration"])? {
+        return Ok(duration);
+    }
+    Err(CompileError::Input(
+        "video loop requires a positive media duration".into(),
+    ))
+}
+
+/// `time` is already `media_start + max(elapsed, 0) * playback_rate`.
+/// Loop wraps that position into `[0, duration)`.
+pub(crate) fn looped_media_time(time: f64, duration: f64) -> f64 {
+    let time = if time.is_finite() { time.max(0.0) } else { 0.0 };
+    if !duration.is_finite() || duration <= 0.0 {
+        return time;
+    }
+    let wrapped = time % duration;
+    if wrapped < 0.0 {
+        wrapped + duration
+    } else {
+        wrapped
+    }
+}
+
+/// One owned decoder. `HtmlElement` applies media start and rate before `update`.
+#[derive(Debug, Clone)]
+struct LoopedVideo {
+    node: VideoNode,
+    duration: f64,
+}
+
+impl Element for LoopedVideo {
+    fn kind(&self) -> &'static str {
+        "video"
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn layout_style(&self) -> taffy::Style {
+        self.node.layout_style()
+    }
+    fn set_layout_style(&mut self, style: taffy::Style) {
+        self.node.set_layout_style(style);
+    }
+    fn set_opacity(&mut self, opacity: f32) {
+        self.node.set_opacity(opacity);
+    }
+    fn update(&mut self, time: f64) -> bool {
+        self.node.update(looped_media_time(time, self.duration))
+    }
+    fn render(
+        &self,
+        canvas: &skia_safe::Canvas,
+        rect: skia_safe::Rect,
+        opacity: f32,
+        draw_children: &mut dyn FnMut(&skia_safe::Canvas),
+    ) -> Result<(), RenderError> {
+        self.node.render(canvas, rect, opacity, draw_children)
+    }
+    fn animate_property(
+        &mut self,
+        property: &str,
+        start: f32,
+        target: f32,
+        duration: f64,
+        easing: &str,
+    ) -> Result<(), String> {
+        self.node
+            .animate_property(property, start, target, duration, easing)
     }
 }
 

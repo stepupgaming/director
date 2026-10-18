@@ -42,8 +42,8 @@ Incremental machinery exists (`compile`, `invalidate`, `dirty_nodes`, `expand_di
 
 | Mode | Dirty set | Cache |
 |------|-----------|--------|
-| Full | `None` (all active nodes update + draw) | May fill static cache |
-| Incremental | `Some(expand(dirty))` | Static hit only if node not dirty and inputs unchanged |
+| Full | `None` (all active nodes update + draw) | Reuse `static_cache` when `StaticCacheKey` matches. Time-varying subtrees store `Some(local_time)` and miss on a later frame |
+| Incremental | `Some(expand(dirty))` | Static hit only if the node is not dirty |
 
 After each `render_at_time`, consuming dirty set is OK if the next mutation re-invalidates. Prefer: **mutations always mark dirty**; render clears after successful frame.
 

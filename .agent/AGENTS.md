@@ -5,6 +5,7 @@
 ## Ownership
 
 - `.agent/skills/director-rhai/` owns Rhai script-authoring instructions, examples, and API reference material.
+- `.agent/skills/director-agent-loop/` owns the check, sheet, audio, still, and render loop, including snapshot, onion, and draft scale.
 - Root AGENTS.md owns broad agent behavior; this file owns only local skill assets.
 
 ## Local Contracts
@@ -24,3 +25,4 @@
 ## Child DOX Index
 
 - `skills/director-rhai/` - Rhai authoring skill, examples, and API reference.
+- `skills/director-agent-loop/` - CLI loop for check, sheet, audio, still, snapshot, onion, and render.

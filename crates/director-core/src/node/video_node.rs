@@ -1,8 +1,8 @@
 use crate::animation::Animated;
 use crate::element::Element;
 use crate::errors::RenderError;
-use crate::node::{calculate_object_fit_rect, parse_easing};
-use crate::types::ObjectFit;
+use crate::node::{calculate_object_fit_rect_at, parse_easing};
+use crate::types::{ObjectFit, ObjectPosition};
 use crate::video_wrapper::{RenderMode, VideoLoader, VideoResponse};
 use skia_safe::{AlphaType, Canvas, ClipOp, Color4f, ColorSpace, ColorType, Data, Image, Paint, Rect, RRect};
 use std::any::Any;
@@ -30,6 +30,7 @@ pub struct VideoNode {
     pub opacity: Animated<f32>,
     pub style: Style,
     pub object_fit: ObjectFit,
+    pub object_position: ObjectPosition,
     pub border_radius: Animated<f32>,
     /// Original asset path, if loaded from a file or blob path.
     pub source_path: Option<String>,
@@ -63,6 +64,7 @@ impl Clone for VideoNode {
             opacity: self.opacity.clone(),
             style: self.style.clone(),
             object_fit: self.object_fit,
+            object_position: self.object_position,
             border_radius: self.border_radius.clone(),
             source_path: self.source_path.clone(),
             current_frame: Mutex::new(None),
@@ -100,6 +102,7 @@ impl VideoNode {
             opacity: Animated::new(1.0),
             style: Style::DEFAULT,
             object_fit: ObjectFit::Cover,
+            object_position: ObjectPosition::default(),
             border_radius: Animated::new(0.0),
             source_path: None,
             current_frame: Mutex::new(None),
@@ -239,11 +242,12 @@ impl Element for VideoNode {
         if let Some((_, img)) = current.as_ref() {
             let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, op), None);
 
-            let draw_rect = calculate_object_fit_rect(
+            let draw_rect = calculate_object_fit_rect_at(
                 img.width() as f32,
                 img.height() as f32,
                 rect,
                 self.object_fit,
+                self.object_position,
             );
 
             canvas.save();
@@ -251,9 +255,8 @@ impl Element for VideoNode {
             if radius > 0.0 {
                 let rrect = RRect::new_rect_xy(&rect, radius, radius);
                 canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-            } else if self.object_fit == ObjectFit::Cover {
-                canvas.clip_rect(rect, ClipOp::Intersect, true);
             }
+            canvas.clip_rect(rect, ClipOp::Intersect, true);
             canvas.draw_image_rect(img, None, draw_rect, &paint);
             canvas.restore();
         } else {

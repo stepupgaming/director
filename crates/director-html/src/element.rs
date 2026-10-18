@@ -1,12 +1,18 @@
+use crate::background_box::{place_axis, AxisRepeat};
+use crate::background_tiles::{place_tiles, PlacedTile};
+use crate::box_edges::{edge_insets, BoxEdge};
 use crate::{
     animation::Animation,
+    shader::PaperPaint,
     style::{
-        canvas_transform, perspective_matrix, resolve, shows_backface, BorderLine, CanvasTransform,
-        LengthParts, Metrics, PaintStyle,
+        canvas_transform, perspective_matrix, resolve, shows_backface, BackgroundFit,
+        BackgroundOrigin, BorderLine, CanvasTransform, LengthParts, Metrics, PaintStyle,
     },
 };
 use director_core::{Element, RenderError};
-use skia_safe::{Canvas, Rect};
+use skia_safe::{
+    color_filters, Canvas, FilterMode, Matrix, MipmapMode, Rect, SamplingOptions, TileMode,
+};
 use std::any::Any;
 use taffy::{
     geometry::Size,
@@ -28,6 +34,7 @@ pub struct HtmlElement {
     pub animations: Vec<Animation>,
     pub base_style: Style,
     pub base_paint: PaintStyle,
+    pub paper: Option<PaperPaint>,
     time: f64,
     baseline_offset: f32,
 }
@@ -51,6 +58,7 @@ impl HtmlElement {
             playback_rate: 1.0,
             hidden: false,
             animations: Vec::new(),
+            paper: None,
             time: 0.0,
             baseline_offset: 0.0,
         }
@@ -221,6 +229,23 @@ impl Element for HtmlElement {
         }
         self.style != old_style
     }
+    fn shares_3d(&self) -> bool {
+        self.paint.preserve_3d
+    }
+    fn view_depth(&self, width: f32, height: f32) -> f32 {
+        let origin = (
+            resolve(self.paint.origin.0, width),
+            resolve(self.paint.origin.1, height),
+        );
+        let center = (width / 2.0, height / 2.0);
+        let v = (center.0 - origin.0, center.1 - origin.1);
+        match canvas_transform(&self.paint.transform, self.metrics, (width, height)) {
+            CanvasTransform::Projective(matrix) => {
+                matrix.rc(2, 0) * v.0 + matrix.rc(2, 1) * v.1 + matrix.rc(2, 3)
+            }
+            CanvasTransform::Affine(_) => 0.0,
+        }
+    }
     fn render(
         &self,
         canvas: &Canvas,
@@ -309,6 +334,10 @@ impl Element for HtmlElement {
         // Background is clipped to individual corner radii; content clipping follows overflow.
         canvas.save();
         canvas.clip_rrect(outer, skia_safe::ClipOp::Intersect, true);
+        if let Some(clip) = content_box_background_clip(rect, &self.style, self.paint.background_clip)
+        {
+            canvas.clip_rect(clip, skia_safe::ClipOp::Intersect, false);
+        }
         bg.render(canvas, rect, 1.0, &mut |_| {})?;
         for gradient in self.paint.gradient.iter().rev() {
             if let Some(shader) = gradient.shader(rect) {
@@ -318,6 +347,7 @@ impl Element for HtmlElement {
                 canvas.draw_rect(rect, &p);
             }
         }
+        paint_background_image(canvas, rect, &self.style, &self.paint);
         canvas.restore();
         for shadow in self.paint.shadows.iter().rev().filter(|s| s.inset) {
             canvas.save();
@@ -368,6 +398,14 @@ impl Element for HtmlElement {
             content_error = content.render(canvas, self.content_rect(rect), 1.0, &mut |_| {});
         }
         if content_error.is_ok() {
+            paint_text_lines(canvas, self, rect);
+        }
+        if content_error.is_ok() {
+            if let Some(paper) = &self.paper {
+                content_error = paper.draw(canvas, self.content_rect(rect));
+            }
+        }
+        if content_error.is_ok() {
             if let Some(distance) = self.paint.perspective {
                 let origin = (
                     resolve(self.paint.perspective_origin.0, rect.width()),
@@ -396,6 +434,16 @@ impl Element for HtmlElement {
             p.set_blend_mode(skia_safe::BlendMode::DstIn);
             if let Some(shader) = mask.shader(rect) {
                 p.set_shader(shader);
+                if self.paint.mask_luminance {
+                    let matrix = [
+                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                        0.2126, 0.7152, 0.0722, 0.0, 0.0,
+                    ];
+                    p.set_color_filter(color_filters::matrix_row_major(
+                        &matrix,
+                        color_filters::Clamp::Yes,
+                    ));
+                }
                 canvas.draw_rect(rect, &p);
             }
         }
@@ -550,4 +598,467 @@ fn paint_borders(
         canvas.draw_path(&path, &p);
     }
     canvas.restore();
+}
+
+fn content_box_background_clip(rect: Rect, layout: &Style, clip: BoxEdge) -> Option<Rect> {
+    if clip != BoxEdge::ContentBox {
+        return None;
+    }
+    let width = rect.width();
+    let insets = edge_insets(
+        BoxEdge::ContentBox,
+        layout.border.left.value(),
+        layout.border.top.value(),
+        layout.border.right.value(),
+        layout.border.bottom.value(),
+        resolve(layout.padding.left, width),
+        resolve(layout.padding.top, width),
+        resolve(layout.padding.right, width),
+        resolve(layout.padding.bottom, width),
+    );
+    let left = rect.left + insets.left;
+    let top = rect.top + insets.top;
+    let right = (rect.right - insets.right).max(left);
+    let bottom = (rect.bottom - insets.bottom).max(top);
+    Some(Rect::new(left, top, right, bottom))
+}
+
+fn paint_background_image(canvas: &Canvas, rect: Rect, layout: &Style, paint: &PaintStyle) {
+    let Some(image) = &paint.background_image else {
+        return;
+    };
+    let iw = image.width() as f32;
+    let ih = image.height() as f32;
+    if iw <= 0.0 || ih <= 0.0 {
+        return;
+    }
+    let (inset_l, inset_t, inset_r, inset_b) = match paint.background_origin {
+        BackgroundOrigin::BorderBox => (0.0, 0.0, 0.0, 0.0),
+        BackgroundOrigin::PaddingBox => (
+            layout.border.left.value(),
+            layout.border.top.value(),
+            layout.border.right.value(),
+            layout.border.bottom.value(),
+        ),
+        BackgroundOrigin::ContentBox => (
+            layout.border.left.value() + resolve(layout.padding.left, rect.width()),
+            layout.border.top.value() + resolve(layout.padding.top, rect.width()),
+            layout.border.right.value() + resolve(layout.padding.right, rect.width()),
+            layout.border.bottom.value() + resolve(layout.padding.bottom, rect.width()),
+        ),
+    };
+    let area_w = (rect.width() - inset_l - inset_r).max(0.0);
+    let area_h = (rect.height() - inset_t - inset_b).max(0.0);
+    if area_w <= 0.0 || area_h <= 0.0 {
+        return;
+    }
+    let (w, h) = fitted_background(paint.background_size, iw, ih, area_w, area_h);
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let (repeat_x, repeat_y) = paint.background_repeat;
+    let shader_repeat = matches!(repeat_x, AxisRepeat::Repeat | AxisRepeat::NoRepeat)
+        && matches!(repeat_y, AxisRepeat::Repeat | AxisRepeat::NoRepeat);
+    if !shader_repeat {
+        paint_placed_tiles(
+            canvas, image, rect, inset_l, inset_t, area_w, area_h, w, h, paint,
+        );
+        return;
+    }
+    let x = rect.left + inset_l + paint.background_position.0.percent * (area_w - w)
+        + paint.background_position.0.length;
+    let y = rect.top + inset_t + paint.background_position.1.percent * (area_h - h)
+        + paint.background_position.1.length;
+    let tile_x = if matches!(repeat_x, AxisRepeat::Repeat) {
+        TileMode::Repeat
+    } else {
+        TileMode::Decal
+    };
+    let tile_y = if matches!(repeat_y, AxisRepeat::Repeat) {
+        TileMode::Repeat
+    } else {
+        TileMode::Decal
+    };
+    // Skia image shaders map image space onto the canvas. Scale the tile to the
+    // fitted size, then move its origin to the background position.
+    let local = Matrix::scale_translate((w / iw, h / ih), (x, y));
+    let Some(shader) = image.to_shader(
+        (tile_x, tile_y),
+        SamplingOptions::new(FilterMode::Nearest, MipmapMode::None),
+        &local,
+    ) else {
+        return;
+    };
+    let mut p = skia_safe::Paint::default();
+    p.set_shader(shader);
+    canvas.draw_rect(rect, &p);
+}
+
+fn fitted_background(fit: BackgroundFit, iw: f32, ih: f32, area_w: f32, area_h: f32) -> (f32, f32) {
+    match fit {
+        BackgroundFit::Auto => (iw, ih),
+        BackgroundFit::Cover => {
+            let scale = (area_w / iw).max(area_h / ih);
+            (iw * scale, ih * scale)
+        }
+        BackgroundFit::Contain => {
+            let scale = (area_w / iw).min(area_h / ih);
+            (iw * scale, ih * scale)
+        }
+        BackgroundFit::Lengths(width, height) => match (width, height) {
+            (None, None) => (iw, ih),
+            (Some(width), None) => {
+                let w = resolve(width, area_w);
+                (w, if iw > 0.0 { w * ih / iw } else { ih })
+            }
+            (None, Some(height)) => {
+                let h = resolve(height, area_h);
+                (if ih > 0.0 { h * iw / ih } else { iw }, h)
+            }
+            (Some(width), Some(height)) => (resolve(width, area_w), resolve(height, area_h)),
+        },
+    }
+}
+
+fn paint_placed_tiles(
+    canvas: &Canvas,
+    image: &skia_safe::Image,
+    rect: Rect,
+    inset_l: f32,
+    inset_t: f32,
+    area_w: f32,
+    area_h: f32,
+    tile_w: f32,
+    tile_h: f32,
+    paint: &PaintStyle,
+) {
+    let tiles = explicit_background_tiles(
+        area_w,
+        area_h,
+        tile_w,
+        tile_h,
+        paint.background_position.0.percent,
+        paint.background_position.0.length,
+        paint.background_position.1.percent,
+        paint.background_position.1.length,
+        paint.background_repeat.0,
+        paint.background_repeat.1,
+    );
+    if tiles.is_empty() {
+        return;
+    }
+    canvas.save();
+    canvas.clip_rect(rect, skia_safe::ClipOp::Intersect, false);
+    let sampling = SamplingOptions::new(FilterMode::Nearest, MipmapMode::None);
+    let mut tile_paint = skia_safe::Paint::default();
+    tile_paint.set_anti_alias(false);
+    let origin_x = rect.left + inset_l;
+    let origin_y = rect.top + inset_t;
+    for tile in tiles {
+        let dst = Rect::from_xywh(origin_x + tile.x, origin_y + tile.y, tile.w, tile.h);
+        canvas.draw_image_rect_with_sampling_options(image, None, dst, sampling, &tile_paint);
+    }
+    canvas.restore();
+}
+
+fn explicit_background_tiles(
+    area_w: f32,
+    area_h: f32,
+    tile_w: f32,
+    tile_h: f32,
+    pos_x_percent: f32,
+    pos_x_length: f32,
+    pos_y_percent: f32,
+    pos_y_length: f32,
+    repeat_x: AxisRepeat,
+    repeat_y: AxisRepeat,
+) -> Vec<PlacedTile> {
+    let repeat_axis =
+        matches!(repeat_x, AxisRepeat::Repeat) || matches!(repeat_y, AxisRepeat::Repeat);
+    if !repeat_axis {
+        let placed = place_tiles(
+            0.0,
+            0.0,
+            area_w,
+            area_h,
+            tile_w,
+            tile_h,
+            pos_x_percent,
+            pos_x_length,
+            pos_y_percent,
+            pos_y_length,
+            repeat_x,
+            repeat_y,
+        );
+        if !placed.is_empty() {
+            return placed;
+        }
+    }
+    let mut xs = axis_spans(area_w, tile_w, pos_x_percent, pos_x_length, repeat_x);
+    let mut ys = axis_spans(area_h, tile_h, pos_y_percent, pos_y_length, repeat_y);
+    if xs.is_empty() || ys.is_empty() {
+        return Vec::new();
+    }
+    while xs.len() * ys.len() > 4096 {
+        if xs.len() >= ys.len() && xs.len() > 1 {
+            xs.pop();
+        } else if ys.len() > 1 {
+            ys.pop();
+        } else {
+            break;
+        }
+    }
+    let mut tiles = Vec::with_capacity(xs.len() * ys.len());
+    for (y, h) in ys {
+        for (x, w) in &xs {
+            tiles.push(PlacedTile {
+                x: *x,
+                y,
+                w: *w,
+                h,
+            });
+        }
+    }
+    tiles
+}
+
+fn axis_spans(
+    area: f32,
+    tile: f32,
+    pos_percent: f32,
+    pos_length: f32,
+    repeat: AxisRepeat,
+) -> Vec<(f32, f32)> {
+    let placed = place_axis(area, tile, pos_percent, pos_length, repeat);
+    if placed.count == 0 {
+        return Vec::new();
+    }
+    if matches!(repeat, AxisRepeat::Repeat) {
+        return repeat_spans(placed.origin, placed.tile, area);
+    }
+    let mut spans = Vec::with_capacity(placed.count.min(4096) as usize);
+    let step = placed.tile + placed.gap;
+    for i in 0..placed.count {
+        spans.push((placed.origin + i as f32 * step, placed.tile));
+        if spans.len() == 4096 {
+            break;
+        }
+    }
+    spans
+}
+
+fn repeat_spans(origin: f32, tile: f32, area: f32) -> Vec<(f32, f32)> {
+    if tile <= 0.0 || !tile.is_finite() || !origin.is_finite() || !area.is_finite() || area <= 0.0
+    {
+        return Vec::new();
+    }
+    let start = ((-origin) / tile).floor();
+    let end = ((area - origin) / tile).ceil();
+    if !start.is_finite() || !end.is_finite() {
+        return Vec::new();
+    }
+    let mut i = start as i64 - 1;
+    let last = end as i64 + 1;
+    let mut spans = Vec::new();
+    while i <= last && spans.len() < 4096 {
+        let x = origin + i as f32 * tile;
+        if x < area && x + tile > 0.0 {
+            spans.push((x, tile));
+        }
+        i += 1;
+    }
+    spans
+}
+
+fn paint_text_lines(canvas: &Canvas, element: &HtmlElement, rect: Rect) {
+    let lines = element.paint.decoration;
+    if !lines.underline && !lines.overline && !lines.line_through {
+        return;
+    }
+    let Some(text) = element
+        .content
+        .as_ref()
+        .and_then(|content| content.as_any().downcast_ref::<director_core::node::TextNode>())
+    else {
+        return;
+    };
+    let content = element.content_rect(rect);
+    let count = text.get_total_char_count();
+    if count == 0 {
+        return;
+    }
+    let thickness = element.paint.decoration_thickness.unwrap_or_else(|| {
+        (element.paint.font_size / 16.0).max(1.0).round()
+    });
+    let spans = {
+        let mut guard = match text.paragraph.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        let Some(paragraph) = guard.as_mut() else {
+            return;
+        };
+        let layout_width = if content.width() < 1.0 {
+            f32::INFINITY
+        } else {
+            content.width()
+        };
+        paragraph.layout(layout_width);
+        let metrics = paragraph.get_line_metrics();
+        let boxes = paragraph.get_rects_for_range(
+            0..count,
+            skia_safe::textlayout::RectHeightStyle::Tight,
+            skia_safe::textlayout::RectWidthStyle::Tight,
+        );
+        let mut spans = Vec::new();
+        for text_box in boxes {
+            let glyph = text_box.rect;
+            if glyph.width() <= 0.0 {
+                continue;
+            }
+            let mid = (glyph.top + glyph.bottom) * 0.5;
+            let line = metrics.iter().find(|line| {
+                let top = (line.baseline - line.ascent) as f32;
+                let bottom = (line.baseline + line.descent) as f32;
+                mid >= top - 0.5 && mid <= bottom + 0.5
+            });
+            let (under, over, strike) = if let Some(line) = line {
+                let baseline = line.baseline as f32;
+                let top = baseline - line.ascent as f32;
+                (
+                    baseline.floor() + 1.0,
+                    top.floor() - thickness,
+                    (baseline - line.ascent as f32 * 0.35).floor(),
+                )
+            } else {
+                (
+                    glyph.bottom.floor() + 1.0,
+                    glyph.top.floor() - thickness,
+                    ((glyph.top + glyph.bottom - thickness) * 0.5).floor(),
+                )
+            };
+            spans.push((
+                content.left + glyph.left,
+                glyph.width().max(thickness),
+                content.top + under,
+                content.top + over,
+                content.top + strike,
+            ));
+        }
+        spans
+    };
+    let mut paint = skia_safe::Paint::default();
+    paint.set_anti_alias(false);
+    paint.set_color4f(element.paint.color.to_color4f(), None);
+    for (x, w, under, over, strike) in spans {
+        if lines.underline {
+            fill_decoration(
+                canvas,
+                &paint,
+                element.paint.decoration_style,
+                x,
+                under,
+                w,
+                thickness,
+            );
+        }
+        if lines.overline {
+            fill_decoration(
+                canvas,
+                &paint,
+                element.paint.decoration_style,
+                x,
+                over,
+                w,
+                thickness,
+            );
+        }
+        if lines.line_through {
+            fill_decoration(
+                canvas,
+                &paint,
+                element.paint.decoration_style,
+                x,
+                strike,
+                w,
+                thickness,
+            );
+        }
+    }
+}
+
+fn fill_decoration(
+    canvas: &Canvas,
+    paint: &skia_safe::Paint,
+    style: crate::decoration_marks::DecorationStyle,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) {
+    for mark in crate::decoration_marks::marks(style, x, y, w, h) {
+        match mark {
+            crate::decoration_marks::Mark::Fill { x, y, w, h } => {
+                canvas.draw_rect(Rect::from_xywh(x, y, w, h), paint);
+            }
+            crate::decoration_marks::Mark::Stroke { points, width } => {
+                let mut path = skia_safe::Path::new();
+                let mut drawn = false;
+                for (px, py) in points {
+                    if drawn {
+                        path.line_to((px, py));
+                    } else {
+                        path.move_to((px, py));
+                        drawn = true;
+                    }
+                }
+                let mut stroke = paint.clone();
+                stroke.set_style(skia_safe::paint::Style::Stroke);
+                stroke.set_stroke_width(width);
+                canvas.draw_path(&path, &stroke);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod background_tile_tests {
+    use super::{explicit_background_tiles, AxisRepeat};
+
+    #[test]
+    fn huge_space_grid_is_capped_and_nonempty() {
+        let tiles = explicit_background_tiles(
+            100_000.0,
+            100_000.0,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            AxisRepeat::Space,
+            AxisRepeat::Space,
+        );
+        assert!(!tiles.is_empty());
+        assert!(tiles.len() <= 4096);
+    }
+
+    #[test]
+    fn repeat_across_space_covers_the_repeat_axis() {
+        let tiles = explicit_background_tiles(
+            64.0,
+            64.0,
+            30.0,
+            30.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            AxisRepeat::Repeat,
+            AxisRepeat::Space,
+        );
+        assert_eq!(tiles.len(), 6);
+        assert!(tiles.iter().any(|tile| tile.x == 0.0 && tile.y == 0.0));
+        assert!(tiles.iter().any(|tile| tile.x == 30.0 && tile.y == 34.0));
+    }
 }

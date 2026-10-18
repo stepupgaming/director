@@ -4,7 +4,7 @@ mod worker;
 use crate::input::Input;
 use axum::{
     extract::{Query, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -123,19 +123,131 @@ async fn api_inspect(
         .map_err(AppError)
 }
 
-async fn api_audio(State(worker): State<Worker>) -> Result<Response, AppError> {
+async fn api_audio(State(worker): State<Worker>, headers: HeaderMap) -> Result<Response, AppError> {
+    // One cached WAV per accepted revision. Ranges slice that body; they do not remix.
     let audio = worker
         .request(|session| session.audio())
         .await
         .map_err(AppError)?;
-    Ok((
-        [
-            (header::CONTENT_TYPE, "audio/wav"),
-            (header::CACHE_CONTROL, "no-store"),
-        ],
-        audio,
-    )
-        .into_response())
+    let range = resolve_byte_range(headers.get(header::RANGE), audio.len());
+    Ok(wav_response(audio, range))
+}
+
+enum ByteRange {
+    Absent,
+    Satisfied { start: usize, end: usize },
+    Unsatisfiable,
+}
+
+fn wav_response(audio: Vec<u8>, range: ByteRange) -> Response {
+    match range {
+        ByteRange::Absent => (
+            [
+                (header::CONTENT_TYPE, "audio/wav"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            audio,
+        )
+            .into_response(),
+        ByteRange::Satisfied { start, end } => {
+            let body = audio[start..=end].to_vec();
+            let total = audio.len();
+            (
+                StatusCode::PARTIAL_CONTENT,
+                [
+                    (header::CONTENT_TYPE, "audio/wav".to_string()),
+                    (header::CACHE_CONTROL, "no-store".to_string()),
+                    (header::ACCEPT_RANGES, "bytes".to_string()),
+                    (header::CONTENT_LENGTH, body.len().to_string()),
+                    (
+                        header::CONTENT_RANGE,
+                        format!("bytes {start}-{end}/{total}"),
+                    ),
+                ],
+                body,
+            )
+                .into_response()
+        }
+        ByteRange::Unsatisfiable => {
+            let total = audio.len();
+            (
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                [
+                    (header::CACHE_CONTROL, "no-store".to_string()),
+                    (header::ACCEPT_RANGES, "bytes".to_string()),
+                    (header::CONTENT_LENGTH, "0".to_string()),
+                    (header::CONTENT_RANGE, format!("bytes */{total}")),
+                ],
+                (),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Inclusive byte ranges. Syntax that is not a single `bytes` range is ignored.
+/// A well-formed range that does not overlap the WAV is unsatisfiable.
+fn resolve_byte_range(header: Option<&HeaderValue>, total: usize) -> ByteRange {
+    let Some(text) = header.and_then(|value| value.to_str().ok()) else {
+        return ByteRange::Absent;
+    };
+    let Some((unit, spec)) = text.trim().split_once('=') else {
+        return ByteRange::Absent;
+    };
+    if !unit.trim().eq_ignore_ascii_case("bytes") {
+        return ByteRange::Absent;
+    }
+    let spec = spec.trim();
+    if spec.is_empty() || spec.contains(',') {
+        return ByteRange::Absent;
+    }
+    if let Some(suffix) = spec.strip_prefix('-') {
+        let Some(length) = parse_bound(suffix.trim()) else {
+            return ByteRange::Absent;
+        };
+        if length == 0 || total == 0 {
+            return ByteRange::Unsatisfiable;
+        }
+        let length = usize::try_from(length).unwrap_or(usize::MAX);
+        return ByteRange::Satisfied {
+            start: total.saturating_sub(length),
+            end: total - 1,
+        };
+    }
+    let Some((start_text, end_text)) = spec.split_once('-') else {
+        return ByteRange::Absent;
+    };
+    let Some(start) = parse_bound(start_text.trim()) else {
+        return ByteRange::Absent;
+    };
+    if start >= total as u128 {
+        return ByteRange::Unsatisfiable;
+    }
+    let start = start as usize;
+    let end_text = end_text.trim();
+    if end_text.is_empty() {
+        return ByteRange::Satisfied {
+            start,
+            end: total - 1,
+        };
+    }
+    let Some(end) = parse_bound(end_text) else {
+        return ByteRange::Absent;
+    };
+    if end < start as u128 {
+        return ByteRange::Unsatisfiable;
+    }
+    ByteRange::Satisfied {
+        start,
+        end: usize::try_from(end).unwrap_or(usize::MAX).min(total - 1),
+    }
+}
+
+fn parse_bound(text: &str) -> Option<u128> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(text.parse::<u128>().unwrap_or(u128::MAX))
 }
 
 async fn api_reload(State(worker): State<Worker>) -> Result<Json<serde_json::Value>, AppError> {
@@ -297,6 +409,157 @@ mod tests {
         assert_eq!(decoded.len(), 18 * 1600 * 2);
         assert!(decoded.iter().all(|s| *s == 0.0));
         assert_eq!(audio, bytes(get(&app, "/api/audio").await).await);
+    }
+
+    fn hdr<'a>(response: &'a Response, name: &header::HeaderName) -> &'a str {
+        response.headers().get(name).unwrap().to_str().unwrap()
+    }
+
+    async fn ranged(app: &Router, range: &str) -> Response {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/audio")
+                    .header(header::RANGE, range)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[test]
+    fn byte_ranges_are_inclusive_and_unsatisfiable_ranges_do_not_overlap() {
+        assert!(matches!(resolve_byte_range(None, 10), ByteRange::Absent));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("bytes=0-3")), 10),
+            ByteRange::Satisfied { start: 0, end: 3 }
+        ));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("bytes=4-")), 10),
+            ByteRange::Satisfied { start: 4, end: 9 }
+        ));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("bytes=-2")), 10),
+            ByteRange::Satisfied { start: 8, end: 9 }
+        ));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("bytes=-100")), 10),
+            ByteRange::Satisfied { start: 0, end: 9 }
+        ));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("bytes=0-99")), 10),
+            ByteRange::Satisfied { start: 0, end: 9 }
+        ));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("bytes=10-")), 10),
+            ByteRange::Unsatisfiable
+        ));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("bytes=-0")), 10),
+            ByteRange::Unsatisfiable
+        ));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("bytes=8-3")), 10),
+            ByteRange::Unsatisfiable
+        ));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("items=0-1")), 10),
+            ByteRange::Absent
+        ));
+        assert!(matches!(
+            resolve_byte_range(Some(&HeaderValue::from_static("bytes=0-1,2-3")), 10),
+            ByteRange::Absent
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audio_ranges_slice_the_cached_revision_wav() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = router(Worker::start(source(directory.path()), false).unwrap());
+        let full = get(&app, "/api/audio").await;
+        assert_eq!(full.status(), StatusCode::OK);
+        assert!(full.headers().get(header::CONTENT_RANGE).is_none());
+        let audio = bytes(full).await;
+        assert_eq!(&audio[..4], b"RIFF");
+        let total = audio.len();
+
+        let head = ranged(&app, "bytes=0-43").await;
+        assert_eq!(head.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(hdr(&head, &header::ACCEPT_RANGES), "bytes");
+        assert_eq!(hdr(&head, &header::CONTENT_TYPE), "audio/wav");
+        assert_eq!(hdr(&head, &header::CACHE_CONTROL), "no-store");
+        assert_eq!(hdr(&head, &header::CONTENT_LENGTH), "44");
+        assert_eq!(
+            hdr(&head, &header::CONTENT_RANGE),
+            format!("bytes 0-43/{total}")
+        );
+        assert_eq!(bytes(head).await, audio[..44]);
+
+        let wave = ranged(&app, "bytes=8-11").await;
+        assert_eq!(wave.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            hdr(&wave, &header::CONTENT_RANGE),
+            format!("bytes 8-11/{total}")
+        );
+        assert_eq!(bytes(wave).await, b"WAVE");
+
+        let open = ranged(&app, "bytes=44-").await;
+        assert_eq!(open.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            hdr(&open, &header::CONTENT_RANGE),
+            format!("bytes 44-{}/{total}", total - 1)
+        );
+        assert_eq!(
+            hdr(&open, &header::CONTENT_LENGTH),
+            (total - 44).to_string()
+        );
+        assert_eq!(bytes(open).await, audio[44..]);
+
+        let suffix = ranged(&app, "bytes=-8").await;
+        assert_eq!(suffix.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            hdr(&suffix, &header::CONTENT_RANGE),
+            format!("bytes {}-{}/{total}", total - 8, total - 1)
+        );
+        assert_eq!(bytes(suffix).await, audio[total - 8..]);
+
+        let wide_suffix = ranged(&app, &format!("bytes=-{}", total + 10)).await;
+        assert_eq!(wide_suffix.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            hdr(&wide_suffix, &header::CONTENT_RANGE),
+            format!("bytes 0-{}/{total}", total - 1)
+        );
+        assert_eq!(bytes(wide_suffix).await, audio);
+
+        let clamped = ranged(&app, &format!("bytes=0-{}", total + 100)).await;
+        assert_eq!(clamped.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            hdr(&clamped, &header::CONTENT_RANGE),
+            format!("bytes 0-{}/{total}", total - 1)
+        );
+        assert_eq!(bytes(clamped).await, audio);
+
+        let past = ranged(&app, &format!("bytes={total}-")).await;
+        assert_eq!(past.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            hdr(&past, &header::CONTENT_RANGE),
+            format!("bytes */{total}")
+        );
+        assert_eq!(hdr(&past, &header::ACCEPT_RANGES), "bytes");
+        assert_eq!(hdr(&past, &header::CONTENT_LENGTH), "0");
+        assert!(bytes(past).await.is_empty());
+
+        let inverted = ranged(&app, "bytes=20-10").await;
+        assert_eq!(inverted.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            hdr(&inverted, &header::CONTENT_RANGE),
+            format!("bytes */{total}")
+        );
+
+        let again = get(&app, "/api/audio").await;
+        assert_eq!(again.status(), StatusCode::OK);
+        assert_eq!(bytes(again).await, audio);
     }
 
     #[cfg(feature = "vulkan")]

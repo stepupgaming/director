@@ -5,7 +5,7 @@
 //! ## Responsibilities
 //! - **Color**: RGBA color representation with Skia conversion.
 //! - **Transform**: Animated 2D transforms (scale, rotation, translation).
-//! - **ObjectFit**: Image/video scaling modes (Cover, Contain, Fill).
+//! - **ObjectFit** / **ObjectPosition**: Image/video scaling and alignment.
 //!
 //! ## Key Types
 //! - `Color`: Float-based RGBA color.
@@ -38,6 +38,29 @@ pub enum ObjectFit {
 impl Default for ObjectFit {
     fn default() -> Self {
         Self::Cover
+    }
+}
+
+/// Alignment of replaced content inside its element box.
+///
+/// `x_percent` / `y_percent` are fractions of the leftover space (`0.5` is
+/// CSS 50%). Length offsets are added after that, in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ObjectPosition {
+    pub x_percent: f32,
+    pub x_offset: f32,
+    pub y_percent: f32,
+    pub y_offset: f32,
+}
+
+impl Default for ObjectPosition {
+    fn default() -> Self {
+        Self {
+            x_percent: 0.5,
+            x_offset: 0.0,
+            y_percent: 0.5,
+            y_offset: 0.0,
+        }
     }
 }
 

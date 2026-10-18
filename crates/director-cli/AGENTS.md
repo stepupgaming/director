@@ -4,9 +4,11 @@
 
 ## Ownership
 
-- `src/main.rs` owns the `director-engine` CLI: `render`, `still`, `inspect`, `project`, `compositions`, `preview`, `html`, plus legacy bare `SCRIPT [OUTPUT]`.
+- `src/main.rs` owns the `director-engine` CLI: `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect`, `project`, `compositions`, `preview`, `html`, plus legacy bare `SCRIPT [OUTPUT]`.
+- `src/sheet.rs` owns the contact-sheet plan and PNG. `src/audio_report.rs` owns the mixer loudness report. `src/check.rs` owns canvas-edge findings. `src/snapshot.rs` owns golden PNG comparison. `src/onion.rs` owns the weighted frame blend. `src/bin/contact_sheet.rs` is not a registered bin.
+- `src/batch.rs` owns batch output names and the status report. It stays free of other crate dependencies so `tests/repair_batch.rs` can include it.
 - `src/input.rs` owns common loading for Rhai, HTML, captured DOM, portable native projects and versioned core projects, plus encoder selection.
-- `src/project.rs` owns portable project packing and element-ID keyed JSON edits.
+- `src/project.rs` owns portable project packing, element-ID keyed JSON edits, and `project repair`.
 - `src/renderer.rs` owns persistent native frame targets, shared core shutter sampling and synchronized PNG readback.
 - `src/html.rs` owns `html check|still|render|capture|benchmark`. HTML and capture JSON compile through `director-html`; browser extraction is explicit and is never invoked by native render/still.
 - `src/preview/` owns Axum endpoints and the native worker; its child DOX owns thread lifetime, accepted revisions, reload and audio caching. The existing player is an optional client.
@@ -22,7 +24,8 @@
 - CLI behavior must remain consistent with `README.md`.
 - User-facing errors should distinguish script failures (exit 1) from render failures (exit 2).
 - HTML compile/extraction failures exit 1; native paint/export/output failures exit 2. Capture JSON declares its FPS and sample rate; stored metadata controls playback.
-- Top-level `render`, `still`, `inspect` and `preview` share input loading. `--props` belongs to Rhai composition builders; native project edits use `project edit --patch`. Rhai packing is outside the native authoring format.
+- `sheet` prints one JSON object and writes one PNG. Frames are `i * timeline_duration / n`, painted at full size, then scaled into the cell. Frame count is capped at 64. The raster is capped at 16777216 pixels. Load or a rejected plan exits 1. Paint or write failure exits 2. `audio` prints `{"tracks":[...]}` with integrated LUFS, true peak, loudness range, `clipped_samples`, and `silent`. Non-finite levels are JSON null. A non-finite sample or more than 57600000 samples sets `error` and skips analysis. It exits 0 when the report prints, including silence or clipping, and 1 on load failure. `check` samples the timeline, reports `off_canvas` (error), `clipped` (warning), and `missing_font` (error), and exits 2 when `--fail-on` matches. It does not apply a platform safe-zone inset. Zero-size and non-finite bounds are ignored. `snapshot --golden <png>` compares one frame. A channel delta above 16 counts. A difference above 0.001 exits 2 and writes `<stem>.actual.png` and a red `<stem>.diff.png`. `--update` replaces the golden and exits 0. Load and bad arguments exit 1. `onion -n N` blends frames with weights 1 through N, capped at 8, and prints JSON. `render --scale` accepts a finite value in `(0, 1]`. Layout width and height stay put. The raster rounds each side down to an even size. Scale 1 is unchanged, including odd sizes. Measured 2026-10-17 by `cargo test -p director-cli --release --bin director-engine agent_`: 14 passed, 11 filtered out. `cargo test -p director-core --release --lib half_scale_is_even` passed 1.
+- Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect` and `preview` share input loading. `--props` belongs to Rhai composition builders; native project edits use `project edit --patch`. `project repair` uses that same patch, saves only after validation, then prints inspect JSON at t=0. A rejected repair leaves the saved file unchanged. `batch --input <path> --output <dir>` renders each input with the software encoder. One failure still reports the other items and exits with the highest item code. `batch --json` prints `{"exit_code","items"}` instead of the `ok`/`fail` lines and keeps that exit code. `inspect --sample <seconds>` may be repeated. With no sample, inspect prints one object at `--time`. With samples, it loads once and prints `{"samples":[{"time","inspection"}]}` in order. A non-finite or negative sample exits 1. Measured 2026-10-17: `inspect_samples` 1, `repair_batch` 5. Rhai packing is outside the native authoring format.
 - Explicit `--gpu` requires Vulkan across top-level render/still/preview as well as HTML commands. Render accepts independent `--encoder software|nvenc`.
 - Preview frames and audio use export mode and clocks. `/api/inspect` returns native layout plus authored IDs and sampled capture elements; bounds describe layout, not final composited pixels.
 - HTML `render` and `benchmark` accept independent `--gpu` and `--encoder software|nvenc`; `still` accepts `--gpu`. An explicit GPU request requires the Vulkan build and a GPU surface; failures exit 2. Default HTML rendering/encoding remains CPU/software.
@@ -46,6 +49,7 @@
 - `cargo test -p director-cli --features vulkan --bin director-engine gpu_readback -- --ignored` requires a live Vulkan device.
 - `tests/html_export.rs` verifies real FFmpeg/ffprobe frame count and audio/video/container duration alignment.
 - `tests/project_workflow.rs` verifies pack → remove sources → inspect/edit/still/export, including atomic rejection and native command parity.
+- `tests/repair_batch.rs` verifies a rejected repair does not write, and the batch report for one failure plus one success.
 - `cargo test -p director-cli --features vulkan --bin director-engine gpu_preview_worker -- --ignored` verifies live GPU ownership with concurrent requests and shutter sampling.
 - `cargo run -p director-cli --bin director-engine -- --help`
 - `cargo run -p director-cli --bin director-engine -- compositions examples/features/compositions.rhai --json`

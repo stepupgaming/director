@@ -193,6 +193,36 @@ fn example_recipes_image_beats() {
     validate_script("examples/recipes/image_beats.rhai");
 }
 
+#[test]
+fn example_recipes_stat_count() {
+    validate_script("examples/recipes/stat_count.rhai");
+}
+
+#[test]
+fn example_recipes_quote_card() {
+    validate_script("examples/recipes/quote_card.rhai");
+}
+
+#[test]
+fn example_recipes_list_reveal() {
+    validate_script("examples/recipes/list_reveal.rhai");
+}
+
+#[test]
+fn example_recipes_end_card() {
+    validate_script("examples/recipes/end_card.rhai");
+}
+
+#[test]
+fn example_recipes_chapter_card() {
+    validate_script("examples/recipes/chapter_card.rhai");
+}
+
+#[test]
+fn example_recipes_countdown() {
+    validate_script("examples/recipes/countdown.rhai");
+}
+
 fn validate_script(relative_path: &str) {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let manifest_path = PathBuf::from(manifest_dir);

@@ -76,6 +76,34 @@ impl From<&crate::timeline::TrackClip> for TimelineItem {
     }
 }
 
+/// Inputs baked into a static-subtree snapshot.
+///
+/// `time` is `None` when the subtree's paint does not depend on time, so a
+/// later frame may reuse the image. `Some` must match the node's local time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StaticCacheKey {
+    pub width: f32,
+    pub height: f32,
+    pub translate_x: f32,
+    pub translate_y: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub rotation: f32,
+    pub skew_x: f32,
+    pub skew_y: f32,
+    pub pivot_x: f32,
+    pub pivot_y: f32,
+    pub parent_opacity: f32,
+    pub time: Option<f64>,
+}
+
+/// Rasterized static subtree plus the key that was baked into it.
+#[derive(Clone, Debug)]
+pub struct StaticCacheEntry {
+    pub image: skia_safe::Image,
+    pub key: StaticCacheKey,
+}
+
 /// The central engine coordinator.
 ///
 /// `Director` manages the Scene Graph (nodes), Timeline (sequencing),
@@ -94,6 +122,10 @@ pub struct Director {
     pub width: i32,
     /// Output height in pixels.
     pub height: i32,
+    /// Device scale for the current export raster. Layout stays at `width`.
+    pub output_scale_x: f32,
+    /// Device scale for the current export raster. Layout stays at `height`.
+    pub output_scale_y: f32,
     /// Frames per second (`f64` so NTSC rates like 23.976 / 29.97 round-trip).
     pub fps: f64,
     /// Number of sub-frame samples for motion blur (default: 1).
@@ -112,8 +144,8 @@ pub struct Director {
     pub encoder_mode: EncoderMode,
     /// Render debug overlays (bounding boxes, ids, z-indices) on top of frames.
     pub debug_overlays: bool,
-    /// Cached rasterized images for static subtrees.
-    pub static_cache: std::collections::HashMap<NodeId, skia_safe::Image>,
+    /// Rasterized static subtrees, keyed by layout, baked transform, opacity, and time.
+    pub static_cache: std::collections::HashMap<NodeId, StaticCacheEntry>,
     /// Persistent semantic entity registry (faces, speakers, objects, caption phrases).
     pub entities: EntityRegistry,
     /// Compile-phase dependency graph built by `compile()`.
@@ -318,6 +350,8 @@ impl Director {
             transitions: Vec::new(),
             width,
             height,
+            output_scale_x: 1.0,
+            output_scale_y: 1.0,
             fps,
             samples_per_frame: 1, // Default to no motion blur
             shutter_angle: 180.0,

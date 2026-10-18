@@ -1,16 +1,19 @@
 //! Load an explicit compile-time browser extraction. No browser is used by this module.
 use crate::{
     assets::AssetStore,
-    compiler::{fit, load_fonts, span, text_content, validate_options},
+    compiler::{
+        fit, load_fonts, looped_media_time, media_duration, span, text_content, validate_options,
+    },
     css::{diagnostic, Values},
     element::HtmlElement,
     style::{self, Metrics},
     CompileError, CompileOptions, CompiledHtml,
 };
 use director_core::{
-    node::{ImageNode, VectorNode},
+    node::{ImageNode, VectorNode, VideoNode, VideoSource},
     scene::SceneGraph,
-    types::NodeId,
+    types::{NodeId, ObjectFit, ObjectPosition},
+    video_wrapper::RenderMode,
     Director, Element, RenderError,
 };
 use serde::{Deserialize, Serialize};
@@ -57,8 +60,48 @@ pub struct CapturedNode {
     pub svg: Option<String>,
     #[serde(default)]
     pub src: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shader: Option<CapturedShader>,
+    /// Present on captured `video` and `audio`. `src`, timing, mute, loop, and volume
+    /// stay fixed for an id. Per-sample fit and rect may change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<CapturedMedia>,
     #[serde(default)]
     pub children: Vec<CapturedNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedMedia {
+    pub muted: bool,
+    pub looped: bool,
+    pub hidden: bool,
+    pub volume: f64,
+    pub media_start: f64,
+    pub playback_rate: f64,
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedShader {
+    pub fragment: String,
+    #[serde(default)]
+    pub uniforms: BTreeMap<String, Vec<f32>>,
+    #[serde(default)]
+    pub images: BTreeMap<String, CapturedShaderImage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedShaderImage {
+    pub width: i32,
+    pub height: i32,
+    pub rgba: String,
+    /// True when WebGL uploaded the image with UNPACK_FLIP_Y_WEBGL.
+    #[serde(default)]
+    pub flip_y: bool,
 }
 
 pub fn compile_capture_file(path: &Path) -> Result<CompiledHtml, CompileError> {
@@ -112,7 +155,41 @@ pub(crate) fn compile_capture_with_assets(
             )));
         }
     }
+    for frame in &capture.frames {
+        let mut seen = BTreeSet::new();
+        reject_duplicate_media(&frame.root, &mut seen)?;
+    }
     normalize_ids(&mut capture);
+    let mut video_specs: BTreeMap<String, MediaSpec> = BTreeMap::new();
+    let mut audio_specs: BTreeMap<String, MediaSpec> = BTreeMap::new();
+    for frame in &capture.frames {
+        let mut found = Vec::new();
+        collect_media(&frame.root, &mut found);
+        for node in found {
+            if node.tag == "iframe" {
+                return Err(CompileError::Diagnostics(vec![diagnostic(
+                    &node.id,
+                    "captured iframe requires native media translation; use the static compiler for media",
+                )]));
+            }
+            let spec = media_spec(node)?;
+            let slot = if node.tag == "audio" {
+                &mut audio_specs
+            } else {
+                &mut video_specs
+            };
+            if let Some(previous) = slot.get(&node.id) {
+                if previous != &spec {
+                    return Err(CompileError::Input(format!(
+                        "captured media '{}' changes across samples",
+                        node.id
+                    )));
+                }
+            } else {
+                slot.insert(node.id.clone(), spec);
+            }
+        }
+    }
     let mut director = Director::new(
         capture.width,
         capture.height,
@@ -122,6 +199,30 @@ pub(crate) fn compile_capture_with_assets(
         None,
     );
     load_fonts(&mut director, &capture.fonts, &assets)?;
+    for spec in audio_specs.values() {
+        let packed = capture.assets.get(&spec.src).ok_or_else(|| {
+            CompileError::Input(format!("captured media asset missing: {}", spec.src))
+        })?;
+        let bytes = assets.read(packed)?;
+        let mut samples = director_core::audio::load_audio_bytes(&bytes, 48000)
+            .map_err(|e| CompileError::Input(format!("audio '{}': {e}", spec.src)))?;
+        samples.drain(..((spec.media.media_start * 96000.0) as usize).min(samples.len()));
+        let track_id =
+            director.add_scene_audio(samples, spec.media.start, spec.media.end - spec.media.start);
+        if let Some(track) = director
+            .audio_mixer
+            .tracks
+            .get_mut(track_id)
+            .and_then(|track| track.as_mut())
+        {
+            track.volume = director_core::animation::Animated::new(if spec.media.hidden {
+                0.0
+            } else {
+                spec.media.volume as f32
+            });
+            track.loop_audio = spec.media.looped;
+        }
+    }
     let metrics = Metrics {
         width: capture.width as f32,
         height: capture.height as f32,
@@ -129,6 +230,7 @@ pub(crate) fn compile_capture_with_assets(
     };
     let mut frame_cache: HashMap<String, Arc<Mutex<SceneGraph>>> = HashMap::new();
     let mut image_cache: HashMap<String, skia_safe::Image> = HashMap::new();
+    let mut videos: BTreeMap<String, Arc<Mutex<VideoNode>>> = BTreeMap::new();
     let mut frames = Vec::new();
     let mut node_count = 0;
     for frame in &capture.frames {
@@ -144,6 +246,7 @@ pub(crate) fn compile_capture_with_assets(
                 &director,
                 &capture.assets,
                 &mut image_cache,
+                &mut videos,
                 &assets,
                 metrics,
                 0,
@@ -254,6 +357,7 @@ fn build(
     director: &Director,
     assets: &BTreeMap<String, String>,
     images: &mut HashMap<String, skia_safe::Image>,
+    videos: &mut BTreeMap<String, Arc<Mutex<VideoNode>>>,
     store: &AssetStore,
     m: Metrics,
     depth: usize,
@@ -272,6 +376,7 @@ fn build(
     let (style, paint) = style::translate(&n.styles, m).map_err(|e| {
         CompileError::Diagnostics(e.into_iter().map(|e| diagnostic(&n.id, e)).collect())
     })?;
+    let mut paper = None;
     let content: Option<Box<dyn Element>> = if let Some(svg) = &n.svg {
         crate::compiler::validate_svg(svg)?;
         usvg::Tree::from_data(svg.as_bytes(), &usvg::Options::default())
@@ -302,9 +407,64 @@ fn build(
         };
         let mut image = ImageNode::from_image(Some(image));
         image.object_fit = fit(&n.styles);
+        image.object_position = paint.object_position;
         Some(Box::new(image))
-    } else if matches!(n.tag.as_str(), "canvas" | "video" | "audio" | "iframe") {
-        return Err(CompileError::Diagnostics(vec![diagnostic(&n.id,format!("captured {} requires native media/shader translation; use the static compiler for media",n.tag))]));
+    } else if n.tag == "canvas" {
+        let shader = n.shader.as_ref().ok_or_else(|| {
+            CompileError::Diagnostics(vec![diagnostic(
+                &n.id,
+                "captured canvas requires a native shader translation".to_string(),
+            )])
+        })?;
+        paper = Some(crate::shader::prepare(shader).map_err(|message| {
+            CompileError::Diagnostics(vec![diagnostic(&n.id, message)])
+        })?);
+        None
+    } else if n.tag == "video" {
+        let src = n
+            .src
+            .as_deref()
+            .filter(|src| !src.is_empty())
+            .ok_or_else(|| CompileError::Input("video without src".into()))?;
+        let shared = if let Some(shared) = videos.get(&n.id) {
+            Arc::clone(shared)
+        } else {
+            let packed = assets.get(src).ok_or_else(|| {
+                CompileError::Input(format!("captured media asset missing: {src}"))
+            })?;
+            let path = store.media_path(packed)?;
+            // Cloning VideoNode opens a second decoder. Samples share this one.
+            // Style's raw pointer keeps VideoNode `!Send`; it is a niche discriminant,
+            // the same claim SceneNode already makes.
+            #[allow(clippy::arc_with_non_send_sync)]
+            let shared = Arc::new(Mutex::new(VideoNode::new(
+                VideoSource::Path(path),
+                RenderMode::Export,
+            )));
+            videos.insert(n.id.clone(), Arc::clone(&shared));
+            shared
+        };
+        let looped = n.media.as_ref().is_some_and(|media| media.looped);
+        let duration = if looped {
+            let path = shared.lock().unwrap().path().clone();
+            media_duration(&path)?
+        } else {
+            0.0
+        };
+        Some(Box::new(SharedVideo {
+            node: shared,
+            object_fit: fit(&n.styles),
+            object_position: paint.object_position,
+            looped,
+            duration,
+        }))
+    } else if n.tag == "audio" {
+        None
+    } else if n.tag == "iframe" {
+        return Err(CompileError::Diagnostics(vec![diagnostic(
+            &n.id,
+            "captured iframe requires native media translation; use the static compiler for media",
+        )]));
     } else {
         None
     };
@@ -317,16 +477,181 @@ fn build(
             ..m
         },
     );
+    el.paper = paper;
+    if n.tag == "video" {
+        if let Some(media) = &n.media {
+            el.start = media.start;
+            el.end = media.end;
+            el.media_start = media.media_start;
+            el.playback_rate = media.playback_rate;
+            el.hidden = media.hidden;
+        }
+    }
+    if n.tag == "audio" {
+        el.hidden = true;
+    }
     el.post_layout(skia_safe::Rect::from_wh(n.rect[2], n.rect[3]));
     let id = scene.add_node(Box::new(el));
     let node = scene.get_node_mut(id).unwrap();
     node.layout_rect = skia_safe::Rect::from_xywh(n.rect[0], n.rect[1], n.rect[2], n.rect[3]);
     node.z_index = paint.z_index;
-    for child in &n.children {
-        let child = build(child, scene, director, assets, images, store, m, depth + 1)?;
-        scene.add_child(id, child);
+    // Audio is already one mixer track. Video children are not visual content.
+    if !matches!(n.tag.as_str(), "audio" | "video") {
+        for child in &n.children {
+            if child.tag == "audio" {
+                continue;
+            }
+            let child = build(
+                child, scene, director, assets, images, videos, store, m, depth + 1,
+            )?;
+            scene.add_child(id, child);
+        }
     }
     Ok(id)
+}
+
+#[derive(PartialEq)]
+struct MediaSpec {
+    src: String,
+    media: CapturedMedia,
+}
+
+fn reject_duplicate_media(node: &CapturedNode, seen: &mut BTreeSet<String>) -> Result<(), CompileError> {
+    if matches!(node.tag.as_str(), "video" | "audio")
+        && !node.id.is_empty()
+        && !seen.insert(node.id.clone())
+    {
+        return Err(CompileError::Input(format!(
+            "duplicate captured media id '{}'",
+            node.id
+        )));
+    }
+    for child in &node.children {
+        reject_duplicate_media(child, seen)?;
+    }
+    Ok(())
+}
+
+fn collect_media<'a>(node: &'a CapturedNode, found: &mut Vec<&'a CapturedNode>) {
+    if matches!(node.tag.as_str(), "video" | "audio" | "iframe") {
+        found.push(node);
+    }
+    for child in &node.children {
+        collect_media(child, found);
+    }
+}
+
+fn media_spec(node: &CapturedNode) -> Result<MediaSpec, CompileError> {
+    let media = node.media.clone().ok_or_else(|| {
+        CompileError::Input(format!(
+            "{}: captured {} requires media timing",
+            node.id, node.tag
+        ))
+    })?;
+    let src = node
+        .src
+        .clone()
+        .filter(|src| !src.is_empty())
+        .ok_or_else(|| CompileError::Input(format!("{} without src", node.tag)))?;
+    if !media.media_start.is_finite()
+        || media.media_start < 0.0
+        || !media.playback_rate.is_finite()
+        || media.playback_rate <= 0.0
+    {
+        return Err(CompileError::Input(
+            "media start must be nonnegative and rate positive".into(),
+        ));
+    }
+    if !media.start.is_finite()
+        || !media.end.is_finite()
+        || media.start < 0.0
+        || media.end <= media.start
+    {
+        return Err(CompileError::Input(format!(
+            "{}: invalid clip window [{}, {})",
+            node.id, media.start, media.end
+        )));
+    }
+    if node.tag == "video" && !media.muted {
+        return Err(CompileError::Input(
+            "video audio needs an explicit audio element; author muted video".into(),
+        ));
+    }
+    if node.tag == "audio" && media.playback_rate != 1.0 {
+        return Err(CompileError::Input(
+            "audio playback-rate translation unsupported".into(),
+        ));
+    }
+    if node.tag == "audio" && (!media.volume.is_finite() || media.volume < 0.0 || media.volume > f32::MAX as f64)
+    {
+        return Err(CompileError::Input(
+            "audio volume must be finite and nonnegative".into(),
+        ));
+    }
+    Ok(MediaSpec { src, media })
+}
+
+/// Forwards seek and draw to one shared decoder. Fit and position belong to this sample.
+#[derive(Debug)]
+struct SharedVideo {
+    node: Arc<Mutex<VideoNode>>,
+    object_fit: ObjectFit,
+    object_position: ObjectPosition,
+    looped: bool,
+    duration: f64,
+}
+
+impl Clone for SharedVideo {
+    fn clone(&self) -> Self {
+        Self {
+            node: Arc::clone(&self.node),
+            object_fit: self.object_fit,
+            object_position: self.object_position,
+            looped: self.looped,
+            duration: self.duration,
+        }
+    }
+}
+
+impl Element for SharedVideo {
+    fn kind(&self) -> &'static str {
+        "video"
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn layout_style(&self) -> taffy::Style {
+        taffy::Style::default()
+    }
+    fn animate_property(&mut self, _: &str, _: f32, _: f32, _: f64, _: &str) -> Result<(), String> {
+        Err("captured timelines are immutable".into())
+    }
+    fn update(&mut self, time: f64) -> bool {
+        let mut node = self.node.lock().unwrap();
+        node.object_fit = self.object_fit;
+        node.object_position = self.object_position;
+        let seek = if self.looped {
+            looped_media_time(time, self.duration)
+        } else {
+            time
+        };
+        node.update(seek)
+    }
+    fn render(
+        &self,
+        canvas: &skia_safe::Canvas,
+        rect: skia_safe::Rect,
+        opacity: f32,
+        draw_children: &mut dyn FnMut(&skia_safe::Canvas),
+    ) -> Result<(), RenderError> {
+        let mut node = self.node.lock().unwrap();
+        node.object_fit = self.object_fit;
+        node.object_position = self.object_position;
+        node.render(canvas, rect, opacity, draw_children)
+    }
 }
 
 struct CapturedElement {
@@ -374,7 +699,13 @@ impl Element for CapturedElement {
         let index =
             ((time.max(0.0) * self.sample_rate + 1e-7).floor() as usize).min(self.frames.len() - 1);
         self.index = index;
-        false
+        // The sampled scene is not a Director child, so its video nodes seek here.
+        let mut scene = self.frames[index].0.lock().unwrap();
+        let mut changed = false;
+        for (_, node) in scene.iter_alive_mut() {
+            changed |= node.element.update(time);
+        }
+        changed
     }
     fn render(
         &self,

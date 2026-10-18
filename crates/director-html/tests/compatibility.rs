@@ -114,18 +114,15 @@ fn inset_shadow_covers_the_inside_edge_above_background() {
 }
 
 #[test]
-fn svg_attribute_dimensions_render_and_external_paint_css_is_diagnosed() {
+fn svg_attribute_dimensions_render_and_external_fill_paints() {
     let p = frame("<style>body{margin:0}</style><svg width='32' height='32' viewBox='0 0 32 32' xmlns='http://www.w3.org/2000/svg'><rect width='32' height='32' fill='red'/></svg>", 0.0);
     assert_eq!(pixel(&p, 16, 16), [255, 0, 0, 255]);
     assert_eq!(pixel(&p, 48, 48), [0, 0, 0, 255]);
-    let error = compile(
-        "<style>.shape{fill:red}</style><svg><rect class='shape' width='32' height='32'/></svg>",
-        Default::default(),
-    )
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(error.contains("stylesheet 'fill' inside SVG"), "{error}");
+    let p = frame(
+        "<style>body{margin:0}.shape{fill:red}</style><svg><rect class='shape' width='32' height='32'/></svg>",
+        0.0,
+    );
+    assert_eq!(pixel(&p, 16, 16), [255, 0, 0, 255]);
 }
 
 #[test]
@@ -298,6 +295,8 @@ fn captured_data_round_trips_and_rejects_gaps() {
         text: None,
         svg: None,
         src: None,
+        shader: None,
+        media: None,
         children: Vec::new(),
     };
     let capture = Capture {

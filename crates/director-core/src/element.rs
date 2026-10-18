@@ -138,6 +138,16 @@ pub trait Element: std::fmt::Debug + ElementClone {
         draw_children: &mut dyn FnMut(&Canvas),
     ) -> Result<(), crate::RenderError>;
 
+    /// Direct children share a 3D context and are depth-sorted.
+    fn shares_3d(&self) -> bool {
+        false
+    }
+
+    /// Z of the element center after its local transform. Larger values paint later.
+    fn view_depth(&self, _width: f32, _height: f32) -> f32 {
+        0.0
+    }
+
     /// Animates a specific named property.
     ///
     /// Returns `Err` for unknown property names or invalid easing strings.

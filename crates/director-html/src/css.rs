@@ -2,7 +2,8 @@ use crate::{CompileError, Diagnostic};
 use lightningcss::{
     declaration::DeclarationBlock,
     properties::Property,
-    rules::{keyframes::KeyframeSelector, CssRule},
+    rules::{keyframes::KeyframeSelector, style::StyleRule, CssRule},
+    selector::SelectorList,
     stylesheet::{ParserOptions, PrinterOptions, StyleSheet},
     traits::ToCss,
 };
@@ -83,6 +84,102 @@ pub fn parse_inline(css: &str) -> Result<Vec<Declaration>, CompileError> {
     declarations(&block)
 }
 
+fn selector_sources(selectors: &SelectorList<'_>) -> Result<Vec<String>, CompileError> {
+    selectors
+        .0
+        .iter()
+        .map(|selector| {
+            selector
+                .to_css_string(PrinterOptions::default())
+                .map_err(|e| CompileError::Input(e.to_string()))
+        })
+        .collect()
+}
+
+// `&` is the parent selector. Paste a single parent when it stays a valid
+// compound; otherwise `:is()` keeps the most specific parent's specificity.
+fn expand_nested_selector(parents: &[String], child: &str) -> String {
+    let mut out = String::new();
+    let mut quote = None;
+    let mut saw_nesting = false;
+    let mut chars = child.char_indices();
+    while let Some((index, c)) = chars.next() {
+        if let Some(q) = quote {
+            out.push(c);
+            if c == '\\' {
+                if let Some((_, escaped)) = chars.next() {
+                    out.push(escaped);
+                }
+            } else if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                out.push(c);
+            }
+            '&' => {
+                saw_nesting = true;
+                out.push_str(&nesting_parent(parents, is_compound_start(child, index)));
+            }
+            _ => out.push(c),
+        }
+    }
+    if saw_nesting {
+        out
+    } else {
+        format!("{} {child}", nesting_parent(parents, true))
+    }
+}
+
+fn nesting_parent(parents: &[String], compound_start: bool) -> String {
+    if let [parent] = parents {
+        if compound_start || is_simple_without_type(parent) {
+            return parent.clone();
+        }
+    }
+    format!(":is({})", parents.join(", "))
+}
+
+fn is_compound_start(selector: &str, index: usize) -> bool {
+    let before = &selector[..index];
+    if before.trim().is_empty() || before.ends_with(char::is_whitespace) {
+        return true;
+    }
+    matches!(before.chars().last(), Some('>' | '+' | '~' | ',' | '('))
+}
+
+fn is_simple_without_type(selector: &str) -> bool {
+    let selector = selector.trim();
+    if !matches!(selector.chars().next(), Some('.' | '#' | '[' | ':')) {
+        return false;
+    }
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut chars = selector.chars();
+    while let Some(c) = chars.next() {
+        if let Some(q) = quote {
+            if c == '\\' {
+                chars.next();
+            } else if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => quote = Some(c),
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '>' | '+' | '~' | ',' if depth == 0 => return false,
+            c if c.is_whitespace() && depth == 0 => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 impl Css {
     pub fn has_stylesheet_property(&self, el: ElementRef<'_>, name: &str) -> bool {
         self.rules.iter().any(|rule| {
@@ -102,27 +199,7 @@ impl Css {
             .map_err(|e| CompileError::Input(format!("CSS stylesheet: {e}")))?;
         for rule in sheet.rules.0 {
             match rule {
-                CssRule::Style(rule) => {
-                    if !rule.rules.0.is_empty() {
-                        return Err(CompileError::Input(
-                            "CSS nesting requires compile-time extraction".into(),
-                        ));
-                    }
-                    let decls = declarations(&rule.declarations)?;
-                    for selector in rule.selectors.0.iter() {
-                        let source = selector
-                            .to_css_string(PrinterOptions::default())
-                            .map_err(|e| CompileError::Input(e.to_string()))?;
-                        let parsed = Selector::parse(&source).map_err(|e| {
-                            CompileError::Input(format!("unsupported selector '{source}': {e:?}"))
-                        })?;
-                        self.rules.push(Rule {
-                            selector: parsed,
-                            specificity: selector.specificity(),
-                            declarations: decls.clone(),
-                        });
-                    }
-                }
+                CssRule::Style(rule) => self.append_style(&[], &rule)?,
                 CssRule::Keyframes(rule) => {
                     let name = rule
                         .name
@@ -189,6 +266,105 @@ impl Css {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn append_style(
+        &mut self,
+        parents: &[String],
+        rule: &StyleRule<'_>,
+    ) -> Result<(), CompileError> {
+        let mut child_parents = selector_sources(&rule.selectors)?;
+        let decls = declarations(&rule.declarations)?;
+        if parents.is_empty() {
+            for selector in rule.selectors.0.iter() {
+                self.push_lightning_selector(selector, &decls)?;
+            }
+        } else {
+            for source in &mut child_parents {
+                *source = expand_nested_selector(parents, source);
+            }
+            for source in &child_parents {
+                self.push_expanded(source, &decls)?;
+            }
+        }
+        for nested in &rule.rules.0 {
+            self.append_nested(&child_parents, nested)?;
+        }
+        Ok(())
+    }
+
+    fn append_nested(
+        &mut self,
+        parents: &[String],
+        rule: &CssRule<'_>,
+    ) -> Result<(), CompileError> {
+        match rule {
+            CssRule::Style(rule) => self.append_style(parents, rule),
+            CssRule::Nesting(rule) => self.append_style(parents, &rule.style),
+            CssRule::NestedDeclarations(rule) => {
+                let decls = declarations(&rule.declarations)?;
+                for source in parents {
+                    self.push_expanded(source, &decls)?;
+                }
+                Ok(())
+            }
+            CssRule::Media(_) => Err(CompileError::Input(
+                "CSS nesting of @media requires compile-time extraction".into(),
+            )),
+            CssRule::Supports(_) => Err(CompileError::Input(
+                "CSS nesting of @supports requires compile-time extraction".into(),
+            )),
+            _ => Err(CompileError::Input(
+                "CSS nesting requires compile-time extraction".into(),
+            )),
+        }
+    }
+
+    fn push_expanded(
+        &mut self,
+        source: &str,
+        declarations: &[Declaration],
+    ) -> Result<(), CompileError> {
+        if declarations.is_empty() {
+            return Ok(());
+        }
+        let css = format!("{source} {{}}");
+        let rule = CssRule::parse_string(&css, ParserOptions::default()).map_err(|e| {
+            CompileError::Input(format!("unsupported selector '{source}': {e}"))
+        })?;
+        let CssRule::Style(rule) = rule else {
+            return Err(CompileError::Input(format!(
+                "unsupported selector '{source}'"
+            )));
+        };
+        if !rule.rules.0.is_empty() {
+            return Err(CompileError::Input(
+                "CSS nesting requires compile-time extraction".into(),
+            ));
+        }
+        for selector in rule.selectors.0.iter() {
+            self.push_lightning_selector(selector, declarations)?;
+        }
+        Ok(())
+    }
+
+    fn push_lightning_selector(
+        &mut self,
+        selector: &lightningcss::selector::Selector<'_>,
+        declarations: &[Declaration],
+    ) -> Result<(), CompileError> {
+        let source = selector
+            .to_css_string(PrinterOptions::default())
+            .map_err(|e| CompileError::Input(e.to_string()))?;
+        let parsed = Selector::parse(&source).map_err(|e| {
+            CompileError::Input(format!("unsupported selector '{source}': {e:?}"))
+        })?;
+        self.rules.push(Rule {
+            selector: parsed,
+            specificity: selector.specificity(),
+            declarations: declarations.to_vec(),
+        });
         Ok(())
     }
 

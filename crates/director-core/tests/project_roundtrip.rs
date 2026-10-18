@@ -502,7 +502,7 @@ fn project_roundtrip_preserves_smart_caption_continuous() {
 #[test]
 fn project_roundtrip_preserves_image() {
     use director_core::node::image_node::ImageNode;
-    use director_core::types::ObjectFit;
+    use director_core::types::{ObjectFit, ObjectPosition};
 
     let mut engine = Engine::new();
     let loader = Arc::new(DefaultAssetLoader);
@@ -515,6 +515,12 @@ fn project_roundtrip_preserves_image() {
     // Build an ImageNode with a source path and object fit.
     let mut img = ImageNode::from_image_with_path(None, "assets/photo.png");
     img.object_fit = ObjectFit::Contain;
+    img.object_position = ObjectPosition {
+        x_percent: 0.0,
+        x_offset: 4.0,
+        y_percent: 0.5,
+        y_offset: 0.0,
+    };
     img.opacity.current_value = 0.8;
 
     {
@@ -536,6 +542,15 @@ fn project_roundtrip_preserves_image() {
             found = true;
             assert_eq!(img.source_path.as_deref(), Some("assets/photo.png"));
             assert_eq!(img.object_fit, ObjectFit::Contain);
+            assert_eq!(
+                img.object_position,
+                ObjectPosition {
+                    x_percent: 0.0,
+                    x_offset: 4.0,
+                    y_percent: 0.5,
+                    y_offset: 0.0,
+                }
+            );
             assert!((img.opacity.current_value - 0.8).abs() < 1e-3);
         }
     }
@@ -549,7 +564,7 @@ fn project_roundtrip_preserves_image() {
 #[test]
 fn project_roundtrip_preserves_video() {
     use director_core::node::video_node::{VideoNode, VideoSource};
-    use director_core::types::ObjectFit;
+    use director_core::types::{ObjectFit, ObjectPosition};
     use director_core::video_wrapper::RenderMode;
 
     let mut engine = Engine::new();
@@ -567,6 +582,12 @@ fn project_roundtrip_preserves_video() {
     )
     .with_source_path("assets/clip.mp4");
     vid.object_fit = ObjectFit::Contain;
+    vid.object_position = ObjectPosition {
+        x_percent: 0.0,
+        x_offset: 4.0,
+        y_percent: 0.5,
+        y_offset: 0.0,
+    };
     vid.opacity.current_value = 0.75;
 
     {
@@ -589,6 +610,15 @@ fn project_roundtrip_preserves_video() {
             assert_eq!(vid.source_path.as_deref(), Some("assets/clip.mp4"));
             assert_eq!(vid.path(), &std::path::PathBuf::from("assets/clip.mp4"));
             assert_eq!(vid.object_fit, ObjectFit::Contain);
+            assert_eq!(
+                vid.object_position,
+                ObjectPosition {
+                    x_percent: 0.0,
+                    x_offset: 4.0,
+                    y_percent: 0.5,
+                    y_offset: 0.0,
+                }
+            );
             assert!((vid.opacity.current_value - 0.75).abs() < 1e-3);
         }
     }

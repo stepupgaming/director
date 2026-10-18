@@ -1,12 +1,21 @@
+use crate::background_box::AxisRepeat;
+use crate::box_edges::{parse_box_edge, BoxEdge};
 use crate::css::{split, Values};
-use director_core::{animation::Animated, node::BoxNode, types::Color};
+use director_core::{animation::Animated, node::BoxNode, types::{Color, ObjectPosition}};
 use lightningcss::{
-    properties::transform::{Matrix3d, Transform, TransformList},
+    properties::{
+        background::BackgroundSize,
+        transform::{Matrix3d, Transform, TransformList},
+    },
     traits::{Parse, ToCss},
     values::{
         angle::Angle,
         color::CssColor,
-        length::{Length, LengthPercentage as CssLength, LengthValue},
+        length::{Length, LengthPercentage as CssLength, LengthPercentageOrAuto},
+        position::{
+            HorizontalPosition, HorizontalPositionKeyword, PositionComponent, VerticalPosition,
+            VerticalPositionKeyword,
+        },
     },
 };
 use skia_safe::{M44, Matrix};
@@ -66,16 +75,56 @@ pub struct PaintStyle {
     pub rtl: bool,
     pub z_index: i32,
     pub gradient: Vec<crate::gradient::NativeGradient>,
+    pub background_image: Option<skia_safe::Image>,
+    pub background_position: (AxisPos, AxisPos),
+    pub background_size: BackgroundFit,
+    pub background_repeat: (AxisRepeat, AxisRepeat),
+    pub background_origin: BackgroundOrigin,
+    pub background_clip: BoxEdge,
     pub mask: Option<crate::gradient::NativeGradient>,
+    pub mask_luminance: bool,
+    pub decoration: TextLines,
+    pub decoration_style: crate::decoration_marks::DecorationStyle,
+    pub decoration_thickness: Option<f32>,
+    pub object_position: ObjectPosition,
     pub corners: [(LengthPercentage, LengthPercentage); 4],
     pub border_colors: [Color; 4],
     pub border_lines: [BorderLine; 4],
     pub perspective: Option<f32>,
     pub perspective_origin: (LengthPercentage, LengthPercentage),
     pub backface_hidden: bool,
+    pub preserve_3d: bool,
     pub filter: Option<skia_safe::ImageFilter>,
     pub blend_mode: skia_safe::BlendMode,
     pub shadows: Vec<Shadow>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AxisPos {
+    pub percent: f32,
+    pub length: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BackgroundFit {
+    Auto,
+    Cover,
+    Contain,
+    Lengths(Option<LengthPercentage>, Option<LengthPercentage>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundOrigin {
+    PaddingBox,
+    BorderBox,
+    ContentBox,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TextLines {
+    pub underline: bool,
+    pub overline: bool,
+    pub line_through: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -128,23 +177,11 @@ pub fn length(s: &str, m: Metrics) -> Result<LengthPercentage, String> {
 }
 
 pub(crate) fn convert_length(l: &CssLength, m: Metrics) -> Result<LengthPercentage, String> {
-    match l {
-        CssLength::Percentage(p) => Ok(LengthPercentage::percent(p.0)),
-        CssLength::Dimension(v) => {
-            let px = match v {
-                LengthValue::Em(v) => v * m.font_size,
-                LengthValue::Rem(v) => v * 16.0,
-                LengthValue::Vw(v) => v * m.width / 100.0,
-                LengthValue::Vh(v) => v * m.height / 100.0,
-                LengthValue::Vmin(v) => v * m.width.min(m.height) / 100.0,
-                LengthValue::Vmax(v) => v * m.width.max(m.height) / 100.0,
-                _ => v
-                    .to_px()
-                    .ok_or_else(|| format!("unsupported length unit {v:?}"))?,
-            };
-            Ok(LengthPercentage::length(px))
-        }
-        _ => Err("mixed calc()/min()/max()/clamp() lengths require extraction".into()),
+    // No percent basis here. A pure percent stays a percent, and a mix of
+    // px and percent still fails. The composition size is not the containing block.
+    match crate::calc_len::resolve_length(l, m, None)? {
+        crate::calc_len::ResolvedLength::Length(px) => Ok(LengthPercentage::length(px)),
+        crate::calc_len::ResolvedLength::Percent(fraction) => Ok(LengthPercentage::percent(fraction)),
     }
 }
 
@@ -244,31 +281,7 @@ fn grid_track(s: &str, m: Metrics) -> Result<TrackSizingFunction, String> {
     }
 }
 fn grid(s: &str, m: Metrics) -> Result<Vec<GridTemplateComponent<String>>, String> {
-    if s == "none" {
-        return Ok(Vec::new());
-    }
-    let mut tracks = Vec::new();
-    for token in split(s, false) {
-        if token.starts_with("repeat(") {
-            let args = split(&token[7..token.len() - 1], true);
-            if args.len() != 2 {
-                return Err("repeat requires count and tracks".into());
-            }
-            let count = args[0]
-                .parse::<usize>()
-                .map_err(|_| "auto-fill/auto-fit require extraction")?;
-            if count > 4096 {
-                return Err("grid repeat exceeds 4096 tracks".into());
-            }
-            let inner = grid(&args[1], m)?;
-            for _ in 0..count {
-                tracks.extend(inner.clone());
-            }
-        } else {
-            tracks.push(GridTemplateComponent::Single(grid_track(&token, m)?));
-        }
-    }
-    Ok(tracks)
+    crate::grid_template::grid_template(s, m)
 }
 fn placement(s: &str) -> Result<GridPlacement, String> {
     if s == "auto" {
@@ -310,13 +323,34 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
         rtl: false,
         z_index: 0,
         gradient: Vec::new(),
+        background_image: None,
+        background_position: (
+            AxisPos {
+                percent: 0.0,
+                length: 0.0,
+            },
+            AxisPos {
+                percent: 0.0,
+                length: 0.0,
+            },
+        ),
+        background_size: BackgroundFit::Auto,
+        background_repeat: (AxisRepeat::Repeat, AxisRepeat::Repeat),
+        background_origin: BackgroundOrigin::PaddingBox,
+        background_clip: BoxEdge::BorderBox,
         mask: None,
+        mask_luminance: false,
+        decoration: TextLines::default(),
+        decoration_style: crate::decoration_marks::DecorationStyle::Solid,
+        decoration_thickness: None,
+        object_position: ObjectPosition::default(),
         corners: [(zero(), zero()); 4],
         border_colors: [Color::BLACK; 4],
         border_lines: [BorderLine::Solid; 4],
         perspective: None,
         perspective_origin: (percent(0.5_f32), percent(0.5_f32)),
         backface_hidden: false,
+        preserve_3d: false,
         filter: Default::default(),
         blend_mode: skia_safe::BlendMode::SrcOver,
         shadows: Vec::new(),
@@ -475,29 +509,35 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                 }
                 "background-image" => {
                     if s != "none" {
-                        paint.gradient = crate::gradient::parse_list(s, m, paint.color)?;
+                        let (gradients, image) = background_layers(s, m, paint.color)?;
+                        paint.gradient = gradients;
+                        paint.background_image = image;
                     }
                 }
-                "background-position-x"
-                | "background-position-y"
-                | "background-size"
-                | "background-repeat"
-                | "background-attachment"
-                | "background-origin"
-                | "background-clip" => {
-                    let acceptable = matches!(
-                        s,
-                        "0" | "0%"
-                            | "auto"
-                            | "auto auto"
-                            | "repeat"
-                            | "scroll"
-                            | "padding-box"
-                            | "border-box"
-                    );
-                    if !acceptable {
-                        return Err(format!("background setting '{s}' requires extraction or native image translation"));
+                "background-position-x" => {
+                    paint.background_position.0 = horizontal_position(s, m)?;
+                }
+                "background-position-y" => {
+                    paint.background_position.1 = vertical_position(s, m)?;
+                }
+                "background-size" => paint.background_size = background_size(s, m)?,
+                "background-repeat" => paint.background_repeat = background_repeat(s)?,
+                "background-attachment" => {
+                    if s.trim() != "scroll" {
+                        return Err(format!("unsupported background-attachment '{s}'"));
                     }
+                }
+                "background-origin" => {
+                    paint.background_origin = match s.trim() {
+                        "padding-box" => BackgroundOrigin::PaddingBox,
+                        "border-box" => BackgroundOrigin::BorderBox,
+                        "content-box" => BackgroundOrigin::ContentBox,
+                        _ => return Err(format!("unsupported background-origin '{s}'")),
+                    }
+                }
+                "background-clip" => {
+                    paint.background_clip = parse_box_edge(s)
+                        .map_err(|_| format!("unsupported background-clip '{s}'"))?;
                 }
                 "opacity" => paint.opacity = number(s)?.clamp(0.0, 1.0),
                 "visibility" => {
@@ -615,6 +655,13 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                             Some(crate::gradient::NativeGradient::parse(s, m, paint.color)?);
                     }
                 }
+                "mask-mode" => {
+                    paint.mask_luminance = match s.trim() {
+                        "alpha" | "match-source" => false,
+                        "luminance" => true,
+                        _ => return Err(format!("unsupported mask-mode '{s}'")),
+                    }
+                }
                 "transform" => {
                     paint.transform =
                         TransformList::parse_string(s).map_err(|e| format!("transform: {e:?}"))?;
@@ -660,9 +707,11 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                     paint.perspective_origin = origin_pair(s, m)?;
                 }
                 "transform-style" => {
-                    if !matches!(s, "flat" | "preserve-3d") {
-                        return Err("unsupported transform-style".into());
-                    }
+                    paint.preserve_3d = match s {
+                        "flat" => false,
+                        "preserve-3d" => true,
+                        _ => return Err("unsupported transform-style".into()),
+                    };
                 }
                 "backface-visibility" => {
                     paint.backface_hidden = match s {
@@ -729,6 +778,31 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                         _ => return Err("unsupported text-transform".into()),
                     }
                 }
+                "text-decoration" => {
+                    let parsed = crate::decoration_value::parse_shorthand(s, m)?;
+                    paint.decoration.underline = parsed.underline;
+                    paint.decoration.overline = parsed.overline;
+                    paint.decoration.line_through = parsed.line_through;
+                    paint.decoration_style = parsed.style;
+                    paint.decoration_thickness = parsed.thickness_px;
+                }
+                "text-decoration-line" => {
+                    let parsed = crate::decoration_value::parse_lines(s)?;
+                    paint.decoration.underline = parsed.underline;
+                    paint.decoration.overline = parsed.overline;
+                    paint.decoration.line_through = parsed.line_through;
+                }
+                "text-decoration-style" => {
+                    paint.decoration_style = crate::decoration_value::parse_style(s)?;
+                }
+                "text-decoration-color" => {
+                    if !s.trim().eq_ignore_ascii_case("currentcolor") {
+                        return Err(format!("unsupported text decoration color '{s}'"));
+                    }
+                }
+                "text-decoration-thickness" => {
+                    paint.decoration_thickness = crate::decoration_value::parse_thickness(s, m)?;
+                }
                 "direction" => {
                     if !matches!(s, "ltr" | "rtl") {
                         return Err("invalid text direction".into());
@@ -746,6 +820,15 @@ pub fn translate(values: &Values, mut m: Metrics) -> Result<(Style, PaintStyle),
                     if !matches!(s, "fill" | "cover" | "contain") {
                         return Err("unsupported object-fit".into());
                     }
+                }
+                "object-position" => {
+                    let parsed = crate::object_pos::parse_object_position(s, m)?;
+                    paint.object_position = ObjectPosition {
+                        x_percent: parsed.x_percent,
+                        x_offset: parsed.x_offset,
+                        y_percent: parsed.y_percent,
+                        y_offset: parsed.y_offset,
+                    };
                 }
                 "clip-path" => {
                     if s != "none" {
@@ -935,26 +1018,12 @@ fn absolute_px(l: &Length, m: Metrics) -> Result<f32, String> {
 }
 
 fn origin_pair(s: &str, m: Metrics) -> Result<(LengthPercentage, LengthPercentage), String> {
-    let v = split(s, false);
-    if v.len() > 2 || v.is_empty() {
+    let parsed = crate::transform_origin::parse_origin(s, m)?;
+    // A non-zero z is not applied to the canvas matrix yet.
+    if parsed.z != 0.0 {
         return Err("3D transform origin unsupported".into());
     }
-    let axis = |s: &str| -> Result<LengthPercentage, String> {
-        match s {
-            "center" => Ok(percent(0.5_f32)),
-            "left" | "top" => Ok(percent(0.0_f32)),
-            "right" | "bottom" => Ok(percent(1.0_f32)),
-            _ => length(s, m),
-        }
-    };
-    Ok((
-        axis(&v[0])?,
-        if v.len() == 2 {
-            axis(&v[1])?
-        } else {
-            percent(0.5_f32)
-        },
-    ))
+    Ok((parsed.x, parsed.y))
 }
 
 fn wrap_turn(angle: &mut Angle) {
@@ -1097,3 +1166,157 @@ pub fn transform_matrix(list: &TransformList, m: Metrics, size: (f32, f32)) -> M
         Matrix::new_identity()
     }
 }
+
+fn background_layers(
+    s: &str,
+    m: Metrics,
+    current: Color,
+) -> Result<(Vec<crate::gradient::NativeGradient>, Option<skia_safe::Image>), String> {
+    let parts = split(s, true);
+    let mut url = None;
+    let mut gradients = false;
+    for part in &parts {
+        if part.eq_ignore_ascii_case("none") {
+            continue;
+        }
+        if is_css_url(part) {
+            if url.is_some() || gradients {
+                return Err(if gradients {
+                    "background-image cannot mix a url and a gradient".into()
+                } else {
+                    "background-image accepts a single url".into()
+                });
+            }
+            url = Some(part.as_str());
+        } else if url.is_some() {
+            return Err("background-image cannot mix a url and a gradient".into());
+        } else {
+            gradients = true;
+        }
+    }
+    if let Some(url) = url {
+        return Ok((Vec::new(), Some(decode_background_url(url)?)));
+    }
+    Ok((crate::gradient::parse_list(s, m, current)?, None))
+}
+
+fn is_css_url(value: &str) -> bool {
+    let value = value.trim();
+    value.len() >= 4 && value[..4].eq_ignore_ascii_case("url(")
+        || value.len() >= 5 && value[..5].eq_ignore_ascii_case("data:")
+}
+
+fn decode_background_url(value: &str) -> Result<skia_safe::Image, String> {
+    let value = value.trim();
+    let url = if value.len() >= 4 && value[..4].eq_ignore_ascii_case("url(") {
+        crate::compiler::url(value).map_err(|e| e.to_string())?
+    } else {
+        value.to_string()
+    };
+    let bytes = crate::assets::AssetStore::local(std::path::Path::new("."), false)
+        .read(&url)
+        .map_err(|e| e.to_string())?;
+    skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))
+        .ok_or_else(|| format!("invalid image '{url}'"))
+}
+
+fn horizontal_position(s: &str, m: Metrics) -> Result<AxisPos, String> {
+    let parsed = HorizontalPosition::parse_string(s)
+        .map_err(|_| format!("unsupported background-position '{s}'"))?;
+    match parsed {
+        PositionComponent::Center => Ok(AxisPos {
+            percent: 0.5,
+            length: 0.0,
+        }),
+        PositionComponent::Length(v) => axis_from_length(&v, m),
+        PositionComponent::Side { side, offset } => side_offset(
+            matches!(side, HorizontalPositionKeyword::Right),
+            offset.as_ref(),
+            m,
+        ),
+    }
+}
+
+fn vertical_position(s: &str, m: Metrics) -> Result<AxisPos, String> {
+    let parsed = VerticalPosition::parse_string(s)
+        .map_err(|_| format!("unsupported background-position '{s}'"))?;
+    match parsed {
+        PositionComponent::Center => Ok(AxisPos {
+            percent: 0.5,
+            length: 0.0,
+        }),
+        PositionComponent::Length(v) => axis_from_length(&v, m),
+        PositionComponent::Side { side, offset } => side_offset(
+            matches!(side, VerticalPositionKeyword::Bottom),
+            offset.as_ref(),
+            m,
+        ),
+    }
+}
+
+fn side_offset(from_end: bool, offset: Option<&CssLength>, m: Metrics) -> Result<AxisPos, String> {
+    let extra = match offset {
+        Some(v) => axis_from_length(v, m)?,
+        None => AxisPos {
+            percent: 0.0,
+            length: 0.0,
+        },
+    };
+    let sign = if from_end { -1.0 } else { 1.0 };
+    Ok(AxisPos {
+        percent: if from_end { 1.0 } else { 0.0 } + sign * extra.percent,
+        length: sign * extra.length,
+    })
+}
+
+fn axis_from_length(value: &CssLength, m: Metrics) -> Result<AxisPos, String> {
+    let s = value
+        .to_css_string(Default::default())
+        .map_err(|e| e.to_string())?;
+    let l = length(&s, m)?;
+    if l.is_percent() {
+        Ok(AxisPos {
+            percent: l.value(),
+            length: 0.0,
+        })
+    } else {
+        Ok(AxisPos {
+            percent: 0.0,
+            length: l.value(),
+        })
+    }
+}
+
+fn background_size(s: &str, m: Metrics) -> Result<BackgroundFit, String> {
+    let parsed = BackgroundSize::parse_string(s)
+        .map_err(|_| format!("unsupported background-size '{s}'"))?;
+    match parsed {
+        BackgroundSize::Cover => Ok(BackgroundFit::Cover),
+        BackgroundSize::Contain => Ok(BackgroundFit::Contain),
+        BackgroundSize::Explicit { width, height } => Ok(BackgroundFit::Lengths(
+            size_component(width, m)?,
+            size_component(height, m)?,
+        )),
+    }
+}
+
+fn size_component(
+    value: LengthPercentageOrAuto,
+    m: Metrics,
+) -> Result<Option<LengthPercentage>, String> {
+    match value {
+        LengthPercentageOrAuto::Auto => Ok(None),
+        LengthPercentageOrAuto::LengthPercentage(value) => {
+            let s = value
+                .to_css_string(Default::default())
+                .map_err(|e| e.to_string())?;
+            Ok(Some(length(&s, m)?))
+        }
+    }
+}
+
+fn background_repeat(s: &str) -> Result<(AxisRepeat, AxisRepeat), String> {
+    crate::background_box::parse_repeat(s)
+}
+
+
