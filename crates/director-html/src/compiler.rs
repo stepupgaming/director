@@ -48,6 +48,10 @@ const SVG_EXTERNAL_PRESENTATION: &[&str] = &[
     "clip-path",
     "filter",
     "mix-blend-mode",
+    "marker-start",
+    "marker-mid",
+    "marker-end",
+    "mask",
 ];
 
 const SVG_ANIMATION_PROPERTIES: &[&str] = &[
@@ -91,8 +95,15 @@ fn write_svg_children(
                 let values = css.cascade(child, parent)?;
                 let mut extra = String::new();
                 for name in SVG_EXTERNAL_PRESENTATION {
-                    if css.has_stylesheet_property(child, name) {
-                        if let Some(value) = values.get(*name) {
+                    // lightningcss stores the mask shorthand as mask-image.
+                    // usvg reads the presentation name mask.
+                    let lookup = if *name == "mask" && !css.has_stylesheet_property(child, name) {
+                        "mask-image"
+                    } else {
+                        *name
+                    };
+                    if css.has_stylesheet_property(child, lookup) {
+                        if let Some(value) = values.get(lookup) {
                             extra.push_str(name);
                             extra.push(':');
                             if *name == "transform" {

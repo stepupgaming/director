@@ -5,7 +5,7 @@ use crate::{
     animation::Animation,
     shader::PaperPaint,
     style::{
-        canvas_transform, perspective_matrix, resolve, shows_backface, BackgroundFit,
+        canvas_transform, perspective_matrix, resolve, shows_backface, AxisPos, BackgroundFit,
         BackgroundLayer, BackgroundOrigin, BorderLine, CanvasTransform, LengthParts, Metrics,
         PaintStyle,
     },
@@ -405,16 +405,17 @@ impl Element for HtmlElement {
             origin_edge(self.paint.background_origin),
         );
         if gradient_rect.width() > 0.0 && gradient_rect.height() > 0.0 {
-            for layer in self.paint.layers.iter().rev() {
+            for (index, layer) in self.paint.layers.iter().enumerate().rev() {
+                let (size, position, repeat) = layer_background(&self.paint, index);
                 match layer {
                     BackgroundLayer::Gradient(gradient) => {
-                        let tile_rect = gradient_tile(gradient_rect, &self.paint);
+                        let tile_rect = gradient_tile(gradient_rect, size, position);
                         let custom = (tile_rect.left() - gradient_rect.left()).abs() > 0.5
                             || (tile_rect.top() - gradient_rect.top()).abs() > 0.5
                             || (tile_rect.width() - gradient_rect.width()).abs() > 0.5
                             || (tile_rect.height() - gradient_rect.height()).abs() > 0.5;
-                        let repeats = self.paint.background_repeat.0 != AxisRepeat::NoRepeat
-                            || self.paint.background_repeat.1 != AxisRepeat::NoRepeat;
+                        let repeats = repeat.0 != AxisRepeat::NoRepeat
+                            || repeat.1 != AxisRepeat::NoRepeat;
                         let shader = if custom && repeats {
                             gradient.shader_with(tile_rect, TileMode::Repeat)
                         } else if custom {
@@ -431,7 +432,16 @@ impl Element for HtmlElement {
                         }
                     }
                     BackgroundLayer::Image(image) => {
-                        paint_background_image(canvas, rect, &self.style, &self.paint, image);
+                        paint_background_image(
+                            canvas,
+                            rect,
+                            &self.style,
+                            &self.paint,
+                            image,
+                            size,
+                            position,
+                            repeat,
+                        );
                     }
                 }
             }
@@ -927,8 +937,42 @@ fn paint_text_clip_mask(canvas: &Canvas, element: &HtmlElement, rect: Rect) {
     canvas.restore();
 }
 
-fn gradient_tile(area: Rect, paint: &PaintStyle) -> Rect {
-    let (tw, th) = match paint.background_size {
+fn layer_background(
+    paint: &PaintStyle,
+    index: usize,
+) -> (
+    BackgroundFit,
+    (AxisPos, AxisPos),
+    (AxisRepeat, AxisRepeat),
+) {
+    let origin = AxisPos {
+        percent: 0.0,
+        length: 0.0,
+    };
+    (
+        cycled(&paint.background_size, index, BackgroundFit::Auto),
+        (
+            cycled(&paint.background_position_x, index, origin),
+            cycled(&paint.background_position_y, index, origin),
+        ),
+        cycled(
+            &paint.background_repeat,
+            index,
+            (AxisRepeat::Repeat, AxisRepeat::Repeat),
+        ),
+    )
+}
+
+fn cycled<T: Copy>(values: &[T], index: usize, fallback: T) -> T {
+    if values.is_empty() {
+        fallback
+    } else {
+        values[index % values.len()]
+    }
+}
+
+fn gradient_tile(area: Rect, size: BackgroundFit, position: (AxisPos, AxisPos)) -> Rect {
+    let (tw, th) = match size {
         BackgroundFit::Lengths(width, height) => {
             let across = |value: Option<taffy::LengthPercentage>, basis: f32| {
                 value
@@ -940,12 +984,8 @@ fn gradient_tile(area: Rect, paint: &PaintStyle) -> Rect {
         }
         _ => (area.width(), area.height()),
     };
-    let x = area.left()
-        + (area.width() - tw) * paint.background_position.0.percent
-        + paint.background_position.0.length;
-    let y = area.top()
-        + (area.height() - th) * paint.background_position.1.percent
-        + paint.background_position.1.length;
+    let x = area.left() + (area.width() - tw) * position.0.percent + position.0.length;
+    let y = area.top() + (area.height() - th) * position.1.percent + position.1.length;
     Rect::from_xywh(x, y, tw.max(1.0), th.max(1.0))
 }
 
@@ -955,6 +995,9 @@ fn paint_background_image(
     layout: &Style,
     paint: &PaintStyle,
     image: &skia_safe::Image,
+    size: BackgroundFit,
+    position: (AxisPos, AxisPos),
+    repeat: (AxisRepeat, AxisRepeat),
 ) {
     let iw = image.width() as f32;
     let ih = image.height() as f32;
@@ -981,23 +1024,21 @@ fn paint_background_image(
     if area_w <= 0.0 || area_h <= 0.0 {
         return;
     }
-    let (w, h) = fitted_background(paint.background_size, iw, ih, area_w, area_h);
+    let (w, h) = fitted_background(size, iw, ih, area_w, area_h);
     if w <= 0.0 || h <= 0.0 {
         return;
     }
-    let (repeat_x, repeat_y) = paint.background_repeat;
+    let (repeat_x, repeat_y) = repeat;
     let shader_repeat = matches!(repeat_x, AxisRepeat::Repeat | AxisRepeat::NoRepeat)
         && matches!(repeat_y, AxisRepeat::Repeat | AxisRepeat::NoRepeat);
     if !shader_repeat {
         paint_placed_tiles(
-            canvas, image, rect, inset_l, inset_t, area_w, area_h, w, h, paint,
+            canvas, image, rect, inset_l, inset_t, area_w, area_h, w, h, position, repeat,
         );
         return;
     }
-    let x = rect.left + inset_l + paint.background_position.0.percent * (area_w - w)
-        + paint.background_position.0.length;
-    let y = rect.top + inset_t + paint.background_position.1.percent * (area_h - h)
-        + paint.background_position.1.length;
+    let x = rect.left + inset_l + position.0.percent * (area_w - w) + position.0.length;
+    let y = rect.top + inset_t + position.1.percent * (area_h - h) + position.1.length;
     let tile_x = if matches!(repeat_x, AxisRepeat::Repeat) {
         TileMode::Repeat
     } else {
@@ -1059,19 +1100,20 @@ fn paint_placed_tiles(
     area_h: f32,
     tile_w: f32,
     tile_h: f32,
-    paint: &PaintStyle,
+    position: (AxisPos, AxisPos),
+    repeat: (AxisRepeat, AxisRepeat),
 ) {
     let tiles = explicit_background_tiles(
         area_w,
         area_h,
         tile_w,
         tile_h,
-        paint.background_position.0.percent,
-        paint.background_position.0.length,
-        paint.background_position.1.percent,
-        paint.background_position.1.length,
-        paint.background_repeat.0,
-        paint.background_repeat.1,
+        position.0.percent,
+        position.0.length,
+        position.1.percent,
+        position.1.length,
+        repeat.0,
+        repeat.1,
     );
     if tiles.is_empty() {
         return;

@@ -123,9 +123,11 @@ pub struct PaintStyle {
     pub rtl: bool,
     pub z_index: i32,
     pub layers: Vec<BackgroundLayer>,
-    pub background_position: (AxisPos, AxisPos),
-    pub background_size: BackgroundFit,
-    pub background_repeat: (AxisRepeat, AxisRepeat),
+    /// Empty lists use the initial value. A shorter list cycles by source index.
+    pub background_position_x: Vec<AxisPos>,
+    pub background_position_y: Vec<AxisPos>,
+    pub background_size: Vec<BackgroundFit>,
+    pub background_repeat: Vec<(AxisRepeat, AxisRepeat)>,
     pub background_origin: BackgroundOrigin,
     pub background_clip: BoxEdge,
     pub mask: Option<crate::gradient::NativeGradient>,
@@ -234,11 +236,63 @@ pub fn length(s: &str, m: Metrics) -> Result<LengthPercentage, String> {
 }
 
 pub(crate) fn convert_length(l: &CssLength, m: Metrics) -> Result<LengthPercentage, String> {
-    // No percent basis here. A pure percent stays a percent, and a mix of
-    // px and percent still fails. The composition size is not the containing block.
+    // No percent basis. A pure percent stays a percent, and mixed calc still fails.
+    // The composition size is not the containing block on this path.
     match crate::calc_len::resolve_length(l, m, None)? {
         crate::calc_len::ResolvedLength::Length(px) => Ok(LengthPercentage::length(px)),
         crate::calc_len::ResolvedLength::Percent(fraction) => Ok(LengthPercentage::percent(fraction)),
+    }
+}
+
+fn length_on(s: &str, m: Metrics, basis: Option<f32>) -> Result<LengthPercentage, String> {
+    let l = CssLength::parse_string(s).map_err(|e| format!("length '{s}': {e:?}"))?;
+    convert_length_with_basis(&l, m, basis)
+}
+
+// Composition axis only. The parent used size is unknown, and a pure percent stays a percent.
+fn convert_length_with_basis(
+    l: &CssLength,
+    m: Metrics,
+    basis: Option<f32>,
+) -> Result<LengthPercentage, String> {
+    let basis = basis.filter(|value| value.is_finite() && *value > 0.0);
+    match crate::calc_len::resolve_length(l, m, basis)? {
+        crate::calc_len::ResolvedLength::Length(px) => Ok(LengthPercentage::length(px)),
+        crate::calc_len::ResolvedLength::Percent(fraction) => Ok(LengthPercentage::percent(fraction)),
+    }
+}
+
+fn axis_basis(value: f32) -> Option<f32> {
+    if value.is_finite() && value > 0.0 {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn dimension_on(s: &str, m: Metrics, basis: Option<f32>) -> Result<Dimension, String> {
+    if s == "auto" {
+        Ok(auto())
+    } else {
+        let v = length_on(s, m, basis)?;
+        Ok(if v.is_percent() {
+            percent(v.value())
+        } else {
+            length_dimension(v.value())
+        })
+    }
+}
+
+fn lpa_on(s: &str, m: Metrics, basis: Option<f32>) -> Result<LengthPercentageAuto, String> {
+    if s == "auto" {
+        Ok(auto())
+    } else {
+        let v = length_on(s, m, basis)?;
+        Ok(if v.is_percent() {
+            percent(v.value())
+        } else {
+            LengthPercentageAuto::length(v.value())
+        })
     }
 }
 
@@ -476,18 +530,6 @@ fn dimension(s: &str, m: Metrics) -> Result<Dimension, String> {
 fn length_dimension(v: f32) -> Dimension {
     Dimension::length(v)
 }
-fn lpa(s: &str, m: Metrics) -> Result<LengthPercentageAuto, String> {
-    if s == "auto" {
-        Ok(auto())
-    } else {
-        let v = length(s, m)?;
-        Ok(if v.is_percent() {
-            percent(v.value())
-        } else {
-            LengthPercentageAuto::length(v.value())
-        })
-    }
-}
 
 fn align(s: &str) -> Result<AlignItems, String> {
     match s {
@@ -672,18 +714,10 @@ pub fn translate(
         rtl: false,
         z_index: 0,
         layers: Vec::new(),
-        background_position: (
-            AxisPos {
-                percent: 0.0,
-                length: 0.0,
-            },
-            AxisPos {
-                percent: 0.0,
-                length: 0.0,
-            },
-        ),
-        background_size: BackgroundFit::Auto,
-        background_repeat: (AxisRepeat::Repeat, AxisRepeat::Repeat),
+        background_position_x: Vec::new(),
+        background_position_y: Vec::new(),
+        background_size: Vec::new(),
+        background_repeat: Vec::new(),
         background_origin: BackgroundOrigin::PaddingBox,
         background_clip: BoxEdge::BorderBox,
         mask: None,
@@ -758,40 +792,50 @@ pub fn translate(
                         _ => return Err("fixed/sticky positioning requires extraction".into()),
                     }
                 }
-                "width" => style.size.width = dimension(s, m)?,
-                "height" => style.size.height = dimension(s, m)?,
-                "min-width" => style.min_size.width = dimension(s, m)?,
-                "min-height" => style.min_size.height = dimension(s, m)?,
+                "width" => style.size.width = dimension_on(s, m, axis_basis(m.width))?,
+                "height" => style.size.height = dimension_on(s, m, axis_basis(m.height))?,
+                "min-width" => style.min_size.width = dimension_on(s, m, axis_basis(m.width))?,
+                "min-height" => style.min_size.height = dimension_on(s, m, axis_basis(m.height))?,
                 "max-width" => {
                     style.max_size.width = if s == "none" {
                         auto()
                     } else {
-                        dimension(s, m)?
+                        dimension_on(s, m, axis_basis(m.width))?
                     }
                 }
                 "max-height" => {
                     style.max_size.height = if s == "none" {
                         auto()
                     } else {
-                        dimension(s, m)?
+                        dimension_on(s, m, axis_basis(m.height))?
                     }
                 }
-                "left" => style.inset.left = lpa(s, m)?,
-                "right" => style.inset.right = lpa(s, m)?,
-                "top" => style.inset.top = lpa(s, m)?,
-                "bottom" => style.inset.bottom = lpa(s, m)?,
-                "margin-left" => style.margin.left = lpa(s, m)?,
-                "margin-right" => style.margin.right = lpa(s, m)?,
-                "margin-top" => style.margin.top = lpa(s, m)?,
-                "margin-bottom" => style.margin.bottom = lpa(s, m)?,
-                "padding-left" => style.padding.left = length(s, m)?,
-                "padding-right" => style.padding.right = length(s, m)?,
-                "padding-top" => style.padding.top = length(s, m)?,
-                "padding-bottom" => style.padding.bottom = length(s, m)?,
+                "left" => style.inset.left = lpa_on(s, m, axis_basis(m.width))?,
+                "right" => style.inset.right = lpa_on(s, m, axis_basis(m.width))?,
+                "top" => style.inset.top = lpa_on(s, m, axis_basis(m.height))?,
+                "bottom" => style.inset.bottom = lpa_on(s, m, axis_basis(m.height))?,
+                "margin-left" => style.margin.left = lpa_on(s, m, axis_basis(m.width))?,
+                "margin-right" => style.margin.right = lpa_on(s, m, axis_basis(m.width))?,
+                "margin-top" => style.margin.top = lpa_on(s, m, axis_basis(m.width))?,
+                "margin-bottom" => style.margin.bottom = lpa_on(s, m, axis_basis(m.width))?,
+                "padding-left" => style.padding.left = length_on(s, m, axis_basis(m.width))?,
+                "padding-right" => style.padding.right = length_on(s, m, axis_basis(m.width))?,
+                "padding-top" => style.padding.top = length_on(s, m, axis_basis(m.width))?,
+                "padding-bottom" => style.padding.bottom = length_on(s, m, axis_basis(m.width))?,
                 "column-gap" => {
-                    style.gap.width = if s == "normal" { zero() } else { length(s, m)? }
+                    style.gap.width = if s == "normal" {
+                        zero()
+                    } else {
+                        length_on(s, m, axis_basis(m.width))?
+                    }
                 }
-                "row-gap" => style.gap.height = if s == "normal" { zero() } else { length(s, m)? },
+                "row-gap" => {
+                    style.gap.height = if s == "normal" {
+                        zero()
+                    } else {
+                        length_on(s, m, axis_basis(m.height))?
+                    }
+                }
                 "flex-direction" => {
                     style.flex_direction = match s {
                         "row" => FlexDirection::Row,
@@ -811,7 +855,13 @@ pub fn translate(
                 }
                 "flex-grow" => style.flex_grow = number(s)?,
                 "flex-shrink" => style.flex_shrink = number(s)?,
-                "flex-basis" => style.flex_basis = dimension(s, m)?,
+                "flex-basis" => {
+                    style.flex_basis = if s == "auto" || s == "content" {
+                        dimension(s, m)?
+                    } else {
+                        dimension_on(s, m, axis_basis(m.width))?
+                    }
+                }
                 "align-items" => style.align_items = Some(align(s)?),
                 "align-self" => style.align_self = if s == "auto" { None } else { Some(align(s)?) },
                 "justify-items" => style.justify_items = Some(align(s)?),
@@ -874,17 +924,18 @@ pub fn translate(
                     }
                 }
                 "background-position-x" => {
-                    paint.background_position.0 = horizontal_position(s, m)?;
+                    paint.background_position_x = axis_position_list(s, m, horizontal_position)?;
                 }
                 "background-position-y" => {
-                    paint.background_position.1 = vertical_position(s, m)?;
+                    paint.background_position_y = axis_position_list(s, m, vertical_position)?;
                 }
                 "background-position" => {
-                    let (x, y) = background_position(s, m)?;
-                    paint.background_position = (x, y);
+                    let layers = background_position_layers(s, m)?;
+                    paint.background_position_x = layers.iter().map(|(x, _)| *x).collect();
+                    paint.background_position_y = layers.iter().map(|(_, y)| *y).collect();
                 }
-                "background-size" => paint.background_size = background_size(s, m)?,
-                "background-repeat" => paint.background_repeat = background_repeat(s)?,
+                "background-size" => paint.background_size = background_size_list(s, m)?,
+                "background-repeat" => paint.background_repeat = background_repeat_list(s)?,
                 "background-attachment" => {
                     if s.trim() != "scroll" {
                         return Err(format!("unsupported background-attachment '{s}'"));
@@ -1146,7 +1197,8 @@ pub fn translate(
                     if parsed.hanging || parsed.each_line {
                         return Err("unsupported text-indent".into());
                     }
-                    paint.text_indent = convert_length(&parsed.value, m)?;
+                    paint.text_indent =
+                        convert_length_with_basis(&parsed.value, m, axis_basis(m.width))?;
                 }
                 "text-overflow" => {
                     paint.text_overflow = match s.trim() {
@@ -1756,6 +1808,29 @@ fn decode_background_url(
         .ok_or_else(|| format!("invalid image '{url}'"))
 }
 
+fn background_position_layers(s: &str, m: Metrics) -> Result<Vec<(AxisPos, AxisPos)>, String> {
+    let parts = split(s.trim(), true);
+    if parts.is_empty() {
+        return Err(format!("unsupported background-position '{s}'"));
+    }
+    parts
+        .iter()
+        .map(|part| background_position(part, m))
+        .collect()
+}
+
+fn axis_position_list(
+    s: &str,
+    m: Metrics,
+    parse: fn(&str, Metrics) -> Result<AxisPos, String>,
+) -> Result<Vec<AxisPos>, String> {
+    let parts = split(s.trim(), true);
+    if parts.is_empty() {
+        return Err(format!("unsupported background-position '{s}'"));
+    }
+    parts.iter().map(|part| parse(part, m)).collect()
+}
+
 fn background_position(s: &str, m: Metrics) -> Result<(AxisPos, AxisPos), String> {
     let parts = split(s.trim(), false);
     let center = AxisPos {
@@ -1876,6 +1951,14 @@ fn axis_from_length(value: &CssLength, m: Metrics) -> Result<AxisPos, String> {
     }
 }
 
+fn background_size_list(s: &str, m: Metrics) -> Result<Vec<BackgroundFit>, String> {
+    let parts = split(s.trim(), true);
+    if parts.is_empty() {
+        return Err(format!("unsupported background-size '{s}'"));
+    }
+    parts.iter().map(|part| background_size(part, m)).collect()
+}
+
 fn background_size(s: &str, m: Metrics) -> Result<BackgroundFit, String> {
     let parsed = BackgroundSize::parse_string(s)
         .map_err(|_| format!("unsupported background-size '{s}'"))?;
@@ -1902,6 +1985,14 @@ fn size_component(
             Ok(Some(length(&s, m)?))
         }
     }
+}
+
+fn background_repeat_list(s: &str) -> Result<Vec<(AxisRepeat, AxisRepeat)>, String> {
+    let parts = split(s.trim(), true);
+    if parts.is_empty() {
+        return Err(format!("unsupported background-repeat '{s}'"));
+    }
+    parts.iter().map(|part| background_repeat(part)).collect()
 }
 
 fn background_repeat(s: &str) -> Result<(AxisRepeat, AxisRepeat), String> {
@@ -2099,5 +2190,66 @@ fn definite_px(values: &Values, name: &str, m: Metrics) -> Option<f32> {
     let px = px(raw, m).ok()?;
     (px > 0.0).then_some(px)
 }
+
+#[cfg(test)]
+mod mixed_calc_basis {
+    use lightningcss::traits::Parse;
+    use lightningcss::values::length::LengthPercentage as CssLength;
+
+    use super::{convert_length_with_basis, length_on, LengthParts, Metrics};
+    use crate::calc_len::{resolve_length, ResolvedLength};
+
+    fn metrics() -> Metrics {
+        Metrics {
+            width: 64.0,
+            height: 32.0,
+            font_size: 16.0,
+        }
+    }
+
+    #[test]
+    fn pure_percent_stays_percent_when_a_basis_is_supplied() {
+        let value = CssLength::parse_string("50%").expect("50%");
+        match resolve_length(&value, metrics(), Some(64.0)).expect("resolve") {
+            ResolvedLength::Percent(fraction) => assert!((fraction - 0.5).abs() < 1.0e-4),
+            ResolvedLength::Length(px) => panic!("50% became {px}px"),
+        }
+        let converted =
+            convert_length_with_basis(&value, metrics(), Some(64.0)).expect("convert");
+        assert!(converted.is_percent(), "50% was stored as px");
+        assert!((converted.value() - 0.5).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn mixed_calc_with_basis_is_length() {
+        let value = CssLength::parse_string("calc(50% + 8px)").expect("calc");
+        match resolve_length(&value, metrics(), Some(64.0)).expect("resolve") {
+            ResolvedLength::Length(px) => assert!((px - 40.0).abs() < 1.0e-4),
+            ResolvedLength::Percent(fraction) => panic!("mixed calc stayed {fraction}"),
+        }
+        let converted = length_on("calc(50% + 8px)", metrics(), Some(64.0)).expect("length");
+        assert!(!converted.is_percent());
+        assert!((converted.value() - 40.0).abs() < 1.0e-4);
+        let swapped = length_on("calc(8px + 50%)", metrics(), Some(64.0)).expect("swapped");
+        assert!((swapped.value() - 40.0).abs() < 1.0e-4);
+        let with_em = length_on("calc(50% + 10px + 1em)", metrics(), Some(64.0)).expect("em");
+        assert!((with_em.value() - 58.0).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn missing_or_non_positive_basis_keeps_the_mixed_error() {
+        let value = CssLength::parse_string("calc(50% + 8px)").expect("calc");
+        for basis in [None, Some(0.0), Some(-1.0), Some(f32::NAN), Some(f32::INFINITY)] {
+            let err = convert_length_with_basis(&value, metrics(), basis).expect_err("basis");
+            assert!(
+                err.contains("mixed calc() requires a length basis"),
+                "{basis:?}: {err}"
+            );
+        }
+        let pure = length_on("12px", metrics(), None).expect("px");
+        assert!((pure.value() - 12.0).abs() < 1.0e-4);
+    }
+}
+
 
 
