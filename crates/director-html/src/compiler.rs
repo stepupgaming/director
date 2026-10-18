@@ -52,6 +52,10 @@ const SVG_EXTERNAL_PRESENTATION: &[&str] = &[
     "marker-mid",
     "marker-end",
     "mask",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
 ];
 
 const SVG_ANIMATION_PROPERTIES: &[&str] = &[
@@ -150,16 +154,80 @@ fn write_svg_children(
 pub(crate) fn validate_svg(source: &str) -> Result<(), CompileError> {
     let dom = Html::parse_fragment(source);
     let selector = Selector::parse(
-        "text, foreignObject, animate, animateTransform, animateMotion, set, script, image",
+        "foreignObject, animate, animateTransform, animateMotion, set, script, image",
     )
     .unwrap();
     if dom.select(&selector).next().is_some() {
         return Err(CompileError::Input(
-            "SVG text, foreignObject, SMIL, scripts, and nested images require native translation"
-                .into(),
+            "SVG foreignObject, SMIL, scripts, and nested images require native translation".into(),
         ));
     }
     Ok(())
+}
+
+const SVG_FONT_FILES: &[&str] = &[
+    "fonts/Roboto-Regular.ttf",
+    "fonts/Roboto-Bold.ttf",
+    "fonts/Roboto-Italic.ttf",
+    "fonts/Inter-Regular.ttf",
+    "fonts/Inter-Bold.ttf",
+    "fonts/Poppins-Bold.ttf",
+];
+
+fn decoded_font(family: &str, bytes: Vec<u8>) -> Result<Vec<u8>, CompileError> {
+    match bytes.get(..4) {
+        Some(b"wOF2") => wuff::decompress_woff2(&bytes).map_err(|e| {
+            CompileError::Input(format!("font '{family}': WOFF2 decode: {e:?}"))
+        }),
+        Some(b"wOFF") => wuff::decompress_woff1(&bytes)
+            .map_err(|e| CompileError::Input(format!("font '{family}': WOFF decode: {e:?}"))),
+        _ => Ok(bytes),
+    }
+}
+
+pub(crate) fn svg_fontdb(
+    assets: &AssetStore,
+    faces: &[(String, String)],
+) -> Result<Arc<usvg::fontdb::Database>, CompileError> {
+    let mut db = usvg::fontdb::Database::new();
+    for path in SVG_FONT_FILES {
+        let bytes = director_core::AssetLoader::load_bytes(assets, path)
+            .map_err(|e| CompileError::Input(format!("SVG font '{path}': {e}")))?;
+        db.load_font_data(bytes);
+    }
+    for (family, src) in faces {
+        let bytes = decoded_font(family, assets.read(&url(src)?)?)?;
+        db.load_font_data(bytes);
+    }
+    db.set_serif_family("Roboto");
+    db.set_sans_serif_family("Roboto");
+    Ok(Arc::new(db))
+}
+
+pub(crate) fn cached_svg_fonts(
+    slot: &mut Option<Arc<usvg::fontdb::Database>>,
+    assets: &AssetStore,
+    faces: &[(String, String)],
+) -> Result<Arc<usvg::fontdb::Database>, CompileError> {
+    if let Some(fonts) = slot {
+        return Ok(Arc::clone(fonts));
+    }
+    let fonts = svg_fontdb(assets, faces)?;
+    *slot = Some(Arc::clone(&fonts));
+    Ok(fonts)
+}
+
+pub(crate) fn parse_svg(
+    markup: &str,
+    context: &str,
+    fonts: &Arc<usvg::fontdb::Database>,
+) -> Result<usvg::Tree, CompileError> {
+    let mut options = usvg::Options::default();
+    options.font_family = "Roboto".into();
+    options.font_size = 16.0;
+    options.fontdb = Arc::clone(fonts);
+    usvg::Tree::from_data(markup.as_bytes(), &options)
+        .map_err(|e| CompileError::Input(format!("{context}: invalid SVG: {e}")))
 }
 pub fn url(source: &str) -> Result<String, CompileError> {
     let mut input = cssparser::ParserInput::new(source);
@@ -180,15 +248,7 @@ pub(crate) fn load_fonts(
     }
     let mut provider = skia_safe::textlayout::TypefaceFontProvider::new();
     for (family, src) in fonts {
-        let bytes = assets.read(&url(src)?)?;
-        let bytes = match bytes.get(..4) {
-            Some(b"wOF2") => wuff::decompress_woff2(&bytes).map_err(|e| {
-                CompileError::Input(format!("font '{family}': WOFF2 decode: {e:?}"))
-            })?,
-            Some(b"wOFF") => wuff::decompress_woff1(&bytes)
-                .map_err(|e| CompileError::Input(format!("font '{family}': WOFF decode: {e:?}")))?,
-            _ => bytes,
-        };
+        let bytes = decoded_font(family, assets.read(&url(src)?)?)?;
         let face = skia_safe::FontMgr::new()
             .new_from_data(&bytes, 0)
             .ok_or_else(|| {
@@ -313,6 +373,7 @@ pub(crate) fn compile_with_assets(
         assets,
         root_id: None,
         fixed: HashSet::new(),
+        svg_fonts: None,
     };
     // Compute inherited values along the full ancestor chain, including body resets.
     let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
@@ -363,6 +424,7 @@ struct Builder {
     assets: Arc<AssetStore>,
     root_id: Option<NodeId>,
     fixed: HashSet<NodeId>,
+    svg_fonts: Option<Arc<usvg::fontdb::Database>>,
 }
 
 fn label(el: ElementRef<'_>) -> String {
@@ -618,6 +680,10 @@ pub fn span(text: String, paint: &PaintStyle) -> TextSpan {
 }
 
 impl Builder {
+    fn ensure_svg_fonts(&mut self) -> Result<Arc<usvg::fontdb::Database>, CompileError> {
+        cached_svg_fonts(&mut self.svg_fonts, &self.assets, &self.css.fonts)
+    }
+
     fn node(
         &mut self,
         el: ElementRef<'_>,
@@ -823,15 +889,15 @@ impl Builder {
                 ));
                 markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
                 markup.push_str("</svg>");
-                let vector = usvg::Tree::from_data(markup.as_bytes(), &usvg::Options::default())
-                    .map_err(|e| CompileError::Input(format!("{context}: invalid SVG: {e}")))?;
+                let fonts = self.ensure_svg_fonts()?;
+                let vector = parse_svg(&markup, &context, &fonts)?;
                 if !values.contains_key("width") {
                     layout.size.width = taffy::prelude::length(vector.size().width());
                 }
                 if !values.contains_key("height") {
                     layout.size.height = taffy::prelude::length(vector.size().height());
                 }
-                Some(Box::new(VectorNode::new(markup.as_bytes())))
+                Some(Box::new(VectorNode::from_tree(vector)))
             }
             "video" => {
                 if el.value().attr("muted").is_none() {

@@ -34,6 +34,11 @@ impl VectorNode {
         let opt = Options::default();
         // usvg 0.44: Tree::from_data
         let tree = Tree::from_data(data, &opt).expect("Failed to parse SVG");
+        Self::from_tree(tree)
+    }
+
+    /// Render a tree that has already resolved text into paths.
+    pub fn from_tree(tree: Tree) -> Self {
         Self {
             tree: Arc::new(tree),
             cache: Mutex::new(None),

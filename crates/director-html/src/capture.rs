@@ -2,7 +2,8 @@
 use crate::{
     assets::AssetStore,
     compiler::{
-        fit, load_fonts, looped_media_time, media_duration, span, text_content, validate_options,
+        cached_svg_fonts, fit, load_fonts, looped_media_time, media_duration, parse_svg, span,
+        text_content, validate_options,
     },
     css::{diagnostic, Values},
     element::HtmlElement,
@@ -228,6 +229,7 @@ pub(crate) fn compile_capture_with_assets(
         height: capture.height as f32,
         font_size: 16.0,
     };
+    let mut svg_fonts = None;
     let mut frame_cache: HashMap<String, Arc<Mutex<SceneGraph>>> = HashMap::new();
     let mut image_cache: HashMap<String, skia_safe::Image> = HashMap::new();
     let mut videos: BTreeMap<String, Arc<Mutex<VideoNode>>> = BTreeMap::new();
@@ -248,6 +250,8 @@ pub(crate) fn compile_capture_with_assets(
                 &mut image_cache,
                 &mut videos,
                 &assets,
+                &mut svg_fonts,
+                &capture.fonts,
                 metrics,
                 style::ContainingBlock::from_axes(capture.width as f32, capture.height as f32),
                 0,
@@ -360,6 +364,8 @@ fn build(
     images: &mut HashMap<String, skia_safe::Image>,
     videos: &mut BTreeMap<String, Arc<Mutex<VideoNode>>>,
     store: &AssetStore,
+    svg_fonts: &mut Option<Arc<usvg::fontdb::Database>>,
+    font_faces: &[(String, String)],
     m: Metrics,
     block: style::ContainingBlock,
     depth: usize,
@@ -401,9 +407,8 @@ fn build(
     let mut paper = None;
     let content: Option<Box<dyn Element>> = if let Some(svg) = &n.svg {
         crate::compiler::validate_svg(svg)?;
-        usvg::Tree::from_data(svg.as_bytes(), &usvg::Options::default())
-            .map_err(|e| CompileError::Input(format!("{}: SVG: {e}", n.id)))?;
-        Some(Box::new(VectorNode::new(svg.as_bytes())))
+        let fonts = cached_svg_fonts(svg_fonts, store, font_faces)?;
+        Some(Box::new(VectorNode::from_tree(parse_svg(svg, &n.id, &fonts)?)))
     } else if let Some(text) = &n.text {
         Some(Box::new(text_content(
             vec![span(text.clone(), &paint)],
@@ -532,6 +537,8 @@ fn build(
                 images,
                 videos,
                 store,
+                svg_fonts,
+                font_faces,
                 m,
                 own,
                 depth + 1,

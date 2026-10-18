@@ -84,25 +84,23 @@ fn external_marker_end_paints_a_blue_cap() {
 }
 
 #[test]
-fn svg_text_and_foreign_object_stay_rejected() {
-    for source in ["<svg><text>No</text></svg>", "<svg><foreignObject></foreignObject></svg>"] {
-        let message = compile(
-            source,
-            CompileOptions {
-                width: WIDTH,
-                height: HEIGHT,
-                duration: 3.0,
-                ..Default::default()
-            },
-        )
-        .err()
-        .unwrap()
-        .to_string();
-        assert!(
-            message.contains(
-                "SVG text, foreignObject, SMIL, scripts, and nested images require native translation"
-            ),
-            "{message}"
-        );
-    }
+fn foreign_object_stays_rejected() {
+    let message = compile(
+        "<svg><foreignObject></foreignObject></svg>",
+        CompileOptions {
+            width: WIDTH,
+            height: HEIGHT,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        message.contains(
+            "SVG foreignObject, SMIL, scripts, and nested images require native translation"
+        ),
+        "{message}"
+    );
 }

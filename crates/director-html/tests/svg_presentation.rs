@@ -197,10 +197,43 @@ fn external_animation_is_refused() {
     );
 }
 
+fn red_ink(pixels: &[u8]) -> usize {
+    let mut count = 0;
+    for y in 12..40 {
+        for x in 2..16 {
+            let px = pixel(pixels, x, y);
+            if px[0] > 200 && px[1] < 40 && px[2] < 40 {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 #[test]
-fn svg_text_is_still_rejected() {
-    assert_compile_contains(
-        "<svg><text>No</text></svg>",
-        "SVG text, foreignObject, SMIL, scripts, and nested images require native translation",
+fn svg_text_paints_red() {
+    let pixels = frame(
+        &svg_doc(
+            "",
+            "<text x='0' y='56' font-size='64' font-family='Roboto' fill='#ff0000'>H</text>",
+        ),
+        0.0,
     );
+    assert!(red_ink(&pixels) > 30, "attribute text");
+    let empty = pixel(&pixels, 62, 2);
+    assert!(empty[0] < 20 && empty[1] < 20 && empty[2] < 20, "{empty:?}");
+}
+
+#[test]
+fn external_svg_text_fill_and_size_paint_red() {
+    let pixels = frame(
+        &svg_doc(
+            "svg .label{fill:#ff0000;font-size:64px;font-family:Roboto}",
+            "<text class='label' x='0' y='56'>H</text>",
+        ),
+        0.0,
+    );
+    assert!(red_ink(&pixels) > 30, "external text");
+    let empty = pixel(&pixels, 62, 2);
+    assert!(empty[0] < 20 && empty[1] < 20 && empty[2] < 20, "{empty:?}");
 }
