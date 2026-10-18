@@ -46,6 +46,12 @@ impl VectorNode {
             opacity: crate::animation::Animated::new(1.0),
         }
     }
+
+    /// Replace the resolved tree and drop the size-keyed pixmap.
+    pub fn set_tree(&mut self, tree: Tree) {
+        self.tree = Arc::new(tree);
+        *self.cache.lock().unwrap() = None;
+    }
 }
 
 impl Element for VectorNode {

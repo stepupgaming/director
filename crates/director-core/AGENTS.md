@@ -238,7 +238,9 @@ never serve cache hits; `expand_dirty_set` includes reverse mask users.
 A full pass reuses `static_cache` when `StaticCacheKey` matches: layout
 width and height, the local transform baked into the snapshot, pivot,
 inherited opacity, and time. Time is `None` when the subtree has no
-time-varying paint, video, or expression, so a later frame may hit.
+time-varying paint, video, expression, or `Element::varies_with_time`
+paint, so a later frame may hit. Authored SVG SMIL inside an HTML
+element sets that flag.
 Time is `Some(local_time)` otherwise, so a later frame misses. An
 incremental pass still hits a clean static node without comparing the
 key. Image-only caches (composition surfaces, captured HTML frames)

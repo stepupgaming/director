@@ -117,31 +117,112 @@ fn empty_foreign_object_compiles() {
 }
 
 #[test]
-fn smil_and_nested_image_stay_rejected() {
-    for markup in [
-        "<svg><animate></animate></svg>",
-        "<svg><set></set></svg>",
+fn nested_svg_image_stays_rejected() {
+    let message = compile(
         "<svg><image href='a.png'></image></svg>",
-    ] {
-        let message = compile(
-            markup,
-            CompileOptions {
-                width: WIDTH,
-                height: HEIGHT,
-                duration: 3.0,
-                ..Default::default()
-            },
-        )
-        .err()
-        .unwrap()
-        .to_string();
-        assert!(
-            message.contains(
-                "SVG SMIL, scripts, and nested images require native translation"
-            ),
-            "{markup} {message}"
-        );
-    }
+        CompileOptions {
+            width: WIDTH,
+            height: HEIGHT,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        message.contains("SVG scripts and nested images require native translation"),
+        "{message}"
+    );
+}
+
+#[test]
+fn animate_moves_the_blue_rect() {
+    let source = svg_doc(
+        "",
+        "<rect x='0' y='0' width='12' height='32' fill='#0000ff'><animate attributeName='x' from='0' to='40' dur='2s' fill='freeze'/></rect>",
+    );
+    let start = frame(&source, 0.0);
+    let end = frame(&source, 2.0);
+    assert!(is_blue(pixel(&start, 4, 16)), "start left {:?}", pixel(&start, 4, 16));
+    assert!(near_black(pixel(&start, 46, 16)), "start right {:?}", pixel(&start, 46, 16));
+    assert!(near_black(pixel(&end, 4, 16)), "end left {:?}", pixel(&end, 4, 16));
+    assert!(is_blue(pixel(&end, 46, 16)), "end right {:?}", pixel(&end, 46, 16));
+}
+
+#[test]
+fn set_holds_red_then_returns() {
+    let source = svg_doc(
+        "",
+        "<rect width='64' height='32' fill='#0000ff'><set attributeName='fill' to='#ff0000' begin='1s' dur='1s'/></rect>",
+    );
+    assert!(is_blue(pixel(&frame(&source, 0.0), 8, 8)));
+    assert!(is_red(pixel(&frame(&source, 1.2), 8, 8)));
+    assert!(is_blue(pixel(&frame(&source, 2.2), 8, 8)));
+}
+
+#[test]
+fn animate_transform_translates() {
+    let source = svg_doc(
+        "",
+        "<rect x='0' y='0' width='12' height='32' fill='#0000ff'><animateTransform attributeName='transform' type='translate' from='0 0' to='40 0' dur='2s' fill='freeze'/></rect>",
+    );
+    let start = frame(&source, 0.0);
+    let end = frame(&source, 2.0);
+    assert!(is_blue(pixel(&start, 4, 16)), "start {:?}", pixel(&start, 4, 16));
+    assert!(near_black(pixel(&start, 46, 16)), "start right {:?}", pixel(&start, 46, 16));
+    assert!(near_black(pixel(&end, 4, 16)), "end left {:?}", pixel(&end, 4, 16));
+    assert!(is_blue(pixel(&end, 46, 16)), "end {:?}", pixel(&end, 46, 16));
+}
+
+#[test]
+fn animate_motion_follows_the_line() {
+    let source = svg_doc(
+        "",
+        "<rect width='12' height='32' fill='#0000ff'><animateMotion path='M0,0 L40,0' dur='2s' fill='freeze'/></rect>",
+    );
+    let start = frame(&source, 0.0);
+    let end = frame(&source, 2.0);
+    assert!(is_blue(pixel(&start, 4, 16)), "start {:?}", pixel(&start, 4, 16));
+    assert!(near_black(pixel(&start, 46, 16)), "start right {:?}", pixel(&start, 46, 16));
+    assert!(near_black(pixel(&end, 4, 16)), "end left {:?}", pixel(&end, 4, 16));
+    assert!(is_blue(pixel(&end, 46, 16)), "end {:?}", pixel(&end, 46, 16));
+}
+
+#[test]
+fn animate_fill_ramps_through_purple() {
+    let source = svg_doc(
+        "",
+        "<rect width='64' height='32' fill='#0000ff'><animate attributeName='fill' from='#0000ff' to='#ff0000' dur='2s' fill='freeze'/></rect>",
+    );
+    let start = frame(&source, 0.0);
+    let mid_frame = frame(&source, 1.0);
+    let end = frame(&source, 2.0);
+    assert!(is_blue(pixel(&start, 8, 8)));
+    let mid = pixel(&mid_frame, 8, 8);
+    assert!(mid[0] > 100 && mid[2] > 100 && mid[1] < 30, "mid {mid:?}");
+    assert!(is_red(pixel(&end, 8, 8)));
+}
+
+#[test]
+fn smil_spline_requires_extraction() {
+    let message = compile(
+        "<svg><rect width='10' height='10'><animate attributeName='x' from='0' to='1' dur='1s' calcMode='spline' keySplines='0 0 1 1'/></rect></svg>",
+        CompileOptions {
+            width: WIDTH,
+            height: HEIGHT,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(
+        message.contains("SMIL calcMode spline requires extraction")
+            || message.contains("SMIL keySplines requires extraction"),
+        "{message}"
+    );
 }
 
 #[test]

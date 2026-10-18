@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 
-fn escape_xml(value: &str, attr: bool) -> String {
+pub(crate) fn escape_xml(value: &str, attr: bool) -> String {
     let mut escaped = value.replace('&', "&amp;").replace('<', "&lt;");
     if attr {
         escaped = escaped.replace('"', "&quot;");
@@ -79,9 +79,10 @@ fn serialize_svg_children(
     el: ElementRef<'_>,
     css: &Css,
     parent: &Values,
+    plan: &crate::smil::SmilPlan,
 ) -> Result<String, CompileError> {
     let mut out = String::new();
-    write_svg_children(el, css, parent, &mut out)?;
+    write_svg_children(el, css, parent, &mut out, "", plan)?;
     Ok(out)
 }
 
@@ -90,12 +91,17 @@ fn write_svg_children(
     css: &Css,
     parent: &Values,
     out: &mut String,
+    parent_path: &str,
+    plan: &crate::smil::SmilPlan,
 ) -> Result<(), CompileError> {
+    let mut index = 0usize;
     for child in el.children() {
         match child.value() {
             Node::Text(text) => out.push_str(&escape_xml(text, false)),
             Node::Element(_) => {
                 let child = ElementRef::wrap(child).unwrap();
+                let child_path = crate::smil::child_path(parent_path, index);
+                index += 1;
                 let values = css.cascade(child, parent)?;
                 let mut extra = String::new();
                 for name in SVG_EXTERNAL_PRESENTATION {
@@ -139,8 +145,11 @@ fn write_svg_children(
                 if !wrote_style && !extra.is_empty() {
                     out.push_str(&format!(" style=\"{}\"", escape_xml(&extra, true)));
                 }
+                if let Some(id) = plan.target_id(&child_path) {
+                    out.push_str(&format!(" director-smil-id=\"{id}\""));
+                }
                 out.push('>');
-                write_svg_children(child, css, &values, out)?;
+                write_svg_children(child, css, &values, out, &child_path, plan)?;
                 out.push_str("</");
                 out.push_str(tag);
                 out.push('>');
@@ -154,8 +163,8 @@ fn write_svg_children(
 pub(crate) fn validate_svg(source: &str) -> Result<(), CompileError> {
     reject_svg(
         source,
-        &["animate", "animateTransform", "animateMotion", "set", "script", "image"],
-        "SVG SMIL, scripts, and nested images require native translation",
+        &["script", "image"],
+        "SVG scripts and nested images require native translation",
     )
 }
 
@@ -1012,6 +1021,7 @@ impl Builder {
             }
             "svg" => {
                 validate_svg(&el.html())?;
+                let plan = crate::smil::collect(el)?;
                 for child in el
                     .descendants()
                     .filter_map(ElementRef::wrap)
@@ -1035,6 +1045,9 @@ impl Builder {
                 if el.value().attr("xmlns").is_none() {
                     markup.push_str(" xmlns=\"http://www.w3.org/2000/svg\"");
                 }
+                if let Some(id) = plan.target_id("") {
+                    markup.push_str(&format!(" director-smil-id=\"{id}\""));
+                }
                 markup.push_str(&format!(
                     " style=\"color:rgba({},{},{},{})\">",
                     paint.color.r * 255.0,
@@ -1042,19 +1055,35 @@ impl Builder {
                     paint.color.b * 255.0,
                     paint.color.a
                 ));
-                markup.push_str(&serialize_svg_children(el, &self.css, &values)?);
+                markup.push_str(&serialize_svg_children(el, &self.css, &values, &plan)?);
                 markup.push_str("</svg>");
                 let fonts = self.ensure_svg_fonts()?;
-                let vector = parse_svg(&markup, &context, &fonts)?;
-                let size = vector.size();
-                svg_viewport = Some((size.width(), size.height()));
+                let (width, height, content_node): (f32, f32, Box<dyn Element>) = if plan.is_empty() {
+                    let vector = parse_svg(&markup, &context, &fonts)?;
+                    let size = vector.size();
+                    (
+                        size.width(),
+                        size.height(),
+                        Box::new(VectorNode::from_tree(vector)),
+                    )
+                } else {
+                    let animated = crate::smil::AnimatedSvg::new(
+                        markup,
+                        Arc::clone(&fonts),
+                        &plan,
+                        &context,
+                    )?;
+                    let (width, height) = animated.size();
+                    (width, height, Box::new(animated))
+                };
+                svg_viewport = Some((width, height));
                 if !values.contains_key("width") {
-                    layout.size.width = taffy::prelude::length(vector.size().width());
+                    layout.size.width = taffy::prelude::length(width);
                 }
                 if !values.contains_key("height") {
-                    layout.size.height = taffy::prelude::length(vector.size().height());
+                    layout.size.height = taffy::prelude::length(height);
                 }
-                Some(Box::new(VectorNode::from_tree(vector)))
+                Some(content_node)
             }
             "video" => {
                 if el.value().attr("muted").is_none() {
@@ -1119,6 +1148,11 @@ impl Builder {
             "foreignobject" => {
                 return Err(CompileError::Input(
                     "nested foreignObject requires extraction".into(),
+                ));
+            }
+            "animate" | "animatetransform" | "animatemotion" | "set" => {
+                return Err(CompileError::Input(
+                    "SMIL inside foreignObject requires extraction".into(),
                 ));
             }
             "canvas" | "iframe" | "object" | "embed" => {

@@ -118,6 +118,11 @@ pub trait Element: std::fmt::Debug + ElementClone {
     /// * `true` if the element's visual appearance changed (requiring a repaint).
     fn update(&mut self, time: f64) -> bool;
 
+    /// Paint depends on local time, so a static-subtree cache key includes that time.
+    fn varies_with_time(&self) -> bool {
+        false
+    }
+
     /// Called after layout is computed but before rendering.
     ///
     /// Useful for elements that need to adjust their state based on their final size (e.g. `TextFit`).

@@ -208,6 +208,9 @@ fn element_depends_on_time(element: &dyn crate::element::Element) -> bool {
 }
 
 fn node_depends_on_time(node: &SceneNode) -> bool {
+    if node.element.varies_with_time() {
+        return true;
+    }
     if matches!(
         node.element.kind(),
         "video"

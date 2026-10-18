@@ -18,6 +18,7 @@ mod grid_template;
 mod object_pos;
 mod project;
 mod shader;
+mod smil;
 mod style;
 mod transform_origin;
 pub use capture::{

@@ -137,6 +137,11 @@ impl Element for HtmlElement {
     fn kind(&self) -> &'static str {
         "html"
     }
+    fn varies_with_time(&self) -> bool {
+        self.content
+            .as_ref()
+            .is_some_and(|content| content.varies_with_time())
+    }
     fn as_any(&self) -> &dyn Any {
         self
     }
