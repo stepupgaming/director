@@ -93,18 +93,16 @@ fn nested_supports_object_fit_cover_paints_red() {
 }
 
 #[test]
-fn nested_supports_position_fixed_is_unsupported() {
-    let err = compile(
-        "<style>.card{@supports (position: fixed){background:red}}</style><div class='card'></div>",
-        options(64, 32),
-    )
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(
-        err.contains("unsupported CSS supports condition"),
-        "{err}"
+fn nested_supports_position_fixed_and_sticky_paint_red() {
+    let html = stage(
+        64,
+        32,
+        ".fixed{position:absolute;left:0;top:0;width:32px;height:32px;@supports (position: fixed){background:red}}.sticky{position:absolute;left:32px;top:0;width:32px;height:32px;@supports (position: sticky){background:red}}",
+        "<div class='fixed'></div><div class='sticky'></div>",
     );
+    let p = frame(&html, 64, 32);
+    assert_eq!(pixel(&p, 64, 8, 8), &[255, 0, 0, 255], "position: fixed");
+    assert_eq!(pixel(&p, 64, 40, 8), &[255, 0, 0, 255], "position: sticky");
 }
 
 #[test]

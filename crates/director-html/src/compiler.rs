@@ -16,7 +16,7 @@ use director_core::{
 use scraper::{node::Node, ElementRef, Html, Selector};
 use std::{
     any::Any,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     path::Path,
     sync::Arc,
 };
@@ -311,6 +311,8 @@ pub(crate) fn compile_with_assets(
         errors: Vec::new(),
         nodes: 0,
         assets,
+        root_id: None,
+        fixed: HashSet::new(),
     };
     // Compute inherited values along the full ancestor chain, including body resets.
     let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
@@ -359,6 +361,8 @@ struct Builder {
     errors: Vec<crate::Diagnostic>,
     nodes: usize,
     assets: Arc<AssetStore>,
+    root_id: Option<NodeId>,
+    fixed: HashSet<NodeId>,
 }
 
 fn label(el: ElementRef<'_>) -> String {
@@ -668,8 +672,16 @@ impl Builder {
             height: self.options.height as f32,
             font_size: parent_size,
         };
+        let style_block = if values.get("position").map(String::as_str) == Some("fixed") {
+            style::ContainingBlock::from_axes(
+                self.options.width as f32,
+                self.options.height as f32,
+            )
+        } else {
+            containing_block
+        };
         let (mut layout, mut paint) =
-            style::translate(&values, metrics, containing_block, &self.assets).map_err(
+            style::translate(&values, metrics, style_block, &self.assets).map_err(
                 |errors| {
                     CompileError::Diagnostics(
                         errors
@@ -898,7 +910,7 @@ impl Builder {
                     .collect();
                 if children.iter().all(|e| inline(e.value().name())) {
                     let mut spans = Vec::new();
-                    self.rich_text(el, &values, &paint, containing_block, &mut spans)?;
+                    self.rich_text(el, &values, &paint, style_block, &mut spans)?;
                     normalize(&mut spans, paint.preserve_space);
                     if spans.is_empty() {
                         None
@@ -924,7 +936,7 @@ impl Builder {
             }
         };
         let stretch_width = !root && style::width_stretches(&values, parent);
-        let child_block = style::content_box(&layout, containing_block, stretch_width);
+        let child_block = style::content_box(&layout, style_block, stretch_width);
         let gap_metrics = Metrics {
             font_size: paint.font_size,
             ..metrics
@@ -969,6 +981,12 @@ impl Builder {
         element.animations = animation::compile(&values, &self.css, &paint, metrics)
             .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
         let id = self.director.scene.add_node(Box::new(element));
+        if root {
+            self.root_id = Some(id);
+        }
+        if values.get("position").map(String::as_str) == Some("fixed") {
+            self.fixed.insert(id);
+        }
         self.nodes += 1;
         self.director.scene.get_node_mut(id).unwrap().z_index = paint.z_index;
         if anonymous_text {
@@ -1022,7 +1040,16 @@ impl Builder {
                 }
                 let child_id =
                     self.node(child, &values, next_start, false, child_block, depth + 1)?;
-                self.director.scene.add_child(id, child_id);
+                // Taffy absolute offsets use the parent node, so fixed is a child of the composition root.
+                if !root && self.fixed.contains(&child_id) {
+                    self.director.scene.add_child(
+                        self.root_id
+                            .expect("composition root exists before a nested fixed box"),
+                        child_id,
+                    );
+                } else {
+                    self.director.scene.add_child(id, child_id);
+                }
             }
         }
         Ok(id)

@@ -319,7 +319,7 @@ export async function extract(page) {
       else if (maskImage != null && maskImage !== 'none' && maskMode !== 'alpha' && maskMode !== 'match-source' && maskMode !== 'luminance') unsupported.push(`${el.id || el.tagName}: non-alpha mask mode`);
       for (const pseudo of ['::before', '::after']) { const content = getComputedStyle(el, pseudo).content; if (content && !['none','normal','""'].includes(content)) unsupported.push(`${el.id || el.tagName}${pseudo}: generated content`); }
       if (css.backgroundImage.startsWith('url(')) unsupported.push(`${el.id || el.tagName}: image backgrounds need native image translation`);
-      if (css.position === 'fixed' || css.position === 'sticky') unsupported.push(`${el.id || el.tagName}: ${css.position} positioning`);
+      if (css.position === 'fixed' || css.position === 'sticky') values.position = css.position;
       if (el.tagName === 'CANVAS' && !window.__directorGl?.read(el)?.fragment) unsupported.push(`${el.id || 'canvas'}: canvas/WebGL requires a native translator`);
       if (el.tagName === 'IFRAME') unsupported.push(`${el.id || 'iframe'}: captured iframe requires native media translation; use the static compiler for media`);
       if (el.tagName === 'VIDEO') {

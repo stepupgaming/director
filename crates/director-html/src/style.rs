@@ -422,7 +422,7 @@ fn used_content_height(style: &Style, parent: ContainingBlock) -> Option<f32> {
     axis_basis(content)
 }
 
-/// Width stretches for a block-level static or relative box with `width: auto`.
+/// Width stretches for a block-level static, relative, or sticky box with `width: auto`.
 /// A row flex item and a grid item stay indefinite. A column flex item stretches on the cross axis.
 pub(crate) fn width_stretches(values: &Values, parent: &Values) -> bool {
     if values.get("width").is_some_and(|value| value != "auto") {
@@ -432,7 +432,7 @@ pub(crate) fn width_stretches(values: &Values, parent: &Values) -> bool {
         .get("position")
         .map(String::as_str)
         .unwrap_or("static");
-    if !matches!(position, "static" | "relative") {
+    if !matches!(position, "static" | "relative" | "sticky") {
         return false;
     }
     let display = values.get("display").map(String::as_str).unwrap_or("block");
@@ -1024,9 +1024,9 @@ pub fn translate(
                 }
                 "position" => {
                     style.position = match s {
-                        "static" | "relative" => Position::Relative,
-                        "absolute" => Position::Absolute,
-                        _ => return Err("fixed/sticky positioning requires extraction".into()),
+                        "static" | "relative" | "sticky" => Position::Relative,
+                        "absolute" | "fixed" => Position::Absolute,
+                        _ => return Err(format!("unsupported position '{s}'")),
                     }
                 }
                 "width" => style.size.width = dimension_on(s, m, block.width)?,
@@ -1636,6 +1636,13 @@ pub fn translate(
         if let Err(e) = result {
             errors.push(format!("{name}: {s}: {e}"));
         }
+    }
+    // Alphabetical order applies bottom/left before position, so clear sticky insets here.
+    if values.get("position").map(String::as_str) == Some("sticky") {
+        style.inset.left = auto();
+        style.inset.right = auto();
+        style.inset.top = auto();
+        style.inset.bottom = auto();
     }
     let mut colors = Vec::new();
     let mut widths = Vec::new();

@@ -172,7 +172,6 @@ fn unknown_nested_conditions_fail_and_top_level_media_stays_unsupported() {
     for source in [
         ".card { @media (hover: hover) { background: red } }",
         ".card { @media speech { background: red } }",
-        ".card { @supports (position: fixed) { background: red } }",
         ".card { @media screen and (prefers-color-scheme: dark) { background: red } }",
     ] {
         let err = compile(

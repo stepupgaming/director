@@ -692,7 +692,7 @@ fn supports_declaration(name: &str, value: &str) -> bool {
     } else if name.eq_ignore_ascii_case("object-fit") {
         keyword(&["fill", "cover", "contain", "none", "scale-down"])
     } else if name.eq_ignore_ascii_case("position") {
-        keyword(&["static", "relative", "absolute"])
+        keyword(&["static", "relative", "absolute", "fixed", "sticky"])
     } else if name.eq_ignore_ascii_case("overflow-x")
         || name.eq_ignore_ascii_case("overflow-y")
         || name.eq_ignore_ascii_case("overflow")
