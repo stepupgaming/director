@@ -365,6 +365,217 @@ fn push_3d_plane(
     prefix.pop();
 }
 
+const Z_VARY_EPSILON: f32 = 1.0e-3;
+
+/// Scene-graph placement for one node. Matches `apply_node_scene_transform`.
+fn scene_view_matrix(node: &SceneNode) -> skia_safe::M44 {
+    let tx = node.layout_rect.left + node.transform.translate_x.current_value;
+    let ty = node.layout_rect.top + node.transform.translate_y.current_value;
+    let rotation = node.transform.rotation.current_value;
+    let scale_x = node.transform.scale_x.current_value;
+    let scale_y = node.transform.scale_y.current_value;
+    let skew_x = node.transform.skew_x.current_value;
+    let skew_y = node.transform.skew_y.current_value;
+    if rotation == 0.0 && scale_x == 1.0 && scale_y == 1.0 && skew_x == 0.0 && skew_y == 0.0 {
+        return skia_safe::M44::translate(tx, ty, 0.0);
+    }
+    let pivot_x = node.layout_rect.width() * node.transform.pivot_x;
+    let pivot_y = node.layout_rect.height() * node.transform.pivot_y;
+    let radians = rotation.to_radians();
+    let (sin, cos) = (radians.sin(), radians.cos());
+    let rotation_z = skia_safe::M44::row_major(&[
+        cos, -sin, 0.0, 0.0, sin, cos, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]);
+    let kx = skew_x.to_radians().tan();
+    let ky = skew_y.to_radians().tan();
+    let skew = skia_safe::M44::row_major(&[
+        1.0, kx, 0.0, 0.0, ky, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]);
+    let mut matrix = skia_safe::M44::translate(tx, ty, 0.0);
+    matrix = skia_safe::M44::concat(&matrix, &skia_safe::M44::translate(pivot_x, pivot_y, 0.0));
+    matrix = skia_safe::M44::concat(&matrix, &rotation_z);
+    matrix = skia_safe::M44::concat(&matrix, &skia_safe::M44::scale(scale_x, scale_y, 1.0));
+    matrix = skia_safe::M44::concat(&matrix, &skew);
+    skia_safe::M44::concat(&matrix, &skia_safe::M44::translate(-pivot_x, -pivot_y, 0.0))
+}
+
+/// Leaf-local point to the sorting parent's space, before that parent's perspective.
+fn chain_local_matrix(scene: &SceneGraph, chain: &[NodeId]) -> skia_safe::M44 {
+    let mut matrix = skia_safe::M44::new_identity();
+    for node_id in chain {
+        let Some(node) = scene.get_node(*node_id) else {
+            continue;
+        };
+        matrix = skia_safe::M44::concat(&matrix, &scene_view_matrix(node));
+        if let Some(local) = node
+            .element
+            .local_view_matrix(node.layout_rect.width(), node.layout_rect.height())
+        {
+            matrix = skia_safe::M44::concat(&matrix, &local);
+        }
+    }
+    matrix
+}
+
+fn plane_z_varies(scene: &SceneGraph, chain: &[NodeId]) -> bool {
+    let matrix = chain_local_matrix(scene, chain);
+    matrix.rc(2, 0).abs() > Z_VARY_EPSILON || matrix.rc(2, 1).abs() > Z_VARY_EPSILON
+}
+
+/// View Z of the plane point that projects to device `(u, v)`. Larger Z is closer.
+fn plane_depth_at(device: &skia_safe::M44, chain: &skia_safe::M44, u: f32, v: f32) -> Option<f32> {
+    let a = u * device.rc(3, 0) - device.rc(0, 0);
+    let b = u * device.rc(3, 1) - device.rc(0, 1);
+    let c = device.rc(0, 3) - u * device.rc(3, 3);
+    let d = v * device.rc(3, 0) - device.rc(1, 0);
+    let e = v * device.rc(3, 1) - device.rc(1, 1);
+    let f = device.rc(1, 3) - v * device.rc(3, 3);
+    let det = a * e - b * d;
+    if !det.is_finite() || det.abs() < 1.0e-8 {
+        return None;
+    }
+    let x = (c * e - b * f) / det;
+    let y = (a * f - c * d) / det;
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
+    let point = chain.map(x, y, 0.0, 1.0);
+    if !point.w.is_finite() || !point.z.is_finite() {
+        return None;
+    }
+    if point.w.abs() < 1.0e-8 {
+        Some(point.z)
+    } else {
+        Some(point.z / point.w)
+    }
+}
+
+fn paint_sorted_planes<C: StaticSubtreeCache>(
+    scene: &SceneGraph,
+    assets: &AssetManager,
+    static_cache: &mut C,
+    planes: &[DepthPlane],
+    canvas: &skia_safe::Canvas,
+    parent_opacity: f32,
+    depth: usize,
+    dirty_nodes: Option<&HashSet<NodeId>>,
+) -> Result<(), RenderError> {
+    for plane in planes {
+        paint_depth_chain(
+            scene,
+            assets,
+            static_cache,
+            &plane.chain,
+            0,
+            canvas,
+            parent_opacity,
+            depth,
+            dirty_nodes,
+        )?;
+    }
+    Ok(())
+}
+
+/// Per-pixel occlusion for preserve-3d planes whose Z changes across the quad.
+///
+/// Planes stay in center-Z order. A covered fragment replaces the stored one
+/// when its view Z is greater or equal, so an equal-Z tie still follows
+/// z-index and source order. Flat and constant-Z lists do not use this path.
+fn paint_occluded_planes<C: StaticSubtreeCache>(
+    scene: &SceneGraph,
+    assets: &AssetManager,
+    static_cache: &mut C,
+    planes: &[DepthPlane],
+    canvas: &skia_safe::Canvas,
+    parent_opacity: f32,
+    depth: usize,
+    dirty_nodes: Option<&HashSet<NodeId>>,
+) -> Result<(), RenderError> {
+    let layer = canvas.base_layer_size();
+    if layer.width <= 0 || layer.height <= 0 {
+        return paint_sorted_planes(
+            scene,
+            assets,
+            static_cache,
+            planes,
+            canvas,
+            parent_opacity,
+            depth,
+            dirty_nodes,
+        );
+    }
+    let width = layer.width as usize;
+    let height = layer.height as usize;
+    let parent_ctm = canvas.local_to_device();
+    let mut color = vec![0u8; width * height * 4];
+    let mut stored = vec![f32::NEG_INFINITY; width * height];
+    for plane in planes {
+        let chain = chain_local_matrix(scene, &plane.chain);
+        let device = skia_safe::M44::concat(&parent_ctm, &chain);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((layer.width, layer.height))
+            .ok_or(RenderError::SurfaceFailure)?;
+        let offscreen = surface.canvas();
+        offscreen.clear(skia_safe::Color::TRANSPARENT);
+        offscreen.set_matrix(&parent_ctm);
+        paint_depth_chain(
+            scene,
+            assets,
+            static_cache,
+            &plane.chain,
+            0,
+            offscreen,
+            parent_opacity,
+            depth,
+            dirty_nodes,
+        )?;
+        let info = skia_safe::ImageInfo::new(
+            (layer.width, layer.height),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Unpremul,
+            None,
+        );
+        let mut pixels = vec![0u8; width * height * 4];
+        if !surface.read_pixels(&info, &mut pixels, width * 4, (0, 0)) {
+            return Err(RenderError::SurfaceFailure);
+        }
+        for y in 0..height {
+            for x in 0..width {
+                let offset = (y * width + x) * 4;
+                if pixels[offset + 3] < 128 {
+                    continue;
+                }
+                let Some(view_z) =
+                    plane_depth_at(&device, &chain, x as f32 + 0.5, y as f32 + 0.5)
+                else {
+                    continue;
+                };
+                let index = y * width + x;
+                if view_z >= stored[index] {
+                    stored[index] = view_z;
+                    color[offset..offset + 4].copy_from_slice(&pixels[offset..offset + 4]);
+                }
+            }
+        }
+    }
+    let info = skia_safe::ImageInfo::new(
+        (layer.width, layer.height),
+        skia_safe::ColorType::RGBA8888,
+        skia_safe::AlphaType::Unpremul,
+        None,
+    );
+    let image = skia_safe::images::raster_from_data(
+        &info,
+        skia_safe::Data::new_copy(&color),
+        width * 4,
+    )
+    .ok_or(RenderError::SurfaceFailure)?;
+    canvas.save();
+    canvas.reset_matrix();
+    canvas.draw_image(&image, (0, 0), None);
+    canvas.restore();
+    Ok(())
+}
+
 /// Same local transform order as the non-static path of `render_recursive`.
 fn apply_node_scene_transform(canvas: &skia_safe::Canvas, node: &SceneNode) {
     let width = node.layout_rect.width();
@@ -503,7 +714,9 @@ fn paint_depth_chain<C: StaticSubtreeCache>(
 ///
 /// A preserve-3d element sorts one shared list: ascending summed `view_depth`,
 /// then z-index, then source order. A direct child that `shares_3d` puts its
-/// descendants in that list. A child that does not stays one plane.
+/// descendants in that list. A child that does not stays one plane. A list
+/// whose Z changes across a quad is occluded per pixel. Constant Z stays on
+/// this sort, so equal Z still follows z-index and source order.
 fn render_node_subtree<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,
@@ -530,20 +743,33 @@ fn render_node_subtree<C: StaticSubtreeCache>(
             return;
         }
         if shares_3d {
-            for plane in collect_3d_planes(scene, node_id) {
-                if let Err(error) = paint_depth_chain(
+            let planes = collect_3d_planes(scene, node_id);
+            let occlude = planes.iter().any(|plane| plane_z_varies(scene, &plane.chain));
+            let painted = if occlude {
+                paint_occluded_planes(
                     scene,
                     assets,
                     static_cache,
-                    &plane.chain,
-                    0,
+                    &planes,
                     canvas,
                     parent_opacity,
                     depth + 1,
                     dirty_nodes,
-                ) {
-                    last_error = Err(error);
-                }
+                )
+            } else {
+                paint_sorted_planes(
+                    scene,
+                    assets,
+                    static_cache,
+                    &planes,
+                    canvas,
+                    parent_opacity,
+                    depth + 1,
+                    dirty_nodes,
+                )
+            };
+            if let Err(error) = painted {
+                last_error = Err(error);
             }
             return;
         }

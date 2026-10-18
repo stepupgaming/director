@@ -12,7 +12,7 @@ use crate::{
 };
 use director_core::{Element, RenderError};
 use skia_safe::{
-    color_filters, Canvas, FilterMode, Matrix, MipmapMode, Rect, SamplingOptions, TileMode,
+    color_filters, Canvas, FilterMode, Matrix, M44, MipmapMode, Rect, SamplingOptions, TileMode,
 };
 use std::any::Any;
 use taffy::{
@@ -289,6 +289,22 @@ impl Element for HtmlElement {
             }
             CanvasTransform::Affine(_) => 0.0,
         }
+    }
+    fn local_view_matrix(&self, width: f32, height: f32) -> Option<skia_safe::M44> {
+        let origin_x = resolve(self.paint.origin.0, width);
+        let origin_y = resolve(self.paint.origin.1, height);
+        let transform = canvas_transform(&self.paint.transform, self.metrics, (width, height));
+        let matrix = match transform {
+            CanvasTransform::Affine(_) if self.paint.origin_z == 0.0 => return None,
+            CanvasTransform::Affine(matrix) => m44_from_affine(&matrix),
+            CanvasTransform::Projective(matrix) => matrix,
+        };
+        Some(origin_view_matrix(
+            origin_x,
+            origin_y,
+            self.paint.origin_z,
+            &matrix,
+        ))
     }
     fn render(
         &self,
@@ -576,6 +592,12 @@ impl Element for HtmlElement {
             rate,
         )
     }
+}
+
+fn origin_view_matrix(origin_x: f32, origin_y: f32, origin_z: f32, matrix: &M44) -> M44 {
+    let to_origin = M44::translate(origin_x, origin_y, origin_z);
+    let from_origin = M44::translate(-origin_x, -origin_y, -origin_z);
+    M44::concat(&M44::concat(&to_origin, matrix), &from_origin)
 }
 
 fn m44_from_affine(matrix: &Matrix) -> skia_safe::M44 {

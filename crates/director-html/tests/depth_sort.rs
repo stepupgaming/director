@@ -86,6 +86,16 @@ fn percent_transform_origin_z_still_fails() {
 }
 
 #[test]
+fn crossing_rotate_x_splits_the_overlap() {
+    let html = "<style>body{margin:0}.stage{position:relative;width:64px;height:64px;transform-style:preserve-3d}.card{position:absolute;top:0;right:0;bottom:0;left:0}.red{background:red;transform:rotateX(60deg)}.blue{background:blue;transform:rotateX(-60deg)}</style><div class='stage'><div class='card red'></div><div class='card blue'></div></div>";
+    let pixels = frame(html, 0.0);
+    assert_eq!(pixel(&pixels, 32, 20), [0, 0, 255, 255]);
+    assert_eq!(pixel(&pixels, 32, 44), [255, 0, 0, 255]);
+    assert_eq!(pixel(&pixels, 32, 8), [0, 0, 0, 255]);
+    assert_eq!(pixel(&pixels, 32, 56), [0, 0, 0, 255]);
+}
+
+#[test]
 fn perspective_origin_z_still_fails() {
     let error = compile(
         "<div style='perspective-origin:50% 50% 10px'></div>",

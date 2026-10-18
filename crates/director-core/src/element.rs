@@ -153,6 +153,12 @@ pub trait Element: std::fmt::Debug + ElementClone {
         0.0
     }
 
+    /// CSS transform and transform-origin, mapping a border-box point into this
+    /// element's plane. `None` leaves Z unchanged. Parent perspective is not included.
+    fn local_view_matrix(&self, _width: f32, _height: f32) -> Option<skia_safe::M44> {
+        None
+    }
+
     /// Animates a specific named property.
     ///
     /// Returns `Err` for unknown property names or invalid easing strings.

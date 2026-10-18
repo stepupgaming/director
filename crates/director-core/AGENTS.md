@@ -252,9 +252,12 @@ A direct child that also shares 3d contributes its descendants. Depth
 sums `view_depth` along that chain. A non-sharing child stays one plane.
 The list sorts by ascending depth, then z-index, then source order.
 HtmlElement reports the Z of the element center after its own local
-matrix. Parent perspective is not part of that Z. Crossing `rotateX`
-planes and a software z-buffer stay out. Composition clip order is
-unchanged.
+matrix. Parent perspective is not part of that Z. A plane whose Z
+changes across its quad, including crossing `rotateX` cards, is
+occluded per pixel. Constant Z stays on the center sort. Measured
+2026-10-18 by `cargo test -p director-html --release --test depth_sort
+--test depth_nested`: depth_sort 8 passed and depth_nested 1 passed.
+Composition clip order is unchanged.
 
 Layout synchronization: compare child order including masks before calling Taffy
 `set_children`; identical lists must not invalidate the layout cache. Compare
