@@ -104,6 +104,16 @@ impl HtmlElement {
                     );
                 }
             }
+        } else if let Some(text) = &self.content {
+            if let Some(node) = text
+                .as_any()
+                .downcast_ref::<director_core::node::TextNode>()
+            {
+                let used = crate::compiler::layout_paragraph(node, &self.paint, content.width());
+                if used.is_finite() && used > content.width() + 0.5 {
+                    content = Rect::from_xywh(content.left, content.top, used, content.height());
+                }
+            }
         }
         content.offset((0.0, self.baseline_offset));
         content
@@ -135,17 +145,26 @@ impl Element for HtmlElement {
             .as_ref()
             .and_then(|c| c.as_any().downcast_ref::<director_core::node::TextNode>())
         {
+            let width = if self.paint.no_wrap {
+                f32::INFINITY
+            } else {
+                known.width.unwrap_or(match available.width {
+                    AvailableSpace::Definite(w) => w,
+                    // A 1px min-content pass would collapse a soft break to one character.
+                    AvailableSpace::MinContent if crate::style::soft_wrap(&self.paint) => {
+                        f32::INFINITY
+                    }
+                    AvailableSpace::MinContent => 1.0,
+                    AvailableSpace::MaxContent => f32::INFINITY,
+                })
+            };
+            if !self.paint.no_wrap {
+                crate::compiler::layout_paragraph(text, &self.paint, width);
+            }
             if let Some(paragraph) = text.paragraph.lock().unwrap().as_mut() {
-                let width = if self.paint.no_wrap {
-                    f32::INFINITY
-                } else {
-                    known.width.unwrap_or(match available.width {
-                        AvailableSpace::Definite(w) => w,
-                        AvailableSpace::MinContent => 1.0,
-                        AvailableSpace::MaxContent => f32::INFINITY,
-                    })
-                };
-                paragraph.layout(width);
+                if self.paint.no_wrap {
+                    paragraph.layout(width);
+                }
                 return Size {
                     width: known.width.unwrap_or(paragraph.longest_line()),
                     height: self

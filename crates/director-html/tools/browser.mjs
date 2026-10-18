@@ -274,7 +274,7 @@ export async function extract(page) {
       else if (typeof mount.render === 'function') mount.render(0);
     }
     const unsupported = [];
-    const props = ['background-color', 'background-image', 'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'white-space', 'text-transform', 'direction', 'opacity', 'transform', 'transform-origin', 'filter', 'backdrop-filter', 'mask-image', 'mix-blend-mode', 'overflow-x', 'overflow-y', 'box-shadow', 'clip-path', 'z-index', 'object-fit', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
+    const props = ['background-color', 'background-image', 'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'white-space', 'text-transform', 'overflow-wrap', 'word-break', 'direction', 'opacity', 'transform', 'transform-origin', 'filter', 'backdrop-filter', 'mask-image', 'mix-blend-mode', 'overflow-x', 'overflow-y', 'box-shadow', 'clip-path', 'z-index', 'object-fit', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
     for (const side of ['top','right','bottom','left']) for (const suffix of ['width','style','color']) props.push(`border-${side}-${suffix}`);
     for (const corner of ['top-left','top-right','bottom-right','bottom-left']) props.push(`border-${corner}-radius`);
     const nodes = [root, ...root.querySelectorAll('*')].filter(el => !el.closest('svg') || el === el.closest('svg'));
@@ -408,7 +408,7 @@ export async function extract(page) {
           if (node.nodeType === Node.ELEMENT_NODE) { const child = walk(node, rect); if (child) item.children.push(child); }
           else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
             const range = document.createRange(); range.selectNodeContents(node); const r = range.getBoundingClientRect();
-            const textStyles = Object.fromEntries(['color','font-family','font-size','font-weight','font-style','line-height','letter-spacing','text-align','white-space','text-transform','direction'].map(p => [p, values[p]]));
+            const textStyles = Object.fromEntries(['color','font-family','font-size','font-weight','font-style','line-height','letter-spacing','text-align','white-space','text-transform','overflow-wrap','word-break','direction'].map(p => [p, values[p]]));
             item.children.push({ tag:'text',id:`${item.id}:text`,rect:[r.x-rect.x,r.y-rect.y,r.width,r.height],styles:textStyles,text:node.textContent.replace(/\s+/g,' '),children:[] });
           }
         }

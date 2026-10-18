@@ -353,7 +353,23 @@ pub fn text_content(spans: Vec<TextSpan>, paint: &PaintStyle, director: &Directo
     prepare_paragraph(&mut node, paint);
     node
 }
-pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
+fn span_font_style(weight: u16, italic: bool) -> skia_safe::FontStyle {
+    skia_safe::FontStyle::new(
+        skia_safe::font_style::Weight::from(weight as i32),
+        skia_safe::font_style::Width::NORMAL,
+        if italic {
+            skia_safe::font_style::Slant::Italic
+        } else {
+            skia_safe::font_style::Slant::Upright
+        },
+    )
+}
+
+fn build_paragraph(
+    node: &TextNode,
+    paint: &PaintStyle,
+    width: f32,
+) -> skia_safe::textlayout::Paragraph {
     use skia_safe::textlayout::{ParagraphBuilder, ParagraphStyle, StrutStyle, TextStyle};
     let mut paragraph = ParagraphStyle::new();
     paragraph.set_text_align(paint.align);
@@ -365,15 +381,7 @@ pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
     let mut strut = StrutStyle::new();
     strut.set_font_families(&[paint.font_family.as_str()]);
     strut.set_font_size(paint.font_size);
-    let font_style = skia_safe::FontStyle::new(
-        skia_safe::font_style::Weight::from(paint.font_weight as i32),
-        skia_safe::font_style::Width::NORMAL,
-        if paint.font_style == "italic" {
-            skia_safe::font_style::Slant::Italic
-        } else {
-            skia_safe::font_style::Slant::Upright
-        },
-    );
+    let font_style = span_font_style(paint.font_weight, paint.font_style == "italic");
     strut.set_font_style(font_style);
     let mut default_text = TextStyle::new();
     default_text.set_font_size(paint.font_size);
@@ -397,30 +405,87 @@ pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
     strut.set_half_leading(true);
     strut.set_leading(0.0);
     paragraph.set_strut_style(strut);
-    let mut builder = ParagraphBuilder::new(&paragraph, collection);
+    let mut builder = ParagraphBuilder::new(&paragraph, collection.clone());
+    let soft = style::soft_wrap(paint) && !paint.no_wrap;
+    let mut line_width = 0.0;
+    let mut line_empty = true;
     for span in &node.spans {
-        let mut text = TextStyle::new();
-        text.set_font_size(span.font_size.unwrap_or(paint.font_size));
-        text.set_color(span.color.unwrap_or(paint.color).to_skia());
-        text.set_font_families(&[span.font_family.as_deref().unwrap_or(&paint.font_family)]);
-        text.set_font_style(skia_safe::FontStyle::new(
-            skia_safe::font_style::Weight::from(
-                span.font_weight.unwrap_or(paint.font_weight) as i32
-            ),
-            skia_safe::font_style::Width::NORMAL,
-            if span.font_style.as_deref().unwrap_or(&paint.font_style) == "italic" {
-                skia_safe::font_style::Slant::Italic
-            } else {
-                skia_safe::font_style::Slant::Upright
+        let size = span.font_size.unwrap_or(paint.font_size);
+        let family = span.font_family.as_deref().unwrap_or(&paint.font_family);
+        let weight = span.font_weight.unwrap_or(paint.font_weight);
+        let italic = span.font_style.as_deref().unwrap_or(&paint.font_style) == "italic";
+        let spacing = span.letter_spacing.unwrap_or(paint.letter_spacing);
+        let style = span_font_style(weight, italic);
+        let font = collection
+            .find_typefaces(&[family], style)
+            .into_iter()
+            .next()
+            .map(|face| skia_safe::Font::from_typeface(face, size));
+        let mut piece = String::new();
+        style::append_wrapped(
+            &mut piece,
+            &span.text,
+            if paint.no_wrap { f32::INFINITY } else { width },
+            soft,
+            spacing,
+            &mut line_width,
+            &mut line_empty,
+            |sample| {
+                if sample.is_empty() {
+                    return 0.0;
+                }
+                let advance = font
+                    .as_ref()
+                    .map(|font| font.measure_str(sample, None).0)
+                    .unwrap_or(sample.chars().count() as f32 * size * 0.5);
+                let gaps = sample.chars().count().saturating_sub(1) as f32;
+                advance + spacing * gaps
             },
-        ));
-        text.set_letter_spacing(span.letter_spacing.unwrap_or(paint.letter_spacing));
+        );
+        let mut text = TextStyle::new();
+        text.set_font_size(size);
+        text.set_color(span.color.unwrap_or(paint.color).to_skia());
+        text.set_font_families(&[family]);
+        text.set_font_style(style);
+        text.set_letter_spacing(spacing);
         builder.push_style(&text);
-        builder.add_text(&span.text);
+        builder.add_text(&piece);
         builder.pop();
     }
-    *node.paragraph.lock().unwrap() = Some(builder.build());
+    builder.build()
+}
+
+pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
+    let paragraph = build_paragraph(node, paint, f32::INFINITY);
+    *node.paragraph.lock().unwrap() = Some(paragraph);
     node.dirty_layout = false;
+}
+
+/// Skia breaks a cluster wider than the layout width. Wrap to `width` first.
+/// Left alignment then lays out at least as wide as the longest line, so a token
+/// that CSS would overflow stays on one line.
+pub fn layout_paragraph(node: &TextNode, paint: &PaintStyle, width: f32) -> f32 {
+    let mut paragraph = build_paragraph(node, paint, width);
+    let finite = width.is_finite() && width > 0.0;
+    let used = if !finite {
+        paragraph.layout(f32::INFINITY);
+        width
+    } else if paint.align == skia_safe::textlayout::TextAlign::Left {
+        paragraph.layout(f32::INFINITY);
+        let longest = paragraph.longest_line();
+        let used = if longest > width {
+            longest + 1.0
+        } else {
+            width
+        };
+        paragraph.layout(used);
+        used
+    } else {
+        paragraph.layout(width);
+        width
+    };
+    *node.paragraph.lock().unwrap() = Some(paragraph);
+    used
 }
 pub fn span(text: String, paint: &PaintStyle) -> TextSpan {
     TextSpan {

@@ -48,6 +48,13 @@ impl LengthParts for LengthPercentage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverflowWrap {
+    Normal,
+    BreakWord,
+    Anywhere,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextTransform {
     None,
     Uppercase,
@@ -87,6 +94,9 @@ pub struct PaintStyle {
     pub align: skia_safe::textlayout::TextAlign,
     pub preserve_space: bool,
     pub no_wrap: bool,
+    pub overflow_wrap: OverflowWrap,
+    /// `word-break: break-word`. Wrapping matches `overflow-wrap`, and other values stay errors.
+    pub break_word: bool,
     pub text_transform: TextTransform,
     pub rtl: bool,
     pub z_index: i32,
@@ -201,6 +211,108 @@ pub(crate) fn convert_length(l: &CssLength, m: Metrics) -> Result<LengthPercenta
     match crate::calc_len::resolve_length(l, m, None)? {
         crate::calc_len::ResolvedLength::Length(px) => Ok(LengthPercentage::length(px)),
         crate::calc_len::ResolvedLength::Percent(fraction) => Ok(LengthPercentage::percent(fraction)),
+    }
+}
+
+pub fn soft_wrap(paint: &PaintStyle) -> bool {
+    paint.break_word || paint.overflow_wrap != OverflowWrap::Normal
+}
+
+fn split_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut whitespace = false;
+    let mut started = false;
+    for ch in text.chars() {
+        if ch == '\n' {
+            if started {
+                tokens.push(std::mem::take(&mut current));
+                started = false;
+            }
+            tokens.push("\n".into());
+            continue;
+        }
+        let is_space = ch.is_whitespace();
+        if started && is_space != whitespace {
+            tokens.push(std::mem::take(&mut current));
+        }
+        whitespace = is_space;
+        started = true;
+        current.push(ch);
+    }
+    if started {
+        tokens.push(current);
+    }
+    tokens
+}
+
+/// Greedy line break. `soft` splits a token wider than `max_width`. A fitting token stays whole.
+pub fn append_wrapped(
+    out: &mut String,
+    text: &str,
+    max_width: f32,
+    soft: bool,
+    letter_spacing: f32,
+    line_width: &mut f32,
+    line_empty: &mut bool,
+    mut width_of: impl FnMut(&str) -> f32,
+) {
+    if text.is_empty() {
+        return;
+    }
+    if !max_width.is_finite() || max_width <= 0.0 {
+        out.push_str(text);
+        *line_empty = false;
+        return;
+    }
+    for token in split_tokens(text) {
+        if token == "\n" {
+            out.push('\n');
+            *line_width = 0.0;
+            *line_empty = true;
+            continue;
+        }
+        let natural = width_of(&token);
+        let gap = if *line_empty { 0.0 } else { letter_spacing };
+        if !*line_empty && *line_width + natural + gap <= max_width {
+            out.push_str(&token);
+            *line_width += natural + gap;
+            *line_empty = false;
+            continue;
+        }
+        if !*line_empty {
+            out.push('\n');
+            *line_width = 0.0;
+            *line_empty = true;
+        }
+        let whitespace = token.chars().all(|c| c.is_whitespace());
+        if whitespace || !soft || natural <= max_width {
+            out.push_str(&token);
+            *line_width = natural;
+            *line_empty = token.is_empty();
+            continue;
+        }
+        let mut chunk = String::new();
+        let mut chunk_width = 0.0;
+        for ch in token.chars() {
+            let piece = ch.to_string();
+            let mut char_width = width_of(&piece);
+            if !chunk.is_empty() {
+                char_width += letter_spacing;
+            }
+            if !chunk.is_empty() && chunk_width + char_width > max_width {
+                out.push_str(&chunk);
+                out.push('\n');
+                chunk.clear();
+                chunk_width = 0.0;
+                char_width = width_of(&piece);
+            }
+            chunk.push(ch);
+            chunk_width += char_width;
+        }
+        out.push_str(&chunk);
+        *line_width = chunk_width;
+        *line_empty = chunk.is_empty();
     }
 }
 
@@ -367,6 +479,8 @@ pub fn translate(
         align: skia_safe::textlayout::TextAlign::Left,
         preserve_space: false,
         no_wrap: false,
+        overflow_wrap: OverflowWrap::Normal,
+        break_word: false,
         text_transform: TextTransform::None,
         rtl: false,
         z_index: 0,
@@ -819,6 +933,21 @@ pub fn translate(
                         _ => return Err("unsupported whitespace mode".into()),
                     };
                     paint.no_wrap = matches!(s, "nowrap" | "pre");
+                }
+                "overflow-wrap" | "word-wrap" => {
+                    paint.overflow_wrap = match s.trim() {
+                        "normal" => OverflowWrap::Normal,
+                        "break-word" => OverflowWrap::BreakWord,
+                        "anywhere" => OverflowWrap::Anywhere,
+                        _ => return Err("unsupported overflow-wrap".into()),
+                    }
+                }
+                "word-break" => {
+                    paint.break_word = match s.trim() {
+                        "normal" => false,
+                        "break-word" => true,
+                        _ => return Err("unsupported word-break".into()),
+                    }
                 }
                 "text-transform" => {
                     paint.text_transform = match s {

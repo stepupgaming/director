@@ -459,6 +459,9 @@ pub fn inherited(name: &str) -> bool {
                 | "white-space"
                 | "direction"
                 | "text-transform"
+                | "overflow-wrap"
+                | "word-wrap"
+                | "word-break"
                 | "visibility"
         )
 }

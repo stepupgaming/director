@@ -254,6 +254,83 @@ fn luminance_mask_is_more_transparent_on_black_than_alpha() {
     );
 }
 
+fn ink_bottom(pixels: &[u8]) -> usize {
+    let mut bottom = 0usize;
+    for y in 0..64 {
+        for x in 0..64 {
+            let sample = pixel(pixels, x, y);
+            if sample[0] > 40 || sample[1] > 40 || sample[2] > 40 {
+                bottom = y;
+            }
+        }
+    }
+    bottom
+}
+
+#[test]
+fn overflow_wrap_breaks_a_long_token() {
+    let source = |wrap: &str, text: &str| {
+        format!(
+            "<style>body{{margin:0}}div{{width:64px;height:64px;color:white;font-size:16px;line-height:1;white-space:pre-wrap;{wrap}}}</style><div>{text}</div>"
+        )
+    };
+    let wrapped = frame(&source(
+        "overflow-wrap:anywhere",
+        "MMMMMMMMMMMMMMMMMMMMMMMM",
+    ));
+    let normal = frame(&source("overflow-wrap:normal", "MMMMMMMMMMMMMMMMMMMMMMMM"));
+    let break_word = frame(&source(
+        "overflow-wrap:break-word",
+        "MMMMMMMMMMMMMMMMMMMMMMMM",
+    ));
+    let word_break = frame(&source("word-break:break-word", "MMMMMMMMMMMMMMMMMMMMMMMM"));
+    assert!(
+        ink_bottom(&normal) < 24,
+        "normal bottom {}",
+        ink_bottom(&normal)
+    );
+    assert!(ink_bottom(&wrapped) > ink_bottom(&normal) + 8);
+    assert!(ink_bottom(&break_word) > ink_bottom(&normal) + 8);
+    assert!(ink_bottom(&word_break) > ink_bottom(&normal) + 8);
+    let spaced = frame(&source("overflow-wrap:normal", "MMMM MMMM MMMM MMMM"));
+    assert!(
+        ink_bottom(&spaced) > 24,
+        "spaced bottom {}",
+        ink_bottom(&spaced)
+    );
+    let fitted = "<style>body{margin:0}div{width:64px;height:64px;color:white;font-size:16px;line-height:1;white-space:pre-wrap;";
+    assert_eq!(
+        frame(&format!(
+            "{fitted}overflow-wrap:anywhere}}</style><div>ab cd</div>"
+        )),
+        frame(&format!(
+            "{fitted}overflow-wrap:normal}}</style><div>ab cd</div>"
+        ))
+    );
+    let options = CompileOptions {
+        width: 64,
+        height: 64,
+        duration: 3.0,
+        ..Default::default()
+    };
+    let err = compile(
+        "<style>div{overflow-wrap:break-spaces}</style><div>ab</div>",
+        options.clone(),
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(err.contains("unsupported overflow-wrap"), "{err}");
+    let err = compile(
+        "<style>div{word-break:break-all}</style><div>ab</div>",
+        options,
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(err.contains("unsupported word-break"), "{err}");
+}
+
 fn text_box(text: &str, transform: &str) -> String {
     format!(
         "<style>body{{margin:0}}div{{width:64px;height:64px;color:white;font-size:16px;line-height:1;text-transform:{transform}}}</style><div>{text}</div>"
