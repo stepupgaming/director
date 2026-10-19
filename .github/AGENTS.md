@@ -4,32 +4,27 @@
 
 ## Ownership
 
-- `workflows/` owns CI and visual regression automation.
+- `workflows/ci.yml` owns the single Linux CI job: release clippy and release workspace tests, including the visual suite.
 - `ISSUE_TEMPLATE/` owns GitHub issue forms and template routing.
 
 ## Local Contracts
 
-- CI should reflect commands that contributors can run locally from this repository.
-- Keep system dependency installation aligned with Skia, FFmpeg, font, and audio requirements used by tests.
-- Do not add workflow-only behavior that bypasses repository verification documented in AGENTS.md files.
-- **Auto CI is disabled** on push/PR to conserve private-repo Actions minutes. Workflows stay in tree and run only via `workflow_dispatch` until re-enabled.
+- CI runs on push to `main`, on pull requests and on `workflow_dispatch`. The repository is public, so standard runners carry no minute quota.
+- CI commands match the local verification in the root `AGENTS.md`.
+- Bundled fonts are committed under `crates/director-core/assets/fonts/`; CI downloads no fonts.
+- FFmpeg runs as a subprocess. CI installs the `ffmpeg` package and verifies `ffmpeg` and `ffprobe`; no FFmpeg development libraries are linked.
 
 ## Work Guidance
 
 - Update workflow commands when package names, feature flags, or test entry points change.
-- Prefer explicit setup steps for external binary/font dependencies needed by tests.
-- The CI test matrix installs FFmpeg and verifies both `ffmpeg` and `ffprobe` on Linux, Windows, and macOS. Real decoder tests fail when those tools are unavailable.
-- To re-enable auto CI, restore `push` / `pull_request` triggers on `ci.yml` and `visual_regression.yml`.
+- Add Windows or macOS jobs only for a platform-specific regression; the Linux job is the gate.
 
 ## Verification
 
-- For workflow edits, run the matching local command when feasible:
-- `cargo check --workspace --all-targets`
-- `cargo test --workspace`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --test visual_suite --no-default-features --features mock_video` from `crates/director-core`
+- `cargo clippy --workspace --all-targets --release -- -D warnings`
+- `cargo test --workspace --release`
 
 ## Child DOX Index
 
-- `workflows/` - CI and visual regression workflow YAML.
+- `workflows/` - CI workflow YAML.
 - `ISSUE_TEMPLATE/` - Bug, feature, release, and template config files.

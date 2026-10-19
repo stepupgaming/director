@@ -112,10 +112,10 @@ When the user requests a durable behavior change, record it here or in the relev
 
 ## Verification
 
-- Rust workspace: `cargo check --workspace --all-targets`
-- Rust tests: `cargo test --workspace`
-- Rust lint: `cargo clippy --workspace --all-targets -- -D warnings`
-- Visual regression: `cargo test --test visual_suite --no-default-features --features mock_video` from `crates/director-core`
+- Rust workspace: `cargo check --workspace --all-targets --release`
+- Rust tests: `cargo test --workspace --release` (CI runs this on push to `main` and on pull requests)
+- Rust lint: `cargo clippy --workspace --all-targets --release -- -D warnings`
+- Visual regression: `cargo test -p director-core --release --test visual_suite`
 
 ## Child DOX Index
 

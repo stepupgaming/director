@@ -47,7 +47,6 @@ criterion = "0.5"
 
 [features]
 default = []
-mock_video = []
 vulkan = ["skia-safe/vulkan"]
 
 [[bench]]

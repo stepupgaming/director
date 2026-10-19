@@ -52,12 +52,7 @@ cargo build --release
 
 | Flag | Purpose |
 |------|---------|
-| `mock_video` | Build without FFmpeg (for CI or docs.rs) |
 | `vulkan` | Enable Vulkan backend for Skia |
-
-```bash
-cargo build --no-default-features --features mock_video
-```
 
 ---
 

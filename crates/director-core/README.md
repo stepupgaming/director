@@ -50,7 +50,6 @@ let movie = engine.eval::<scripting::MovieHandle>(script)?;
 
 | Flag | Purpose |
 |------|---------|
-| `mock_video` | Build without FFmpeg |
 | `vulkan` | Enable Vulkan Skia backend |
 
 ## Core hardening
