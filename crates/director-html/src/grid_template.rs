@@ -579,7 +579,10 @@ struct Frame {
 
 struct Slot {
     compile_id: usize,
+    epoch: u64,
     stack: Vec<Frame>,
+    /// Frame-stack length at the start of each entered element.
+    scopes: Vec<usize>,
     /// The top frame belongs to the element currently being translated.
     open: bool,
 }
@@ -587,20 +590,57 @@ struct Slot {
 thread_local! {
     static LINES: RefCell<Slot> = RefCell::new(Slot {
         compile_id: 0,
+        epoch: 0,
         stack: Vec::new(),
+        scopes: Vec::new(),
         open: false,
     });
 }
 
-/// A new element. The previous element's template becomes the parent axis.
-pub(crate) fn begin_element(compile_id: usize) {
+/// Named-line scope for one element. Hold it until that element's children
+/// have been translated. Dropping it removes the template this element installed.
+pub(crate) struct GridScope {
+    compile_id: usize,
+    epoch: u64,
+}
+
+impl Drop for GridScope {
+    fn drop(&mut self) {
+        end_element(self.compile_id, self.epoch);
+    }
+}
+
+/// Start one element. The parent template stays the current axis until the
+/// returned scope drops.
+pub(crate) fn begin_element(compile_id: usize) -> GridScope {
     LINES.with(|slot| {
         let mut slot = slot.borrow_mut();
         if slot.compile_id != compile_id {
             slot.compile_id = compile_id;
+            slot.epoch = slot.epoch.wrapping_add(1);
             slot.stack.clear();
+            slot.scopes.clear();
             slot.open = false;
         } else if slot.open {
+            slot.open = false;
+        }
+        let depth = slot.stack.len();
+        slot.scopes.push(depth);
+        GridScope {
+            compile_id,
+            epoch: slot.epoch,
+        }
+    })
+}
+
+fn end_element(compile_id: usize, epoch: u64) {
+    LINES.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.compile_id != compile_id || slot.epoch != epoch {
+            return;
+        }
+        if let Some(base) = slot.scopes.pop() {
+            slot.stack.truncate(base);
             slot.open = false;
         }
     });
@@ -1022,14 +1062,14 @@ mod tests {
 
     #[test]
     fn subgrid_copies_definite_parent_tracks() {
-        super::begin_element(11);
+        let _parent_scope = super::begin_element(11);
         let parent = grid_template("[main] 32px [side] 32px", metrics()).unwrap();
         super::install_tracks(true, parent.clone());
-        super::begin_element(11);
+        let _child_scope = super::begin_element(11);
         let child = super::grid_template_axis("subgrid", metrics(), true).unwrap();
         assert_eq!(child, parent);
         super::install_tracks(true, child.clone());
-        super::begin_element(11);
+        let _grandchild_scope = super::begin_element(11);
         let grandchild = super::grid_template_axis("subgrid", metrics(), true).unwrap();
         assert_eq!(grandchild, child);
         match super::resolve_named(true, "side", 1).unwrap() {
@@ -1039,48 +1079,65 @@ mod tests {
     }
 
     #[test]
+    fn sibling_after_nested_grid_uses_the_parent_lines() {
+        let _parent_scope = super::begin_element(21);
+        let parent = grid_template("[alpha] 32px [beta] 32px", metrics()).unwrap();
+        super::install_tracks(true, parent);
+        {
+            let _child_scope = super::begin_element(21);
+            let child = grid_template("[beta] 16px [gamma] 16px", metrics()).unwrap();
+            super::install_tracks(true, child);
+        }
+        let _sibling_scope = super::begin_element(21);
+        match super::resolve_named(true, "beta", 1).unwrap() {
+            super::NamedPlacement::Line(index) => assert_eq!(index, 2),
+            super::NamedPlacement::Named(_, _) => panic!("beta resolved as an auto repeat"),
+        }
+    }
+
+    #[test]
     fn subgrid_copies_parent_rows() {
-        super::begin_element(18);
+        let _parent_scope = super::begin_element(18);
         let parent = grid_template("[top] 16px [bottom] 16px", metrics()).unwrap();
         super::install_tracks(false, parent.clone());
-        super::begin_element(18);
+        let _child_scope = super::begin_element(18);
         let child = super::grid_template_axis("subgrid", metrics(), false).unwrap();
         assert_eq!(child, parent);
     }
 
     #[test]
     fn subgrid_without_a_parent_errors() {
-        super::begin_element(12);
+        let _scope = super::begin_element(12);
         let err = super::grid_template_axis("subgrid", metrics(), true).unwrap_err();
         assert!(err.to_ascii_lowercase().contains("subgrid"), "{err}");
     }
 
     #[test]
     fn subgrid_on_an_auto_repeat_errors() {
-        super::begin_element(13);
+        let _parent_scope = super::begin_element(13);
         let parent = grid_template("repeat(auto-fit, 20px)", metrics()).unwrap();
         super::install_tracks(true, parent);
-        super::begin_element(13);
+        let _child_scope = super::begin_element(13);
         let err = super::grid_template_axis("subgrid", metrics(), true).unwrap_err();
         assert!(err.to_ascii_lowercase().contains("subgrid"), "{err}");
     }
 
     #[test]
     fn subgrid_inside_repeat_errors() {
-        super::begin_element(14);
+        let _scope = super::begin_element(14);
         let err = grid_template("repeat(2, subgrid)", metrics()).unwrap_err();
         assert!(err.to_ascii_lowercase().contains("subgrid"), "{err}");
     }
 
     #[test]
     fn subgrid_adds_line_names() {
-        super::begin_element(15);
+        let _parent_scope = super::begin_element(15);
         let parent = grid_template("[main] 32px [side] 32px", metrics()).unwrap();
         super::install_tracks(true, parent);
-        super::begin_element(15);
+        let _child_scope = super::begin_element(15);
         let child = super::grid_template_axis("subgrid [a] [b] [c]", metrics(), true).unwrap();
         super::install_tracks(true, child);
-        super::begin_element(15);
+        let _grandchild_scope = super::begin_element(15);
         let line = |name: &str| match super::resolve_named(true, name, 1).unwrap() {
             super::NamedPlacement::Line(index) => index,
             super::NamedPlacement::Named(_, _) => panic!("{name} resolved as an auto repeat"),
@@ -1093,20 +1150,20 @@ mod tests {
 
     #[test]
     fn subgrid_name_count_must_match() {
-        super::begin_element(16);
+        let _parent_scope = super::begin_element(16);
         let parent = grid_template("32px 32px", metrics()).unwrap();
         super::install_tracks(true, parent);
-        super::begin_element(16);
+        let _child_scope = super::begin_element(16);
         let err = super::grid_template_axis("subgrid [only]", metrics(), true).unwrap_err();
         assert!(err.contains("named grid lines"), "{err}");
     }
 
     #[test]
     fn subgrid_rows_do_not_read_columns() {
-        super::begin_element(17);
+        let _parent_scope = super::begin_element(17);
         let parent = grid_template("32px 32px", metrics()).unwrap();
         super::install_tracks(true, parent);
-        super::begin_element(17);
+        let _child_scope = super::begin_element(17);
         let err = super::grid_template_axis("subgrid", metrics(), false).unwrap_err();
         assert!(err.to_ascii_lowercase().contains("subgrid"), "{err}");
     }

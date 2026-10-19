@@ -909,7 +909,7 @@ impl Builder {
         } else {
             containing_block
         };
-        let (mut layout, mut paint) =
+        let (mut layout, mut paint, _grid_scope) =
             style::translate(&values, metrics, style_block, &self.assets).map_err(
                 |errors| {
                     CompileError::Diagnostics(
@@ -1460,7 +1460,7 @@ impl Builder {
                 })
                 .unwrap_or(16.0),
         };
-        let (mut layout, mut paint) = style::translate(
+        let (mut layout, mut paint, _grid_scope) = style::translate(
             &Values::new(),
             metrics,
             style::ContainingBlock::from_axes(width, height),
@@ -1551,7 +1551,7 @@ impl Builder {
                         label(child)
                     )));
                 }
-                let (_, child_paint) = style::translate(
+                let (_, child_paint, _grid_scope) = style::translate(
                     &child_values,
                     Metrics {
                         width: self.options.width as f32,

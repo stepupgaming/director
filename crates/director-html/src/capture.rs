@@ -381,7 +381,7 @@ fn build(
             n.id
         )));
     }
-    let (mut style, mut paint) = style::translate(&n.styles, m, block, store).map_err(|e| {
+    let (mut style, mut paint, _grid_scope) = style::translate(&n.styles, m, block, store).map_err(|e| {
         CompileError::Diagnostics(e.into_iter().map(|e| diagnostic(&n.id, e)).collect())
     })?;
     // Sampled px stays px. A leftover calc uses this node's used size when the style

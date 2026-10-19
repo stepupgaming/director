@@ -914,8 +914,9 @@ pub fn translate(
     mut m: Metrics,
     block: ContainingBlock,
     assets: &crate::assets::AssetStore,
-) -> Result<(Style, PaintStyle), Vec<String>> {
-    crate::grid_template::begin_element(assets as *const crate::assets::AssetStore as usize);
+) -> Result<(Style, PaintStyle, crate::grid_template::GridScope), Vec<String>> {
+    let grid_scope =
+        crate::grid_template::begin_element(assets as *const crate::assets::AssetStore as usize);
     let mut errors = Vec::new();
     let mut style = Style {
         display: Display::Block,
@@ -1684,7 +1685,7 @@ pub fn translate(
     }
     paint.box_node.style = style.clone();
     if errors.is_empty() {
-        Ok((style, paint))
+        Ok((style, paint, grid_scope))
     } else {
         Err(errors)
     }
