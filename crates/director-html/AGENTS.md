@@ -9,7 +9,7 @@
 - `tools/` owns optional compile-time browser extraction, Chromium and CPU/GPU parity, real HyperFrames CLI and CPU/GPU export benchmarks, and Hyper CN registry auditing.
 - `tests/` owns executable compatibility and pixel regressions.
 - `benches/` owns Criterion compile/render workloads.
-- `README.md` owns the user-facing feature summary, incompatibilities, commands, and reproducible measured results. This file owns the exact behavior contracts. Current phase status and test counts live in `docs/plans/09-native-fidelity.md`.
+- `README.md` owns the user-facing feature summary, incompatibilities, commands, and reproducible measured results. This file owns the exact behavior contracts. Current phase status and test counts live in `docs/plans/10-native-platform-overhaul.md`.
 
 ## Local Contracts
 

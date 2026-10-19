@@ -8,7 +8,8 @@
 - `01`–`06` - time, identity, pipeline, animation eval, scene model, determinism/media. **Done.**
 - `07-stdlib-and-recipes.md` - L1 motion stdlib + L2 component contract + L3 recipes on the current stack (no SDK crate). **Done at the v1 stop-line.**
 - `08-native-projects-and-runtime.md` - portable HTML/capture projects, validated CLI edits, common input loading and native backend execution. **Done.**
-- `09-native-fidelity.md` - native paint and media fidelity. **In progress.** It is the current-state and handoff document: what is implemented, Hyper CN smoke coverage, the latest measurement table, known refusals, and the next action. Feature contracts live in `crates/director-html/AGENTS.md`.
+- `09-native-fidelity.md` - native paint and media fidelity. **Superseded.** Keeps the implemented list, Hyper CN smoke coverage and the refusal backlog. Feature contracts live in `crates/director-html/AGENTS.md`.
+- `10-native-platform-overhaul.md` - scene document, parallel renderer, host session, HTML-first authoring and proof. **In progress.** It is the current-state and handoff document: phases and gates, the latest measurement table, and the next action.
 
 ## Local Contracts
 
@@ -22,7 +23,7 @@
 
 - Implement in index order unless a plan explicitly allows parallel work.
 - Prefer package-scoped tests while iterating; workspace checks before closeout.
-- Agent production workflows after plan 09 are tracked in GitHub issue #3.
+- Plan 10 phases run in the order the plan states; its typed computed style work may start once phase 1 lands.
 
 ## Verification
 

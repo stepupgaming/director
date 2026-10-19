@@ -2,7 +2,7 @@
 
 > **Status:** Plans 01–06 implemented (2026-07-19) — core hardening program complete
 > **Priority:** Engine solidity over product surface
-> **Post-core product:** compositions, motion/recipes and CLI landed. Native projects and runtime are [plan 08](08-native-projects-and-runtime.md) (**Done**). Native paint and media fidelity is [plan 09](09-native-fidelity.md) (**In progress**), which holds current status and the next action. Agent production workflows are GitHub issue #3.
+> **Post-core product:** compositions, motion/recipes and CLI landed. Native projects and runtime are [plan 08](08-native-projects-and-runtime.md) (**Done**). Native paint and media fidelity is [plan 09](09-native-fidelity.md) (**Superseded**). The native platform overhaul is [plan 10](10-native-platform-overhaul.md) (**In progress**), which holds current status and the next action.
 
 ## Goal
 
@@ -69,7 +69,8 @@ Do not schedule under this program:
 | 6 | [06-determinism-and-media.md](06-determinism-and-media.md) | Same script → same pixels/audio clock | **Done** |
 | 7 | [07-stdlib-and-recipes.md](07-stdlib-and-recipes.md) | L1 verbs + L2 contract + L3 recipes | **Done (v1 stop-line)** |
 | 8 | [08-native-projects-and-runtime.md](08-native-projects-and-runtime.md) | Portable native projects, common loading, headless inspection/edits and GPU backend | **Done** |
-| 9 | [09-native-fidelity.md](09-native-fidelity.md) | Native CSS, SVG, 3D, shader, and captured-media fidelity for the Hyper CN corpus and authored HTML | **In progress** |
+| 9 | [09-native-fidelity.md](09-native-fidelity.md) | Native CSS, SVG, 3D, shader, and captured-media fidelity for the Hyper CN corpus and authored HTML | **Superseded** |
+| 10 | [10-native-platform-overhaul.md](10-native-platform-overhaul.md) | Scene document, parallel renderer, host session, HTML-first authoring, proof of speed and quality | **In progress** |
 
 **Dependency order:** `01` first (everything samples time). `02` before trusting incremental edit. `03` can start once dirty APIs are understood; finish after `01`–`02`. `04` parallel after `01` time helpers exist. `05` after identity stabilizes. `06` continuous background; fonts/CI can land anytime.
 
@@ -105,4 +106,4 @@ cargo test -p director-core --test visual_suite --no-default-features --features
 
 ## Next action
 
-Plans 01–08 are done. Resume from the Next action section of [plan 09](09-native-fidelity.md).
+Plans 01–08 are done and plan 09 is superseded. Resume from the Next action section of [plan 10](10-native-platform-overhaul.md).

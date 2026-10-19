@@ -114,7 +114,7 @@ See [docs/contributing/development.md](docs/contributing/development.md) for det
 
 | Document | Description |
 |----------|-------------|
-| [docs/plans/09-native-fidelity.md](docs/plans/09-native-fidelity.md) | Current phase: status, latest test results, next action |
+| [docs/plans/10-native-platform-overhaul.md](docs/plans/10-native-platform-overhaul.md) | Current phase: status, latest test results, next action |
 | [crates/director-cli/README.md](crates/director-cli/README.md) | CLI commands, exit codes, preview backend |
 | [crates/director-html/README.md](crates/director-html/README.md) | HTML compiler support, capture, measurements |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Engine internals |

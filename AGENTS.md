@@ -65,7 +65,7 @@ Default section order:
 - Do not duplicate rules across many files unless each scope needs a local version
 - Delete stale notes instead of explaining history
 - Trim obvious statements, repeated rules, misplaced detail, and warnings for risks that no longer exist
-- Test counts live only in the measurement table of the active plan (`docs/plans/09-native-fidelity.md`). Keep one row per check with its latest count, date, and exact command, and replace the row on re-run. Contract docs state behavior without counts.
+- Test counts live only in the measurement table of the active plan (`docs/plans/10-native-platform-overhaul.md`). Keep one row per check with its latest count, date, and exact command, and replace the row on re-run. Contract docs state behavior without counts.
 
 ## Closeout
 
@@ -86,7 +86,9 @@ When the user requests a durable behavior change, record it here or in the relev
 - Never use `pip` for Python package installation; use `uv`.
 - Writing style for docs, commits, and replies: affirmative statements, no em dashes, and no contrastive "X, not Y" constructions.
 - Director's product goal is to replace HyperFrames, FFrames and Remotion with a superior native video platform. Assess authoring, motion and media quality, preview/editing, agent tooling, deployment and measured rendering efficiency together; compiler throughput alone does not establish product superiority.
-- Current product work prioritizes native projects, runtime, CLI and agent tooling. Frontend/editor design and Remotion compatibility are outside this phase; competing with Remotion does not require accepting its source format.
+- Director is library-first. Delete in-repo frontend code; a future editor (a Tauri app in the style of the HyperFrames and Remotion studios) links the host session API. Remotion source compatibility stays out of scope.
+- Major overhauls are welcome. Earlier architecture came from weaker models; judge it on merit and replace it when a better design wins.
+- HTML/CSS is the primary authoring front door. Rhai is an optional generator.
 - Build Director with `cargo --release`. Do not populate `target/debug`. Rustc temp may go on `F:\cargo-tmp` when `C:` is tight.
 - Do not use git worktrees. Keep every change in the shared `C:\Projects\director` tree.
 - Use parallel subagents on file-disjoint slices when it helps. Subagents do not compile, run tests, commit, or edit `vendor/`, `Cargo.toml`, `Cargo.lock`, AGENTS.md, README, or docs. The parent runs one release test pass after their edits land, does the DOX pass, and commits.
@@ -96,7 +98,7 @@ When the user requests a durable behavior change, record it here or in the relev
 
 ## Work Guidance
 
-- Current phase status, latest test counts, known refusals, and the next action live in `docs/plans/09-native-fidelity.md`. Read it first when resuming work.
+- Current phase status, latest test counts, and the next action live in `docs/plans/10-native-platform-overhaul.md`. Read it first when resuming work.
 - Use Cargo workspace conventions from `Cargo.toml`; prefer package-scoped checks while iterating and workspace checks before broad closeout.
 - Keep Rust crate ownership clear: public API and shared runtime behavior belong in `crates/director-core`, command-line concerns in `crates/director-cli`, schema reflection in `crates/director-schema`, and Lottie-specific logic in the `lottie-*` crates.
 - `crates/director-html` owns HTML/CSS/HyperFrames compilation, portable native authoring projects and explicit compile-time browser extraction. Native rendering continues through `director-core`; Hyper CN is part of its compatibility corpus.
