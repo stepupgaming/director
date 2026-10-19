@@ -10,7 +10,6 @@ How to write and maintain documentation for Director Engine.
 | `docs/plans/` | Implementation plans; the active plan holds current status, measurements, and the next action |
 | `docs/contributing/` | Contributor guides |
 | `docs/archive/` | Superseded / deferred docs (not current contracts) |
-| `specs/` | RON feature specs for the harness |
 | `crates/*/AGENTS.md` | Per-crate behavior contracts |
 | `crates/*/README.md` | Per-crate documentation |
 

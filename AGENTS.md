@@ -91,7 +91,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - HTML/CSS is the primary authoring front door. Rhai is an optional generator.
 - Build Director with `cargo --release`. Do not populate `target/debug`. Rustc temp may go on `F:\cargo-tmp` when `C:` is tight.
 - Do not use git worktrees. Keep every change in the shared `C:\Projects\director` tree.
-- Use parallel subagents on file-disjoint slices when it helps. Subagents do not compile, run tests, commit, or edit `vendor/`, `Cargo.toml`, `Cargo.lock`, AGENTS.md, README, or docs. The parent runs one release test pass after their edits land, does the DOX pass, and commits.
+- Use parallel subagents on file-disjoint slices when it helps. Default subagents to Grok 4.7 (`grok-4.7-high-fast`). Give them explicit step-by-step prompts with exact files, allowed edits and the report format, and review their diffs before landing. Subagents do not compile, run tests, commit, or edit `vendor/`, `Cargo.toml`, `Cargo.lock`, AGENTS.md, README, or docs. The parent runs one release test pass after their edits land, does the DOX pass, and commits.
 - Commit each finished slice with one imperative sentence. Never commit `.freebuff/`. Push only when asked.
 - Ask before GPU- or browser-heavy work: the Hyper CN registry smoke, Chrome launches, and long benchmarks.
 - On a Windows `LNK1181` link failure for skia-bindings 0.90.0, restore `skia.lib` and `skunicode_icu.lib` beside `skunicode_core.lib` from the matching `pdf-textlayout` prebuilt archive. Do not start a Skia source build.
@@ -124,5 +124,4 @@ When the user requests a durable behavior change, record it here or in the relev
 - `crates/AGENTS.md` - Rust workspace crates and package-level ownership.
 - `docs/AGENTS.md` - Architecture, core contracts, active plans, contributing, archive.
 - `examples/AGENTS.md` - Rhai example scripts, rendered media references, and script validation helpers.
-- `specs/AGENTS.md` - RON feature specs consumed by the developer harness.
 - `vendor/AGENTS.md` - Vendored third-party crates with durable patches.

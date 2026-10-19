@@ -135,15 +135,6 @@ pub const NODE_CATALOG: &[NodeCatalogEntry] = &[
         true,
     ),
     node(
-        "Wgpu",
-        "",
-        "GPU compute node with custom WGSL shaders (Rhai-only; not in MovieRequest JSON)",
-        false,
-        &["opacity"],
-        &["wgpu_gpu_compute"],
-        false,
-    ),
-    node(
         "Caption",
         "caption",
         "Timed kinetic captions (SRT/VTT) with per-word highlight",

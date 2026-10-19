@@ -10,7 +10,6 @@ High-level map of the runtime. **Normative spines** (time, identity, pipeline, e
 | `director-html` | HTML/CSS/HyperFrames compiler into native nodes, portable native projects, compile-time browser capture |
 | `director-cli` | `director-engine` CLI: render, still, inspect, agent checks, projects, batch, and the native preview backend |
 | `director-schema` | JSON / schema-facing types |
-| `director-pipeline` | Schema → Director loading |
 | `lottie-*` | Lottie parse / data / Skia path |
 
 ## High-level components

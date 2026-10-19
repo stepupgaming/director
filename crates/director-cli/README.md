@@ -47,10 +47,6 @@ director-engine render render.rhai -o out.mp4
 - `still` without `-o` writes a `frame_*.png` next to the script.
 - `compositions` exits nonzero when the script registers none.
 
-### Deprecated
-
-`preview_frame` remains as a thin shim; prefer `director-engine still`.
-
 ## Native HTML commands
 
 ```bash
@@ -111,16 +107,16 @@ Edits validate before atomic save. `-o` writes another project; otherwise the in
 
 Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect` and `preview` accept the same inputs. `sheet` writes a PNG grid and prints frame times as JSON. It rejects more than 64 frames or a raster above 16777216 pixels. `audio` prints per-track LUFS, true peak, clipped samples, and silence. Non-finite levels are null. A non-finite sample or a track above 57600000 samples sets `error` and skips analysis. `check` prints elements that leave the canvas and missing fonts. `--safe-zone tiktok` warns when text, caption, or smart_caption enters that inset. Other nodes stay on the canvas check. An unknown preset exits 1. `snapshot --golden shot.png -t 0` compares one frame. A channel delta above 16 counts. More than 0.1% different pixels exits 2 and writes `shot.actual.png` and `shot.diff.png`. `--update` replaces the golden. `onion -n 4 -o onion.png` blends frames with weights 1 through n. `render --scale 0.5` keeps the layout size and encodes even pixel dimensions at or below that scale. `--draft-encode` sets software x264 to ultrafast and CRF 30 and leaves the raster size on `--scale`. Hardware qp and alpha VP9 stay put. `html` commands additionally retain compile/capture/benchmark tooling. GPU rendering and encoder choice are independent; explicit GPU requests fail when unavailable.
 
-## Native preview backend
+## Native preview API
 
 ```bash
 director-engine preview script.rhai
 director-engine preview script.rhai --composition intro --props '{"title":"X"}'
-director-engine preview script.rhai --bind 127.0.0.1:7788 --no-open
-director-engine preview target/movie.dirproj --gpu --no-open
+director-engine preview script.rhai --bind 127.0.0.1:7788
+director-engine preview target/movie.dirproj --gpu
 ```
 
-`--no-open` runs just the backend. The existing minimal player remains an optional client. A bounded queue serializes native work on one thread, including Vulkan construction/rendering/destruction. Native input and consumed asset modification time/length are checked before requests; invalid reloads keep the accepted scene and expose `reload_error`. Rhai/core project reload watches the input file.
+The server exposes JSON and binary endpoints for editors and agents; the repo ships no browser client. A bounded queue serializes native work on one thread, including Vulkan construction/rendering/destruction. Native input and consumed asset modification time/length are checked before requests; invalid reloads keep the accepted scene and expose `reload_error`. Rhai/core project reload watches the input file.
 
 | Endpoint | Response |
 | --- | --- |

@@ -76,13 +76,11 @@ director/
 │   ├── director-core/       # Engine: scene graph, layout, animation, Rhai API, export
 │   ├── director-html/       # HTML/CSS/HyperFrames compiler, native projects, capture tools
 │   ├── director-cli/        # director-engine CLI and preview backend
-│   ├── director-pipeline/   # Asset pipeline utilities
 │   ├── director-schema/     # Schema definitions
 │   ├── lottie-core/         # Lottie animation logic
 │   ├── lottie-data/         # Lottie data structures
 │   └── lottie-skia/         # Lottie Skia renderer
 ├── examples/                # Rhai and HTML examples (executable reference)
-├── specs/                   # RON feature specs for the harness
 ├── docs/                    # Architecture, plans, contributing
 └── vendor/                  # Patched third-party crates
 ```

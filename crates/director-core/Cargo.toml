@@ -29,13 +29,6 @@ lottie-core = { path = "../lottie-core", version = "0.1.0" }
 lottie-data = { path = "../lottie-data", version = "0.1.0" }
 lottie-skia = { path = "../lottie-skia", version = "0.1.0" }
 
-# Optional dependencies
-wgpu = { version = "23", optional = true }
-bytemuck = { version = "1", optional = true, features = ["derive"] }
-pollster = { version = "0.4", optional = true }
-
-reqwest = { version = "0.12", features = ["blocking", "json"] }
-ndarray = "0.16"
 rayon = "1.10"
 tempfile = "3.23.0"
 crossbeam-channel = "0.5.15"
@@ -56,7 +49,6 @@ criterion = "0.5"
 default = []
 mock_video = []
 vulkan = ["skia-safe/vulkan"]
-wgpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
 
 [[bench]]
 name = "layout_snapshot_bench"

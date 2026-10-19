@@ -1,11 +1,11 @@
-//! Native preview endpoints. The embedded player is an unchanged optional client.
+//! Native preview API endpoints for editors and agents.
 mod worker;
 
 use crate::input::Input;
 use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -14,8 +14,6 @@ use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use worker::Worker;
-
-const PLAYER_HTML: &str = include_str!("player.html");
 
 #[derive(Debug, Default, Deserialize)]
 struct FrameQuery {
@@ -27,7 +25,6 @@ pub struct PreviewArgs {
     pub input: Input,
     pub gpu: bool,
     pub bind: SocketAddr,
-    pub open_browser: bool,
 }
 
 pub async fn run_preview(args: PreviewArgs) -> Result<(), String> {
@@ -39,11 +36,7 @@ pub async fn run_preview(args: PreviewArgs) -> Result<(), String> {
         .await
         .map_err(|e| format!("bind {}: {e}", args.bind))?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
-    let url = format!("http://{addr}/");
-    eprintln!("Preview: {url}");
-    if args.open_browser {
-        let _ = open::that(&url);
-    }
+    eprintln!("Preview API: http://{addr}/api/meta");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
@@ -52,7 +45,6 @@ pub async fn run_preview(args: PreviewArgs) -> Result<(), String> {
 
 fn router(worker: Worker) -> Router {
     Router::new()
-        .route("/", get(|| async { Html(PLAYER_HTML) }))
         .route("/api/meta", get(api_meta))
         .route("/api/frame", get(api_frame))
         .route("/api/inspect", get(api_inspect))

@@ -17,7 +17,6 @@ pub mod compiler;
 pub mod compositions;
 pub mod effects;
 pub mod entities;
-pub mod http;
 pub mod inspect;
 pub mod lifecycle;
 pub mod manifest;
@@ -52,7 +51,6 @@ pub fn register_all_with_default_mode(
     compiler::register(engine);
     effects::register(engine);
     entities::register(engine);
-    http::register(engine);
     properties::register(engine);
     smart_caption::register(engine);
     templates::register(engine);

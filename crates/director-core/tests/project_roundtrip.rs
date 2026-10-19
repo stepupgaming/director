@@ -1192,7 +1192,6 @@ fn node_kind_tier_matrix() {
         assert_eq!(node_kind_tier(k), NodeKindTier::Required, "{k}");
     }
     assert_eq!(node_kind_tier("Vector"), NodeKindTier::Optional);
-    assert_eq!(node_kind_tier("Wgpu"), NodeKindTier::Optional);
     assert_eq!(node_kind_tier("NotANode"), NodeKindTier::Unknown);
 }
 

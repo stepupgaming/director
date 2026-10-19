@@ -25,7 +25,7 @@
 //! * **Required kinds** (see [`NodeKindTier`]): Box, Text, Image, Video,
 //!   Caption, SmartCaption, Effect, Composition, Lottie, Spectrum — full
 //!   rebuild or **hard error** (never silent Box placeholder).
-//! * **Optional kinds** (Vector, Shape, ActiveSpeakerCamera, Wgpu, Unknown):
+//! * **Optional kinds** (Vector, Shape, ActiveSpeakerCamera, Unknown):
 //!   may degrade with a warning; load continues.
 //! * **Animation**: transform channels and Box/Text opacity keyframes survive
 //!   round-trip and reproduce after `update(t)`.
@@ -77,7 +77,7 @@ pub fn node_kind_tier(kind: &str) -> NodeKindTier {
     match kind {
         "Box" | "Text" | "Image" | "Video" | "Caption" | "SmartCaption" | "Effect"
         | "Composition" | "Lottie" | "Spectrum" => NodeKindTier::Required,
-        "Vector" | "Shape" | "ActiveSpeakerCamera" | "Wgpu" => NodeKindTier::Optional,
+        "Vector" | "Shape" | "ActiveSpeakerCamera" => NodeKindTier::Optional,
         _ => NodeKindTier::Unknown,
     }
 }

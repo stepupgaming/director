@@ -1523,53 +1523,6 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         },
     );
 
-    // ========== WGPU NODE (feature-gated) ==========
-    #[cfg(feature = "wgpu")]
-    {
-        engine.register_fn(
-            "add_wgpu_node",
-            |parent: &mut NodeHandle,
-             vertex_src: &str,
-             fragment_src: &str|
-             -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
-                let mut d = parent.lock_director()?;
-                parent.ensure_alive(&d)?;
-                let node = crate::node::WgpuNode::new(vertex_src.to_string(), fragment_src.to_string());
-                let id = d.scene.add_node(Box::new(node));
-                if !d.add_child(parent.id, id) {
-                    d.scene.destroy_node(id);
-                    return Err(
-                        format!("Failed to attach wgpu node {} to parent {}", id, parent.id)
-                            .into(),
-                    );
-                }
-                Ok(NodeHandle {
-                    director: parent.director.clone(),
-                    id,
-                })
-            },
-        );
-        engine.register_fn(
-            "add_wgpu_node",
-            |parent: &mut NodeHandle| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
-                let mut d = parent.lock_director()?;
-                parent.ensure_alive(&d)?;
-                let node = crate::node::WgpuNode::new_default();
-                let id = d.scene.add_node(Box::new(node));
-                if !d.add_child(parent.id, id) {
-                    d.scene.destroy_node(id);
-                    return Err(
-                        format!("Failed to attach wgpu node {} to parent {}", id, parent.id).into(),
-                    );
-                }
-                Ok(NodeHandle {
-                    director: parent.director.clone(),
-                    id,
-                })
-            },
-        );
-    }
-
     // Static-subtree caching controls
     engine.register_fn(
         "set_static",

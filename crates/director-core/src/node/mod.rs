@@ -1,5 +1,4 @@
 // NOTE: Custom SkSL shaders are already supported via EffectNode with RuntimeShader.
-// 3D rendering via wgpu: WgpuNode (feature-gated behind "wgpu").
 use crate::animation::EasingType;
 use crate::types::{ObjectFit, ObjectPosition};
 use skia_safe::Rect;
@@ -50,12 +49,6 @@ pub use active_speaker_camera::{ActiveSpeakerCamera, ActiveSpeakerCameraConfig, 
 pub mod effect;
 pub mod effect_shaders;
 pub use effect::{build_effect_filter, EffectNode, EffectType, ShaderUniform};
-
-#[cfg(feature = "wgpu")]
-pub mod wgpu_node;
-#[cfg(feature = "wgpu")]
-pub use wgpu_node::WgpuNode;
-
 // Helper to parse easing
 pub fn parse_easing(e: &str) -> EasingType {
     use tracing::warn;

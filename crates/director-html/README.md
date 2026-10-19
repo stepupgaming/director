@@ -18,7 +18,7 @@ director-engine project pack examples/html/native-motion.html -o target/movie.di
 director-engine inspect target/movie.dirproj -t 1
 director-engine project edit target/movie.dirproj --patch edits.json
 director-engine render target/movie.dirproj --gpu -o target/movie.mp4
-director-engine preview target/movie.dirproj --gpu --no-open
+director-engine preview target/movie.dirproj --gpu
 ```
 
 Loading recompiles stored native authoring input; it does not deserialize HTML adapters as core node kinds. HTML edits support literal text, CSS overrides and supported timing/media attributes. Captures retain their sample rate and rectangles; text/paint edits cannot reconstruct uncaptured layout or continuous JS animation. Inspection exposes unique authored IDs and generated structural paths for anonymous/duplicate capture IDs; path identity assumes stable sampled topology. The format embeds media in JSON, with base64 overhead; it is not a binary compiled-scene cache. Rhai remains on the core project contract. See the [native CLI/backend workflow](../director-cli/README.md).

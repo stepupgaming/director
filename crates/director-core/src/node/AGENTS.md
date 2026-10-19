@@ -16,8 +16,8 @@ This directory owns the scene-graph nodes (`BoxNode`, `ImageNode`, `TextNode`,
 ## Ownership
 
 `effect.rs` + `effect_shaders.rs` + `scripting/api/effects.rs` + `api_catalog.rs`
-form one shader contract: adding a shader requires editing all of them (and the
-pipeline conversion) or the build/tests fail.
+form one shader contract: adding a shader requires editing all of them or the
+build/tests fail. Plan 10 phase 2 collapses this into one effect table.
 
 ## Local Contracts
 
@@ -27,7 +27,7 @@ pipeline conversion) or the build/tests fail.
 - Measurement and rendering both compute paragraph width as `max(rect_width * layout_width_fraction, 20)` so narrow boxes preserve the same wrapping and height.
 - Regression checks: `cargo test -p director-core --lib node::caption::tests`, including margin/inset separation and narrow measure/render equivalence.
 
-### Adding a runtime shader touches 6 places
+### Adding a runtime shader touches 5 places
 
 1. `effect_shaders.rs` — `pub(crate) fn build_<name>(...)` + SkSL string. Use the
    shared `cached_runtime_shader(shader_cache, "__<name>__", sksl, "<Name>", ...)`
@@ -46,10 +46,7 @@ pipeline conversion) or the build/tests fail.
 4. `api_catalog.rs` — `e("<name>", "<schema_tag>", "desc", &[("param","f32"), ...],
    &["alias", ...])`. This entry **auto-generates** the `EffectConfig` serde enum
    in `director-schema` via `build.rs`; do not hand-edit that enum.
-5. `director-pipeline/src/lib.rs` — `EffectConfig::<Name> { ... } => EffectType::<Name> { ... }`
-   arm in the manual `EffectType` conversion (exhaustive match; missing arm = build error).
-   Color params arrive as `Option<Color>` (apply `.unwrap_or(default)`).
-6. `examples/features/*.rhai` — at least one `apply_effect("name", #{...})` call
+5. `examples/features/*.rhai` — at least one `apply_effect("name", #{...})` call
    so the new shader is exercised as executable reference material.
 
 ### SkSL conventions (load-bearing — keep consistent)
@@ -84,8 +81,7 @@ pipeline conversion) or the build/tests fail.
   frame and threads it through `build_effect_filter`.
 - After editing `api_catalog.rs`, the generated `EffectConfig` enum changes; run
   `cargo test -p director-schema` — its round-trip test asserts every catalog tag
-  parses. A missing pipeline arm (`director-pipeline`) or catalog entry fails the
-  build immediately.
+  parses.
 
 ## Verification
 

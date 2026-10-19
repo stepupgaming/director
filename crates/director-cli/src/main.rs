@@ -106,7 +106,7 @@ enum Commands {
     Onion(onion::OnionArgs),
     /// List compositions registered by a script
     Compositions(CompositionsArgs),
-    /// Live web preview (scrub / play frames in the browser)
+    /// Preview API server for editors and agents (frames, inspect, audio, reload)
     Preview(CliPreviewArgs),
 }
 
@@ -214,14 +214,6 @@ struct CliPreviewArgs {
     /// Bind address (default 127.0.0.1:7788)
     #[arg(long, default_value = "127.0.0.1:7788")]
     bind: String,
-
-    /// Open the default browser to the preview URL
-    #[arg(long, default_value_t = true)]
-    open: bool,
-
-    /// Do not open a browser
-    #[arg(long, default_value_t = false)]
-    no_open: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -547,7 +539,6 @@ fn cmd_preview(args: CliPreviewArgs) {
             std::process::exit(1);
         }
     };
-    let open_browser = args.open && !args.no_open;
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -559,7 +550,6 @@ fn cmd_preview(args: CliPreviewArgs) {
         input: args.input,
         gpu: args.gpu,
         bind,
-        open_browser,
     })) {
         error!("{}", e);
         std::process::exit(1);

@@ -8,13 +8,12 @@
 - `director-html/` owns HTML/CSS/HyperFrames compilation, native CSS adapters, portable authoring projects and bundled assets, optional browser extraction, and Hyper CN compatibility/parity tooling.
 - `director-cli/` owns command-line rendering tools and helper binaries.
 - `director-schema/` owns schema-facing types and JSON schema reflection.
-- `director-pipeline/` owns asset and pipeline utilities.
 - `lottie-core/`, `lottie-data/`, and `lottie-skia/` own Lottie parsing, data models, animation logic, and Skia rendering.
 
 ## Local Contracts
 
 - Keep crate responsibilities separated; cross-crate changes should respect the dependency direction in `Cargo.toml`.
-- Public API changes must be reflected in README, examples, specs, generated truth, or skill references when those materials describe the changed behavior.
+- Public API changes must be reflected in README, examples, generated truth, or skill references when those materials describe the changed behavior.
 - `director-core::api_catalog` is the single source of truth for effects, transitions, nodes, and Rhai lifecycle helpers; `registry` and `director-schema` must stay synced with it.
 - Tests and fixtures live with the crate that owns the behavior.
 
@@ -36,7 +35,6 @@
 - `director-html/AGENTS.md` - HTML compiler, portable native projects, capture format, compatibility corpus, and benchmarks.
 - `director-cli/AGENTS.md` - CLI binaries and render command behavior.
 - `director-schema/AGENTS.md` - Schema crate and JSON schema reflection.
-- `director-pipeline/AGENTS.md` - Pipeline utility crate.
 - `lottie-core/AGENTS.md` - Lottie animation logic and expression support.
 - `lottie-data/AGENTS.md` - Lottie data models and JSON fixtures.
 - `lottie-skia/AGENTS.md` - Lottie Skia renderer and render fixtures.

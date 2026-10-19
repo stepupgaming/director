@@ -219,7 +219,6 @@ fn node_depends_on_time(node: &SceneNode) -> bool {
             | "smart_caption"
             | "active_speaker_camera"
             | "composition"
-            | "wgpu"
             | "effect"
             | "html_capture"
     ) {

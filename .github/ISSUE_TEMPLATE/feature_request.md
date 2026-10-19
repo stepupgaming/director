@@ -22,7 +22,6 @@ assignees: ''
 - [ ] `director-core`
 - [ ] `director-cli`
 - [ ] `director-schema`
-- [ ] `director-pipeline`
 - [ ] `lottie-*`
 
 **Files to Modify:**
