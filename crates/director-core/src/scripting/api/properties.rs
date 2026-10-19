@@ -17,7 +17,17 @@ use rhai::Engine;
 use super::super::types::NodeHandle;
 use super::super::utils::{
     parse_hex_color, parse_layout_style, parse_object_fit, parse_spans_from_dynamic, parse_text_style,
+    reject_unknown_keys, LAYOUT_STYLE_KEYS, TEXT_STYLE_KEYS,
 };
+
+fn style_prop_keys() -> Vec<&'static str> {
+    const EXTRA: &[&str] = &["object_fit"];
+    let mut keys = Vec::with_capacity(LAYOUT_STYLE_KEYS.len() + TEXT_STYLE_KEYS.len() + EXTRA.len());
+    keys.extend_from_slice(LAYOUT_STYLE_KEYS);
+    keys.extend_from_slice(TEXT_STYLE_KEYS);
+    keys.extend_from_slice(EXTRA);
+    keys
+}
 
 /// Register property-related Rhai functions.
 pub fn register(engine: &mut Engine) {
@@ -39,6 +49,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(
         "set_style",
         |node: &mut NodeHandle, style: rhai::Map| -> Result<(), Box<rhai::EvalAltResult>> {
+            reject_unknown_keys(&style, &style_prop_keys(), "set_style")?;
             let mut d = node.lock_director()?;
             node.ensure_alive(&d)?;
             let n = d
@@ -196,7 +207,12 @@ pub fn register(engine: &mut Engine) {
                 "saturation" => skia_safe::BlendMode::Saturation,
                 "color" => skia_safe::BlendMode::Color,
                 "luminosity" => skia_safe::BlendMode::Luminosity,
-                _ => skia_safe::BlendMode::SrcOver,
+                _ => {
+                    return Err(format!(
+                        "unknown blend mode '{mode_str}'; valid: clear, src, dst, src_over, dst_over, src_in, dst_in, src_out, dst_out, src_atop, dst_atop, xor, plus, modulate, screen, overlay, darken, lighten, color_dodge, color_burn, hard_light, soft_light, difference, exclusion, multiply, hue, saturation, color, luminosity"
+                    )
+                    .into());
+                }
             };
             if let Some(n) = d.scene.get_node_mut(node.id) {
                 n.blend_mode = mode;
