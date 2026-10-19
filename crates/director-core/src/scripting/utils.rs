@@ -443,6 +443,78 @@ pub fn parse_easing_result(ease: &str) -> Result<EasingType, String> {
     }
 }
 
+/// Keys `parse_layout_style` reads. Other map keys are not layout.
+pub const LAYOUT_STYLE_KEYS: &[&str] = &[
+    "width",
+    "height",
+    "max_width",
+    "max_height",
+    "flex_direction",
+    "align_items",
+    "justify_content",
+    "flex_wrap",
+    "flex_grow",
+    "flex_shrink",
+    "padding",
+    "padding_top",
+    "padding_right",
+    "padding_bottom",
+    "padding_left",
+    "margin",
+    "margin_top",
+    "margin_right",
+    "margin_bottom",
+    "margin_left",
+    "gap",
+    "display",
+    "grid_template_columns",
+    "grid_template_rows",
+    "grid_row",
+    "grid_column",
+    "aspect_ratio",
+    "position",
+    "left",
+    "right",
+    "top",
+    "bottom",
+];
+
+/// Keys `parse_text_style` reads, including documented aliases (`font_size`, `font_weight`).
+pub const TEXT_STYLE_KEYS: &[&str] = &[
+    "color",
+    "weight",
+    "font_weight",
+    "size",
+    "font_size",
+    "font_family",
+    "font_style",
+    "background_color",
+    "background_padding",
+    "stroke_width",
+    "stroke_color",
+    "fill_gradient",
+    "letter_spacing",
+    "line_height",
+];
+
+/// Error when `map` contains a key outside `allowed`.
+pub fn reject_unknown_keys(map: &Map, allowed: &[&str], kind: &str) -> Result<(), String> {
+    let mut unknown: Vec<&str> = map
+        .keys()
+        .map(|key| key.as_str())
+        .filter(|key| !allowed.iter().any(|allowed_key| allowed_key == key))
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    unknown.sort_unstable();
+    Err(format!(
+        "unknown {kind} key '{}'; valid: {}",
+        unknown.join("', '"),
+        allowed.join(", ")
+    ))
+}
+
 /// Parse layout style properties from a Rhai map into a Taffy Style.
 pub fn parse_layout_style(props: &rhai::Map, style: &mut Style) {
     let to_dim = |v: &rhai::Dynamic| -> Option<Dimension> {
@@ -572,6 +644,18 @@ pub fn parse_layout_style(props: &rhai::Map, style: &mut Style) {
             bottom: p,
         };
     }
+    if let Some(p) = props.get("padding_top").and_then(to_lp) {
+        style.padding.top = p;
+    }
+    if let Some(p) = props.get("padding_right").and_then(to_lp) {
+        style.padding.right = p;
+    }
+    if let Some(p) = props.get("padding_bottom").and_then(to_lp) {
+        style.padding.bottom = p;
+    }
+    if let Some(p) = props.get("padding_left").and_then(to_lp) {
+        style.padding.left = p;
+    }
 
     let to_lpa = |v: &rhai::Dynamic| -> Option<LengthPercentageAuto> {
         if let Ok(f) = v.as_float() {
@@ -602,6 +686,18 @@ pub fn parse_layout_style(props: &rhai::Map, style: &mut Style) {
             top: m,
             bottom: m,
         };
+    }
+    if let Some(m) = props.get("margin_top").and_then(to_lpa) {
+        style.margin.top = m;
+    }
+    if let Some(m) = props.get("margin_right").and_then(to_lpa) {
+        style.margin.right = m;
+    }
+    if let Some(m) = props.get("margin_bottom").and_then(to_lpa) {
+        style.margin.bottom = m;
+    }
+    if let Some(m) = props.get("margin_left").and_then(to_lpa) {
+        style.margin.left = m;
     }
 
     // Gap
@@ -745,16 +841,16 @@ pub fn parse_layout_style(props: &rhai::Map, style: &mut Style) {
     }
 
     // Insets (Top, Left, Right, Bottom) - reuse to_lpa closure
-    if let Some(v) = props.get("left").and_then(|v| to_lpa(v)) {
+    if let Some(v) = props.get("left").and_then(&to_lpa) {
         style.inset.left = v;
     }
-    if let Some(v) = props.get("right").and_then(|v| to_lpa(v)) {
+    if let Some(v) = props.get("right").and_then(&to_lpa) {
         style.inset.right = v;
     }
-    if let Some(v) = props.get("top").and_then(|v| to_lpa(v)) {
+    if let Some(v) = props.get("top").and_then(&to_lpa) {
         style.inset.top = v;
     }
-    if let Some(v) = props.get("bottom").and_then(|v| to_lpa(v)) {
+    if let Some(v) = props.get("bottom").and_then(to_lpa) {
         style.inset.bottom = v;
     }
 }
@@ -871,12 +967,22 @@ pub fn style_to_json(style: &Style) -> JsonMap<String, JsonValue> {
         && style.padding.left == style.padding.bottom
     {
         m.insert("padding".into(), lp(&style.padding.left));
+    } else {
+        m.insert("padding_top".into(), lp(&style.padding.top));
+        m.insert("padding_right".into(), lp(&style.padding.right));
+        m.insert("padding_bottom".into(), lp(&style.padding.bottom));
+        m.insert("padding_left".into(), lp(&style.padding.left));
     }
     if style.margin.left == style.margin.right
         && style.margin.left == style.margin.top
         && style.margin.left == style.margin.bottom
     {
         m.insert("margin".into(), lpa(&style.margin.left));
+    } else {
+        m.insert("margin_top".into(), lpa(&style.margin.top));
+        m.insert("margin_right".into(), lpa(&style.margin.right));
+        m.insert("margin_bottom".into(), lpa(&style.margin.bottom));
+        m.insert("margin_left".into(), lpa(&style.margin.left));
     }
     if style.gap.width == style.gap.height {
         m.insert("gap".into(), lp(&style.gap.width));

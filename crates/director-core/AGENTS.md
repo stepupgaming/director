@@ -408,6 +408,14 @@ five 640x360 premultiplied RGBA frames per workload via
 - **L3** — `examples/recipes/*` (must register compositions): `faceless_short`, `kinetic_lower_third`, `image_beats` (media props), `stat_count`, `quote_card`, `list_reveal`, `end_card`, `chapter_card`, `countdown`. The `examples` test filter `example_recipes_` validates them. Plan 07 **Done at v1 stop-line** (`docs/plans/07-stdlib-and-recipes.md`).
 - No separate `director-sdk` crate. TTS Historian, Podcast Clipper, full component library deferred.
 
+## Authoring errors
+
+- Unknown effect names, effect parameters, transition names, easing names, `add_box`/`add_text`/`set_style` keys, and blend modes fail the script with the valid names. They do not fall back.
+- `add_audio`, `add_image`, `add_svg`, `add_lottie`, and `add_video` fail the script when the asset loader cannot read the path, or when image, audio, svg, or lottie bytes are empty or undecodable. The error names the path.
+- `add_box` and `add_text` accept per-side `margin_top`, `margin_right`, `margin_bottom`, `margin_left` and the matching `padding_*` keys. A single `margin` or `padding` still sets all four sides.
+- `set_layout_style` stores the new Taffy style on box, text, effect, shape, and composition nodes.
+- Tests: `tests/fail_loud.rs`, `tests/fail_loud_catalog.rs`, `tests/quick_wins.rs`.
+
 ## Named compositions (Rhai)
 
 - `src/scripting/api/compositions.rs` — `CompositionRegistry`, `register_composition`, shallow props merge, JSON listing.

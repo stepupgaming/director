@@ -56,6 +56,62 @@ fn push_or_wrap_effect(
     apply_effect_to_node(d, node_id, effect)
 }
 
+fn unknown_effect(name: &str) -> Box<rhai::EvalAltResult> {
+    crate::api_catalog::unknown_effect_message(name).into()
+}
+
+fn reject_unknown_effect_params(name: &str, map: &Map) -> Result<(), Box<rhai::EvalAltResult>> {
+    let entry = crate::api_catalog::find_effect(name).ok_or_else(|| unknown_effect(name))?;
+    let mut unknown = Vec::new();
+    for key in map.keys() {
+        let key = key.as_str();
+        if !entry.params.iter().any(|(param, _)| *param == key) {
+            unknown.push(key.to_string());
+        }
+    }
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::api_catalog::unknown_effect_params_message(name, &unknown, entry).into())
+    }
+}
+
+fn effect_param_list(name: &str) -> String {
+    crate::api_catalog::find_effect(name)
+        .map(|entry| {
+            entry
+                .params
+                .iter()
+                .map(|(param, _)| *param)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default()
+}
+
+fn identity_color_matrix() -> Vec<f32> {
+    vec![
+        1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        1.0, 0.0,
+    ]
+}
+
+/// Effects whose second argument is a number rather than a parameter map.
+fn is_number_effect(name: &str) -> bool {
+    matches!(
+        name,
+        "contrast"
+            | "brightness"
+            | "saturation"
+            | "exposure"
+            | "hue_rotate"
+            | "hue"
+            | "blur"
+            | "temperature"
+            | "warmth"
+    )
+}
+
 /// Register effect-related Rhai functions.
 pub fn register(engine: &mut Engine) {
     // Named effects (no value)
@@ -77,6 +133,9 @@ pub fn register(engine: &mut Engine) {
                     -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 1.0,
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ])),
+                "thermal" | "heatmap" => Some(EffectType::Thermal),
+                "mirror" | "quad_mirror" => Some(EffectType::Mirror),
+                "gameboy" => Some(EffectType::Gameboy),
                 _ => None,
             };
 
@@ -86,11 +145,14 @@ pub fn register(engine: &mut Engine) {
                     director: node.director.clone(),
                     id,
                 })
+            } else if crate::api_catalog::find_effect(name).is_some() {
+                Err(format!(
+                    "effect '{name}' requires parameters ({})",
+                    effect_param_list(name)
+                )
+                .into())
             } else {
-                Ok(NodeHandle {
-                    director: node.director.clone(),
-                    id: node.id,
-                })
+                Err(unknown_effect(name))
             }
         },
     );
@@ -140,7 +202,7 @@ pub fn register(engine: &mut Engine) {
                     let cos_a = angle_rad.cos();
                     let sin_a = angle_rad.sin();
                     let inv_cos = 1.0 - cos_a;
-                    let isqrt3 = 0.577350269;
+                    let isqrt3 = 0.577_350_26;
                     Some(EffectType::ColorMatrix(vec![
                         cos_a + inv_cos / 3.0,              inv_cos / 3.0 - sin_a * isqrt3,  inv_cos / 3.0 + sin_a * isqrt3,  0.0, 0.0,
                         inv_cos / 3.0 + sin_a * isqrt3,     cos_a + inv_cos / 3.0,            inv_cos / 3.0 - sin_a * isqrt3,  0.0, 0.0,
@@ -170,11 +232,10 @@ pub fn register(engine: &mut Engine) {
                     director: node.director.clone(),
                     id,
                 })
+            } else if crate::api_catalog::find_effect(name).is_some() {
+                Err(format!("effect '{name}' does not take a single number").into())
             } else {
-                Ok(NodeHandle {
-                    director: node.director.clone(),
-                    id: node.id,
-                })
+                Err(unknown_effect(name))
             }
         },
     );
@@ -188,6 +249,7 @@ pub fn register(engine: &mut Engine) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = node.lock_director()?;
             node.ensure_alive(&d)?;
+            reject_unknown_effect_params(name, &map)?;
 
             let effect = match name {
                 "shader" => {
@@ -227,8 +289,62 @@ pub fn register(engine: &mut Engine) {
                             uniforms,
                         })
                     } else {
-                        None
+                        return Err("effect 'shader' requires a 'code' string".into());
                     }
+                }
+                "drop_shadow" => {
+                    let blur = map.get("blur").and_then(|v| v.as_float().ok()).unwrap_or(10.0) as f32;
+                    let offset_x = map
+                        .get("offset_x")
+                        .and_then(|v| v.as_float().ok())
+                        .unwrap_or(0.0) as f32;
+                    let offset_y = map
+                        .get("offset_y")
+                        .and_then(|v| v.as_float().ok())
+                        .unwrap_or(0.0) as f32;
+                    let color = map
+                        .get("color")
+                        .and_then(|v| v.clone().into_string().ok())
+                        .and_then(|s| super::super::utils::parse_hex_color(&s))
+                        .unwrap_or(crate::types::Color::BLACK);
+                    Some(EffectType::DropShadow {
+                        blur: Animated::new(blur),
+                        offset_x: Animated::new(offset_x),
+                        offset_y: Animated::new(offset_y),
+                        color: Animated::new(color),
+                    })
+                }
+                "color_matrix" => {
+                    let matrix = match map.get("matrix") {
+                        None => identity_color_matrix(),
+                        Some(value) => {
+                            let Ok(arr) = value.clone().into_array() else {
+                                return Err(
+                                    "effect 'color_matrix' parameter 'matrix' must be an array of 20 numbers"
+                                        .into(),
+                                );
+                            };
+                            if arr.len() != 20 {
+                                return Err(format!(
+                                    "effect 'color_matrix' parameter 'matrix' must have 20 numbers, got {}",
+                                    arr.len()
+                                )
+                                .into());
+                            }
+                            let mut matrix = Vec::with_capacity(20);
+                            for item in arr {
+                                let Ok(n) = item.as_float() else {
+                                    return Err(
+                                        "effect 'color_matrix' parameter 'matrix' must contain numbers"
+                                            .into(),
+                                    );
+                                };
+                                matrix.push(n as f32);
+                            }
+                            matrix
+                        }
+                    };
+                    Some(EffectType::ColorMatrix(matrix))
                 }
                 // Directional blur (motion blur)
                 // Usage: node.apply_effect("directional_blur", #{ strength: 10.0, angle: 45.0, samples: 16 })
@@ -852,18 +968,18 @@ pub fn register(engine: &mut Engine) {
                 _ => None,
             };
 
-            if let Some(eff) = effect {
-                let id = push_or_wrap_effect(&mut d, node.id, eff);
-                Ok(NodeHandle {
-                    director: node.director.clone(),
-                    id,
-                })
-            } else {
-                Ok(NodeHandle {
-                    director: node.director.clone(),
-                    id: node.id,
-                })
-            }
+            let Some(eff) = effect else {
+                return if is_number_effect(name) {
+                    Err(format!("effect '{name}' takes a number, not a parameter map").into())
+                } else {
+                    Err(format!("effect '{name}' does not accept a parameter map").into())
+                };
+            };
+            let id = push_or_wrap_effect(&mut d, node.id, eff);
+            Ok(NodeHandle {
+                director: node.director.clone(),
+                id,
+            })
         },
     );
 }

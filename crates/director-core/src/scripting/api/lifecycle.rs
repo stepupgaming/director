@@ -33,7 +33,7 @@ fn seeded_rng() -> &'static Mutex<StdRng> {
 }
 
 use super::super::types::{ClipHandle, MovieHandle, SceneHandle, SequenceHandle, TrackHandle};
-use super::super::utils::parse_easing;
+use super::super::utils::parse_easing_result;
 
 /// Register lifecycle-related Rhai functions.
 pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode: RenderMode) {
@@ -673,8 +673,9 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
          to: SceneHandle,
          type_str: &str,
          duration: f64,
-         easing_str: &str| {
-            add_transition_internal(movie, from, to, type_str, duration, easing_str, None);
+         easing_str: &str|
+         -> Result<(), Box<rhai::EvalAltResult>> {
+            add_transition_internal(movie, from, to, type_str, duration, easing_str, None)
         },
     );
 
@@ -687,12 +688,13 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
          duration: f64,
          easing_str: &str,
          amplitude: f64,
-         frequency: f64| {
+         frequency: f64|
+         -> Result<(), Box<rhai::EvalAltResult>> {
             let kind = TransitionType::Wave {
                 amplitude: amplitude as f32,
                 frequency: frequency as f32,
             };
-            add_transition_with_kind(movie, from, to, duration, easing_str, kind);
+            add_transition_with_kind(movie, from, to, duration, easing_str, kind)
         },
     );
 
@@ -704,11 +706,12 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
          to: SceneHandle,
          duration: f64,
          easing_str: &str,
-         intensity: f64| {
+         intensity: f64|
+         -> Result<(), Box<rhai::EvalAltResult>> {
             let kind = TransitionType::Glitch {
                 intensity: intensity as f32,
             };
-            add_transition_with_kind(movie, from, to, duration, easing_str, kind);
+            add_transition_with_kind(movie, from, to, duration, easing_str, kind)
         },
     );
 
@@ -721,12 +724,13 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
          duration: f64,
          easing_str: &str,
          start_radius: f64,
-         end_radius: f64| {
+         end_radius: f64|
+         -> Result<(), Box<rhai::EvalAltResult>> {
             let kind = TransitionType::Iris {
                 start_radius: start_radius as f32,
                 end_radius: end_radius as f32,
             };
-            add_transition_with_kind(movie, from, to, duration, easing_str, kind);
+            add_transition_with_kind(movie, from, to, duration, easing_str, kind)
         },
     );
 
@@ -738,11 +742,12 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
          to: SceneHandle,
          duration: f64,
          easing_str: &str,
-         rotations: f64| {
+         rotations: f64|
+         -> Result<(), Box<rhai::EvalAltResult>> {
             let kind = TransitionType::Spiral {
                 rotations: rotations as f32,
             };
-            add_transition_with_kind(movie, from, to, duration, easing_str, kind);
+            add_transition_with_kind(movie, from, to, duration, easing_str, kind)
         },
     );
 }
@@ -859,7 +864,7 @@ fn add_transition_internal(
     duration: f64,
     easing_str: &str,
     params: Option<rhai::Map>,
-) {
+) -> Result<(), Box<rhai::EvalAltResult>> {
     let kind = match type_str {
         "fade" => TransitionType::Fade,
         "slide_left" | "slide-left" => TransitionType::SlideLeft,
@@ -891,9 +896,33 @@ fn add_transition_internal(
         "flip" => TransitionType::Flip,
         "clock_wipe" | "clock-wipe" | "clockwipe" => TransitionType::ClockWipe,
         "cube" => TransitionType::Cube,
-        _ => TransitionType::Fade,
+        _ => return Err(crate::api_catalog::unknown_transition_message(type_str).into()),
     };
-    add_transition_with_kind(movie, from, to, duration, easing_str, kind);
+    if let Some(map) = params.as_ref() {
+        if let Some(entry) = crate::api_catalog::find_transition(type_str) {
+            let mut unknown = Vec::new();
+            for key in map.keys() {
+                let key = key.as_str();
+                if !entry.params.iter().any(|(param, _)| *param == key) {
+                    unknown.push(key.to_string());
+                }
+            }
+            if !unknown.is_empty() {
+                let valid: Vec<&str> = entry.params.iter().map(|(param, _)| *param).collect();
+                let valid_list = if valid.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    valid.join(", ")
+                };
+                return Err(format!(
+                    "unknown parameter '{}' for transition '{type_str}'; valid: {valid_list}",
+                    unknown.join("', '")
+                )
+                .into());
+            }
+        }
+    }
+    add_transition_with_kind(movie, from, to, duration, easing_str, kind)
 }
 
 // Helper function to add a transition with a specific kind
@@ -904,18 +933,16 @@ fn add_transition_with_kind(
     duration: f64,
     easing_str: &str,
     kind: TransitionType,
-) {
-    let mut d = match movie.lock_director() {
-        Ok(d) => d,
-        Err(_) => return,
-    };
+) -> Result<(), Box<rhai::EvalAltResult>> {
+    let easing = parse_easing_result(easing_str)?;
+    let mut d = movie.lock_director()?;
 
     if duration <= 0.0 {
         warn!(
             "Ignoring transition with non-positive duration: {}",
             duration
         );
-        return;
+        return Ok(());
     }
 
     // Flat indices match Director::flat_timeline (track order, then clip order).
@@ -930,7 +957,7 @@ fn add_transition_with_kind(
                 to_scene = t_idx,
                 "Ignoring transition: target scene must come after source scene"
             );
-            return;
+            return Ok(());
         }
         if duration > flat[f_idx].duration {
             warn!(
@@ -938,7 +965,7 @@ fn add_transition_with_kind(
                 from_duration = flat[f_idx].duration,
                 "Ignoring transition: duration exceeds source scene duration"
             );
-            return;
+            return Ok(());
         }
 
         // Ripple left: shift 'to' clip and all later flat clips left by duration.
@@ -960,7 +987,6 @@ fn add_transition_with_kind(
             }
         }
 
-        let easing = parse_easing(easing_str);
         // Recompute start after ripple.
         let start_time = d
             .flat_timeline()
@@ -979,4 +1005,5 @@ fn add_transition_with_kind(
 
         d.transitions.push(transition);
     }
+    Ok(())
 }

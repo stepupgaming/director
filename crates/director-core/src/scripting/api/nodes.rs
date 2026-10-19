@@ -33,7 +33,8 @@ use tracing::error;
 use super::super::types::{MovieHandle, NodeHandle, SceneHandle};
 use super::super::utils::{
     parse_gradient_config, parse_hex_color, parse_layout_style, parse_object_fit,
-    parse_spans_from_dynamic, parse_text_shadow,
+    parse_spans_from_dynamic, parse_text_shadow, reject_unknown_keys, LAYOUT_STYLE_KEYS,
+    TEXT_STYLE_KEYS,
 };
 
 /// Register node creation Rhai functions.
@@ -99,6 +100,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |parent: &mut NodeHandle,
          props: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            reject_unknown_keys(&props, &box_prop_keys(), "add_box")?;
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
             let mut box_node = BoxNode::new();
@@ -131,6 +133,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |scene: &mut SceneHandle,
          props: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            reject_unknown_keys(&props, &box_prop_keys(), "add_box")?;
             let mut d = scene.lock_director()?;
             let mut box_node = BoxNode::new();
             apply_box_props(&mut box_node, &props);
@@ -171,6 +174,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
             let image = d.assets.load_image(path);
+            if image.is_none() {
+                return Err(format!("image not found or not decodable: {path}").into());
+            }
 
             let img_node = ImageNode::from_image_with_path(image, path);
             let id = d.scene.add_node(Box::new(img_node));
@@ -192,6 +198,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |scene: &mut SceneHandle, path: &str| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
             let image = d.assets.load_image(path);
+            if image.is_none() {
+                return Err(format!("image not found or not decodable: {path}").into());
+            }
 
             let img_node = ImageNode::from_image_with_path(image, path);
             let id = d.scene.add_node(Box::new(img_node));
@@ -218,6 +227,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
             let image = d.assets.load_image(path);
+            if image.is_none() {
+                return Err(format!("image not found or not decodable: {path}").into());
+            }
 
             let mut img_node = ImageNode::from_image_with_path(image, path);
             parse_layout_style(&props, &mut img_node.style);
@@ -267,6 +279,9 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
             let image = d.assets.load_image(path);
+            if image.is_none() {
+                return Err(format!("image not found or not decodable: {path}").into());
+            }
 
             let mut img_node = ImageNode::from_image_with_path(image, path);
             parse_layout_style(&props, &mut img_node.style);
@@ -311,7 +326,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |parent: &mut NodeHandle, path: &str| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
-            let blob = d.assets.load_blob(path).map_err(|e| e.to_string())?;
+            let blob = load_nonempty_blob(&d, path, "lottie")?;
 
             match LottieNode::new(&blob, HashMap::new(), &d.assets) {
                 Ok(lottie_node) => {
@@ -345,7 +360,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
-            let blob = d.assets.load_blob(path).map_err(|e| e.to_string())?;
+            let blob = load_nonempty_blob(&d, path, "lottie")?;
 
             let mut assets_map = HashMap::new();
             if let Some(assets_prop) = props
@@ -405,7 +420,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          props: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
-            let blob = d.assets.load_blob(path).map_err(|e| e.to_string())?;
+            let blob = load_nonempty_blob(&d, path, "lottie")?;
 
             let mut assets_map = HashMap::new();
             if let Some(assets_prop) = props
@@ -463,7 +478,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         "add_svg",
         |scene: &mut SceneHandle, path: &str| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
-            let blob = d.assets.load_blob(path).unwrap_or(Arc::new(Vec::new()));
+            let blob = load_nonempty_blob(&d, path, "svg")?;
 
             let vec_node = VectorNode::new(&blob);
             let id = d.scene.add_node(Box::new(vec_node));
@@ -492,7 +507,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          props: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
-            let blob = d.assets.load_blob(path).unwrap_or(Arc::new(Vec::new()));
+            let blob = load_nonempty_blob(&d, path, "svg")?;
 
             let mut vec_node = VectorNode::new(&blob);
             parse_layout_style(&props, &mut vec_node.style);
@@ -526,7 +541,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |parent: &mut NodeHandle, path: &str| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
-            let blob = d.assets.load_blob(path).unwrap_or(Arc::new(Vec::new()));
+            let blob = load_nonempty_blob(&d, path, "svg")?;
 
             let vec_node = VectorNode::new(&blob);
             let id = d.scene.add_node(Box::new(vec_node));
@@ -554,7 +569,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
-            let blob = d.assets.load_blob(path).unwrap_or(Arc::new(Vec::new()));
+            let blob = load_nonempty_blob(&d, path, "svg")?;
 
             let mut vec_node = VectorNode::new(&blob);
             parse_layout_style(&props, &mut vec_node.style);
@@ -587,6 +602,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |parent: &mut NodeHandle, path: &str| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
+            ensure_video_readable(&d, path)?;
             let mode = d.render_mode;
             let source = build_video_source(&d, path);
 
@@ -616,6 +632,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
+            ensure_video_readable(&d, path)?;
             let mode = d.render_mode;
             let source = build_video_source(&d, path);
 
@@ -660,6 +677,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         "add_video",
         |scene: &mut SceneHandle, path: &str| -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
+            ensure_video_readable(&d, path)?;
             let mode = d.render_mode;
             let source = build_video_source(&d, path);
 
@@ -690,6 +708,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          props: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
+            ensure_video_readable(&d, path)?;
             let mode = d.render_mode;
             let source = build_video_source(&d, path);
 
@@ -780,6 +799,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |parent: &mut NodeHandle,
          props: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            reject_unknown_keys(&props, &text_prop_keys(), "add_text")?;
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
             let font_collection = d.assets.font_collection.clone();
@@ -824,6 +844,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
         |scene: &mut SceneHandle,
          props: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
+            reject_unknown_keys(&props, &text_prop_keys(), "add_text")?;
             let mut d = scene.lock_director()?;
             let font_collection = d.assets.font_collection.clone();
 
@@ -1920,7 +1941,7 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
         node.style.active_pop_scale = (v as f32).clamp(1.0, 1.10);
     }
     if let Some(d) = props.get("active_pop_duration").and_then(|v| v.as_float().ok()) {
-        node.style.active_pop_duration = (d as f64).clamp(0.05, 0.15);
+        node.style.active_pop_duration = d.clamp(0.05, 0.15);
     }
     if let Some(v) = props.get("line_reveal_offset_1").and_then(|v| v.as_float().ok()) {
         let f = v as f32;
@@ -1994,8 +2015,66 @@ fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
     node.after_style_changed();
 }
 
+fn box_prop_keys() -> Vec<&'static str> {
+    const EXTRA: &[&str] = &[
+        "bg_color",
+        "bg_gradient",
+        "shadow_color",
+        "shadow_blur",
+        "shadow_x",
+        "shadow_y",
+        "border_radius",
+        "border_width",
+        "border_color",
+        "overflow",
+        "backdrop_blur",
+        "clip_path",
+        "box_shadows",
+        "filter_blur",
+        "filter_brightness",
+        "filter_contrast",
+        "filter_saturation",
+        "filter_hue_rotate",
+        "z_index",
+    ];
+    let mut keys = Vec::with_capacity(LAYOUT_STYLE_KEYS.len() + EXTRA.len());
+    keys.extend_from_slice(LAYOUT_STYLE_KEYS);
+    keys.extend_from_slice(EXTRA);
+    keys
+}
+
+fn text_prop_keys() -> Vec<&'static str> {
+    const EXTRA: &[&str] = &[
+        "content",
+        "fit",
+        "min_size",
+        "max_size",
+        "align",
+        "text_direction",
+        "text_shadow_color",
+        "text_shadow_blur",
+        "text_shadow_x",
+        "text_shadow_y",
+        "filter_blur",
+        "filter_brightness",
+        "filter_contrast",
+        "filter_saturation",
+        "filter_hue_rotate",
+        "z_index",
+    ];
+    let mut keys = Vec::with_capacity(LAYOUT_STYLE_KEYS.len() + TEXT_STYLE_KEYS.len() + EXTRA.len());
+    keys.extend_from_slice(LAYOUT_STYLE_KEYS);
+    keys.extend_from_slice(TEXT_STYLE_KEYS);
+    keys.extend_from_slice(EXTRA);
+    keys
+}
+
 fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
-    if let Some(s) = props.get("size").and_then(|v| v.as_float().ok()) {
+    if let Some(s) = props
+        .get("size")
+        .or_else(|| props.get("font_size"))
+        .and_then(|v| v.as_float().ok())
+    {
         text_node.default_font_size = Animated::new(s as f32);
     }
     if let Some(c) = props
@@ -2007,7 +2086,25 @@ fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
         }
     }
 
-    let weight = props.get("weight").and_then(super::super::utils::parse_font_weight);
+    let weight = props
+        .get("weight")
+        .or_else(|| props.get("font_weight"))
+        .and_then(super::super::utils::parse_font_weight);
+    let font_family = props
+        .get("font_family")
+        .and_then(|v| v.clone().into_string().ok());
+    let font_style = props
+        .get("font_style")
+        .and_then(|v| v.clone().into_string().ok())
+        .filter(|style| style == "italic" || style == "oblique");
+    let letter_spacing = props
+        .get("letter_spacing")
+        .and_then(|v| v.as_float().ok())
+        .map(|v| v as f32);
+    let line_height = props
+        .get("line_height")
+        .and_then(|v| v.as_float().ok())
+        .map(|v| v as f32);
 
     // Top-level rich text defaults
     let default_background_color = props
@@ -2032,6 +2129,18 @@ fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
     for span in &mut text_node.spans {
         if span.font_weight.is_none() {
             span.font_weight = weight;
+        }
+        if span.font_family.is_none() {
+            span.font_family = font_family.clone();
+        }
+        if span.font_style.is_none() {
+            span.font_style = font_style.clone();
+        }
+        if span.letter_spacing.is_none() {
+            span.letter_spacing = letter_spacing;
+        }
+        if span.line_height.is_none() {
+            span.line_height = line_height;
         }
         if span.background_color.is_none() {
             span.background_color = default_background_color;
@@ -2243,6 +2352,34 @@ fn build_smart_caption_trajectory(
     };
     let trajectory = solve_caption_trajectory(&d.entities, &manifest, &params);
     Ok((trajectory, manifest.entity_refs))
+}
+
+/// Missing or empty media bytes fail the script before a node is built.
+fn load_nonempty_blob(
+    d: &crate::director::Director,
+    path: &str,
+    kind: &str,
+) -> Result<Arc<Vec<u8>>, Box<rhai::EvalAltResult>> {
+    let blob = d
+        .assets
+        .load_blob(path)
+        .map_err(|e| format!("{kind} not found: {path}: {e}"))?;
+    if blob.is_empty() {
+        return Err(format!("{kind} file is empty: {path}").into());
+    }
+    Ok(blob)
+}
+
+/// Read `path` with the asset loader before a video node is built.
+fn ensure_video_readable(
+    d: &crate::director::Director,
+    path: &str,
+) -> Result<(), Box<rhai::EvalAltResult>> {
+    d.assets
+        .loader
+        .load_bytes(path)
+        .map_err(|e| format!("video not found: {path}: {e}"))?;
+    Ok(())
 }
 
 /// Build a `VideoSource` from a path, falling back to loaded bytes when the

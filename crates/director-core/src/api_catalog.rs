@@ -787,6 +787,123 @@ pub fn catalog_effect_names() -> Vec<&'static str> {
     EFFECT_CATALOG.iter().map(|e| e.name).collect()
 }
 
+/// Catalog entry for a primary effect name or a documented alias.
+pub fn find_effect(name: &str) -> Option<&'static EffectCatalogEntry> {
+    EFFECT_CATALOG.iter().find(|entry| effect_name_matches(entry, name))
+}
+
+/// Catalog entry for a primary transition name or a documented alias.
+pub fn find_transition(name: &str) -> Option<&'static TransitionCatalogEntry> {
+    TRANSITION_CATALOG
+        .iter()
+        .find(|entry| entry.name == name || entry.aliases.contains(&name))
+}
+
+fn effect_name_matches(entry: &EffectCatalogEntry, name: &str) -> bool {
+    entry.name == name || entry.aliases.contains(&name)
+}
+
+fn effect_labels() -> Vec<&'static str> {
+    let mut labels = Vec::new();
+    for entry in EFFECT_CATALOG {
+        labels.push(entry.name);
+        labels.extend(entry.aliases.iter().copied());
+    }
+    labels
+}
+
+fn transition_labels() -> Vec<&'static str> {
+    let mut labels = Vec::new();
+    for entry in TRANSITION_CATALOG {
+        labels.push(entry.name);
+        labels.extend(entry.aliases.iter().copied());
+    }
+    labels
+}
+
+/// Runtime error text for an effect name that is not in the catalog.
+pub fn unknown_effect_message(name: &str) -> String {
+    unknown_name_message("effect", name, &effect_labels())
+}
+
+/// Runtime error text for a transition name that is not in the catalog.
+pub fn unknown_transition_message(name: &str) -> String {
+    unknown_name_message("transition", name, &transition_labels())
+}
+
+/// Runtime error text listing parameter names declared for an effect.
+pub fn unknown_effect_params_message(
+    name: &str,
+    unknown: &[String],
+    entry: &EffectCatalogEntry,
+) -> String {
+    let valid: Vec<&str> = entry.params.iter().map(|(param, _)| *param).collect();
+    let valid_list = if valid.is_empty() {
+        "(none)".to_string()
+    } else {
+        valid.join(", ")
+    };
+    format!(
+        "unknown parameter '{}' for effect '{name}'; valid: {valid_list}",
+        unknown.join("', '")
+    )
+}
+
+fn unknown_name_message(kind: &str, name: &str, labels: &[&str]) -> String {
+    let close = close_names(name, labels);
+    if close.is_empty() {
+        format!("unknown {kind} '{name}'; valid: {}", labels.join(", "))
+    } else {
+        format!(
+            "unknown {kind} '{name}'; close matches: {}; valid: {}",
+            close.join(", "),
+            labels.join(", ")
+        )
+    }
+}
+
+fn close_names<'a>(query: &str, names: &[&'a str]) -> Vec<&'a str> {
+    let query_l = query.to_ascii_lowercase();
+    let mut scored: Vec<(usize, &'a str)> = names
+        .iter()
+        .copied()
+        .filter(|name| *name != query)
+        .filter_map(|name| {
+            let name_l = name.to_ascii_lowercase();
+            let dist = edit_distance(&query_l, &name_l);
+            let contains = name_l.len() >= 4
+                && (name_l.contains(&query_l) || query_l.contains(&name_l));
+            let near = dist <= 2 || (dist <= 3 && query_l.len() >= 6) || contains;
+            near.then_some((dist, name))
+        })
+        .collect();
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(b.1)));
+    scored.dedup_by(|a, b| a.1 == b.1);
+    scored.into_iter().take(5).map(|(_, name)| name).collect()
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
 /// JSON schema tags for effects (one per catalog entry).
 pub fn catalog_effect_schema_tags() -> Vec<&'static str> {
     EFFECT_CATALOG.iter().map(|e| e.schema_tag).collect()

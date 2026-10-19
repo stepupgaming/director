@@ -5,7 +5,7 @@
 //
 // Default media is repo-relative (run from workspace root / examples tests cwd):
 //   examples/tests/heart_eyes_official_frame1.jpg
-//   examples/assets/star.svg
+//   examples/assets/photo_b.jpg
 //
 // CLI:
 //   director-engine compositions examples/recipes/image_beats.rhai --json
@@ -25,7 +25,7 @@ register_composition("image_beats", #{
         hold: 2.8,
         images: [
             "examples/tests/heart_eyes_official_frame1.jpg",
-            "examples/assets/star.svg"
+            "examples/assets/photo_b.jpg"
         ],
         captions: [
             "Lead with a still",

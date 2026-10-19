@@ -14,36 +14,41 @@ use rhai::Engine;
 use tracing::error;
 
 use super::super::types::{AudioTrackHandle, MovieHandle, NodeHandle, SceneHandle};
-use super::super::utils::parse_easing;
+use super::super::utils::parse_easing_result;
+
+fn load_audio_samples(
+    d: &crate::director::Director,
+    path: &str,
+) -> Result<Vec<f32>, Box<rhai::EvalAltResult>> {
+    let bytes = d
+        .assets
+        .loader
+        .load_bytes(path)
+        .map_err(|e| format!("audio not found: {path}: {e}"))?;
+    let samples = crate::audio::load_audio_bytes(&bytes, d.audio_mixer.sample_rate)
+        .map_err(|e| format!("audio not decodable: {path}: {e}"))?;
+    if samples.is_empty() {
+        return Err(format!("audio not decodable: {path}").into());
+    }
+    Ok(samples)
+}
 
 /// Register audio-related Rhai functions.
 pub fn register(engine: &mut Engine) {
     engine.register_type_with_name::<AudioTrackHandle>("AudioTrack");
 
-    engine.register_fn("add_audio", |movie: &mut MovieHandle, path: &str| {
-        let mut d = match movie.lock_director() {
-            Ok(d) => d,
-            Err(e) => {
-                error!("{}", e);
-                return AudioTrackHandle {
-                    director: movie.director.clone(),
-                    id: usize::MAX,
-                };
-            }
-        };
-        let bytes = d.assets.loader.load_bytes(path).unwrap_or(Vec::new());
-        let samples = crate::audio::load_audio_bytes(&bytes, d.audio_mixer.sample_rate)
-            .unwrap_or_else(|e| {
-                error!("Audio error: {}", e);
-                Vec::new()
-            });
-
-        let id = d.add_global_audio(samples);
-        AudioTrackHandle {
-            director: movie.director.clone(),
-            id,
-        }
-    });
+    engine.register_fn(
+        "add_audio",
+        |movie: &mut MovieHandle, path: &str| -> Result<AudioTrackHandle, Box<rhai::EvalAltResult>> {
+            let mut d = movie.lock_director()?;
+            let samples = load_audio_samples(&d, path)?;
+            let id = d.add_global_audio(samples);
+            Ok(AudioTrackHandle {
+                director: movie.director.clone(),
+                id,
+            })
+        },
+    );
 
     engine.register_fn(
         "add_global_audio",
@@ -62,60 +67,49 @@ pub fn register(engine: &mut Engine) {
         },
     );
 
-    engine.register_fn("add_audio", |scene: &mut SceneHandle, path: &str| {
-        let id = {
-            let mut d = match scene.lock_director() {
-                Ok(d) => d,
-                Err(e) => {
-                    error!("{}", e);
-                    return AudioTrackHandle {
-                        director: scene.director.clone(),
-                        id: usize::MAX,
-                    };
+    engine.register_fn(
+        "add_audio",
+        |scene: &mut SceneHandle, path: &str| -> Result<AudioTrackHandle, Box<rhai::EvalAltResult>> {
+            let id = {
+                let mut d = scene.lock_director()?;
+                let samples = load_audio_samples(&d, path)?;
+
+                let id = d.add_scene_audio(samples, scene.start_time, scene.duration);
+                if let Some(clip) = d
+                    .tracks
+                    .iter_mut()
+                    .flat_map(|t| t.clips.iter_mut())
+                    .find(|c| c.scene_root == scene.root_id)
+                {
+                    clip.audio_tracks.push(id);
                 }
+                id
             };
-            let bytes = d.assets.loader.load_bytes(path).unwrap_or(Vec::new());
-            let samples = crate::audio::load_audio_bytes(&bytes, d.audio_mixer.sample_rate)
-                .unwrap_or_else(|e| {
-                    error!("Audio error: {}", e);
-                    Vec::new()
-                });
 
-            let id = d.add_scene_audio(samples, scene.start_time, scene.duration);
-            if let Some(clip) = d
-                .tracks
-                .iter_mut()
-                .flat_map(|t| t.clips.iter_mut())
-                .find(|c| c.scene_root == scene.root_id)
-            {
-                clip.audio_tracks.push(id);
-            }
-            id
-        };
+            // Update SceneHandle tracking after dropping Director lock.
+            scene.audio_tracks.push(id);
 
-        // Update SceneHandle tracking after dropping Director lock.
-        scene.audio_tracks.push(id);
-
-        AudioTrackHandle {
-            director: scene.director.clone(),
-            id,
-        }
-    });
+            Ok(AudioTrackHandle {
+                director: scene.director.clone(),
+                id,
+            })
+        },
+    );
 
     engine.register_fn(
         "animate_volume",
-        |track: &mut AudioTrackHandle, start: f64, end: f64, dur: f64, ease: &str| {
-            let mut d = match track.lock_director() {
-                Ok(d) => d,
-                Err(e) => {
-                    error!("{}", e);
-                    return;
-                }
-            };
+        |track: &mut AudioTrackHandle,
+         start: f64,
+         end: f64,
+         dur: f64,
+         ease: &str|
+         -> Result<(), Box<rhai::EvalAltResult>> {
+            let ease_fn = parse_easing_result(ease)?;
+            let mut d = track.lock_director()?;
             if let Some(t) = d.audio_mixer.get_track_mut(track.id) {
-                let ease_fn = parse_easing(ease);
                 t.volume.add_segment(start as f32, end as f32, dur, ease_fn);
             }
+            Ok(())
         },
     );
 
@@ -245,10 +239,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(
         "loudness",
         |track: &mut AudioTrackHandle| -> Result<rhai::Map, Box<rhai::EvalAltResult>> {
-            let d = match track.lock_director() {
-                Ok(d) => d,
-                Err(e) => return Err(e),
-            };
+            let d = track.lock_director()?;
             let Some(t) = d.audio_mixer.tracks.get(track.id).and_then(|t| t.as_ref()) else {
                 return Err(format!("audio track {} not found", track.id).into());
             };
@@ -280,18 +271,18 @@ pub fn register(engine: &mut Engine) {
 
     engine.register_fn(
         "animate_pan",
-        |track: &mut AudioTrackHandle, start: f64, end: f64, dur: f64, ease: &str| {
-            let mut d = match track.lock_director() {
-                Ok(d) => d,
-                Err(e) => {
-                    error!("{}", e);
-                    return;
-                }
-            };
+        |track: &mut AudioTrackHandle,
+         start: f64,
+         end: f64,
+         dur: f64,
+         ease: &str|
+         -> Result<(), Box<rhai::EvalAltResult>> {
+            let ease_fn = parse_easing_result(ease)?;
+            let mut d = track.lock_director()?;
             if let Some(t) = d.audio_mixer.get_track_mut(track.id) {
-                let ease_fn = parse_easing(ease);
                 t.pan.add_segment(start as f32, end as f32, dur, ease_fn);
             }
+            Ok(())
         },
     );
 
@@ -425,16 +416,11 @@ pub fn register(engine: &mut Engine) {
          start: f64,
          end: f64,
          dur: f64,
-         ease: &str| {
-            let mut d = match track.lock_director() {
-                Ok(d) => d,
-                Err(e) => {
-                    error!("{}", e);
-                    return;
-                }
-            };
+         ease: &str|
+         -> Result<(), Box<rhai::EvalAltResult>> {
+            let ease_fn = parse_easing_result(ease)?;
+            let mut d = track.lock_director()?;
             if let Some(t) = d.audio_mixer.get_track_mut(track.id) {
-                let ease_fn = parse_easing(ease);
                 let mut animated = crate::animation::Animated::new(start as f32);
                 animated.add_segment(start as f32, end as f32, dur, ease_fn);
                 t.effect_param_animations.push(EffectParamAnimation {
@@ -443,6 +429,7 @@ pub fn register(engine: &mut Engine) {
                     animated,
                 });
             }
+            Ok(())
         },
     );
 

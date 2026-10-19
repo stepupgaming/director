@@ -35,7 +35,7 @@ use crate::animation::Animated;
 use crate::element::{TextFit, TextSpan};
 use crate::node::{BoxNode, ImageNode, SpectrumVisualizerNode, TextNode};
 use crate::scripting::types::{NodeHandle, SceneHandle};
-use crate::scripting::utils::{parse_hex_color, parse_layout_style, parse_object_fit};
+use crate::scripting::utils::{parse_hex_color, parse_layout_style};
 use crate::types::Color;
 use rhai::Engine;
 use skia_safe::textlayout::TextAlign as SkTextAlign;
@@ -375,7 +375,7 @@ fn build_counter(
 
     let start = props.get("start").and_then(|v| v.as_float().ok()).unwrap_or(0.0) as f32;
     let end = props.get("end").and_then(|v| v.as_float().ok()).unwrap_or(100.0) as f32;
-    let duration = props.get("duration").and_then(|v| v.as_float().ok()).unwrap_or(2.0) as f64;
+    let duration = props.get("duration").and_then(|v| v.as_float().ok()).unwrap_or(2.0);
     let decimals = props.get("decimals").and_then(|v| v.as_int().ok()).unwrap_or(0) as usize;
     let prefix = props.get("prefix").map(|v| v.to_string()).unwrap_or_default();
     let suffix = props.get("suffix").map(|v| v.to_string()).unwrap_or_default();
@@ -446,7 +446,7 @@ fn build_counter(
         if let Some(text_node) = node.element.as_any_mut().downcast_mut::<TextNode>() {
             text_node.counter = Some(counter_cfg);
             text_node.counter_value = crate::animation::Animated::new(start);
-            let ease_fn = crate::node::parse_easing(&easing);
+            let ease_fn = crate::scripting::utils::parse_easing_result(&easing).map_err(to_eval_err)?;
             text_node.counter_value.add_segment(start, end, duration, ease_fn);
         }
     }
@@ -1127,10 +1127,10 @@ fn build_bento_grid(
     };
     root.style.display = Display::Grid;
     root.style.grid_template_columns = (0..columns)
-        .map(|_| GridTemplateComponent::Single(fr(1.0)))
+        .map(|_| GridTemplateComponent::Single(fr(1.0_f32)))
         .collect();
     root.style.grid_template_rows = (0..rows)
-        .map(|_| GridTemplateComponent::Single(fr(1.0)))
+        .map(|_| GridTemplateComponent::Single(fr(1.0_f32)))
         .collect();
     root.style.gap = Size {
         width: LengthPercentage::length(gap),
