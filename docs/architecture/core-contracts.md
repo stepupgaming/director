@@ -67,7 +67,7 @@ update(time, dirty?) → layout → post_layout → render → (mix_audio / enco
 | Item | Contract | Status (2026-07-19) |
 |------|----------|---------------------|
 | Full vs incremental | Same pixels for same scene+time after public mutations | **Done** — `tests/pipeline_equivalence.rs` |
-| Static cache | Auto-invalidated via `note_mutation` / `invalidate`; dirty static nodes never serve cache hits. Full passes currently re-rasterize static subtrees. | Correctness covered; full-pass reuse remains a performance gap |
+| Static cache | Auto-invalidated via `note_mutation` / `invalidate`; dirty static nodes never serve cache hits. A full pass reuses a cached subtree when its `StaticCacheKey` (size, baked local transform, pivot, inherited opacity, and time for time-varying paint) matches. Image-only caches still miss on a full pass. | **Done** — `tests/static_reuse.rs` (issue #2) |
 | Layout cache | Unchanged ordered children/masks and non-measured styles do not dirty Taffy. Dirty intrinsic content still invalidates measure even when Style is unchanged. | Covered by layout unit tests and persistent/fresh pixel equivalence |
 | Dirty expansion | Ancestors, descendants, mask subtrees, reverse mask users; drop stale ids | **Done** |
 | Uncompiled graph | Incremental falls back to full (`!is_compiled()` ⇒ dirty `None`) | **Done** |
@@ -132,8 +132,8 @@ See plan **06** (implemented). Acceptance: `tests/determinism_media.rs`.
 
 These are **not** core solidity work:
 
-- Live preview server: landed (`director-engine preview`); compositions/props CLI: landed  
-- Agent repair loops / recipes / SDK L1–L3  
+- Live preview server, compositions/props CLI, recipes (plan 07), and agent repair/batch commands: landed as product surface above these contracts  
+- A separate SDK crate  
 - New shader packs, NLE UI, GPU rewrite, in-engine STT  
 
 Deferred material: [`docs/archive/`](../archive/README.md).

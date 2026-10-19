@@ -1,16 +1,31 @@
 # Director
 
-[![CI](https://github.com/stepupgaming/director/actions/workflows/ci.yml/badge.svg)](https://github.com/stepupgaming/director/actions/workflows/ci.yml)
+> ⚠️ **Pre-release**. APIs may change before v1.0.
 
-> ⚠️ **Pre-release** — API may change before v1.0
+**A native video platform in Rust for agents and developers.**
 
-**A programmatic video rendering engine in Rust.**
-
-Director combines Taffy (CSS Flexbox), Skia (rasterization), and Rhai (scripting) to enable programmatic video generation with a clean, declarative API.
+Director renders video from Rhai scripts, HTML/CSS, HyperFrames compositions, and sampled browser captures. Taffy lays out, Skia paints on CPU or Vulkan, and FFmpeg encodes. HTML is compiled into native scene nodes, so rendering never drives a browser.
 
 ---
 
 ## Quick Start
+
+```bash
+cargo build --release -p director-cli --bin director-engine
+
+# Rhai script
+target/release/director-engine render examples/basics/hello_world.rhai -o output.mp4
+
+# HTML/CSS composition
+target/release/director-engine html render examples/html/native-motion.html -o target/native.mp4
+
+# Portable native project: pack, inspect, edit, render
+target/release/director-engine project pack examples/html/native-motion.html -o target/movie.dirproj
+target/release/director-engine inspect target/movie.dirproj -t 1
+target/release/director-engine render target/movie.dirproj -o target/movie.mp4
+```
+
+A minimal Rhai script:
 
 ```rhai
 let movie = new_director(1920, 1080, 30);
@@ -36,70 +51,52 @@ title.animate("scale", 0.8, 1.0, 1.0, "bounce_out");
 movie
 ```
 
-```bash
-cargo run --release -- examples/basics/hello_world.rhai output.mp4
-```
-
 ---
 
 ## Features
 
 | Category | Features |
 |----------|----------|
-| **Layout** | Flexbox via Taffy (justify, align, padding, margin, absolute positioning) |
-| **Text** | SkParagraph with rich spans, weights, colors, backgrounds, shrink-to-fit |
-| **Animation** | Keyframes + easing, spring physics, per-property animation |
-| **Effects** | Blur, color matrices, drop shadow, custom SkSL shaders, cinematic + extended library (vignette, glitch, warp, swirl, duotone, kaleidoscope, and more) |
-| **Compositing** | Alpha masking, blend modes (multiply, screen, overlay, etc.) |
-| **Media** | Image loading, video embedding, multi-track audio |
-| **Transitions** | Scene transitions (fade, slide, wipe) with ripple edit |
+| **Authoring** | Rhai scripts with named compositions and props, a motion stdlib and recipes; HTML/CSS and HyperFrames compiled natively; sampled Hyper CN captures, including Paper Shader canvases translated to SKSL |
+| **Layout** | Flexbox and Grid via Taffy, including CSS positioning, `calc()`, named lines and `subgrid` for HTML input |
+| **Text** | SkParagraph with rich spans, weights, colors, backgrounds, shrink-to-fit, and kinetic captions with word highlighting |
+| **Animation** | Keyframes and easing, spring physics, CSS keyframes, SVG SMIL |
+| **Paint** | Gradients, layered backgrounds, borders, shadows, masks, filters, blend modes, 2D/3D transforms with preserve-3d depth, custom SkSL shaders |
+| **Media** | Images, video, multi-track audio, Lottie |
+| **Agent tooling** | `inspect`, `check`, `sheet`, `snapshot`, `onion`, `audio`, `project edit`/`repair`, `batch`, and a native preview backend |
+| **Export** | CPU or Vulkan rendering, software x264 or NVENC encoding, draft encode and reduced-scale renders |
 
 ---
 
 ## Project Structure
 
 ```
-director-engine/
+director/
 ├── crates/
-│   ├── director-core/       # Main engine (rendering, scripting, layout)
-│   ├── director-cli/        # Command-line video renderer
+│   ├── director-core/       # Engine: scene graph, layout, animation, Rhai API, export
+│   ├── director-html/       # HTML/CSS/HyperFrames compiler, native projects, capture tools
+│   ├── director-cli/        # director-engine CLI and preview backend
 │   ├── director-pipeline/   # Asset pipeline utilities
 │   ├── director-schema/     # Schema definitions
-│   ├── lottie-core/         # Lottie animation parser
+│   ├── lottie-core/         # Lottie animation logic
 │   ├── lottie-data/         # Lottie data structures
 │   └── lottie-skia/         # Lottie Skia renderer
-├── examples/
-│   ├── basics/              # Hello world, layout, animation, text
-│   └── features/            # Effects, masking, transitions, images
-├── docs/                    # Documentation
-├── assets/                  # Test assets (images, fonts, audio, video)
-└── .github/                 # CI/CD and issue templates
+├── examples/                # Rhai and HTML examples (executable reference)
+├── specs/                   # RON feature specs for the harness
+├── docs/                    # Architecture, plans, contributing
+└── vendor/                  # Patched third-party crates
 ```
 
 ---
 
-## Installation
-
-### As a Dependency
-
-```toml
-[dependencies]
-director-engine = "1.1"
-rhai = "1.19"
-```
-
-### Building from Source
+## Building from Source
 
 ```bash
-# Clone
-git clone https://github.com/user/director-engine.git
-cd director-engine
-
-# Build (requires FFmpeg)
-cargo build --release
-
-# Run example
-cargo run --release -- examples/basics/hello_world.rhai output.mp4
+git clone https://github.com/stepupgaming/director.git
+cd director
+cargo build --release -p director-cli --bin director-engine
+# Vulkan rendering:
+cargo build --release -p director-cli --bin director-engine --features vulkan
 ```
 
 ### System Dependencies
@@ -117,38 +114,22 @@ See [docs/contributing/development.md](docs/contributing/development.md) for det
 
 | Document | Description |
 |----------|-------------|
+| [docs/plans/09-native-fidelity.md](docs/plans/09-native-fidelity.md) | Current phase: status, latest test results, next action |
+| [crates/director-cli/README.md](crates/director-cli/README.md) | CLI commands, exit codes, preview backend |
+| [crates/director-html/README.md](crates/director-html/README.md) | HTML compiler support, capture, measurements |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Engine internals |
 | [docs/architecture/core-contracts.md](docs/architecture/core-contracts.md) | Normative engine spines (time, identity, pipeline, …) |
-| [docs/plans/00-core-hardening-index.md](docs/plans/00-core-hardening-index.md) | Active core-hardening program |
+| [docs/plans/00-core-hardening-index.md](docs/plans/00-core-hardening-index.md) | Plan index |
 | [docs/contributing/development.md](docs/contributing/development.md) | Build guide & contributing |
 | [examples/README.md](examples/README.md) | Example scripts index |
 | [docs/archive/](docs/archive/README.md) | Historical audit / deferred product plans |
-
-
----
-
-## Examples
-
-All examples are tested and serve as API reference:
-
-```bash
-# Basics
-cargo run --release -- examples/basics/hello_world.rhai output.mp4
-cargo run --release -- examples/basics/layout_flexbox.rhai output.mp4
-cargo run --release -- examples/basics/animation.rhai output.mp4
-
-# Features
-cargo run --release -- examples/features/effects.rhai output.mp4
-cargo run --release -- examples/features/masking.rhai output.mp4
-cargo run --release -- examples/features/transitions.rhai output.mp4
-```
 
 ---
 
 ## Embedding in Rust
 
 ```rust
-use director_engine::{scripting, DefaultAssetLoader};
+use director_core::{scripting, DefaultAssetLoader};
 use rhai::Engine;
 use std::sync::Arc;
 
@@ -165,18 +146,20 @@ fn main() -> anyhow::Result<()> {
 
     let movie = engine.eval::<scripting::MovieHandle>(script)?;
     let mut director = movie.director.lock().unwrap();
-    
-    director_engine::export::render_export(
+
+    director_core::export::render_export(
         &mut director,
         "output.mp4".into(),
         None,
         None,
         false,
     )?;
-    
+
     Ok(())
 }
 ```
+
+Depend on `director-core` by path or git; the crates are not published.
 
 ---
 

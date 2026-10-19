@@ -1,4 +1,13 @@
-# Caption system — god-tier kinetic captions for short-form video
+# Purpose
+
+- Own the Director engine: scene graph, timeline, layout, animation, Rhai API, captions, media, project I/O, export, and visual regression tests.
+
+## Ownership
+
+- Sections below are the local contracts for each engine area: captions, bundled fonts, core hardening spines, video export and decoding, entities and smart captions, project round-trip, the dependency-graph compiler, the authoring stack, and named compositions.
+- Normative cross-crate spines live in `docs/architecture/core-contracts.md`.
+
+## Caption system: kinetic captions for short-form video
 
 Each caption cue is a pre-laid-out, structurally stable text block.
 Highlighting the active word never moves any other word; no per-line
@@ -208,9 +217,9 @@ rather than relying on host system fonts.
   (director.rs, BUNDLED_FONTS).
 * Multiple weights of a family (Regular/Bold/Italic) are registered under
   the same family alias so font_weight / font_style resolve deterministically.
-* Roboto-Regular is required today; Bold/Italic/Inter/Poppins currently warn
-  if missing. **Plan 06** makes caption/export-critical weights fail-closed in
-  CI/export. setup_assets.sh and CI should provision the full set.
+* Roboto Regular/Bold/Italic, Inter Regular/Bold, and Poppins Bold are
+  required; export fails via `ensure_required_fonts` when one is missing.
+  setup_assets.sh and CI provision the full set.
 * Emoji fallback is loaded via DefaultAssetLoader::load_font_fallback
   (assets/fonts/emoji.ttf or DIRECTOR_EMOJI_FONT env var).
 * Do NOT add host-system-font-dependent text paths; new caption/template
@@ -254,9 +263,7 @@ The list sorts by ascending depth, then z-index, then source order.
 HtmlElement reports the Z of the element center after its own local
 matrix. Parent perspective is not part of that Z. A plane whose Z
 changes across its quad, including crossing `rotateX` cards, is
-occluded per pixel. Constant Z stays on the center sort. Measured
-2026-10-18 by `cargo test -p director-html --release --test depth_sort
---test depth_nested`: depth_sort 8 passed and depth_nested 1 passed.
+occluded per pixel. Constant Z stays on the center sort.
 Composition clip order is unchanged.
 
 Layout synchronization: compare child order including masks before calling Taffy
@@ -288,7 +295,7 @@ five 640x360 premultiplied RGBA frames per workload via
 - `systems::renderer::render_sampled_at_time` owns shutter sampling and accumulation for export and the CLI frame worker. Scratch and transition surfaces retain the requested backend; preview/still use the same sampling clock as export.
 - `src/export/video.rs`: a supplied Vulkan context requires GPU surface allocation. Flush/submit and read RGBA pixels directly from that surface into one reusable frame buffer; do not draw GPU snapshots onto CPU canvases.
 - Export passes per-channel sample-frame counts to `mix_audio`, which returns interleaved stereo. The total output remains `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`.
-- Software x264 defaults to preset `slow` and CRF 18. `software_x264_quality(true)` is `ultrafast` and CRF 30. Hardware qp and the alpha VP9 path stay put. `render_export` keeps draft off. Measured 2026-10-17: `cargo test -p director-core --release --lib draft_software_x264` passed 1, 177 filtered out. No ffmpeg encode was run.
+- Software x264 defaults to preset `slow` and CRF 18. `software_x264_quality(true)` is `ultrafast` and CRF 30. Hardware qp and the alpha VP9 path stay put. `render_export` keeps draft off. Unit test: `draft_software_x264`.
 - End-to-end A/V acceptance is `cargo test -p director-cli --test html_export`, with FFmpeg and ffprobe in PATH.
 
 ## Video decoder lifecycle and verification
@@ -350,9 +357,7 @@ five 640x360 premultiplied RGBA frames per workload via
   radius, opacity, and render mode. Object position is a leftover-space
   fraction plus a pixel offset on each axis. The default is 50% 50% with no
   offset. A missing `object_position` key stays at that default. Media is
-  reloaded from disk on load when available. Measured 2026-10-17:
-  `cargo test -p director-core --release --test object_position --test project_roundtrip -- object_position contain_offset project_roundtrip_preserves_image project_roundtrip_preserves_video`
-  passed 3 and 2. The pre-existing 26 lib warnings remain.
+  reloaded from disk on load when available. Tests: `tests/object_position.rs`.
 - `Lottie` embeds the parsed model JSON and restores speed, loop flag, frame,
   and opacity.
 - `Effect` serializes every `EffectType` variant to JSON and rebuilds the
@@ -388,7 +393,7 @@ five 640x360 premultiplied RGBA frames per workload via
 - **L0** — engine + raw Rhai (`animate`, nodes, timeline).
 - **L1** — `src/scripting/api/stdlib.rs`: `fade_in`/`out`, `pop_in`, `fly_in_*`/`fly_out_*`, `pulse`, `pulse_on_beat`, `typewriter`, `ken_burns`. Catalogued in `RHAI_FUNCTION_CATALOG`.
 - **L2** — `templates.rs` (`add_*` incl. `add_smart_lower_third`) + `register_composition` + shallow props. Catalogued helpers: `add_smart_lower_third`, `register_composition`.
-- **L3** — `examples/recipes/*` (must register compositions): `faceless_short`, `kinetic_lower_third`, `image_beats` (media props), `stat_count`, `quote_card`, `list_reveal`, `end_card`, `chapter_card`, `countdown`. The 2026-10-17 release `examples` filter `example_recipes_` passed 9, including those three. Plan 07 **Done at v1 stop-line** (`docs/plans/07-stdlib-and-recipes.md`).
+- **L3** — `examples/recipes/*` (must register compositions): `faceless_short`, `kinetic_lower_third`, `image_beats` (media props), `stat_count`, `quote_card`, `list_reveal`, `end_card`, `chapter_card`, `countdown`. The `examples` test filter `example_recipes_` validates them. Plan 07 **Done at v1 stop-line** (`docs/plans/07-stdlib-and-recipes.md`).
 - No separate `director-sdk` crate. TTS Historian, Podcast Clipper, full component library deferred.
 
 ## Named compositions (Rhai)

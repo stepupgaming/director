@@ -7,11 +7,11 @@ How to write and maintain documentation for Director Engine.
 | Location | Purpose |
 |----------|---------|
 | `docs/architecture/` | System design, internals, **core contracts** |
-| `docs/plans/` | Active implementation plans (core hardening) |
+| `docs/plans/` | Implementation plans; the active plan holds current status, measurements, and the next action |
 | `docs/contributing/` | Contributor guides |
 | `docs/archive/` | Superseded / deferred docs (not current contracts) |
-| `docs/specs/` | Extra design notes under docs (if any) |
 | `specs/` | RON feature specs for the harness |
+| `crates/*/AGENTS.md` | Per-crate behavior contracts |
 | `crates/*/README.md` | Per-crate documentation |
 
 ---
@@ -25,6 +25,7 @@ How to write and maintain documentation for Director Engine.
 | Time, identity, pipeline, anim, scene, determinism spines | `docs/architecture/core-contracts.md` + relevant `docs/plans/0*.md` |
 | New crate | `crates/<name>/README.md` |
 | Finished or superseded plan | Plan status + `docs/plans/00-core-hardening-index.md`; move dead product drafts to `docs/archive/` |
+| A test re-run | Replace that check's row in the active plan's measurement table; do not add counts anywhere else |
 
 ---
 

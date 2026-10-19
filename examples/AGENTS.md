@@ -31,7 +31,7 @@
 - `recipes/list_reveal.rhai` — L3 16:9 three-line reveal (`list_reveal`).
 - `recipes/end_card.rhai` — L3 9:16 end card (`end_card`).
 - `recipes/chapter_card.rhai` — L3 16:9 chapter card (`chapter_card`).
-- `recipes/countdown.rhai` — L3 9:16 stepped countdown (`countdown`). The 2026-10-17 release examples filter passed 9 recipe scripts, including these three.
+- `recipes/countdown.rhai` — L3 9:16 stepped countdown (`countdown`). The `examples` test filter `example_recipes_` validates every recipe script.
 - `features/smart_lower_third.rhai` — L2 content-reactive lower third demo.
 - Keep test helper behavior deterministic enough for CI or local validation.
 
