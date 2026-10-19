@@ -19,7 +19,7 @@
 //! - `StylePolicyScorer`: Evaluates a `Director` against a policy.
 
 use crate::director::Director;
-use crate::loudness::{analyze_stereo, LoudnessAnalysis};
+use crate::loudness::analyze_stereo;
 use crate::node::caption::CaptionNode;
 use crate::node::smart_caption::SmartCaptionNode;
 use crate::node::text::TextNode;

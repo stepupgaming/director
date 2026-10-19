@@ -98,7 +98,7 @@ pub(crate) fn parse_smart_caption_config(props: &rhai::Map) -> SmartCaptionConfi
 pub fn register(engine: &mut Engine) {
     engine.register_fn(
         "create_semantic_manifest",
-        |movie: &mut MovieHandle,
+        |_movie: &mut MovieHandle,
          props: rhai::Map|
          -> Result<SemanticManifest, Box<EvalAltResult>> {
             let mut entity_refs = Vec::new();

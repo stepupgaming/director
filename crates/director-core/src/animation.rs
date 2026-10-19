@@ -681,7 +681,7 @@ fn solve_spring(start: f32, end: f32, config: SpringConfig) -> Vec<(f32, f64)> {
 
         frames.push((current, t));
 
-        if t > max_duration as f64 {
+        if t > max_duration {
             break;
         }
 
@@ -836,7 +836,7 @@ mod tests {
         for i in 1..=20 {
             let x = i as f64 / 20.0;
             let y = ease.y(x);
-            assert!(y >= -0.05 && y <= 1.05, "y out of range at x={x}: {y}");
+            assert!((-0.05..=1.05).contains(&y), "y out of range at x={x}: {y}");
             // Not strictly monotonic for all beziers, but this one should increase.
             assert!(y + 1e-6 >= prev, "non-monotonic at x={x}");
             prev = y;

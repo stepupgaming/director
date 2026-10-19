@@ -1430,7 +1430,7 @@ pub fn render_at_time(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::director::{Director, TimelineItem};
+    use crate::director::Director;
     use crate::node::BoxNode;
     use crate::video_wrapper::RenderMode;
     use std::sync::Arc;

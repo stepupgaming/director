@@ -1,7 +1,7 @@
 use crate::animation::Animated;
 use crate::element::Element;
 use crate::errors::RenderError;
-use crate::node::{calculate_object_fit_rect_at, parse_easing};
+use crate::node::calculate_object_fit_rect_at;
 use crate::types::{ObjectFit, ObjectPosition};
 use crate::video_wrapper::{RenderMode, VideoLoader, VideoResponse};
 use skia_safe::{AlphaType, Canvas, ClipOp, Color4f, ColorSpace, ColorType, Data, Image, Paint, Rect, RRect};
@@ -178,27 +178,24 @@ impl Element for VideoNode {
                     decoder.send_request(seek_time);
 
                     if let Some(resp) = decoder.get_response() {
-                        match resp {
-                            VideoResponse::Frame(t, data, w, h) => {
-                                let data = Data::new_copy(&data);
-                                let info = skia_safe::ImageInfo::new(
-                                    (w as i32, h as i32),
-                                    ColorType::RGBA8888,
-                                    AlphaType::Premul,
-                                    Some(ColorSpace::new_srgb()),
-                                );
+                        if let VideoResponse::Frame(t, data, w, h) = resp {
+                            let data = Data::new_copy(&data);
+                            let info = skia_safe::ImageInfo::new(
+                                (w as i32, h as i32),
+                                ColorType::RGBA8888,
+                                AlphaType::Premul,
+                                Some(ColorSpace::new_srgb()),
+                            );
 
-                                if let Some(img) = skia_safe::images::raster_from_data(
-                                    &info,
-                                    data,
-                                    (w * 4) as usize,
-                                ) {
-                                    *self.current_frame.lock().unwrap() = Some((t, img));
-                                } else {
-                                    tracing::warn!("Failed to rasterize video frame at {:.3}s from threaded decoder ({}x{})", t, w, h);
-                                }
+                            if let Some(img) = skia_safe::images::raster_from_data(
+                                &info,
+                                data,
+                                (w * 4) as usize,
+                            ) {
+                                *self.current_frame.lock().unwrap() = Some((t, img));
+                            } else {
+                                tracing::warn!("Failed to rasterize video frame at {:.3}s from threaded decoder ({}x{})", t, w, h);
                             }
-                            _ => {}
                         }
                     }
                 }
@@ -253,7 +250,7 @@ impl Element for VideoNode {
             canvas.save();
             let radius = self.border_radius.current_value;
             if radius > 0.0 {
-                let rrect = RRect::new_rect_xy(&rect, radius, radius);
+                let rrect = RRect::new_rect_xy(rect, radius, radius);
                 canvas.clip_rrect(rrect, ClipOp::Intersect, true);
             }
             canvas.clip_rect(rect, ClipOp::Intersect, true);

@@ -22,9 +22,11 @@ use std::fmt;
 /// Specifies how the content of a replaceable element (img, video) should
 /// be resized to fit its container.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default)]
 pub enum ObjectFit {
     /// The content is sized to maintain its aspect ratio while filling the element's entire content box.
     /// If the object's aspect ratio does not match the aspect ratio of its box, then the object will be clipped to fit.
+    #[default]
     Cover,
     /// The content is scaled to maintain its aspect ratio while fitting within the element's content box.
     /// The entire object is made to fill the box, while preserving its aspect ratio, so the object will be "letterboxed"
@@ -40,11 +42,6 @@ pub enum ObjectFit {
     ScaleDown,
 }
 
-impl Default for ObjectFit {
-    fn default() -> Self {
-        Self::Cover
-    }
-}
 
 /// Alignment of replaced content inside its element box.
 ///
@@ -323,6 +320,12 @@ pub struct Transform {
     pub pivot_y: f32,
 }
 
+impl Default for Transform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Transform {
     pub fn new() -> Self {
         Self {
@@ -410,30 +413,30 @@ fn srgb_to_oklab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let rl = srgb_to_linear(r);
     let gl = srgb_to_linear(g);
     let bl = srgb_to_linear(b);
-    let l = 0.4122214708 * rl + 0.5363325363 * gl + 0.0514459929 * bl;
-    let m = 0.2119034982 * rl + 0.6806995451 * gl + 0.1073969566 * bl;
-    let s = 0.0883024619 * rl + 0.2817188376 * gl + 0.6299787005 * bl;
+    let l = 0.412_221_46 * rl + 0.536_332_55 * gl + 0.051_445_995 * bl;
+    let m = 0.211_903_5 * rl + 0.680_699_5 * gl + 0.107_396_96 * bl;
+    let s = 0.088_302_46 * rl + 0.281_718_85 * gl + 0.629_978_7 * bl;
     let l_ = l.cbrt();
     let m_ = m.cbrt();
     let s_ = s.cbrt();
     (
-        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
-        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
-        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+        0.210_454_26 * l_ + 0.793_617_8 * m_ - 0.004_072_047 * s_,
+        1.977_998_5 * l_ - 2.428_592_2 * m_ + 0.450_593_7 * s_,
+        0.025_904_037 * l_ + 0.782_771_77 * m_ - 0.808_675_77 * s_,
     )
 }
 
 #[allow(non_snake_case)]
 fn oklab_to_srgb(L: f32, a: f32, b: f32) -> (f32, f32, f32) {
-    let l_ = L + 0.3963377774 * a + 0.2158037573 * b;
-    let m_ = L - 0.1055613458 * a - 0.0638541728 * b;
-    let s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+    let l_ = L + 0.396_337_78 * a + 0.215_803_76 * b;
+    let m_ = L - 0.105_561_346 * a - 0.063_854_17 * b;
+    let s_ = L - 0.089_484_18 * a - 1.291_485_5 * b;
     let l = l_ * l_ * l_;
     let m = m_ * m_ * m_;
     let s = s_ * s_ * s_;
-    let r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
-    let g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
-    let b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+    let r = 4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s;
+    let g = -1.268_438 * l + 2.609_757_4 * m - 0.341_319_38 * s;
+    let b = -0.0041960863 * l - 0.703_418_6 * m + 1.707_614_7 * s;
     (linear_to_srgb(r), linear_to_srgb(g), linear_to_srgb(b))
 }
 
@@ -720,8 +723,10 @@ fn multiply_color_matrices(a: &[f32; 20], b: &[f32; 20]) -> [f32; 20] {
 
 /// The type of gradient to render.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default)]
 pub enum GradientType {
     /// Linear gradient from start point to end point.
+    #[default]
     Linear,
     /// Radial gradient emanating from a center point.
     Radial,
@@ -729,11 +734,6 @@ pub enum GradientType {
     Conic,
 }
 
-impl Default for GradientType {
-    fn default() -> Self {
-        Self::Linear
-    }
-}
 
 /// Configuration for a gradient fill (linear, radial, or conic).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

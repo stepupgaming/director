@@ -484,11 +484,11 @@ fn image_props_to_json(node: &ImageNode) -> JsonMap<String, JsonValue> {
     }
     p.insert(
         "object_fit".into(),
-        serde_json::to_value(&node.object_fit).unwrap_or_default(),
+        serde_json::to_value(node.object_fit).unwrap_or_default(),
     );
     p.insert(
         "object_position".into(),
-        serde_json::to_value(&node.object_position).unwrap_or_default(),
+        serde_json::to_value(node.object_position).unwrap_or_default(),
     );
     p.insert(
         "border_radius".into(),
@@ -547,11 +547,11 @@ fn video_props_to_json(node: &VideoNode) -> JsonMap<String, JsonValue> {
     );
     p.insert(
         "object_fit".into(),
-        serde_json::to_value(&node.object_fit).unwrap_or_default(),
+        serde_json::to_value(node.object_fit).unwrap_or_default(),
     );
     p.insert(
         "object_position".into(),
-        serde_json::to_value(&node.object_position).unwrap_or_default(),
+        serde_json::to_value(node.object_position).unwrap_or_default(),
     );
     p.insert(
         "border_radius".into(),
@@ -579,7 +579,7 @@ fn rebuild_video_node_from_props(
     let path = props
         .get("path")
         .and_then(|v| v.as_str())
-        .map(|s| std::path::PathBuf::from(s))
+        .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
             source_path
                 .clone()
@@ -1095,7 +1095,7 @@ fn rebuild_effect_node_from_props(
     props: &JsonMap<String, JsonValue>,
     assets: &crate::systems::assets::AssetManager,
 ) -> Option<EffectNode> {
-    use serde_json::json;
+    
 
     let effects_arr = props.get("effects")?.as_array()?;
     let mut effects = Vec::new();

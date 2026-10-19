@@ -448,7 +448,7 @@ pub fn register(engine: &mut Engine) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
     use crate::scripting::register_rhai_api_with_default_mode;
     use crate::scripting::MovieHandle;
     use crate::video_wrapper::RenderMode;

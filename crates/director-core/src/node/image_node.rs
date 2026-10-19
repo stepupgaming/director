@@ -1,7 +1,7 @@
 use crate::animation::Animated;
 use crate::element::Element;
 use crate::errors::RenderError;
-use crate::node::{calculate_object_fit_rect_at, parse_easing};
+use crate::node::calculate_object_fit_rect_at;
 use crate::types::{ObjectFit, ObjectPosition};
 use skia_safe::{Canvas, ClipOp, Color4f, Data, Image, Paint, Rect, RRect};
 use std::any::Any;
@@ -118,7 +118,7 @@ impl Element for ImageNode {
             canvas.save();
             let radius = self.border_radius.current_value;
             if radius > 0.0 {
-                let rrect = RRect::new_rect_xy(&rect, radius, radius);
+                let rrect = RRect::new_rect_xy(rect, radius, radius);
                 canvas.clip_rrect(rrect, ClipOp::Intersect, true);
             }
             canvas.clip_rect(rect, ClipOp::Intersect, true);

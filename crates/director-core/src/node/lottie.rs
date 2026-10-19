@@ -1,6 +1,5 @@
 use crate::animation::Animated;
 use crate::element::Element;
-use crate::node::parse_easing;
 use crate::systems::assets::AssetManager;
 use crate::AssetLoader;
 use crate::RenderError;

@@ -44,7 +44,9 @@ pub struct CaptionLine {
 
 /// Where to position the caption within the layout rect.
 #[derive(Clone, Debug, PartialEq)]
+#[derive(Default)]
 pub enum CaptionPosition {
+    #[default]
     Bottom,
     Top,
     Center,
@@ -159,11 +161,6 @@ impl CaptionPosition {
     }
 }
 
-impl Default for CaptionPosition {
-    fn default() -> Self {
-        Self::Bottom
-    }
-}
 
 impl serde::Serialize for CaptionPosition {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -797,7 +794,7 @@ impl CaptionNode {
             display_line.line_width + pad_h * 2.0,
             display_line.line_height + pad_v * 2.0,
         );
-        let rrect = RRect::new_rect_xy(&pill_rect, style.pill_radius, style.pill_radius);
+        let rrect = RRect::new_rect_xy(pill_rect, style.pill_radius, style.pill_radius);
         let mut paint = Paint::default();
         let mut c = pill_color;
         c.a *= alpha;
@@ -827,7 +824,7 @@ impl CaptionNode {
 
         let mut slot_free_at: Vec<f64> = vec![f64::NEG_INFINITY; max_overlap];
         let mut cue_slot_idx = vec![0usize; n];
-        for (t, i, delta) in events {
+        for (_t, i, delta) in events {
             if delta > 0 {
                 let mut best = 0usize;
                 let mut best_t = slot_free_at[0];
@@ -922,12 +919,12 @@ impl CaptionNode {
                     tokens.push(TokenLayout {
                         word_idx: word_indices[i],
                         text: word.text.clone(),
-                        x: rect.left() as f32,
-                        baseline_y: rect.top() as f32, // paragraph-local
-                        width: rect.width() as f32,
-                        height: rect.height() as f32,
-                        center_x: rect.left() as f32 + rect.width() as f32 * 0.5,
-                        center_y: rect.top() as f32 + rect.height() as f32 * 0.5,
+                        x: rect.left(),
+                        baseline_y: rect.top(), // paragraph-local
+                        width: rect.width(),
+                        height: rect.height(),
+                        center_x: rect.left() + rect.width() * 0.5,
+                        center_y: rect.top() + rect.height() * 0.5,
                         line_index: line_idx_idx,
                     });
                 }
@@ -1037,7 +1034,7 @@ impl CaptionNode {
             Err(_) => {
                 let mut builder = ParagraphBuilder::new(
                     &ParagraphStyle::new(),
-                    &skia_safe::textlayout::FontCollection::new(),
+                    skia_safe::textlayout::FontCollection::new(),
                 );
                 for w in words {
                     builder.add_text(&w.text);
@@ -1160,12 +1157,11 @@ impl CaptionNode {
         let mut result: Option<(usize, usize)> = None;
         for &(line_idx, line) in visible {
             for (word_idx, word) in line.words.iter().enumerate() {
-                if time >= word.start_sec && time < word.end_sec {
-                    if word.start_sec > latest_start {
+                if time >= word.start_sec && time < word.end_sec
+                    && word.start_sec > latest_start {
                         latest_start = word.start_sec;
                         result = Some((line_idx, word_idx));
                     }
-                }
             }
         }
         result
@@ -1175,8 +1171,8 @@ impl CaptionNode {
 
     fn sample_bg_luminance(canvas: &Canvas, rect: Rect) -> Option<f32> {
         let pixmap = canvas.peek_pixels()?;
-        let pw = pixmap.width() as i32;
-        let ph = pixmap.height() as i32;
+        let pw = pixmap.width();
+        let ph = pixmap.height();
         if pw <= 0 || ph <= 0 {
             return None;
         }
@@ -1193,8 +1189,8 @@ impl CaptionNode {
         for k in 0..sample_count {
             let ratio_x = ((k * 37 + 11) % sample_count) as f32 / sample_count as f32;
             let ratio_y = ((k * 53 + 7) % sample_count) as f32 / sample_count as f32;
-            let x = rect.left as i32 + (ratio_x * rect.width() as f32) as i32;
-            let y = rect.top as i32 + (ratio_y * rect.height() as f32) as i32;
+            let x = rect.left as i32 + (ratio_x * rect.width()) as i32;
+            let y = rect.top as i32 + (ratio_y * rect.height()) as i32;
             if x < 0 || y < 0 || x >= pw || y >= ph {
                 continue;
             }
@@ -1487,7 +1483,7 @@ impl Element for CaptionNode {
                 // ── Position each DISPLAY LINE horizontally based on the
                 //    caption's anchor. Precomputed `line_width` is used to
                 //    avoid relying on a token origin as the line's left edge.
-                let rect_w = rect.width();
+                let _rect_w = rect.width();
                 let line_left_x = Self::compute_line_left_x(
                     &layout_style.position,
                     rect,
@@ -1674,7 +1670,7 @@ impl CaptionNode {
             Err(_) => {
                 let mut builder = ParagraphBuilder::new(
                     &ParagraphStyle::new(),
-                    &skia_safe::textlayout::FontCollection::new(),
+                    skia_safe::textlayout::FontCollection::new(),
                 );
                 builder.add_text("");
                 return builder.build();

@@ -190,6 +190,12 @@ pub struct SceneGraph {
     free_indices: Vec<u32>,
 }
 
+impl Default for SceneGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SceneGraph {
     pub fn new() -> Self {
         Self {

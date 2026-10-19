@@ -1,5 +1,4 @@
 use crate::element::Element;
-use crate::node::parse_easing;
 use skia_safe::{AlphaType, Canvas, ColorSpace, ColorType, Data, Image, Paint, Rect};
 use std::any::Any;
 use std::sync::{Arc, Mutex};

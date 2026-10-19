@@ -21,6 +21,12 @@ impl fmt::Debug for AudioEffectChain {
     }
 }
 
+impl Default for AudioEffectChain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AudioEffectChain {
     pub fn new() -> Self {
         Self {

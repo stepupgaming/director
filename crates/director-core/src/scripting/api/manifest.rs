@@ -277,7 +277,7 @@ fn verification_issue_from_map(map: &Map) -> Result<VerificationIssue, Box<rhai:
                 .map(|v| {
                     // Prefer #{index,generation}; bare int is index@0 for issue replay.
                     crate::scripting::utils::node_id_from_dynamic(v)
-                        .map_err(|e| Box::<rhai::EvalAltResult>::from(e))
+                        .map_err(Box::<rhai::EvalAltResult>::from)
                 })
                 .collect::<Result<Vec<_>, _>>()
         })

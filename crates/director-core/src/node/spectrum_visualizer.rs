@@ -1,7 +1,6 @@
 use crate::animation::Animated;
 use crate::element::Element;
 use crate::errors::RenderError;
-use crate::node::parse_easing;
 use crate::types::Color;
 use skia_safe::{Canvas, Paint, RRect, Rect};
 use std::any::Any;
@@ -142,7 +141,7 @@ impl Element for SpectrumVisualizerNode {
             };
 
             let bar_rect = Rect::from_xywh(x, y, bar_width, h.max(0.1));
-            let rrect = RRect::new_rect_xy(&bar_rect, self.border_radius, self.border_radius);
+            let rrect = RRect::new_rect_xy(bar_rect, self.border_radius, self.border_radius);
 
             let mut paint = Paint::default();
             paint.set_anti_alias(true);

@@ -61,7 +61,7 @@ pub fn analyze_track(samples: &[f32], channels: u32, sample_rate: u32) -> Loudne
     assert!(channels > 0, "channels must be greater than 0");
     assert!(sample_rate > 0, "sample_rate must be greater than 0");
 
-    if samples.is_empty() || (samples.len() % channels as usize) != 0 {
+    if samples.is_empty() || !samples.len().is_multiple_of(channels as usize) {
         return LoudnessAnalysis::silent();
     }
 

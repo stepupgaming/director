@@ -375,7 +375,7 @@ pub fn register(engine: &mut Engine, registry: CompositionRegistry) {
               builder: FnPtr|
               -> Result<(), Box<EvalAltResult>> {
             let (width, height, fps, duration, default_props) = parse_composition_meta(&meta)
-                .map_err(|e| Box::<EvalAltResult>::from(e))?;
+                .map_err(Box::<EvalAltResult>::from)?;
             let entry = CompositionEntry {
                 name: name.to_string(),
                 width,
@@ -385,7 +385,7 @@ pub fn register(engine: &mut Engine, registry: CompositionRegistry) {
                 default_props,
                 builder,
             };
-            reg.push(entry).map_err(|e| Box::<EvalAltResult>::from(e))?;
+            reg.push(entry).map_err(Box::<EvalAltResult>::from)?;
             Ok(())
         },
     );

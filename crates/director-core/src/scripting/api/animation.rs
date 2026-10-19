@@ -125,10 +125,10 @@ fn apply_spring_prop(
     match prop {
         "scale" => {
             if let Some(s) = start {
-                n.transform.scale_x.add_spring_with_start(s, end, conf.clone());
+                n.transform.scale_x.add_spring_with_start(s, end, conf);
                 n.transform.scale_y.add_spring_with_start(s, end, conf);
             } else {
-                n.transform.scale_x.add_spring(end, conf.clone());
+                n.transform.scale_x.add_spring(end, conf);
                 n.transform.scale_y.add_spring(end, conf);
             }
             Ok(())
