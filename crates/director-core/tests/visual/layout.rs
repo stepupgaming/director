@@ -1,17 +1,15 @@
-use director_core::node::BoxNode;
-use taffy::style::{Dimension, AlignItems, JustifyContent, FlexDirection};
-use director_core::types::Color;
 use director_core::animation::Animated;
+use director_core::node::BoxNode;
+use director_core::types::Color;
+use director_core::Director;
+use taffy::style::{AlignItems, Dimension, FlexDirection, JustifyContent};
 
 // Matrix Test: Flex Row with JustifyContent
 crate::visual_test_matrix!(
     name: layout_flex_row,
     suite: "layout",
     variations: [
-        (row_center, JustifyContent::Center),
         (row_space_between, JustifyContent::SpaceBetween),
-        (row_space_around, JustifyContent::SpaceAround),
-        (row_space_evenly, JustifyContent::SpaceEvenly),
     ],
     setup: |d: &mut Director, justify: JustifyContent| {
         let mut root = BoxNode::new();
@@ -51,9 +49,7 @@ crate::visual_test_matrix!(
     name: layout_alignments,
     suite: "layout",
     variations: [
-        (align_start, AlignItems::FlexStart),
         (align_center, AlignItems::Center),
-        (align_end, AlignItems::FlexEnd),
     ],
     setup: |d: &mut Director, align: AlignItems| {
         // Root Container

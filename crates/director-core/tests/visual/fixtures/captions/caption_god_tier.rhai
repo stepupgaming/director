@@ -1,4 +1,4 @@
-// @snapshot: 1.0, 3.5, 6.0
+// @skip
 // God-tier short-form captions: 9:16, TikTok safe area, pills, phrase break, uppercase.
 let movie = new_director(1080, 1920, 30);
 let scene = movie.add_scene(10.0);

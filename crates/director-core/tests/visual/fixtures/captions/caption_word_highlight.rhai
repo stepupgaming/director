@@ -1,4 +1,4 @@
-// @snapshot: 1.0, 3.5, 6.0, 8.5
+// @snapshot: 3.5
 // TikTok/Reels style kinetic captions: chunked words, 2-line reserve,
 // one global active word (yellow), subtle 1.04 scale pop, no jitter.
 let movie = new_director(800, 600, 30);

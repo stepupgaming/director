@@ -219,12 +219,24 @@ rather than relying on host system fonts.
   the same family alias so font_weight / font_style resolve deterministically.
 * Roboto Regular/Bold/Italic, Inter Regular/Bold, and Poppins Bold are
   required; export fails via `ensure_required_fonts` when one is missing.
-  setup_assets.sh and CI provision the full set.
+  The six files are committed; CI downloads nothing.
 * Emoji fallback is loaded via DefaultAssetLoader::load_font_fallback
   (assets/fonts/emoji.ttf or DIRECTOR_EMOJI_FONT env var).
 * Do NOT add host-system-font-dependent text paths; new caption/template
-  fonts must be added to BUNDLED_FONTS AND downloaded in setup_assets.sh
-  and .github/workflows/ci.yml, then force-kept in .gitignore.
+  fonts must be added to BUNDLED_FONTS and force-kept in .gitignore.
+
+## Visual golden corpus
+
+* `tests/visual_suite.rs` renders 40 frames across layout, text, images,
+  masks, effects, shapes, animation, compositions, transitions, captions,
+  templates and temporal sampling, plus a one-pixel harness self-test.
+* Goldens live in `tests/visual/golden/<module>/<name>.png`. A missing
+  golden fails. `DIRECTOR_UPDATE_GOLDENS=1` rewrites goldens; review the PNG
+  diff before committing.
+* A pixel differs when any channel delta exceeds 16; a frame fails above a
+  0.001 differing fraction. `assert_visual_match_with` overrides per test.
+* Fonts and assets resolve from `CARGO_MANIFEST_DIR`, so the suite runs from
+  any working directory.
 
 ## Core hardening
 

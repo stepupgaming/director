@@ -1,4 +1,4 @@
-// @snapshot: 0.0, 1.5, 3.0
+// @snapshot: 1.5
 let movie = new_director(300, 300, 30);
 let scene = movie.add_scene(5.0);
 

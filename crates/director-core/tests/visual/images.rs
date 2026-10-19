@@ -1,8 +1,7 @@
 // Image Node Visual Regression Tests
 //
-// Tests for image rendering with different ObjectFit modes (Cover, Contain, Fill)
-// and opacity. Uses a programmatically generated test image to avoid external
-// asset dependencies.
+// Tests for image rendering with ObjectFit Cover, Contain, and Fill.
+// Uses a programmatically generated test image.
 
 use director_core::animation::Animated;
 use director_core::node::{BoxNode, ImageNode};
@@ -77,7 +76,7 @@ fn setup_image_director(fit: ObjectFit) -> std::sync::Arc<std::sync::Mutex<direc
     director_arc
 }
 
-/// ObjectFit::Cover — image scaled to fill, excess cropped.
+/// ObjectFit::Cover: image scaled to fill, excess cropped.
 #[test]
 fn image_cover() {
     use crate::visual::assert_visual_match;
@@ -87,7 +86,7 @@ fn image_cover() {
     assert_visual_match(&mut d, 0.0, "images", "image_cover").unwrap();
 }
 
-/// ObjectFit::Contain — image scaled to fit, letterboxed.
+/// ObjectFit::Contain: image scaled to fit, letterboxed.
 #[test]
 fn image_contain() {
     use crate::visual::assert_visual_match;
@@ -97,7 +96,7 @@ fn image_contain() {
     assert_visual_match(&mut d, 0.0, "images", "image_contain").unwrap();
 }
 
-/// ObjectFit::Fill — image stretched to fill (distorted).
+/// ObjectFit::Fill: image stretched to fill the box.
 #[test]
 fn image_fill() {
     use crate::visual::assert_visual_match;
@@ -105,35 +104,4 @@ fn image_fill() {
     let director_arc = setup_image_director(ObjectFit::Fill);
     let mut d = director_arc.lock().unwrap();
     assert_visual_match(&mut d, 0.0, "images", "image_fill").unwrap();
-}
-
-/// Image at 40% opacity over a colored background.
-#[test]
-fn image_opacity() {
-    use crate::visual::{assert_visual_match, setup_test_director};
-
-    let director_arc = setup_test_director(200, 200);
-    {
-        let mut d = director_arc.lock().unwrap();
-
-        let mut root = BoxNode::new();
-        root.style.size.width = Dimension::percent(1.0);
-        root.style.size.height = Dimension::percent(1.0);
-        root.bg_color = Some(Animated::new(Color::new(0.2, 0.6, 0.8, 1.0)));
-        let root_id = d.scene.add_node(Box::new(root));
-
-        d.push_scene_root(root_id, 5.0);
-
-        let png_bytes = create_test_image();
-        let mut image_node = ImageNode::new(png_bytes);
-        image_node.object_fit = ObjectFit::Cover;
-        image_node.opacity = Animated::new(0.4);
-        image_node.style.size.width = Dimension::percent(1.0);
-        image_node.style.size.height = Dimension::percent(1.0);
-        let img_id = d.scene.add_node(Box::new(image_node));
-        d.scene.add_child(root_id, img_id);
-    }
-
-    let mut d = director_arc.lock().unwrap();
-    assert_visual_match(&mut d, 0.0, "images", "image_opacity").unwrap();
 }

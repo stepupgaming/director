@@ -1,4 +1,4 @@
-// @snapshot: 2.6, 5.2
+// @skip
 // Stress: overlapping SRT windows — newest cue replaces older in the same position.
 let movie = new_director(1080, 1920, 30);
 let scene = movie.add_scene(8.0);

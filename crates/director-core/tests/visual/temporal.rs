@@ -7,13 +7,12 @@
 // contain animations so that each snapshot time produces a visibly
 // distinct frame.
 
-use std::env;
 use std::path::PathBuf;
 
 #[test]
 fn all_temporal_fixtures() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let fixtures_dir = PathBuf::from(&manifest_dir).join("tests/visual/fixtures/temporal");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixtures_dir = manifest_dir.join("tests/visual/fixtures/temporal");
 
     let mut fixture_count = 0;
     let mut failures = Vec::new();

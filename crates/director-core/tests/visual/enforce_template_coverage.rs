@@ -28,8 +28,8 @@ const EXPECTED_TEMPLATES: &[&str] = &[
 
 #[test]
 fn every_template_has_visual_fixture() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let fixtures_dir = PathBuf::from(&manifest_dir).join("tests/visual/fixtures/templates");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixtures_dir = manifest_dir.join("tests/visual/fixtures/templates");
 
     let expected: HashSet<String> = EXPECTED_TEMPLATES.iter().map(|s| s.to_string()).collect();
 

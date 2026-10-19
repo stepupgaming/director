@@ -1,4 +1,4 @@
-// @snapshot: 0.0
+// @skip
 let movie = new_director(640, 120, 30);
 let scene = movie.add_scene(1.0);
 

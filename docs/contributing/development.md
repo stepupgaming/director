@@ -65,17 +65,13 @@ cargo test --release
 # Specific crate
 cargo test --release -p director-core
 
-# Visual regression tests
-cargo test --release -p director-core visual
+# Visual regression tests (40 golden frames)
+cargo test --release -p director-core --test visual_suite
 
-# Update snapshots
-$env:UPDATE_SNAPSHOTS="1"; cargo test --release -p director-core visual
-```
-
-Failed visual tests output diffs to:
-```
-crates/director-core/target/visual_regression_failures/
-```
+# Regenerate goldens after an intended visual change, then review the PNG diff
+$env:DIRECTOR_UPDATE_GOLDENS="1"; cargo test --release -p director-core --test visual_suite; Remove-Item Env:DIRECTOR_UPDATE_GOLDENS
+```n
+Goldens live in `crates/director-core/tests/visual/golden/<module>/<name>.png`. A missing golden fails. Failures write `<name>.actual.png` and `<name>.diff.png` under `target/tmp/director-visual/<module>/`.
 
 ---
 

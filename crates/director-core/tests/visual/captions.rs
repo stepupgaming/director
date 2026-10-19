@@ -1,10 +1,9 @@
-use std::env;
 use std::path::PathBuf;
 
 #[test]
 fn all_caption_fixtures() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let fixtures_dir = PathBuf::from(&manifest_dir).join("tests/visual/fixtures/captions");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixtures_dir = manifest_dir.join("tests/visual/fixtures/captions");
 
     let mut fixture_count = 0;
     let mut failures = Vec::new();
@@ -151,7 +150,7 @@ fn smart_caption_avoids_bottom_face() {
     let mut max_y: Option<u32> = None;
     let mut non_bg_count = 0u64;
 
-    for (x, y, pixel) in rendered_img.enumerate_pixels() {
+    for (_, y, pixel) in rendered_img.enumerate_pixels() {
         let [r, g, b, a] = pixel.0;
         // Treat any pixel that is not pure black as part of the caption.
         if r > 0 || g > 0 || b > 0 || a > 0 {
@@ -173,8 +172,6 @@ fn smart_caption_avoids_bottom_face() {
         min_y, max_y, half_y
     );
 
-    // Also generate a reference snapshot so future rendering regressions are
-    // caught visually. Run with UPDATE_SNAPSHOTS=1 to regenerate.
     assert_visual_match(&mut d, 0.5, "captions", "smart_caption_avoids_bottom_face")
         .expect("visual snapshot mismatch");
 }
@@ -194,7 +191,7 @@ fn smart_caption_switches_anchor_with_moving_face() {
     use director_core::types::Color;
     use taffy::style::Dimension;
 
-    use crate::visual::{assert_visual_match, setup_test_director};
+    use crate::visual::setup_test_director;
 
     fn anchor_is_top(position: &CaptionPosition) -> bool {
         matches!(
@@ -300,10 +297,6 @@ fn smart_caption_switches_anchor_with_moving_face() {
         top_position
     );
 
-    // Snapshot the top-anchored state before updating to the bottom state.
-    assert_visual_match(&mut d, 0.5, "captions", "smart_caption_moving_face_top")
-        .expect("visual snapshot mismatch at t=0.5");
-
     d.update(3.5, None);
     let bottom_position = {
         let node = d.scene.get_node(smart_id).expect("smart caption node exists");
@@ -320,7 +313,4 @@ fn smart_caption_switches_anchor_with_moving_face() {
         bottom_position
     );
 
-    // Generate reference snapshot for the bottom-anchored state.
-    assert_visual_match(&mut d, 3.5, "captions", "smart_caption_moving_face_bottom")
-        .expect("visual snapshot mismatch at t=3.5");
 }

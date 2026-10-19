@@ -1,23 +1,22 @@
-// Template Visual Regression Tests — Script-Driven Fixtures
+// Template visual regression tests. Script-driven fixtures.
 //
 // All `.rhai` files in `fixtures/templates/` are automatically discovered,
 // evaluated through the real Rhai scripting API, rendered, and compared
 // against snapshots.
 //
 // To add a test for a new template, drop a `.rhai` fixture into
-// `fixtures/templates/` and re-run with `UPDATE_SNAPSHOTS=1`.
+// `fixtures/templates/` and re-run with `DIRECTOR_UPDATE_GOLDENS=1`.
 //
 // Fixtures may include temporal capture annotations:
 //   // @snapshot: 0.0, 2.5, 5.0
 // If omitted, a single snapshot at t=0.0 is captured.
 
-use std::env;
 use std::path::PathBuf;
 
 #[test]
 fn all_template_fixtures() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let fixtures_dir = PathBuf::from(&manifest_dir).join("tests/visual/fixtures/templates");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixtures_dir = manifest_dir.join("tests/visual/fixtures/templates");
 
     let mut fixture_count = 0;
     let mut failures = Vec::new();

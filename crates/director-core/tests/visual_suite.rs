@@ -79,3 +79,8 @@ mod shapes {
 mod captions {
     include!("visual/captions.rs");
 }
+
+#[cfg(test)]
+mod transitions {
+    include!("visual/transitions.rs");
+}
