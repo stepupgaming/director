@@ -311,9 +311,9 @@ five 640x360 premultiplied RGBA frames per workload via
 - `systems::renderer::render_sampled_at_time` owns shutter sampling and accumulation for export and the CLI frame worker. Scratch and transition surfaces retain the requested backend; preview/still use the same sampling clock as export.
 - `src/export/video.rs`: a supplied Vulkan context requires GPU surface allocation. Flush/submit and read RGBA pixels directly from that surface into one reusable frame buffer; do not draw GPU snapshots onto CPU canvases.
 - Export passes per-channel sample-frame counts to `mix_audio`, which returns interleaved stereo. The total output remains `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`.
-- Software x264 defaults to preset `slow` and CRF 18. `software_x264_quality(true)` is `ultrafast` and CRF 30. Hardware qp and the alpha VP9 path stay put. `render_export` keeps draft off. Unit test: `draft_software_x264`.
+- Software x264 defaults to preset `slow` and CRF 18. `software_x264_quality(true)` is `ultrafast` and CRF 30. Hardware qp and the alpha VP9 settings stay put under the draft switch. `render_export` keeps draft off. Unit test: `draft_software_x264`.
 - End-to-end A/V acceptance is `cargo test -p director-cli --test html_export`, with FFmpeg and ffprobe in PATH.
-- Alpha export (`--alpha`, VP9 `yuva420p`) sets `Director::transparent_background`, so every frame clears to transparent, and reads unpremultiplied pixels because FFmpeg treats `rgba` input as straight alpha. Opaque export clears to black. Decode alpha WebM with `-c:v libvpx-vp9` before `-i` to keep the alpha plane. Acceptance: `alpha_export_keeps_empty_pixels_transparent_and_alpha_straight` in `crates/director-cli/tests/html_export.rs`.
+- Alpha export (`--alpha`, lossless VP9 `yuva420p` at `-deadline realtime -cpu-used 8`, where the speed only changes file size) sets `Director::transparent_background`, so every frame clears to transparent, and reads unpremultiplied pixels because FFmpeg treats `rgba` input as straight alpha. Opaque export clears to black. Decode alpha WebM with `-c:v libvpx-vp9` before `-i` to keep the alpha plane. Acceptance: `alpha_export_keeps_empty_pixels_transparent_and_alpha_straight` in `crates/director-cli/tests/html_export.rs`.
 
 ## Video decoder lifecycle and verification
 

@@ -408,8 +408,13 @@ impl Encoder {
                 .arg("pc")
                 .arg("-lossless")
                 .arg("1")
+                // Lossless output decodes to the same pixels at every speed; the
+                // realtime speed only grows the file. Speed 2 took 18 s for a
+                // 30 s 1080x1920 layer, realtime speed 8 takes about 3 s.
+                .arg("-deadline")
+                .arg("realtime")
                 .arg("-cpu-used")
-                .arg("2")
+                .arg("8")
                 .arg("-row-mt")
                 .arg("1");
         } else {
