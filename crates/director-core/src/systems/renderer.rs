@@ -1085,6 +1085,15 @@ pub fn draw_debug_overlays(scene: &SceneGraph, canvas: &skia_safe::Canvas) {
     }
 }
 
+/// The colour every frame starts from: transparent for alpha export, opaque black otherwise.
+fn clear_color(director: &Director) -> skia_safe::Color {
+    if director.transparent_background {
+        skia_safe::Color::TRANSPARENT
+    } else {
+        skia_safe::Color::BLACK
+    }
+}
+
 /// Renders the scene at the current director state to a canvas.
 /// Assumes `director.update()` and layout have already been called.
 ///
@@ -1096,7 +1105,7 @@ fn render_scene_to_canvas(
     dirty_nodes: Option<&std::collections::HashSet<NodeId>>,
 ) -> Result<(), RenderError> {
     let assets = &director.assets;
-    canvas.clear(skia_safe::Color::BLACK);
+    canvas.clear(clear_color(director));
 
     let mut clips: Vec<(usize, usize, &TrackClip)> = Vec::new();
     for (ti, track) in director.tracks.iter().enumerate() {
@@ -1198,7 +1207,7 @@ pub fn render_frame(
         let image = scratch_surface.image_snapshot();
 
         if s == 0 {
-            canvas.clear(skia_safe::Color::BLACK);
+            canvas.clear(clear_color(director));
         }
         canvas.draw_image(&image, (0, 0), Some(&paint));
     }
@@ -1234,7 +1243,7 @@ pub fn render_sampled_at_time(
     let mut paint = skia_safe::Paint::default();
     paint.set_alpha_f(1.0 / samples as f32);
     paint.set_blend_mode(skia_safe::BlendMode::Plus);
-    surface.canvas().clear(skia_safe::Color::BLACK);
+    surface.canvas().clear(clear_color(director));
     for sample in 0..samples {
         let sample_time = shutter_start + (sample as f64 / (samples - 1) as f64) * shutter_duration;
         render_at_time(
@@ -1291,7 +1300,7 @@ pub fn render_at_time(
 
     let assets_ref = &director.assets;
 
-    canvas.clear(skia_safe::Color::BLACK);
+    canvas.clear(clear_color(director));
     begin_scene_canvas(canvas, director);
 
     // Check transition (indices refer to Director::flat_timeline order).

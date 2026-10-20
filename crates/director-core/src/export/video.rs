@@ -150,7 +150,9 @@ pub fn render_export_at_scale(
 ) -> Result<()> {
     let previous_x = director.output_scale_x;
     let previous_y = director.output_scale_y;
+    let previous_transparent = director.transparent_background;
     let (out_w, out_h) = set_output_scale(director, scale).map_err(anyhow::Error::msg)?;
+    director.transparent_background = alpha;
     let result = export_scaled(
         director,
         out_path,
@@ -163,6 +165,7 @@ pub fn render_export_at_scale(
     );
     director.output_scale_x = previous_x;
     director.output_scale_y = previous_y;
+    director.transparent_background = previous_transparent;
     result
 }
 
@@ -248,6 +251,12 @@ fn export_scaled(
         None
     };
 
+    // FFmpeg reads `rgba` as straight alpha, so alpha export reads unpremultiplied pixels.
+    let read_info = if alpha {
+        info.clone().with_alpha_type(AlphaType::Unpremul)
+    } else {
+        info.clone()
+    };
     let row_bytes = width as usize * 4;
     let mut pixels = vec![0u8; height as usize * row_bytes];
     for i in 0..total_frames {
@@ -266,7 +275,7 @@ fn export_scaled(
             ctx.flush_and_submit();
         }
         anyhow::ensure!(
-            surface.read_pixels(&info, &mut pixels, row_bytes, (0, 0)),
+            surface.read_pixels(&read_info, &mut pixels, row_bytes, (0, 0)),
             "Failed to read pixels from render surface"
         );
         encoder.encode(&pixels, crate::timeline::frame_to_time(i as u64, fps))?;

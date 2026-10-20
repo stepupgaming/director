@@ -126,6 +126,8 @@ pub struct Director {
     pub output_scale_x: f32,
     /// Device scale for the current export raster. Layout stays at `height`.
     pub output_scale_y: f32,
+    /// Clear each frame to transparent instead of opaque black. Alpha export sets it.
+    pub transparent_background: bool,
     /// Frames per second (`f64` so NTSC rates like 23.976 / 29.97 round-trip).
     pub fps: f64,
     /// Number of sub-frame samples for motion blur (default: 1).
@@ -352,6 +354,7 @@ impl Director {
             height,
             output_scale_x: 1.0,
             output_scale_y: 1.0,
+            transparent_background: false,
             fps,
             samples_per_frame: 1, // Default to no motion blur
             shutter_angle: 180.0,
