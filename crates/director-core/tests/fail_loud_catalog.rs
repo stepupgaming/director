@@ -58,7 +58,7 @@ fn catalog_effect_names_apply() {
     );
 
     for name in catalog_effect_names() {
-        let call = effect_call(&name);
+        let call = effect_call(name);
         let script = [
             "let movie = new_director(64, 64, 30);",
             "let scene = movie.add_scene(0.2);",

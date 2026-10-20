@@ -213,6 +213,7 @@ pub trait Element: std::fmt::Debug + ElementClone {
     /// Adds an animator to a specific range of text graphemes.
     ///
     /// Only applicable for `TextNode`.
+    #[allow(clippy::too_many_arguments)]
     fn add_text_animator(
         &mut self,
         _start_idx: usize,
@@ -231,6 +232,7 @@ pub trait Element: std::fmt::Debug + ElementClone {
     fn set_opacity(&mut self, _opacity: f32) {}
 
     /// Adds an animator to a specific range of text graphemes with optional stagger.
+    #[allow(clippy::too_many_arguments)]
     fn add_text_animator_full(
         &mut self,
         _start_idx: usize,

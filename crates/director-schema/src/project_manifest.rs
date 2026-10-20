@@ -263,8 +263,6 @@ fn asset_kind_for_path(path: &str) -> &'static str {
         || lower.ends_with(".ogg")
     {
         "audio"
-    } else if lower.ends_with(".json") && lower.contains("lottie") {
-        "lottie"
     } else if lower.ends_with(".json") {
         "lottie"
     } else if lower.ends_with(".svg") {

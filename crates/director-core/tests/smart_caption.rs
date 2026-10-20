@@ -10,6 +10,7 @@ use director_core::DefaultAssetLoader;
 use rhai::Engine;
 use std::sync::{Arc, Mutex};
 
+#[allow(clippy::arc_with_non_send_sync)]
 fn empty_font_collection() -> Arc<Mutex<skia_safe::textlayout::FontCollection>> {
     Arc::new(Mutex::new(skia_safe::textlayout::FontCollection::new()))
 }
@@ -53,9 +54,11 @@ fn smart_caption_avoids_bottom_face() {
         1.0,
     );
 
-    let mut solver = SolverConfig::default();
-    solver.motion_penalty = 0.1;
-    solver.smoothing_window = 1;
+    let solver = SolverConfig {
+        motion_penalty: 0.1,
+        smoothing_window: 1,
+        ..SolverConfig::default()
+    };
     let manifest = SemanticManifest {
         entity_refs: vec![face],
         start_time: 0.0,
@@ -138,9 +141,11 @@ fn smart_caption_switches_when_face_moves() {
         1.0,
     );
 
-    let mut solver = SolverConfig::default();
-    solver.motion_penalty = 0.1;
-    solver.smoothing_window = 1;
+    let solver = SolverConfig {
+        motion_penalty: 0.1,
+        smoothing_window: 1,
+        ..SolverConfig::default()
+    };
     let manifest = SemanticManifest {
         entity_refs: vec![face, face_left, face_right],
         start_time: 0.0,
@@ -269,9 +274,11 @@ fn smart_caption_uses_left_anchor_when_right_top_and_bottom_are_blocked() {
         1.0,
     );
 
-    let mut solver = SolverConfig::default();
-    solver.motion_penalty = 0.1;
-    solver.smoothing_window = 1;
+    let solver = SolverConfig {
+        motion_penalty: 0.1,
+        smoothing_window: 1,
+        ..SolverConfig::default()
+    };
     let manifest = SemanticManifest {
         entity_refs: vec![face_top, face_bottom, face_right],
         start_time: 0.0,
@@ -352,9 +359,11 @@ fn smart_caption_uses_right_anchor_when_left_top_and_bottom_are_blocked() {
         1.0,
     );
 
-    let mut solver = SolverConfig::default();
-    solver.motion_penalty = 0.1;
-    solver.smoothing_window = 1;
+    let solver = SolverConfig {
+        motion_penalty: 0.1,
+        smoothing_window: 1,
+        ..SolverConfig::default()
+    };
     let manifest = SemanticManifest {
         entity_refs: vec![face_top, face_bottom, face_left],
         start_time: 0.0,
@@ -410,9 +419,11 @@ fn smart_caption_continuous_uses_free_xy_position() {
         1.0,
     );
 
-    let mut solver = SolverConfig::default();
-    solver.motion_penalty = 0.1;
-    solver.smoothing_window = 1;
+    let solver = SolverConfig {
+        motion_penalty: 0.1,
+        smoothing_window: 1,
+        ..SolverConfig::default()
+    };
     let manifest = SemanticManifest {
         entity_refs: vec![face],
         start_time: 0.0,
@@ -461,9 +472,11 @@ fn project_roundtrip_smart_caption_preserves_entity_refs() {
         1.0,
     );
 
-    let mut solver = SolverConfig::default();
-    solver.motion_penalty = 0.1;
-    solver.smoothing_window = 1;
+    let solver = SolverConfig {
+        motion_penalty: 0.1,
+        smoothing_window: 1,
+        ..SolverConfig::default()
+    };
     let manifest = SemanticManifest {
         entity_refs: vec![face],
         start_time: 0.0,

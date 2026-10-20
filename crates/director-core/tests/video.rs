@@ -3,7 +3,7 @@
 //! Tests for VideoNode behavior in different render modes.
 
 use director_core::{
-    director::{Director, TimelineItem},
+    director::Director,
     node::{VideoNode, VideoSource},
     video_wrapper::RenderMode,
     AssetLoader,

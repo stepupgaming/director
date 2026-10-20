@@ -10,6 +10,7 @@ pub struct PlacedTile {
     pub h: f32,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn place_tiles(
     area_x: f32,
     area_y: f32,

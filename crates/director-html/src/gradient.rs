@@ -112,12 +112,14 @@ fn stop_position<D: ToCss>(
         }
     }
 }
+type GradientStops = Result<(Vec<Option<skia_safe::Color>>, Vec<Option<StopPos>>), String>;
+
 fn stops<D: ToCss>(
     items: Vec<GradientItem<D>>,
     m: Metrics,
     current: Color,
     conic: bool,
-) -> Result<(Vec<Option<skia_safe::Color>>, Vec<Option<StopPos>>), String> {
+) -> GradientStops {
     let mut colors = Vec::new();
     let mut positions = Vec::new();
     for item in items {
@@ -219,8 +221,8 @@ fn expand_hints(
             let midpoint = (offset - offset1) / (offset2 - offset1);
             let samples = if midpoint > 0.5 {
                 let mut samples = [0.0; 9];
-                for y in 0..7 {
-                    samples[y] = offset1 + (offset - offset1) * (7 + y) as f32 / 13.0;
+                for (y, sample) in samples.iter_mut().enumerate().take(7) {
+                    *sample = offset1 + (offset - offset1) * (7 + y) as f32 / 13.0;
                 }
                 samples[7] = offset + (offset2 - offset) / 3.0;
                 samples[8] = offset + (offset2 - offset) * 2.0 / 3.0;

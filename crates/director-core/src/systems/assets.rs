@@ -107,6 +107,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::arc_with_non_send_sync)]
     fn test_blob_caching() {
         let loader = Arc::new(MockLoader {
             calls: AtomicUsize::new(0),

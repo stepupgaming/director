@@ -182,7 +182,7 @@ pub struct Director {
 ///    composition sub-directors) sits behind `Mutex`es.
 /// 3. **Thread-confined decoders.** `SyncDecoder` owns a live `ffmpeg` child
 ///    + pipe reader and is only driven from its owner's thread; the worker
-///    thread owns the `ThreadedDecoder` pipe exclusively.
+///      thread owns the `ThreadedDecoder` pipe exclusively.
 ///
 /// Skia objects (`Image` in `static_cache`, surfaces borrowed per call) are
 /// never shared across threads without the `Director` lock held. If a new
@@ -260,6 +260,7 @@ impl Director {
     /// * `asset_loader` - Implementation of asset loading strategy.
     /// * `render_mode` - Mode hint (e.g. Preview vs Export).
     /// * `context` - Optional existing context (for nested compositions).
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new(
         width: i32,
         height: i32,
@@ -341,8 +342,7 @@ impl Director {
             )
         };
 
-        let mut tracks = Vec::new();
-        tracks.push(Track::new("Default"));
+        let tracks = vec![Track::new("Default")];
         Self {
             scene: SceneGraph::new(),
             tracks,

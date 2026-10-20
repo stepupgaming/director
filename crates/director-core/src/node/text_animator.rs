@@ -87,6 +87,7 @@ pub struct TextAnimator {
 
 impl TextAnimator {
     /// Creates a new text animator for the specified glyph range.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         start_idx: usize,
         end_idx: usize,

@@ -1016,6 +1016,7 @@ fn gradient_tile(area: Rect, size: BackgroundFit, position: (AxisPos, AxisPos)) 
     Rect::from_xywh(x, y, tw.max(1.0), th.max(1.0))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_background_image(
     canvas: &Canvas,
     rect: Rect,
@@ -1117,6 +1118,7 @@ fn fitted_background(fit: BackgroundFit, iw: f32, ih: f32, area_w: f32, area_h: 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_placed_tiles(
     canvas: &Canvas,
     image: &skia_safe::Image,
@@ -1159,6 +1161,7 @@ fn paint_placed_tiles(
     canvas.restore();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn explicit_background_tiles(
     area_w: f32,
     area_h: f32,

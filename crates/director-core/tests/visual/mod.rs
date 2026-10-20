@@ -335,7 +335,7 @@ pub fn assert_visual_match_with(
             actual_path.display()
         );
         for note in notes {
-            message.push_str("\n");
+            message.push('\n');
             message.push_str(&note);
         }
         return Err(message);

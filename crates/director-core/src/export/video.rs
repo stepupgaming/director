@@ -166,6 +166,7 @@ pub fn render_export_at_scale(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_scaled(
     director: &mut Director,
     out_path: PathBuf,

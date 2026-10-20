@@ -28,6 +28,7 @@ pub fn parse_box_edge(source: &str) -> Result<BoxEdge, String> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn edge_insets(
     edge: BoxEdge,
     border_left: f32,

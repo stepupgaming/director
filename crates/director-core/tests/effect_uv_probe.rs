@@ -13,7 +13,7 @@ use director_core::scripting::{register_rhai_api, MovieHandle};
 use director_core::DefaultAssetLoader;
 use rhai::Engine;
 use skia_safe::{AlphaType, ColorSpace, ColorType, ImageInfo};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // Shader that paints uv = pos / u_resolution as RGB. Ignores the input image.
 const PROBE_SKSL: &str = r#"
@@ -53,8 +53,8 @@ fn render_and_sample() -> (Vec<u8>, usize, usize) {
 
     let mut director = movie.director.lock().unwrap();
 
-    let width = director.width as i32;
-    let height = director.height as i32;
+    let width = director.width;
+    let height = director.height;
     let info = ImageInfo::new(
         (width, height),
         ColorType::RGBA8888,

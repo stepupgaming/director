@@ -200,7 +200,6 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
             );
         }
         drop(compiled);
-        drop(context);
         println!("{}", output.display());
     } else {
         println!(
@@ -312,7 +311,6 @@ fn benchmark(
     drop(compiled);
     drop(surfaces);
     drop(surface);
-    drop(context);
     Ok(())
 }
 

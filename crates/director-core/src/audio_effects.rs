@@ -59,6 +59,10 @@ impl AudioEffectChain {
     pub fn len(&self) -> usize {
         self.effects.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 pub trait AudioEffect: Send + fmt::Debug {
@@ -92,7 +96,7 @@ pub struct Reverb {
 struct CombFilter {
     buffer: Vec<f32>,
     index: usize,
-    delay: usize,
+    _delay: usize,
     feedback: f32,
 }
 
@@ -101,7 +105,7 @@ impl CombFilter {
         Self {
             buffer: vec![0.0; delay_samples],
             index: 0,
-            delay: delay_samples,
+            _delay: delay_samples,
             feedback,
         }
     }
@@ -124,7 +128,7 @@ impl CombFilter {
 struct AllPassFilter {
     buffer: Vec<f32>,
     index: usize,
-    delay: usize,
+    _delay: usize,
     feedback: f32,
 }
 
@@ -133,7 +137,7 @@ impl AllPassFilter {
         Self {
             buffer: vec![0.0; delay_samples],
             index: 0,
-            delay: delay_samples,
+            _delay: delay_samples,
             feedback,
         }
     }
@@ -171,6 +175,7 @@ impl Reverb {
         }
     }
 
+    #[allow(dead_code)]
     fn rebuild_feedback(&mut self, sample_rate: u32) {
         let rt60 = 3.0 * (1.0 - self.decay).max(0.01);
         let base_delay = (sample_rate as f32 * 0.03) as usize;
@@ -192,7 +197,8 @@ impl AudioEffect for Reverb {
         if channels != 2 {
             return;
         }
-        for pair in samples.chunks_exact_mut(2) {
+        let (pairs, _) = samples.as_chunks_mut::<2>();
+        for pair in pairs {
             let input_l = pair[0];
             let input_r = pair[1];
             let mono = (input_l + input_r) * 0.5;
@@ -279,7 +285,8 @@ impl AudioEffect for Delay {
         }
         self.rebuild_buffer();
         let buf_len = self.buffer.len();
-        for pair in samples.chunks_exact_mut(2) {
+        let (pairs, _) = samples.as_chunks_mut::<2>();
+        for pair in pairs {
             for ch in [0, 1] {
                 let input = pair[ch];
                 let delayed = self.buffer[self.index];
@@ -491,7 +498,8 @@ impl BiquadEQ {
 impl AudioEffect for BiquadEQ {
     fn process(&mut self, samples: &mut [f32], _sample_rate: u32, channels: u16) {
         if channels == 2 {
-            for pair in samples.chunks_exact_mut(2) {
+            let (pairs, _) = samples.as_chunks_mut::<2>();
+            for pair in pairs {
                 pair[0] = self.process_channel(pair[0]);
                 pair[1] = self.process_channel(pair[1]);
             }
@@ -512,7 +520,7 @@ impl AudioEffect for BiquadEQ {
     fn set_parameter(&mut self, name: &str, value: f32) {
         match name {
             "frequency" | "freq" => {
-                self.frequency = value.max(10.0).min(20000.0);
+                self.frequency = value.clamp(10.0, 20000.0);
                 self.needs_recalc = true;
             }
             "q" | "resonance" => {
@@ -597,7 +605,8 @@ impl Compressor {
 impl AudioEffect for Compressor {
     fn process(&mut self, samples: &mut [f32], _sample_rate: u32, channels: u16) {
         if channels == 2 {
-            for pair in samples.chunks_exact_mut(2) {
+            let (pairs, _) = samples.as_chunks_mut::<2>();
+            for pair in pairs {
                 pair[0] = self.process_channel(pair[0]);
                 pair[1] = self.process_channel(pair[1]);
             }

@@ -385,10 +385,12 @@ pub(crate) fn parse_svg(
     context: &str,
     fonts: &Arc<usvg::fontdb::Database>,
 ) -> Result<usvg::Tree, CompileError> {
-    let mut options = usvg::Options::default();
-    options.font_family = "Roboto".into();
-    options.font_size = 16.0;
-    options.fontdb = Arc::clone(fonts);
+    let options = usvg::Options {
+        font_family: "Roboto".into(),
+        font_size: 16.0,
+        fontdb: Arc::clone(fonts),
+        ..usvg::Options::default()
+    };
     usvg::Tree::from_data(markup.as_bytes(), &options)
         .map_err(|e| CompileError::Input(format!("{context}: invalid SVG: {e}")))
 }
@@ -1368,6 +1370,7 @@ impl Builder {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn place_one_foreign(
         &mut self,
         svg: ElementRef<'_>,

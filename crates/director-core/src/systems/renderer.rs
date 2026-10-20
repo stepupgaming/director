@@ -57,6 +57,7 @@ pub trait StaticSubtreeCache {
 }
 
 impl StaticSubtreeCache for HashMap<NodeId, StaticCacheEntry> {
+    #[allow(clippy::question_mark)]
     fn lookup(
         &mut self,
         node_id: NodeId,
@@ -449,6 +450,7 @@ fn plane_depth_at(device: &skia_safe::M44, chain: &skia_safe::M44, u: f32, v: f3
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_sorted_planes<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,
@@ -480,6 +482,7 @@ fn paint_sorted_planes<C: StaticSubtreeCache>(
 /// Planes stay in center-Z order. A covered fragment replaces the stored one
 /// when its view Z is greater or equal, so an equal-Z tie still follows
 /// z-index and source order. Flat and constant-Z lists do not use this path.
+#[allow(clippy::too_many_arguments)]
 fn paint_occluded_planes<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,
@@ -653,6 +656,7 @@ where
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_depth_chain<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,
@@ -716,6 +720,7 @@ fn paint_depth_chain<C: StaticSubtreeCache>(
 /// descendants in that list. A child that does not stays one plane. A list
 /// whose Z changes across a quad is occluded per pixel. Constant Z stays on
 /// this sort, so equal Z still follows z-index and source order.
+#[allow(clippy::too_many_arguments)]
 fn render_node_subtree<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,
@@ -854,6 +859,7 @@ fn render_node_subtree<C: StaticSubtreeCache>(
 /// expression. A mismatch drops the entry and re-rasters. An incremental
 /// pass reuses entries for nodes outside the dirty set and never serves a
 /// hit for a dirty static node.
+#[allow(clippy::too_many_arguments)]
 pub fn render_recursive<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,
@@ -877,6 +883,7 @@ pub fn render_recursive<C: StaticSubtreeCache>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_recursive_inner<C: StaticSubtreeCache>(
     scene: &SceneGraph,
     assets: &AssetManager,

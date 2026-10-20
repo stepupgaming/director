@@ -841,13 +841,13 @@ pub fn parse_layout_style(props: &rhai::Map, style: &mut Style) {
     }
 
     // Insets (Top, Left, Right, Bottom) - reuse to_lpa closure
-    if let Some(v) = props.get("left").and_then(&to_lpa) {
+    if let Some(v) = props.get("left").and_then(to_lpa) {
         style.inset.left = v;
     }
-    if let Some(v) = props.get("right").and_then(&to_lpa) {
+    if let Some(v) = props.get("right").and_then(to_lpa) {
         style.inset.right = v;
     }
-    if let Some(v) = props.get("top").and_then(&to_lpa) {
+    if let Some(v) = props.get("top").and_then(to_lpa) {
         style.inset.top = v;
     }
     if let Some(v) = props.get("bottom").and_then(to_lpa) {

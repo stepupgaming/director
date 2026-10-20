@@ -536,7 +536,7 @@ mod tests {
         "##;
 
         let ast = engine.compile(script).expect("compile");
-        engine.eval_ast::<Dynamic>(&ast).expect("eval register");
+        let _ = engine.eval_ast::<Dynamic>(&ast).expect("eval register");
 
         assert_eq!(registry.len(), 2);
         assert_eq!(registry.names(), vec!["intro", "outro"]);
@@ -586,7 +586,7 @@ mod tests {
             }, |props| { new_director(100, 100, 30) });
         "##;
         let ast = engine.compile(script).unwrap();
-        engine.eval_ast::<Dynamic>(&ast).unwrap();
+        let _ = engine.eval_ast::<Dynamic>(&ast).unwrap();
 
         let movie = registry.build(&engine, &ast, None, None).unwrap();
         assert_eq!(movie.director.lock().unwrap().width, 100);

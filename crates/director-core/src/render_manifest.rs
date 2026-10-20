@@ -14,9 +14,9 @@ use crate::compiler::DependencyInput;
 use crate::director::{Director, TimelineItem};
 use crate::entity::{BoundingBox, EntityKind};
 use crate::node::active_speaker_camera::ActiveSpeakerCamera;
-use crate::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
+use crate::node::smart_caption::SmartCaptionNode;
 use crate::node::caption::scaled_safe_zone;
-use crate::semantic::{intersection_area, CaptionTrajectory, SemanticManifest, SolverConfig, SolverParams, TrajectorySample};
+use crate::semantic::{intersection_area, SolverParams};
 use crate::element::element_kind;
 use crate::systems::layout::LayoutEngine;
 use crate::types::{BoundsRect, NodeId};
@@ -686,11 +686,14 @@ mod tests {
     use super::*;
     use crate::entity::{BoundingBox, EntityKind};
     use crate::node::caption::{CaptionLine, CaptionNode, CaptionWord};
+    use crate::node::smart_caption::SmartCaptionConfig;
     use crate::node::BoxNode;
+    use crate::semantic::{CaptionTrajectory, SemanticManifest, SolverConfig, TrajectorySample};
     use crate::video_wrapper::RenderMode;
     use crate::{DefaultAssetLoader, Director};
     use std::sync::{Arc, Mutex};
 
+    #[allow(clippy::arc_with_non_send_sync)]
     fn empty_font_collection() -> Arc<Mutex<skia_safe::textlayout::FontCollection>> {
         Arc::new(Mutex::new(skia_safe::textlayout::FontCollection::new()))
     }

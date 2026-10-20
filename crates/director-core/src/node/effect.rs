@@ -1349,11 +1349,9 @@ impl Element for EffectNode {
         let mut found = false;
         for effect in &mut self.effects {
             if let EffectType::RuntimeShader { uniforms, .. } = effect {
-                if let Some(anim) = uniforms.get_mut(property) {
-                    if let ShaderUniform::Float(a) = anim {
-                        a.add_segment(start, target, duration, ease_fn.clone());
-                        found = true;
-                    }
+                if let Some(ShaderUniform::Float(a)) = uniforms.get_mut(property) {
+                    a.add_segment(start, target, duration, ease_fn.clone());
+                    found = true;
                 }
             }
         }
@@ -1376,15 +1374,13 @@ impl Element for EffectNode {
         let mut found = false;
         for effect in &mut self.effects {
             if let EffectType::RuntimeShader { uniforms, .. } = effect {
-                if let Some(anim) = uniforms.get_mut(property) {
-                    if let ShaderUniform::Float(a) = anim {
-                        if let Some(s) = start {
-                            a.add_spring_with_start(s, target, config);
-                        } else {
-                            a.add_spring(target, config);
-                        }
-                        found = true;
+                if let Some(ShaderUniform::Float(a)) = uniforms.get_mut(property) {
+                    if let Some(s) = start {
+                        a.add_spring_with_start(s, target, config);
+                    } else {
+                        a.add_spring(target, config);
                     }
+                    found = true;
                 }
             }
         }
@@ -1404,6 +1400,7 @@ mod shader_compile_tests {
     use crate::animation::Animated;
     use crate::types::Color;
 
+    #[allow(clippy::arc_with_non_send_sync)]
     fn cache() -> Arc<Mutex<HashMap<String, RuntimeEffect>>> {
         Arc::new(Mutex::new(HashMap::new()))
     }

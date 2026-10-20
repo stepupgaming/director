@@ -100,7 +100,7 @@ pub fn parse_shorthand(source: &str, metrics: Metrics) -> Result<DecorationPaint
                 paint.thickness = DecorationThickness::FromFont;
                 thickness_set = true;
             }
-            "none" => return Err(format!("unsupported text decoration 'none'")),
+            "none" => return Err("unsupported text decoration 'none'".to_string()),
             "currentcolor" | "currentColor" => {}
             other => match resolved_px(other, metrics) {
                 Ok(px) if px.is_finite() => {

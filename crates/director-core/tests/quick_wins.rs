@@ -89,6 +89,7 @@ fn assert_layout_style_applies(mut element: Box<dyn Element>, label: &str) {
 }
 
 #[test]
+#[allow(clippy::arc_with_non_send_sync)]
 fn set_layout_style_updates_box_text_effect_shape_and_composition() {
     assert_layout_style_applies(Box::new(BoxNode::new()), "box");
     assert_layout_style_applies(

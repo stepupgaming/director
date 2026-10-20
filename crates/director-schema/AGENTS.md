@@ -11,7 +11,7 @@
 
 - Types intended for developer introspection must derive or support JSON schema generation.
 - `EffectConfig` and `TransitionType` are **codegen'd** from `director-core::api_catalog` via `build.rs`; edit the catalog, not the generated output.
-- `NodeKind` must stay in sync with `director-core::api_catalog` JSON-schema entries (enforced by `test_catalog_node_sync`; `Wgpu` is Rhai-only).
+- `NodeKind` must stay in sync with `director-core::api_catalog` JSON-schema entries (enforced by `test_catalog_node_sync`).
 - Rhai `add_loop` / `add_freeze` map to `Scene.loop_count` and `Scene.post_hold` in `MovieRequest`.
 - `manifest::api_manifest_json()` and `export_movie_request_schema()` are the agent-facing schema exports.
 - `project_manifest::build_project_manifest()` emits a static agent summary (timeline, nodes, assets) from `MovieRequest` without rendering.

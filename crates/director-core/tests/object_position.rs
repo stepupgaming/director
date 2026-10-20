@@ -134,7 +134,7 @@ fn decode_standard_base64(input: &str) -> Vec<u8> {
     }
 
     let bytes = input.as_bytes();
-    assert!(bytes.len() % 4 == 0, "standard base64 length");
+    assert!(bytes.len().is_multiple_of(4), "standard base64 length");
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
     for chunk in bytes.chunks_exact(4) {
         let pad = chunk.iter().filter(|&&c| c == b'=').count();

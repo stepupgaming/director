@@ -38,7 +38,7 @@ pub struct PixelDiff {
 }
 
 pub fn diff_limit(max_diff: f64) -> Result<(), String> {
-    if !max_diff.is_finite() || max_diff < 0.0 || max_diff > 1.0 {
+    if !(0.0..=1.0).contains(&max_diff) {
         Err("max diff must be finite and in [0, 1]".into())
     } else {
         Ok(())
@@ -252,6 +252,7 @@ pub fn run(args: SnapshotArgs) -> i32 {
     code
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_report(
     args: &SnapshotArgs,
     width: u32,

@@ -3,7 +3,7 @@
 //! Tests for Taffy-based layout computation and scene graph structure.
 
 use director_core::{
-    director::TimelineItem, node::BoxNode, scene::SceneGraph, types::NodeId,
+    node::BoxNode, scene::SceneGraph, types::NodeId,
     video_wrapper::RenderMode, DefaultAssetLoader, Director,
 };
 use std::env;
@@ -186,12 +186,12 @@ fn grid_layout_basic() {
     grid.style.align_items = Some(AlignItems::Stretch);
     grid.style.justify_content = Some(JustifyContent::Stretch);
     grid.style.grid_template_columns = vec![
-        GridTemplateComponent::Single(fr(1.0)),
-        GridTemplateComponent::Single(fr(1.0)),
+        GridTemplateComponent::Single(fr(1.0_f32)),
+        GridTemplateComponent::Single(fr(1.0_f32)),
     ];
     grid.style.grid_template_rows = vec![
-        GridTemplateComponent::Single(fr(1.0)),
-        GridTemplateComponent::Single(fr(1.0)),
+        GridTemplateComponent::Single(fr(1.0_f32)),
+        GridTemplateComponent::Single(fr(1.0_f32)),
     ];
     let grid_id = d.scene.add_node(Box::new(grid));
 

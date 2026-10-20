@@ -64,7 +64,7 @@ fn inspect_api_works() {
         .expect("bounds_root must be a map");
     for k in ["x", "y", "w", "h"] {
         assert!(
-            bounds.get(k).is_some(),
+            bounds.contains_key(k),
             "node_bounds must include key '{}'",
             k
         );
@@ -76,7 +76,7 @@ fn inspect_api_works() {
         .and_then(|v| v.clone().try_cast::<Array>())
         .expect("children_root must be an array");
     assert!(
-        children.len() >= 1,
+        !children.is_empty(),
         "root should have at least 1 child (the text node)"
     );
     let inner_children: Array = result

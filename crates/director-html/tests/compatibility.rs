@@ -168,7 +168,7 @@ fn malformed_and_cyclic_styles_are_errors() {
         "<div style='opacity:invalid'></div>",
         "<div style='--a:var(--b);--b:var(--a);width:var(--a)'></div>",
         "<div style='transform:translateX(calc(10% + 2px))'></div>",
-        "<svg><text>Needs a font</text></svg>",
+        "<div style='perspective:0'></div>",
     ] {
         assert!(
             compile(html, CompileOptions::default()).is_err(),

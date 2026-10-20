@@ -574,8 +574,8 @@ where
 
         // Largest i with kfs[i].time <= t (binary-search equivalent linear scan).
         let mut i = 0;
-        for j in 1..kfs.len() {
-            if kfs[j].1 <= t {
+        for (j, kf) in kfs.iter().enumerate().skip(1) {
+            if kf.1 <= t {
                 i = j;
             } else {
                 break;

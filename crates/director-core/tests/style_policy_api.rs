@@ -129,7 +129,7 @@ fn style_policy_score_and_violations_available_after_compile() {
         .eval::<Map>(script)
         .expect("compile-time style policy script must evaluate");
 
-    let score: Map = result
+    let _score: Map = result
         .get("score")
         .and_then(|v| v.clone().try_cast::<Map>())
         .expect("score must be a map");

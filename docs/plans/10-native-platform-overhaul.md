@@ -1,6 +1,6 @@
 # Plan 10: Native platform overhaul
 
-> **Status:** In progress. Phase 1 is active.
+> **Status:** In progress. The phase 1 gate is green locally. Phase 2 is next.
 > **Product direction:** Exceed HyperFrames, FFrames and Remotion with a library-first native video platform: HTML/CSS authoring that compiles to a typed scene document, a parallel deterministic renderer, one host session API shared by the CLI, agents and a future editor, and measured proof of speed and quality.
 
 This file is the current-state and handoff document for the active phase. It replaces [plan 09](09-native-fidelity.md) as the active plan. Feature contracts for HTML live in [`crates/director-html/AGENTS.md`](../../crates/director-html/AGENTS.md).
@@ -90,6 +90,9 @@ One row per check, holding the most recent passing count. Replace the row when a
 
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
+| workspace clippy | pass | 2026-10-19 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
+| workspace release tests | pass except the doctest, then fixed | 2026-10-19 | `cargo test --workspace --release` |
+| director-core doctest | 1 | 2026-10-19 | `cargo test -p director-core --doc --release` |
 | director-html lib | 101 | 2026-10-17 | `cargo test -p director-html --release` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
 | object_position_css, gradient_hints, project, shader | 9, 8, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |
@@ -104,20 +107,15 @@ One row per check, holding the most recent passing count. Replace the row when a
 | inspect_samples, repair_batch | 1, 5 | 2026-10-17 | release `director-cli` tests, exact command not recorded |
 | recipe scripts | 9 | 2026-10-17 | release `examples` filter `example_recipes_` |
 
-Stale checks, last green before later changes landed:
+The 2026-10-19 workspace release run passed every target after two fixture updates: a rejected preview reload now uses `perspective:0`, and SVG text with no font family is no longer treated as a compile error. The `Director::new` doctest passes `fps` as `30.0`.
 
-- `compatibility` (23) and `authoring_slices` (2) have not been re-run since 2026-10-17.
-- The director-html media tests have not been re-run since muted `video loop` support.
-- `preview::tests` have not been re-run since `/api/audio` byte ranges.
-- The full `cargo test -p director-html --release` has not been re-run since 2026-10-17.
-
-Workspace state: `cargo test --workspace` fails on four unmodified Rhai example scripts, and workspace clippy reports existing `director-core` warnings.
+Linux CI on the next push still has to confirm the Windows-rendered text goldens.
 
 ## Next action
 
-1. Phase 1 deletions, then the example walker fixes, then fail-loud authoring.
-2. Golden corpus and CI.
-3. Re-run the stale checks and the workspace gate, update the table, and close issue #2 (static-subtree reuse). Issue #3 (agent production workflows) folds into phase 4.
+1. Phase 2: add `director-scene` and an exporter from the current `Director`, then round-trip the golden scenes through JSON.
+2. Push when asked, and read the Linux CI result for the golden frames.
+3. Close issue #2 (static-subtree reuse). Issue #3 (agent production workflows) folds into phase 4.
 
 ## Verification
 

@@ -189,3 +189,9 @@ impl DesignSystem {
         }
     }
 }
+
+impl Default for DesignSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}

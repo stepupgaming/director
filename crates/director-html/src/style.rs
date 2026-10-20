@@ -176,6 +176,7 @@ pub enum BackgroundFit {
     Lengths(Option<LengthPercentage>, Option<LengthPercentage>),
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackgroundOrigin {
     PaddingBox,
@@ -621,6 +622,7 @@ fn place_break_all(
 /// Greedy line break. `soft` splits a token wider than `max_width`. A fitting token stays whole.
 /// `break_all` also splits when the token overflows the space left on the line.
 /// `pre_line` collapses spaces and tabs and keeps newlines.
+#[allow(clippy::too_many_arguments)]
 pub fn append_wrapped(
     out: &mut String,
     text: &str,

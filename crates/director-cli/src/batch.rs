@@ -7,6 +7,7 @@ use std::{
 };
 
 pub struct PlannedItem {
+    #[allow(dead_code)]
     pub input: PathBuf,
     pub output: PathBuf,
 }

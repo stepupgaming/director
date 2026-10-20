@@ -136,7 +136,6 @@ fn active_speaker_camera_requires_continuity_group() {
 
 #[test]
 fn active_speaker_camera_creates_node_with_trajectory() {
-    use director_core::element::Element;
     use director_core::node::ActiveSpeakerCamera;
 
     let mut engine = Engine::new();

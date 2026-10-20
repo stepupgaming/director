@@ -25,11 +25,13 @@ pub struct CompositionNode {
 
 impl CompositionNode {
     pub fn new(internal_director: Director) -> Self {
-        let mut style = Style::default();
         // Defaults to "Vertical Stack, Centered"
-        style.flex_direction = FlexDirection::Column;
-        style.align_items = Some(AlignItems::Center);
-        style.justify_content = Some(JustifyContent::Center);
+        let style = Style {
+            flex_direction: FlexDirection::Column,
+            align_items: Some(AlignItems::Center),
+            justify_content: Some(JustifyContent::Center),
+            ..Default::default()
+        };
 
         Self {
             internal_director: Mutex::new(internal_director),

@@ -323,7 +323,6 @@ fn cmd_render(args: RenderArgs) {
     }
     drop(director);
     drop(loaded);
-    drop(context);
     println!("{}", output.display());
 }
 
@@ -396,7 +395,6 @@ fn render_software_item(input_path: &Path, output: &Path) -> Result<(), ItemFail
     })?;
     drop(director);
     drop(loaded);
-    drop(context);
     Ok(())
 }
 

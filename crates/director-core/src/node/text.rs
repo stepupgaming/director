@@ -423,16 +423,23 @@ impl TextNode {
 
         for animator in &self.animators {
             // Apply this animator to affected glyphs
-            for char_idx in animator.start_idx..animator.end_idx.min(char_count) {
+            let start = animator.start_idx;
+            let end = animator.end_idx.min(char_count);
+            for (char_idx, state) in states
+                .iter_mut()
+                .enumerate()
+                .skip(start)
+                .take(end.saturating_sub(start))
+            {
                 let glyph_offset = char_idx - animator.start_idx;
                 let value = animator.value_for_glyph(glyph_offset, time);
 
                 match animator.property {
-                    TextAnimProperty::Opacity => states[char_idx].opacity = value,
-                    TextAnimProperty::OffsetX => states[char_idx].offset_x = value,
-                    TextAnimProperty::OffsetY => states[char_idx].offset_y = value,
-                    TextAnimProperty::Scale => states[char_idx].scale = value,
-                    TextAnimProperty::Rotation => states[char_idx].rotation = value,
+                    TextAnimProperty::Opacity => state.opacity = value,
+                    TextAnimProperty::OffsetX => state.offset_x = value,
+                    TextAnimProperty::OffsetY => state.offset_y = value,
+                    TextAnimProperty::Scale => state.scale = value,
+                    TextAnimProperty::Rotation => state.rotation = value,
                 }
             }
         }
@@ -700,13 +707,9 @@ impl Element for TextNode {
         }
 
         // Counter interpolation: update numeric value and re-format text each frame
-        if self.counter.is_some() {
+        if let Some(counter) = &self.counter {
             self.counter_value.update(time);
-            let formatted = self
-                .counter
-                .as_ref()
-                .unwrap()
-                .format_value(self.counter_value.current_value);
+            let formatted = counter.format_value(self.counter_value.current_value);
             if !self.spans.is_empty() && self.spans[0].text != formatted {
                 self.spans[0].text = formatted;
                 changed = true;

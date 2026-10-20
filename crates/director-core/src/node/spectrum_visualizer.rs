@@ -41,6 +41,7 @@ pub struct SpectrumVisualizerNode {
 }
 
 impl SpectrumVisualizerNode {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         track_id: usize,
         bar_count: usize,

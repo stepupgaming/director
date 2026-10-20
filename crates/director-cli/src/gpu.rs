@@ -176,6 +176,7 @@ pub fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
 }
 
 #[cfg(not(feature = "vulkan"))]
+#[allow(dead_code)]
 pub fn create_vulkan_context() -> Option<()> {
     None
 }

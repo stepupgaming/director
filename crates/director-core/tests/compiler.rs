@@ -642,6 +642,7 @@ fn rhai_introspection_bindings_work() {
 }
 
 #[test]
+#[allow(clippy::arc_with_non_send_sync)]
 fn compile_emits_style_policy_violations() {
     let mut d = empty_director();
 

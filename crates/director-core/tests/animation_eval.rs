@@ -18,6 +18,7 @@ use skia_safe::textlayout::FontCollection;
 use std::sync::{Arc, Mutex};
 use taffy::style::{Dimension, Style};
 
+#[allow(clippy::arc_with_non_send_sync)]
 fn font_collection() -> Arc<Mutex<FontCollection>> {
     Arc::new(Mutex::new(FontCollection::new()))
 }

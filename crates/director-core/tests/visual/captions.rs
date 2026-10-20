@@ -266,8 +266,10 @@ fn smart_caption_switches_anchor_with_moving_face() {
     // Use a low motion penalty so the solver freely switches to the best
     // anchor at each sample. This makes the top -> bottom switch explicit
     // when the face moves from bottom to top.
-    let mut solver = SolverConfig::default();
-    solver.motion_penalty = 0.0;
+    let solver = SolverConfig {
+        motion_penalty: 0.0,
+        ..SolverConfig::default()
+    };
 
     let manifest = SemanticManifest {
         entity_refs: vec![face],

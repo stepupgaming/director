@@ -30,7 +30,7 @@
 //! let mut director = Director::new(
 //!     1920,
 //!     1080,
-//!     30,
+//!     30.0,
 //!     Arc::new(DefaultAssetLoader),
 //!     RenderMode::Preview,
 //!     None

@@ -104,6 +104,7 @@ fn axis_keyword(token: &str) -> Option<AxisRepeat> {
     }
 }
 
+#[allow(dead_code)]
 pub fn tile_origins(tiles: AxisTiles) -> Vec<f32> {
     let mut origins = Vec::with_capacity(tiles.count as usize);
     let step = tiles.tile + tiles.gap;

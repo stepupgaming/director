@@ -336,7 +336,7 @@ mod tests {
         assert!(inspection["element_ids"].get("box").is_some());
         std::fs::write(
             directory.path().join("style.css"),
-            "#box{perspective:400px}",
+            "#box{perspective:0}",
         )
         .unwrap();
         let failed: serde_json::Value =

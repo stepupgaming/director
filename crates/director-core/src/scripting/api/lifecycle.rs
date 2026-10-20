@@ -172,7 +172,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
     // These mirror Remotion's <Series> and <Sequence> primitives for
     // sequential scene building without manual start-time bookkeeping.
 
-    /// `add_sequence(movie, duration)` — creates a scene and returns a SequenceHandle.
+    // `add_sequence(movie, duration)` — creates a scene and returns a SequenceHandle.
     // Use `sequence.next(duration)` to chain scenes back-to-back.
     engine.register_type_with_name::<super::super::types::SequenceHandle>("Sequence");
 
@@ -186,7 +186,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
         },
     );
 
-    /// `sequence.next(duration)` — adds a scene at the current sequence time,
+    // `sequence.next(duration)` — adds a scene at the current sequence time,
     // then advances the cursor by `duration`. Returns a SceneHandle.
     engine.register_fn(
         "next",
@@ -199,7 +199,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
         },
     );
 
-    /// `sequence.next_with_overlap(duration, overlap)` — adds a scene but
+    // `sequence.next_with_overlap(duration, overlap)` — adds a scene but
     // only advances the cursor by `duration - overlap` (for transitions).
     engine.register_fn(
         "next_with_overlap",
@@ -213,7 +213,7 @@ pub fn register(engine: &mut Engine, loader: Arc<dyn AssetLoader>, default_mode:
         },
     );
 
-    /// `sequence.skip(duration)` — advances the cursor without adding a scene
+    // `sequence.skip(duration)` — advances the cursor without adding a scene
     // (creates a gap/blank period in the timeline).
     engine.register_fn(
         "skip",

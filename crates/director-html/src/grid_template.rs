@@ -588,13 +588,15 @@ struct Slot {
 }
 
 thread_local! {
-    static LINES: RefCell<Slot> = RefCell::new(Slot {
-        compile_id: 0,
-        epoch: 0,
-        stack: Vec::new(),
-        scopes: Vec::new(),
-        open: false,
-    });
+    static LINES: RefCell<Slot> = const {
+        RefCell::new(Slot {
+            compile_id: 0,
+            epoch: 0,
+            stack: Vec::new(),
+            scopes: Vec::new(),
+            open: false,
+        })
+    };
 }
 
 /// Named-line scope for one element. Hold it until that element's children

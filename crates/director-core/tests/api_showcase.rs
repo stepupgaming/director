@@ -5,7 +5,6 @@
 
 use director_core::{
     animation::Animated,
-    director::TimelineItem,
     node::{auto_time_words, BoxNode, CaptionLine, CaptionNode, CaptionPosition},
     scripting::{register_rhai_api, MovieHandle},
     systems::renderer::render_frame,
@@ -33,7 +32,7 @@ scene.add_text(#{ content: "Test", size: 48.0, color: "#FFFFFF" });
 movie
 "##;
 
-    let result = engine.eval::<MovieHandle>(&script);
+    let result = engine.eval::<MovieHandle>(script);
     assert!(result.is_ok(), "Basic script should execute without error");
 }
 
@@ -77,7 +76,7 @@ for i in 0..3 {
 movie
 "##;
 
-    let result = engine.eval::<MovieHandle>(&script);
+    let result = engine.eval::<MovieHandle>(script);
     assert!(
         result.is_ok(),
         "Flexbox layout script should execute: {:?}",
@@ -120,7 +119,7 @@ box.animate("opacity", 1.0, #{
 movie
 "##;
 
-    let result = engine.eval::<MovieHandle>(&script);
+    let result = engine.eval::<MovieHandle>(script);
     assert!(
         result.is_ok(),
         "Animation script should execute: {:?}",
@@ -157,7 +156,7 @@ let safe = theme::safe_area("tiktok");
 movie
 "##;
 
-    let result = engine.eval::<MovieHandle>(&script);
+    let result = engine.eval::<MovieHandle>(script);
     assert!(
         result.is_ok(),
         "Theme API script should execute: {:?}",
@@ -197,7 +196,7 @@ let title = root.add_text(#{
 movie
 "##;
 
-    let result = engine.eval::<MovieHandle>(&script);
+    let result = engine.eval::<MovieHandle>(script);
     assert!(
         result.is_ok(),
         "Rich text script should execute: {:?}",
@@ -240,7 +239,7 @@ gray_box.apply_effect("grayscale");
 movie
 "##;
 
-    let result = engine.eval::<MovieHandle>(&script);
+    let result = engine.eval::<MovieHandle>(script);
     assert!(
         result.is_ok(),
         "Effects script should execute: {:?}",
@@ -328,7 +327,7 @@ animated_box.animate("scale", 0.8, 1.2, 1.0, "ease_in_out");
 movie
 "##;
 
-    let result = engine.eval::<MovieHandle>(&script).expect("Script failed");
+    let result = engine.eval::<MovieHandle>(script).expect("Script failed");
     let mut director = result.director.lock().unwrap();
 
     let out_path = PathBuf::from("target/api_showcase.mp4");
@@ -363,7 +362,7 @@ let captions = scene.add_caption(#{
 movie
 "##;
 
-    let result = engine.eval::<MovieHandle>(&script);
+    let result = engine.eval::<MovieHandle>(script);
     assert!(
         result.is_ok(),
         "Caption script should execute: {:?}",

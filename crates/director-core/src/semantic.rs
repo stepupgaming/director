@@ -577,8 +577,7 @@ pub fn solve_caption_trajectory_continuous(
     };
 
     let mut state_costs: Vec<Vec<f32>> = Vec::with_capacity(num_samples);
-    for i in 0..num_samples {
-        let faces = &per_sample_faces[i];
+    for faces in &per_sample_faces {
         let mut costs = Vec::with_capacity(num_states);
         for &(x, y) in &positions {
             costs.push(state_cost(x, y, faces, &cost_config));

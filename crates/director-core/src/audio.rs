@@ -96,73 +96,71 @@ impl AudioMixer {
         let mut output = vec![0.0; samples_needed * 2];
         let dt_per_sample = 1.0 / self.sample_rate as f64;
 
-        for track_opt in self.tracks.iter_mut() {
-            if let Some(track) = track_opt {
-                track.volume.update(start_time);
-                track.pan.update(start_time);
-                let vol = track.volume.current_value;
-                let (left_gain, right_gain) = pan_gains(track.pan.current_value);
+        for track in self.tracks.iter_mut().flatten() {
+            track.volume.update(start_time);
+            track.pan.update(start_time);
+            let vol = track.volume.current_value;
+            let (left_gain, right_gain) = pan_gains(track.pan.current_value);
 
-                // Apply effect parameter animations
-                for anim in &mut track.effect_param_animations {
-                    anim.animated.update(start_time);
-                    if let Some(effect) = track.effects.get_mut(anim.effect_idx) {
-                        effect.set_parameter(&anim.param_name, anim.animated.current_value);
-                    }
+            // Apply effect parameter animations
+            for anim in &mut track.effect_param_animations {
+                anim.animated.update(start_time);
+                if let Some(effect) = track.effects.get_mut(anim.effect_idx) {
+                    effect.set_parameter(&anim.param_name, anim.animated.current_value);
+                }
+            }
+
+            // Build per-track buffer
+            let mut track_buf = vec![0.0; samples_needed * 2];
+
+            for i in 0..samples_needed {
+                let t = start_time + i as f64 * dt_per_sample;
+                let mut relative_time = t - track.start_time;
+
+                if relative_time < 0.0 {
+                    continue;
                 }
 
-                // Build per-track buffer
-                let mut track_buf = vec![0.0; samples_needed * 2];
-
-                for i in 0..samples_needed {
-                    let t = start_time + i as f64 * dt_per_sample;
-                    let mut relative_time = t - track.start_time;
-
-                    if relative_time < 0.0 {
+                if let Some(dur) = track.duration {
+                    if !(dur.is_finite() && dur > 0.0) {
                         continue;
                     }
-
-                    if let Some(dur) = track.duration {
-                        if !(dur.is_finite() && dur > 0.0) {
+                    if relative_time >= dur {
+                        if track.loop_audio {
+                            relative_time %= dur;
+                        } else {
                             continue;
                         }
-                        if relative_time >= dur {
-                            if track.loop_audio {
-                                relative_time %= dur;
-                            } else {
-                                continue;
-                            }
-                        }
                     }
-
-                    let mut sample_idx = (relative_time * self.sample_rate as f64) as usize;
-                    let frame_count = track.samples.len() / 2;
-                    if frame_count == 0 {
-                        continue;
-                    }
-
-                    if track.loop_audio {
-                        sample_idx %= frame_count;
-                    } else if sample_idx >= frame_count {
-                        continue;
-                    }
-
-                    let left = track.samples[sample_idx * 2];
-                    let right = track.samples[sample_idx * 2 + 1];
-
-                    track_buf[i * 2] = left * vol * left_gain;
-                    track_buf[i * 2 + 1] = right * vol * right_gain;
                 }
 
-                // Process effects chain
-                track
-                    .effects
-                    .process(&mut track_buf, self.sample_rate, 2);
-
-                // Mix into output
-                for (out, val) in output.iter_mut().zip(track_buf.iter()) {
-                    *out += val;
+                let mut sample_idx = (relative_time * self.sample_rate as f64) as usize;
+                let frame_count = track.samples.len() / 2;
+                if frame_count == 0 {
+                    continue;
                 }
+
+                if track.loop_audio {
+                    sample_idx %= frame_count;
+                } else if sample_idx >= frame_count {
+                    continue;
+                }
+
+                let left = track.samples[sample_idx * 2];
+                let right = track.samples[sample_idx * 2 + 1];
+
+                track_buf[i * 2] = left * vol * left_gain;
+                track_buf[i * 2 + 1] = right * vol * right_gain;
+            }
+
+            // Process effects chain
+            track
+                .effects
+                .process(&mut track_buf, self.sample_rate, 2);
+
+            // Mix into output
+            for (out, val) in output.iter_mut().zip(track_buf.iter()) {
+                *out += val;
             }
         }
 
@@ -403,7 +401,8 @@ pub fn resample_audio(samples: &[f32], source_rate: u32, target_rate: u32) -> Re
     let mut left = Vec::with_capacity(frames);
     let mut right = Vec::with_capacity(frames);
 
-    for chunk in samples.chunks_exact(2) {
+    let (chunks, _) = samples.as_chunks::<2>();
+    for chunk in chunks {
         left.push(chunk[0]);
         right.push(chunk[1]);
     }

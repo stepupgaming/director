@@ -275,12 +275,17 @@ pub fn register(engine: &mut Engine) {
 
     // ----- fly_in_* -----
     macro_rules! fly_in {
-        ($name:literal, $axis:literal, $sign:expr) => {
+        ($name:literal, $axis:literal, $negative:literal) => {
             engine.register_fn(
                 $name,
                 |node: &mut NodeHandle, dur: f64| -> Result<(), Box<EvalAltResult>> {
                     with_node(node, $name, |n| {
-                        fly_in_impl(n, $axis, $sign * DEFAULT_FLY_PX, dur, 0.0)
+                        let distance = if $negative {
+                            -DEFAULT_FLY_PX
+                        } else {
+                            DEFAULT_FLY_PX
+                        };
+                        fly_in_impl(n, $axis, distance, dur, 0.0)
                     })
                 },
             );
@@ -288,7 +293,12 @@ pub fn register(engine: &mut Engine) {
                 $name,
                 |node: &mut NodeHandle, dur: f64, delay: f64| -> Result<(), Box<EvalAltResult>> {
                     with_node(node, $name, |n| {
-                        fly_in_impl(n, $axis, $sign * DEFAULT_FLY_PX, dur, delay)
+                        let distance = if $negative {
+                            -DEFAULT_FLY_PX
+                        } else {
+                            DEFAULT_FLY_PX
+                        };
+                        fly_in_impl(n, $axis, distance, dur, delay)
                     })
                 },
             );
@@ -300,25 +310,35 @@ pub fn register(engine: &mut Engine) {
                  distance: f64|
                  -> Result<(), Box<EvalAltResult>> {
                     with_node(node, $name, |n| {
-                        fly_in_impl(n, $axis, $sign * distance as f32, dur, delay)
+                        let distance = if $negative {
+                            -(distance as f32)
+                        } else {
+                            distance as f32
+                        };
+                        fly_in_impl(n, $axis, distance, dur, delay)
                     })
                 },
             );
         };
     }
-    fly_in!("fly_in_up", "translate_y", 1.0);
-    fly_in!("fly_in_down", "translate_y", -1.0);
-    fly_in!("fly_in_left", "translate_x", 1.0);
-    fly_in!("fly_in_right", "translate_x", -1.0);
+    fly_in!("fly_in_up", "translate_y", false);
+    fly_in!("fly_in_down", "translate_y", true);
+    fly_in!("fly_in_left", "translate_x", false);
+    fly_in!("fly_in_right", "translate_x", true);
 
     // ----- fly_out_* -----
     macro_rules! fly_out {
-        ($name:literal, $axis:literal, $sign:expr) => {
+        ($name:literal, $axis:literal, $negative:literal) => {
             engine.register_fn(
                 $name,
                 |node: &mut NodeHandle, dur: f64| -> Result<(), Box<EvalAltResult>> {
                     with_node(node, $name, |n| {
-                        fly_out_impl(n, $axis, $sign * DEFAULT_FLY_PX, dur, 0.0)
+                        let distance = if $negative {
+                            -DEFAULT_FLY_PX
+                        } else {
+                            DEFAULT_FLY_PX
+                        };
+                        fly_out_impl(n, $axis, distance, dur, 0.0)
                     })
                 },
             );
@@ -326,7 +346,12 @@ pub fn register(engine: &mut Engine) {
                 $name,
                 |node: &mut NodeHandle, dur: f64, delay: f64| -> Result<(), Box<EvalAltResult>> {
                     with_node(node, $name, |n| {
-                        fly_out_impl(n, $axis, $sign * DEFAULT_FLY_PX, dur, delay)
+                        let distance = if $negative {
+                            -DEFAULT_FLY_PX
+                        } else {
+                            DEFAULT_FLY_PX
+                        };
+                        fly_out_impl(n, $axis, distance, dur, delay)
                     })
                 },
             );
@@ -338,16 +363,21 @@ pub fn register(engine: &mut Engine) {
                  distance: f64|
                  -> Result<(), Box<EvalAltResult>> {
                     with_node(node, $name, |n| {
-                        fly_out_impl(n, $axis, $sign * distance as f32, dur, delay)
+                        let distance = if $negative {
+                            -(distance as f32)
+                        } else {
+                            distance as f32
+                        };
+                        fly_out_impl(n, $axis, distance, dur, delay)
                     })
                 },
             );
         };
     }
-    fly_out!("fly_out_up", "translate_y", -1.0);
-    fly_out!("fly_out_down", "translate_y", 1.0);
-    fly_out!("fly_out_left", "translate_x", -1.0);
-    fly_out!("fly_out_right", "translate_x", 1.0);
+    fly_out!("fly_out_up", "translate_y", true);
+    fly_out!("fly_out_down", "translate_y", false);
+    fly_out!("fly_out_left", "translate_x", true);
+    fly_out!("fly_out_right", "translate_x", false);
 
     // ----- pulse -----
     engine.register_fn(

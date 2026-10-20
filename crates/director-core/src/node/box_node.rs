@@ -55,11 +55,13 @@ impl Default for BoxNode {
 
 impl BoxNode {
     pub fn new() -> Self {
-        let mut style = Style::default();
         // Defaults to "Vertical Stack, Centered"
-        style.flex_direction = FlexDirection::Column;
-        style.align_items = Some(AlignItems::Center);
-        style.justify_content = Some(JustifyContent::Center);
+        let style = Style {
+            flex_direction: FlexDirection::Column,
+            align_items: Some(AlignItems::Center),
+            justify_content: Some(JustifyContent::Center),
+            ..Default::default()
+        };
 
         Self {
             style,

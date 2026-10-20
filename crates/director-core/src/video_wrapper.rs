@@ -747,12 +747,8 @@ impl ThreadedDecoder {
                     Ok(())
                 };
 
-            loop {
-                // Coalesce queued seeks: only the latest scrub position matters.
-                let mut target_time = match cmd_rx.recv() {
-                    Ok(VideoCommand::GetFrame(t)) => t,
-                    Err(_) => break,
-                };
+            // Coalesce queued seeks: only the latest scrub position matters.
+            while let Ok(VideoCommand::GetFrame(mut target_time)) = cmd_rx.recv() {
                 while let Ok(VideoCommand::GetFrame(t)) = cmd_rx.try_recv() {
                     target_time = t;
                 }
@@ -1078,6 +1074,24 @@ pub enum VideoLoader {
     Sync(SyncDecoder),
 }
 
+impl VideoLoader {
+    pub fn new(path: PathBuf, mode: RenderMode) -> Result<Self> {
+        FFmpegDriver::ensure_available()?;
+        match mode {
+            RenderMode::Preview => Ok(Self::Threaded(ThreadedDecoder::new(path, mode)?)),
+            RenderMode::Export => Ok(Self::Sync(SyncDecoder::new(path)?)),
+        }
+    }
+
+    /// Probed source frame rate of the underlying stream.
+    pub fn source_fps(&self) -> f64 {
+        match self {
+            Self::Threaded(d) => d.source_fps(),
+            Self::Sync(d) => d.source_fps(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1361,23 +1375,5 @@ mod tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("decoder drop must join without deadlock");
         dropper.join().unwrap();
-    }
-}
-
-impl VideoLoader {
-    pub fn new(path: PathBuf, mode: RenderMode) -> Result<Self> {
-        FFmpegDriver::ensure_available()?;
-        match mode {
-            RenderMode::Preview => Ok(Self::Threaded(ThreadedDecoder::new(path, mode)?)),
-            RenderMode::Export => Ok(Self::Sync(SyncDecoder::new(path)?)),
-        }
-    }
-
-    /// Probed source frame rate of the underlying stream.
-    pub fn source_fps(&self) -> f64 {
-        match self {
-            Self::Threaded(d) => d.source_fps(),
-            Self::Sync(d) => d.source_fps(),
-        }
     }
 }

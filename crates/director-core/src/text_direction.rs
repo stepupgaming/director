@@ -16,6 +16,7 @@ pub enum TextDirectionMode {
 }
 
 impl TextDirectionMode {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
             "rtl" | "right" | "right_to_left" | "right-to-left" => Self::Rtl,

@@ -177,25 +177,23 @@ impl Element for VideoNode {
                 VideoLoader::Threaded(decoder) => {
                     decoder.send_request(seek_time);
 
-                    if let Some(resp) = decoder.get_response() {
-                        if let VideoResponse::Frame(t, data, w, h) = resp {
-                            let data = Data::new_copy(&data);
-                            let info = skia_safe::ImageInfo::new(
-                                (w as i32, h as i32),
-                                ColorType::RGBA8888,
-                                AlphaType::Premul,
-                                Some(ColorSpace::new_srgb()),
-                            );
+                    if let Some(VideoResponse::Frame(t, data, w, h)) = decoder.get_response() {
+                        let data = Data::new_copy(&data);
+                        let info = skia_safe::ImageInfo::new(
+                            (w as i32, h as i32),
+                            ColorType::RGBA8888,
+                            AlphaType::Premul,
+                            Some(ColorSpace::new_srgb()),
+                        );
 
-                            if let Some(img) = skia_safe::images::raster_from_data(
-                                &info,
-                                data,
-                                (w * 4) as usize,
-                            ) {
-                                *self.current_frame.lock().unwrap() = Some((t, img));
-                            } else {
-                                tracing::warn!("Failed to rasterize video frame at {:.3}s from threaded decoder ({}x{})", t, w, h);
-                            }
+                        if let Some(img) = skia_safe::images::raster_from_data(
+                            &info,
+                            data,
+                            (w * 4) as usize,
+                        ) {
+                            *self.current_frame.lock().unwrap() = Some((t, img));
+                        } else {
+                            tracing::warn!("Failed to rasterize video frame at {:.3}s from threaded decoder ({}x{})", t, w, h);
                         }
                     }
                 }

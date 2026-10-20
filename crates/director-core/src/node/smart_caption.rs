@@ -446,6 +446,7 @@ mod tests {
     use skia_safe::textlayout::FontCollection;
     use std::sync::{Arc, Mutex};
 
+    #[allow(clippy::arc_with_non_send_sync)]
     fn empty_font_collection() -> Arc<Mutex<FontCollection>> {
         Arc::new(Mutex::new(FontCollection::new()))
     }

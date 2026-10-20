@@ -317,6 +317,7 @@ fn find_abs_box(d: &director_core::Director) -> Option<director_core::types::Nod
 /// semantic manifest, and trajectory instead of falling back to a BoxNode
 /// placeholder.
 #[test]
+#[allow(clippy::arc_with_non_send_sync)]
 fn project_roundtrip_preserves_smart_caption() {
     use director_core::entity::{BoundingBox, EntityKind};
     use director_core::node::caption::{CaptionLine, CaptionNode, CaptionWord};
@@ -418,6 +419,7 @@ fn project_roundtrip_preserves_smart_caption() {
 /// Verifies that a continuous SmartCaptionNode round-trips with its
 /// trajectory and `continuous` flag.
 #[test]
+#[allow(clippy::arc_with_non_send_sync)]
 fn project_roundtrip_preserves_smart_caption_continuous() {
     use director_core::entity::{BoundingBox, EntityKind};
     use director_core::node::caption::{CaptionLine, CaptionNode, CaptionWord};
@@ -699,6 +701,7 @@ fn project_roundtrip_preserves_lottie() {
 /// Verifies that an EffectNode round-trips with its effects instead of
 /// becoming a BoxNode placeholder.
 #[test]
+#[allow(clippy::arc_with_non_send_sync)]
 fn project_roundtrip_preserves_effect() {
     use director_core::animation::Animated;
     use director_core::node::effect::{EffectNode, EffectType};
@@ -947,6 +950,7 @@ fn project_roundtrip_preserves_smart_caption_from_rhai() {
 /// tracked entities in the restored EntityRegistry, and that a corrupted
 /// trajectory is detected by the post-load verification stage.
 #[test]
+#[allow(clippy::arc_with_non_send_sync)]
 fn loaded_smart_caption_trajectory_avoids_entities() {
     use director_core::entity::{BoundingBox, EntityKind};
     use director_core::node::caption::{CaptionLine, CaptionNode, CaptionWord};
@@ -1206,7 +1210,7 @@ fn catalog_effect_parity() {
     let names = catalog_effect_names();
     assert!(names.len() >= 50, "catalog should list many effects, got {}", names.len());
     for must in ["blur", "pixelate", "vignette", "glow"] {
-        assert!(names.iter().any(|n| *n == must), "missing catalog name {must}");
+        assert!(names.contains(&must), "missing catalog name {must}");
     }
 
     let tags: HashSet<&str> = project_effect_type_tags().iter().copied().collect();

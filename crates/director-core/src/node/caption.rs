@@ -112,6 +112,7 @@ impl CaptionPosition {
     /// Unknown or malformed strings fall back to `CaptionPosition::Bottom`
     /// after logging a warning. Use [`CaptionPosition::try_from_str`] if you
     /// need to surface parse errors.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         Self::try_from_str(s).unwrap_or_else(|e| {
             tracing::warn!("{}", e);
@@ -638,6 +639,7 @@ impl CaptionNode {
         self.style.color
     }
 
+    #[allow(dead_code)]
     fn compute_word_opacity(&self, is_future: bool, is_past: bool, is_active: bool) -> f32 {
         if is_active {
             self.style.active_opacity
@@ -828,9 +830,9 @@ impl CaptionNode {
             if delta > 0 {
                 let mut best = 0usize;
                 let mut best_t = slot_free_at[0];
-                for k in 1..max_overlap {
-                    if slot_free_at[k] < best_t {
-                        best_t = slot_free_at[k];
+                for (k, &free_at) in slot_free_at.iter().enumerate().skip(1) {
+                    if free_at < best_t {
+                        best_t = free_at;
                         best = k;
                     }
                 }
@@ -1504,17 +1506,15 @@ impl Element for CaptionNode {
                 // paint's color varies per token. Therefore this
                 // paragraph's glyph run x/y values match the cached
                 // TokenLayout x/y within sub-pixel precision.
-                let active_local_in_line: Option<usize> =
-                    if active_in_this_cue.is_some() {
-                        let target_word_idx =
-                            active_in_this_cue.as_ref().unwrap().word_idx;
-                        display_line
-                            .tokens
-                            .iter()
-                            .position(|t| t.word_idx == target_word_idx)
-                    } else {
-                        None
-                    };
+                let active_local_in_line: Option<usize> = if let Some(active) = active_in_this_cue {
+                    let target_word_idx = active.word_idx;
+                    display_line
+                        .tokens
+                        .iter()
+                        .position(|t| t.word_idx == target_word_idx)
+                } else {
+                    None
+                };
 
                 // ── Apply reveal as a save-layer alpha when reveal
                 //    < 1.0. ─────────────────────────────────────
@@ -1564,8 +1564,8 @@ impl Element for CaptionNode {
                 // scaled canvas so only the active word grows. Without
                 // the base pass above, the clip hid every other word
                 // and caused a flash on each word change.
-                if active_pop_active && active_local_in_line.is_some() {
-                    let local_idx = active_local_in_line.unwrap();
+                if active_pop_active {
+                    if let Some(local_idx) = active_local_in_line {
                     let active_token = &display_line.tokens[local_idx];
                     let cx = line_left_x + active_token.center_x;
                     let cy = line_y_cursor + active_token.center_y;
@@ -1595,6 +1595,7 @@ impl Element for CaptionNode {
                         line_y_cursor,
                     );
                     canvas.restore();
+                    }
                 }
 
                 if line_needs_layer {
@@ -1648,6 +1649,7 @@ impl CaptionNode {
     // painting this paragraph at the line's cached line_left_x /
     // line_y_cursor places every glyph inside its cached TokenLayout
     // bbox.
+    #[allow(clippy::too_many_arguments)]
     fn build_line_paragraph_for_frame(
         &self,
         style: &CaptionStyle,
@@ -1723,6 +1725,7 @@ impl CaptionNode {
     }
 
     // ── Build + paint the line paragraph in one step. ───────────
+    #[allow(clippy::too_many_arguments)]
     fn paint_line_paragraph_at(
         &self,
         style: &CaptionStyle,
@@ -2123,6 +2126,7 @@ pub fn parse_vtt(content: &str) -> Vec<CaptionLine> {
 }
 
 #[cfg(test)]
+#[allow(clippy::arc_with_non_send_sync)]
 mod tests {
     use super::*;
     use crate::{AssetLoader, DefaultAssetLoader};
@@ -2488,9 +2492,11 @@ mod tests {
 
     #[test]
     fn test_safe_area_preset_scales_bottom_margin() {
-        let mut style = CaptionStyle::default();
-        style.safe_area_preset = Some("tiktok".to_string());
-        style.scale_with_canvas = false;
+        let style = CaptionStyle {
+            safe_area_preset: Some("tiktok".to_string()),
+            scale_with_canvas: false,
+            ..CaptionStyle::default()
+        };
         let at_1920 = style.resolved_for_canvas(1920.0);
         let at_960 = style.resolved_for_canvas(960.0);
         assert!(at_1920.bottom_margin > 100.0);
