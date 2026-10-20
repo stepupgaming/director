@@ -2,7 +2,7 @@
 use crate::animation::Animated;
 use crate::element::Element;
 use crate::errors::RenderError;
-use crate::node::{build_effect_filter, parse_easing, EffectType};
+use crate::node::{build_effect_filter, EffectType};
 use crate::types::{Color, GradientConfig, GradientType};
 use skia_safe::{Canvas, ClipOp, Paint, PaintStyle, Point, RRect, Rect, TileMode};
 use std::any::Any;
@@ -45,6 +45,12 @@ pub struct BoxShadow {
     pub blur: Animated<f32>,
     pub offset_x: Animated<f32>,
     pub offset_y: Animated<f32>,
+}
+
+impl Default for BoxNode {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BoxNode {
@@ -92,6 +98,10 @@ impl Element for BoxNode {
         self.style.clone()
     }
 
+    fn set_layout_style(&mut self, style: Style) {
+        self.style = style;
+    }
+
     fn update(&mut self, time: f64) -> bool {
         let mut changed = false;
         if let Some(bg) = &mut self.bg_color {
@@ -132,7 +142,7 @@ impl Element for BoxNode {
     ) -> Result<(), RenderError> {
         let local_opacity = self.opacity.current_value * opacity;
         let radius = self.border_radius.current_value;
-        let rrect = RRect::new_rect_xy(&rect, radius, radius);
+        let rrect = RRect::new_rect_xy(rect, radius, radius);
 
         canvas.save();
 

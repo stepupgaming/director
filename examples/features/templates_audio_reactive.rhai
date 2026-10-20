@@ -11,7 +11,7 @@
 let movie = new_director(1920, 1080, 30);
 
 // Add global audio track
-let music = movie.add_audio("assets/music.mp3");
+let music = movie.add_audio("examples/assets/tone.wav");
 let track_id = music.id();
 
 // ============================================================
@@ -100,8 +100,8 @@ let bg = s2.add_box(#{
 
 // Note: Replace with actual video/image paths for real use
 let overlay = s2.add_reaction_overlay(#{
-    main: "assets/background.jpg",
-    facecam: "assets/facecam.jpg",
+    main: "examples/assets/photo_b.jpg",
+    facecam: "examples/assets/photo_a.jpg",
     corner: "bottom_right",
     facecam_size: 28.0,
     facecam_margin: 24.0,

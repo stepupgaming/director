@@ -57,10 +57,9 @@ s2.add_lower_third(#{
 // ============================================================
 let s3 = movie.add_scene(5.0);
 
-// Note: Replace "left.jpg" and "right.jpg" with your actual image paths
 s3.add_split_screen(#{
-    left: "assets/left.jpg",
-    right: "assets/right.jpg",
+    left: "examples/assets/photo_a.jpg",
+    right: "examples/assets/photo_b.jpg",
     ratio: 0.5,
     gap: 8.0,
     vertical: false
@@ -71,10 +70,9 @@ s3.add_split_screen(#{
 // ============================================================
 let s4 = movie.add_scene(6.0);
 
-// Note: Replace "main.jpg" and "facecam.jpg" with your actual image paths
 s4.add_reaction_overlay(#{
-    main: "assets/main.jpg",
-    facecam: "assets/facecam.jpg",
+    main: "examples/assets/photo_b.jpg",
+    facecam: "examples/assets/photo_a.jpg",
     corner: "bottom_right",
     facecam_size: 25.0,
     facecam_margin: 20.0,

@@ -230,7 +230,7 @@ impl TextNode {
                 // Use fallback — build without custom font collection
                 let mut builder = ParagraphBuilder::new(
                     &ParagraphStyle::new(),
-                    &skia_safe::textlayout::FontCollection::new(),
+                    skia_safe::textlayout::FontCollection::new(),
                 );
                 for span in &self.spans {
                     builder.add_text(&span.text);
@@ -260,7 +260,7 @@ impl TextNode {
 
             // 3. Color (Foreground) or Gradient Fill
             if let Some(gradient) = &span.fill_gradient {
-                let skia_colors: Vec<skia_safe::Color> =
+                let _skia_colors: Vec<skia_safe::Color> =
                     gradient.colors.iter().map(|c| c.to_skia()).collect();
                 // Gradient coordinates will be remapped to the text layout rect at render time.
                 // We build with placeholder coordinates here and apply the actual gradient
@@ -665,6 +665,10 @@ impl Element for TextNode {
 
     fn layout_style(&self) -> Style {
         self.style.clone()
+    }
+
+    fn set_layout_style(&mut self, style: Style) {
+        self.style = style;
     }
 
     fn update(&mut self, time: f64) -> bool {

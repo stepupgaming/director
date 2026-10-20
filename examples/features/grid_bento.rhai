@@ -45,12 +45,12 @@ let sidebar = root.add_box(#{
     align_items: "center"
 });
 
-sidebar.add_text(#{
+let side_label = sidebar.add_text(#{
     content: "Side",
     size: 40.0,
-    rotation: 90.0,
     color: "#ffffff"
 });
+side_label.animate("rotation", 90.0, 90.0, 0.1, "linear");
 
 // Bottom Item 1 (1x1)
 let bottom1 = root.add_box(#{
@@ -79,8 +79,7 @@ bottom2.add_box(#{
     left: 0.0,
     right: 0.0,
     bottom: 0.0,
-    bg_color: "#ffffff",
-    opacity: 0.3,
+    bg_color: "#ffffff4d",
     border_radius: 20.0
 });
 

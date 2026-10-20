@@ -67,7 +67,7 @@ movie.add_loop(s2, 3);
 let s3 = movie.add_scene(5.0);
 
 // Add audio for true reactivity
-let music = movie.add_audio(".director-smoke/gemmy_music.wav");
+let music = movie.add_audio("examples/assets/tone.wav");
 let track_id = music.id();
 
 // Background

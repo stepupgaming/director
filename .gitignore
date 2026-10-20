@@ -1,7 +1,6 @@
 target/
-assets/
+/assets/
 crates/director-html/tools/node_modules/
-!ultimate_showcase.mp4
 # Keep the bundled test fonts for deterministic visual regression snapshots.
 !crates/director-core/assets/
 crates/director-core/assets/*

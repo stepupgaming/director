@@ -4,8 +4,8 @@
 let movie = new_director(1920, 1080, 30);
 let scene = movie.add_scene(5.0);
 
-// Add audio track (use a WAV file from the smoke test assets)
-let music = movie.add_audio(".director-smoke/gemmy_music.wav");
+// Add audio track from the example sample
+let music = movie.add_audio("examples/assets/tone.wav");
 let track_id = music.id();
 
 // Dark background

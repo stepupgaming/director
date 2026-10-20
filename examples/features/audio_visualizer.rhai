@@ -5,7 +5,7 @@ let movie = new_director(1920, 1080, 60);  // 60fps for smoothness
 let scene = movie.add_scene(10.0);
 
 // Load audio
-let music = movie.add_audio("assets/music.mp3");
+let music = movie.add_audio("examples/assets/tone.wav");
 let track_id = music.id();
 
 // === DARK BACKGROUND ===

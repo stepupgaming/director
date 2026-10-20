@@ -81,7 +81,7 @@ impl ShapeNode {
             }
             ShapeType::Ellipse { cx, cy, rx, ry } => {
                 let oval = Rect::from_xywh(rect.left + cx - rx, rect.top + cy - ry, rx * 2.0, ry * 2.0);
-                path.add_oval(&oval, Some((skia_safe::PathDirection::CW, 1)));
+                path.add_oval(oval, Some((skia_safe::PathDirection::CW, 1)));
             }
             ShapeType::Path { commands } => {
                 for cmd in commands {
@@ -127,7 +127,7 @@ impl ShapeNode {
                                 ry * 2.0,
                             );
                             path.arc_to(
-                                &oval,
+                                oval,
                                 *start_angle,
                                 *sweep_angle,
                                 false,
@@ -202,6 +202,10 @@ impl Element for ShapeNode {
 
     fn layout_style(&self) -> Style {
         self.style.clone()
+    }
+
+    fn set_layout_style(&mut self, style: Style) {
+        self.style = style;
     }
 
     fn needs_measure(&self) -> bool {

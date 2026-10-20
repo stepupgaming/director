@@ -5,7 +5,7 @@ let movie = new_director(1920, 1080, 30);
 let scene = movie.add_scene(8.0);  // 8 seconds
 
 // Add audio track - keep the handle to get track ID
-let music = movie.add_audio("assets/music.mp3");
+let music = movie.add_audio("examples/assets/tone.wav");
 let track_id = music.id();
 
 // Create dark background

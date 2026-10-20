@@ -23,7 +23,7 @@ bg.add_text(#{
 });
 
 // Test image loading
-let img = bg.add_image("assets/img1.jpg", #{
+let img = bg.add_image("examples/assets/photo_a.jpg", #{
     width: 400,
     height: 300,
     position: "absolute",

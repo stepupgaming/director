@@ -23,8 +23,8 @@ let title = add_text(container, #{
         #{ text: "DIRECTOR ", size: 80.0, weight: "bold", color: "#FF4D4D" },
         #{ text: "ENGINE", size: 80.0, weight: "bold", color: "#FFFFFF" }
     ],
-    shadow_color: "#FF0000",
-    shadow_blur: 20.0,
+    text_shadow_color: "#FF0000",
+    text_shadow_blur: 20.0,
     margin_bottom: 40.0
 });
 
@@ -59,7 +59,7 @@ for i in 0..4 {
     // Staggered Entrance
     let delay = i * 0.1;
     card.animate("scale", 0.0, 1.0, 0.6, "back_out");
-    card.animate("y", 100.0, 0.0, 0.6, "cubic_out"); // Slide up
+    card.animate("y", 100.0, 0.0, 0.6, "ease_out"); // Slide up
     
     // Inner Text
     add_text(card, #{

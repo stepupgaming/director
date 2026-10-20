@@ -1,7 +1,6 @@
 use crate::animation::{Animated, TweenableVector};
 use crate::element::Element;
 use crate::errors::RenderError;
-use crate::node::parse_easing;
 use crate::types::Color;
 use skia_safe::{
     color_filters, image_filters, runtime_effect::RuntimeShaderBuilder, Canvas, ColorMatrix, Paint,
@@ -1296,6 +1295,10 @@ impl Element for EffectNode {
 
     fn layout_style(&self) -> Style {
         self.style.clone()
+    }
+
+    fn set_layout_style(&mut self, style: Style) {
+        self.style = style;
     }
 
     fn update(&mut self, time: f64) -> bool {

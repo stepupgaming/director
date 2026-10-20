@@ -79,6 +79,10 @@ impl Element for CompositionNode {
         self.style.clone()
     }
 
+    fn set_layout_style(&mut self, style: Style) {
+        self.style = style;
+    }
+
     fn update(&mut self, time: f64) -> bool {
         let comp_time = time - self.start_offset;
         let mut d = match self.internal_director.lock() {

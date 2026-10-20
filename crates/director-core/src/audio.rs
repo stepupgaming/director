@@ -123,6 +123,9 @@ impl AudioMixer {
                     }
 
                     if let Some(dur) = track.duration {
+                        if !(dur.is_finite() && dur > 0.0) {
+                            continue;
+                        }
                         if relative_time >= dur {
                             if track.loop_audio {
                                 relative_time %= dur;
@@ -134,6 +137,9 @@ impl AudioMixer {
 
                     let mut sample_idx = (relative_time * self.sample_rate as f64) as usize;
                     let frame_count = track.samples.len() / 2;
+                    if frame_count == 0 {
+                        continue;
+                    }
 
                     if track.loop_audio {
                         sample_idx %= frame_count;
@@ -175,13 +181,13 @@ impl AudioMixer {
 ///
 /// # Arguments
 /// * `output` - Mutable buffer to mix audio into (interleaved stereo)
-/// * `scene_nodes` - Reference to the scene graph's node storage
+/// * `scene` - Scene graph. Lookups require both `NodeId` index and generation.
 /// * `active_roots` - List of (root_node_id, local_time) for active scenes
 /// * `samples_needed` - Number of samples per channel
 /// * `sample_rate` - Audio sample rate
 pub fn mix_scene_audio(
     output: &mut [f32],
-    scene_nodes: &[Option<crate::scene::SceneNode>],
+    scene: &crate::scene::SceneGraph,
     active_roots: &[(crate::types::NodeId, f64)],
     samples_needed: usize,
     sample_rate: u32,
@@ -189,24 +195,22 @@ pub fn mix_scene_audio(
     let mut stack: Vec<(crate::types::NodeId, f64)> = active_roots.to_vec();
 
     while let Some((id, local_time)) = stack.pop() {
-        let idx = id.index();
-        if idx < scene_nodes.len() {
-            if let Some(node) = &scene_nodes[idx] {
-                if let Some(samples) =
-                    node.element
-                        .get_audio(local_time, samples_needed, sample_rate)
-                {
-                    for (i, val) in samples.iter().enumerate() {
-                        if i < output.len() {
-                            output[i] += val;
-                        }
-                    }
-                }
-
-                for child_id in &node.children {
-                    stack.push((*child_id, local_time));
+        let Some(node) = scene.get_node(id) else {
+            continue;
+        };
+        if let Some(samples) = node
+            .element
+            .get_audio(local_time, samples_needed, sample_rate)
+        {
+            for (i, val) in samples.iter().enumerate() {
+                if i < output.len() {
+                    output[i] += val;
                 }
             }
+        }
+
+        for child_id in &node.children {
+            stack.push((*child_id, local_time));
         }
     }
 

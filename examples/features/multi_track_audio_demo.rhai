@@ -66,7 +66,7 @@ set_track_opacity(track_2, 0.8);
 // ============================================================
 
 // Add audio (skipped silently if file doesn't exist — visual demo still works)
-let music = movie.add_audio("assets/music.mp3");
+let music = movie.add_audio("examples/assets/tone.wav");
 let track_id = music.id();
 
 // --- Pan animation ---

@@ -13,8 +13,8 @@ let box = scene.add_box(#{
     width: 100,
     height: 100,
     bg_color: "#FF0000",
-    x: 0,
-    y: 540
+    position: "absolute",
+    top: 490
 });
 
 // Animate quickly across screen - motion blur should be visible

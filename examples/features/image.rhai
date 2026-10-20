@@ -19,7 +19,7 @@ let root = scene.add_box(#{
 });
 
 // Load image via parent node
-let img = root.add_image("assets/img1.jpg", #{
+let img = root.add_image("examples/assets/photo_a.jpg", #{
     width: 400.0,
     height: 300.0,
     border_radius: 20.0

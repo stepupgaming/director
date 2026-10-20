@@ -9,11 +9,14 @@
 - `recipes/` owns L3 full-arc composition scripts (props in, finished show out).
 - `html/` owns native HTML/CSS/HyperFrames compiler reference compositions.
 - `tests/` owns test scripts, visual comparison helpers, and reference media.
-- Root example `.rhai` files own broader manual or preview scenarios.
+- `assets/` owns the small committed fixtures every example uses: `tone.wav` (2 s 220 Hz beep, mono 24 kHz), `clip.mp4` (2 s 640x360 `testsrc2`), `photo_a.jpg` (`testsrc2` still), `photo_b.jpg` (`gradients` still) and `star.svg`. Regenerate with ffmpeg `lavfi` sources; keep each file under 100 KB.
 
 ## Local Contracts
 
 - Examples are executable reference material and should stay aligned with the Rhai API.
+- Scripts reference media only under `examples/` (usually `examples/assets/`), as paths relative to the workspace root. No machine paths, downloads or network access.
+- `crates/director-core/tests/examples.rs` runs every `.rhai` here with a workspace-rooted asset loader; `SKIPPED_EXAMPLES` in that file is the only skip list.
+- Keep one example per feature. Delete duplicate showcases, iteration proofs and machine-specific probes.
 - Keep generated media only when it serves as a durable reference or test artifact.
 - Python helper scripts must not require package installation through `pip`; use `uv` if dependencies need installation.
 

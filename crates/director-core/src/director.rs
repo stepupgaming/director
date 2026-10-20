@@ -409,7 +409,7 @@ impl Director {
         // Delegate scene graph audio mixing to audio module
         crate::audio::mix_scene_audio(
             &mut output,
-            &self.scene.nodes,
+            &self.scene,
             &active_roots,
             samples_needed,
             self.audio_mixer.sample_rate,
@@ -686,7 +686,7 @@ impl Director {
                     return;
                 }
                 // Skip nodes that are not in the dirty set during incremental updates.
-                if let Some(ref dirty) = dirty {
+                if let Some(dirty) = dirty {
                     if !dirty.contains(&node_id) {
                         return;
                     }
@@ -767,7 +767,7 @@ impl Director {
             }
             // During incremental updates, skip audio bindings for nodes
             // that are not dirty.
-            if let Some(ref dirty) = dirty {
+            if let Some(dirty) = dirty {
                 if !dirty.contains(&node_id) {
                     continue;
                 }
@@ -926,11 +926,10 @@ impl Director {
         let mut stack: Vec<NodeId> = dirty.iter().copied().collect();
         for (id, node) in self.scene.iter_alive() {
             if let Some(mask_id) = node.mask_node {
-                if dirty.contains(&mask_id) {
-                    if expanded.insert(id) {
+                if dirty.contains(&mask_id)
+                    && expanded.insert(id) {
                         stack.push(id);
                     }
-                }
             }
         }
 
@@ -1024,11 +1023,9 @@ impl Director {
     /// This is called after the Layout Engine has computed the final boxes, allowing elements
     /// to adjust their internal state (e.g., text resizing) based on the final layout.
     pub fn run_post_layout(&mut self, global_time: f64) {
-        for node_opt in self.scene.nodes.iter_mut() {
-            if let Some(node) = node_opt {
-                if (node.last_visit_time - global_time).abs() < 0.0001 {
-                    node.element.post_layout(node.layout_rect);
-                }
+        for node in self.scene.nodes.iter_mut().flatten() {
+            if (node.last_visit_time - global_time).abs() < 0.0001 {
+                node.element.post_layout(node.layout_rect);
             }
         }
     }
