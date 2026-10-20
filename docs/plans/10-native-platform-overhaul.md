@@ -113,9 +113,9 @@ Linux CI on the next push still has to confirm the Windows-rendered text goldens
 
 ## Next action
 
-1. Phase 2: add `director-scene` and an exporter from the current `Director`, then round-trip the golden scenes through JSON.
-2. Push when asked, and read the Linux CI result for the golden frames.
-3. Close issue #2 (static-subtree reuse). Issue #3 (agent production workflows) folds into phase 4.
+1. Extend `director-scene` export until every golden scene round-trips through JSON without loss. `box` and `text` bodies are copied today. Other kinds export as `NodeBody::Unspecified`.
+2. Read a document back into a `Director` only when phase 3 needs it.
+3. Push when asked. Linux CI still has to confirm the Windows-rendered text goldens.
 
 ## Verification
 

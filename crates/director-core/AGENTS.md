@@ -416,6 +416,13 @@ five 640x360 premultiplied RGBA frames per workload via
 - `set_layout_style` stores the new Taffy style on box, text, effect, shape, and composition nodes.
 - Tests: `tests/fail_loud.rs`, `tests/fail_loud_catalog.rs`, `tests/quick_wins.rs`.
 
+## Scene document
+
+- `src/scene_export.rs` copies a live `Director` into `director_scene::SceneDocument`.
+- `box` and `text` copy their body fields. Other kinds keep hierarchy and transform channels and use `NodeBody::Unspecified`.
+- The document does not load back into a `Director`.
+- Test: `cargo test -p director-core --release --test scene_document`.
+
 ## Named compositions (Rhai)
 
 - `src/scripting/api/compositions.rs` — `CompositionRegistry`, `register_composition`, shallow props merge, JSON listing.

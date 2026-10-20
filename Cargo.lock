@@ -985,6 +985,7 @@ dependencies = [
  "anyhow",
  "criterion",
  "crossbeam-channel",
+ "director-scene",
  "ebur128",
  "hound",
  "image",
@@ -1035,6 +1036,16 @@ dependencies = [
  "thiserror 2.0.17",
  "usvg",
  "wuff",
+]
+
+[[package]]
+name = "director-scene"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
