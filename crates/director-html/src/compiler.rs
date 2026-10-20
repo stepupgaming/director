@@ -627,7 +627,25 @@ fn build_paragraph(
     paint: &PaintStyle,
     width: f32,
 ) -> skia_safe::textlayout::Paragraph {
-    build_paragraph_colored(node, paint, width, false, TextPass::Combined)
+    let wrap = wrap_width(node, paint, width);
+    build_paragraph_colored(node, paint, width, wrap, false, TextPass::Combined)
+}
+
+/// The width `append_wrapped` breaks lines at. It adds up unkerned token
+/// advances, which run wider than the shaped line, and the gap grows with font
+/// size. Text whose shaped lines already fit `width` keeps its own breaks, so a
+/// box sized to its max-content width holds the same lines it was measured with.
+fn wrap_width(node: &TextNode, paint: &PaintStyle, width: f32) -> f32 {
+    if paint.no_wrap || !width.is_finite() || width <= 0.0 {
+        return width;
+    }
+    let mut probe = build_paragraph_colored(node, paint, width, f32::INFINITY, false, TextPass::Fill);
+    probe.layout(f32::INFINITY);
+    if probe.longest_line() <= width + WRAP_SLACK {
+        f32::INFINITY
+    } else {
+        width
+    }
 }
 
 /// The text paint one paragraph carries.
@@ -662,9 +680,10 @@ fn text_paragraphs(
     Option<skia_safe::textlayout::Paragraph>,
 ) {
     if separate_stroke(node, paint) {
+        let wrap = wrap_width(node, paint, width);
         (
-            build_paragraph_colored(node, paint, width, false, TextPass::Fill),
-            Some(build_paragraph_colored(node, paint, width, false, TextPass::Stroke)),
+            build_paragraph_colored(node, paint, width, wrap, false, TextPass::Fill),
+            Some(build_paragraph_colored(node, paint, width, wrap, false, TextPass::Stroke)),
         )
     } else {
         (build_paragraph(node, paint, width), None)
@@ -675,6 +694,7 @@ fn build_paragraph_colored(
     node: &TextNode,
     paint: &PaintStyle,
     width: f32,
+    wrap: f32,
     force_white: bool,
     pass: TextPass,
 ) -> skia_safe::textlayout::Paragraph {
@@ -760,7 +780,7 @@ fn build_paragraph_colored(
             if paint.no_wrap {
                 f32::INFINITY
             } else {
-                width + WRAP_SLACK
+                wrap + WRAP_SLACK
             },
             soft,
             spacing,
@@ -828,7 +848,8 @@ pub fn glyph_mask(
     paint: &PaintStyle,
     width: f32,
 ) -> skia_safe::textlayout::Paragraph {
-    let mut paragraph = build_paragraph_colored(node, paint, width, true, TextPass::Combined);
+    let wrap = wrap_width(node, paint, width);
+    let mut paragraph = build_paragraph_colored(node, paint, width, wrap, true, TextPass::Combined);
     fit_paragraph(&mut paragraph, paint, width);
     paragraph
 }
