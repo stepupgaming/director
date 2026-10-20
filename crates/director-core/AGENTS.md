@@ -283,6 +283,10 @@ Layout synchronization: compare child order including masks before calling Taffy
 dirty styles before `set_style`; unchanged intrinsic-measure nodes still need
 `mark_dirty` after content changes. Persistent layouts must match fresh layouts
 after reordering, reparenting, mask edits, size changes, and generational reuse.
+Taffy 0.9 passes a known size to the measure closure as the border box and the
+available space as the content box. The closure hands `Element::measure` the
+content size for a known axis, so padded text wraps at the width it paints at
+(`director-html/tests/padded_text.rs`).
 
 Performance tracking: `python -B crates/director-core/benches/frame_regression.py`
 provides `record --output <baseline>`, `check --baseline <baseline> --output <run>`,

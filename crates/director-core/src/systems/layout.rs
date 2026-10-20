@@ -150,7 +150,18 @@ impl LayoutEngine {
                         if let Some(director_node_id) = context {
                             if let Some(node) = scene.get_node(*director_node_id) {
                                 if node.element.needs_measure() {
-                                    return node.element.measure(known_dimensions, available_space);
+                                    // Taffy passes a known size as the border box and the
+                                    // available space as the content box. Measure functions
+                                    // size content, so a known axis gets its content size.
+                                    let known = Size {
+                                        width: known_dimensions
+                                            .width
+                                            .and(available_space.width.into_option()),
+                                        height: known_dimensions
+                                            .height
+                                            .and(available_space.height.into_option()),
+                                    };
+                                    return node.element.measure(known, available_space);
                                 }
                             }
                         }
