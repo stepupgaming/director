@@ -121,11 +121,19 @@ impl HtmlElement {
                 .downcast_ref::<director_core::node::TextNode>()
             {
                 let used = crate::compiler::layout_paragraph(node, &self.paint, content.width());
-                if self.paint.line_clamp.is_none()
-                    && used.is_finite()
-                    && used > content.width() + 0.5
-                {
-                    content = Rect::from_xywh(content.left, content.top, used, content.height());
+                if self.paint.line_clamp.is_none() && used.is_finite() && used > content.width() {
+                    // A wider paragraph keeps its alignment edge, so centred text stays centred.
+                    let offset = match self.paint.align {
+                        skia_safe::textlayout::TextAlign::Center => (content.width() - used) / 2.0,
+                        skia_safe::textlayout::TextAlign::Right => content.width() - used,
+                        _ => 0.0,
+                    };
+                    content = Rect::from_xywh(
+                        content.left + offset,
+                        content.top,
+                        used,
+                        content.height(),
+                    );
                 }
             }
         }

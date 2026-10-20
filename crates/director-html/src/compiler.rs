@@ -757,7 +757,11 @@ fn build_paragraph_colored(
         style::append_wrapped(
             &mut piece,
             &span.text,
-            if paint.no_wrap { f32::INFINITY } else { width },
+            if paint.no_wrap {
+                f32::INFINITY
+            } else {
+                width + WRAP_SLACK
+            },
             soft,
             spacing,
             &mut line_width,
@@ -825,12 +829,7 @@ pub fn glyph_mask(
     width: f32,
 ) -> skia_safe::textlayout::Paragraph {
     let mut paragraph = build_paragraph_colored(node, paint, width, true, TextPass::Combined);
-    let layout_width = if width.is_finite() && width > 0.0 {
-        width
-    } else {
-        f32::INFINITY
-    };
-    paragraph.layout(layout_width);
+    fit_paragraph(&mut paragraph, paint, width);
     paragraph
 }
 
@@ -842,38 +841,49 @@ pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
     node.dirty_layout = false;
 }
 
+/// Taffy rounds each box edge to a whole pixel, so a box sized to its text's
+/// max-content width can come out up to a pixel narrower than the text. A line
+/// may run this far past its box before the next word wraps.
+const WRAP_SLACK: f32 = 1.0;
+
 /// Skia breaks a cluster wider than the layout width. Wrap to `width` first.
-/// Left alignment then lays out at least as wide as the longest line, so a token
-/// that CSS would overflow stays on one line. An ellipsized nowrap line, and a
-/// line-clamp, keep `width`, so the ellipsis stays inside the box.
+/// Skia also breaks a line laid out at exactly its own width, so a line within a
+/// pixel of `width` lays out a pixel wider than itself. Left alignment lays out at
+/// least that wide for any longer line too, so a token that CSS would overflow
+/// stays on one line; other alignments do so for a line within `WRAP_SLACK`. An
+/// ellipsized nowrap line, and a line-clamp, keep `width`, so the ellipsis stays
+/// inside the box.
 pub fn layout_paragraph(node: &TextNode, paint: &PaintStyle, width: f32) -> f32 {
     let (mut paragraph, stroke) = text_paragraphs(node, paint, width);
+    let used = fit_paragraph(&mut paragraph, paint, width);
+    *node.paragraph.lock().unwrap() = Some(paragraph);
+    *node.stroke_paragraph.lock().unwrap() = stroke;
+    used
+}
+
+/// Lays `paragraph` out for a box `width` wide, as `layout_paragraph` describes, and returns the width used.
+fn fit_paragraph(paragraph: &mut skia_safe::textlayout::Paragraph, paint: &PaintStyle, width: f32) -> f32 {
     let finite = width.is_finite() && width > 0.0;
     let ellipsis = paint.no_wrap && matches!(paint.text_overflow, style::TextOverflow::Ellipsis);
     let clamped = paint.line_clamp.is_some();
-    let used = if !finite {
+    if !finite {
         paragraph.layout(f32::INFINITY);
         width
     } else if ellipsis || clamped {
         paragraph.layout(width);
         width
-    } else if paint.align == skia_safe::textlayout::TextAlign::Left {
+    } else {
         paragraph.layout(f32::INFINITY);
         let longest = paragraph.longest_line();
-        let used = if longest > width {
+        let left = paint.align == skia_safe::textlayout::TextAlign::Left;
+        let used = if longest > width - 1.0 && (left || longest <= width + WRAP_SLACK) {
             longest + 1.0
         } else {
             width
         };
         paragraph.layout(used);
         used
-    } else {
-        paragraph.layout(width);
-        width
-    };
-    *node.paragraph.lock().unwrap() = Some(paragraph);
-    *node.stroke_paragraph.lock().unwrap() = stroke;
-    used
+    }
 }
 pub fn span(text: String, paint: &PaintStyle) -> TextSpan {
     TextSpan {
