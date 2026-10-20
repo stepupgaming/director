@@ -27,6 +27,11 @@ build/tests fail. Plan 10 phase 2 collapses this into one effect table.
 - Measurement and rendering both compute paragraph width as `max(rect_width * layout_width_fraction, 20)` so narrow boxes preserve the same wrapping and height.
 - Regression checks: `cargo test -p director-core --lib node::caption::tests`, including margin/inset separation and narrow measure/render equivalence.
 
+### Text stroke pass
+
+- `TextNode::stroke_paragraph` is an optional stroke-only paragraph that the fast render path lays out at the fill paragraph's width and paints with it. `stroke_over_fill` picks the order: `true` paints the stroke over the fill. Shadows cast from both. The per-glyph animator path paints the fill paragraph only.
+- The HTML compiler sets both fields. Regression checks: `cargo test -p director-html --release --test text_stroke`.
+
 ### Adding a runtime shader touches 5 places
 
 1. `effect_shaders.rs` — `pub(crate) fn build_<name>(...)` + SkSL string. Use the

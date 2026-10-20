@@ -78,3 +78,57 @@ fn unparsable_stroke_is_rejected() {
     .to_string();
     assert!(err.contains("unsupported text-stroke"), "{err}");
 }
+
+fn count(pixels: &[u8], test: impl Fn(&[u8]) -> bool) -> usize {
+    pixels.chunks(4).filter(|sample| test(sample)).count()
+}
+
+fn white(sample: &[u8]) -> bool {
+    sample[0] > 230 && sample[1] > 230 && sample[2] > 230
+}
+
+fn black(sample: &[u8]) -> bool {
+    sample[0] < 30 && sample[1] < 30 && sample[2] < 30
+}
+
+#[test]
+fn black_stroke_keeps_its_colour_around_an_opaque_white_fill() {
+    let pixels = frame(&source(
+        "background:#0000ff;color:white;-webkit-text-stroke:4px black;paint-order:stroke fill",
+    ));
+    assert!(count(&pixels, white) > 20, "white fill painted no white");
+    assert!(count(&pixels, black) > 20, "black stroke painted no black");
+}
+
+#[test]
+fn paint_order_normal_paints_the_stroke_over_the_fill() {
+    let under = frame(&source(
+        "background:#0000ff;color:white;-webkit-text-stroke:4px black;paint-order:stroke",
+    ));
+    let over = frame(&source(
+        "background:#0000ff;color:white;-webkit-text-stroke:4px black",
+    ));
+    let (under_white, over_white) = (count(&under, white), count(&over, white));
+    assert!(
+        over_white < under_white,
+        "stroke over fill left {over_white} white pixels, under left {under_white}"
+    );
+    assert!(count(&over, black) > count(&under, black));
+}
+
+#[test]
+fn repeated_paint_order_layer_is_rejected() {
+    let err = compile(
+        &source("paint-order:fill fill"),
+        CompileOptions {
+            width: 64,
+            height: 64,
+            duration: 3.0,
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(err.contains("unsupported paint-order"), "{err}");
+}

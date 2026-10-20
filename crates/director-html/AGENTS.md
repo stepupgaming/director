@@ -96,7 +96,7 @@
 - `text-shadow` paints one shadow; `none` paints none. A second shadow or a non-zero spread fails.
 - `overflow-wrap` and `word-wrap` accept `normal`, `break-word`, and `anywhere`; `break-spaces` fails. `word-break` accepts `normal`, `break-word`, and `break-all`; `keep-all` fails. `anywhere`, `break-word`, and `word-break: break-word` break a token that does not fit. `break-all` also splits a token that overflows the space left on the line. `normal` keeps that token on one line, and left alignment lays the line out past the box. Soft min-content stays the unwrapped line, so `anywhere` does not shrink to one character.
 - `white-space: pre-line` keeps hard breaks and collapses spaces. `pre-wrap` preserves spaces and wraps.
-- `font-variant-numeric: tabular-nums` sets `tnum`. `text-indent` inserts a leading placeholder; `hanging` and `each-line` fail. `-webkit-text-stroke` paints one stroke; width `0` skips it.
+- `font-variant-numeric: tabular-nums` sets `tnum`. `text-indent` inserts a leading placeholder; `hanging` and `each-line` fail. `-webkit-text-stroke` paints one stroke; width `0` skips it. A stroke colour that differs from an opaque fill paints from its own paragraph, ordered by `paint-order`. `paint-order` takes `normal` or `fill`, `stroke`, and `markers` once each in any order; unlisted layers follow in the order fill, stroke, markers. `normal` paints the stroke over the fill, and `stroke fill` paints it under. A repeated or unknown layer fails. Neither property inherits, so set both on the element that holds the text.
 
 ### Transforms and 3D
 

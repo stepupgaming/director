@@ -627,7 +627,48 @@ fn build_paragraph(
     paint: &PaintStyle,
     width: f32,
 ) -> skia_safe::textlayout::Paragraph {
-    build_paragraph_colored(node, paint, width, false)
+    build_paragraph_colored(node, paint, width, false, TextPass::Combined)
+}
+
+/// The text paint one paragraph carries.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextPass {
+    /// One paint: stroke-only over a transparent fill, stroke-and-fill in the fill colour otherwise.
+    Combined,
+    /// Fill only. The stroke paints from its own paragraph.
+    Fill,
+    /// Stroke only, in the stroke colour.
+    Stroke,
+}
+
+/// A stroke colour that differs from an opaque fill paints from its own paragraph, ordered by `paint-order`.
+fn separate_stroke(node: &TextNode, paint: &PaintStyle) -> bool {
+    paint.text_stroke_width > 0.0
+        && paint.text_stroke_color.is_some_and(|ink| {
+            node.spans.iter().any(|span| {
+                let fill = span.color.unwrap_or(paint.color);
+                fill.a > 0.0 && fill != ink
+            })
+        })
+}
+
+/// Builds the fill paragraph, plus the stroke paragraph when the stroke paints on its own.
+fn text_paragraphs(
+    node: &TextNode,
+    paint: &PaintStyle,
+    width: f32,
+) -> (
+    skia_safe::textlayout::Paragraph,
+    Option<skia_safe::textlayout::Paragraph>,
+) {
+    if separate_stroke(node, paint) {
+        (
+            build_paragraph_colored(node, paint, width, false, TextPass::Fill),
+            Some(build_paragraph_colored(node, paint, width, false, TextPass::Stroke)),
+        )
+    } else {
+        (build_paragraph(node, paint, width), None)
+    }
 }
 
 fn build_paragraph_colored(
@@ -635,6 +676,7 @@ fn build_paragraph_colored(
     paint: &PaintStyle,
     width: f32,
     force_white: bool,
+    pass: TextPass,
 ) -> skia_safe::textlayout::Paragraph {
     use skia_safe::textlayout::{ParagraphBuilder, ParagraphStyle, StrutStyle, TextStyle};
     let mut paragraph = ParagraphStyle::new();
@@ -749,14 +791,14 @@ fn build_paragraph_colored(
         if paint.tabular_nums {
             text.add_font_feature("tnum", 1);
         }
-        if paint.text_stroke_width > 0.0 {
-            // One paragraph paint. Transparent fill is stroke-only.
-            // An opaque fill uses stroke-and-fill in that color so the fill still inks.
+        if paint.text_stroke_width > 0.0 && pass != TextPass::Fill {
+            // A transparent fill or a stroke pass is stroke-only.
+            // A combined opaque fill uses stroke-and-fill in that color so the fill still inks.
             let mut ink = skia_safe::Paint::default();
             ink.set_anti_alias(true);
             ink.set_stroke_width(paint.text_stroke_width);
             ink.set_stroke_join(skia_safe::PaintJoin::Round);
-            if css_color.a == 0.0 {
+            if pass == TextPass::Stroke || css_color.a == 0.0 {
                 ink.set_style(skia_safe::PaintStyle::Stroke);
                 let stroke_color = if force_white {
                     color
@@ -782,7 +824,7 @@ pub fn glyph_mask(
     paint: &PaintStyle,
     width: f32,
 ) -> skia_safe::textlayout::Paragraph {
-    let mut paragraph = build_paragraph_colored(node, paint, width, true);
+    let mut paragraph = build_paragraph_colored(node, paint, width, true, TextPass::Combined);
     let layout_width = if width.is_finite() && width > 0.0 {
         width
     } else {
@@ -793,8 +835,10 @@ pub fn glyph_mask(
 }
 
 pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
-    let paragraph = build_paragraph(node, paint, f32::INFINITY);
+    let (paragraph, stroke) = text_paragraphs(node, paint, f32::INFINITY);
     *node.paragraph.lock().unwrap() = Some(paragraph);
+    *node.stroke_paragraph.lock().unwrap() = stroke;
+    node.stroke_over_fill = paint.stroke_over_fill;
     node.dirty_layout = false;
 }
 
@@ -803,7 +847,7 @@ pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
 /// that CSS would overflow stays on one line. An ellipsized nowrap line, and a
 /// line-clamp, keep `width`, so the ellipsis stays inside the box.
 pub fn layout_paragraph(node: &TextNode, paint: &PaintStyle, width: f32) -> f32 {
-    let mut paragraph = build_paragraph(node, paint, width);
+    let (mut paragraph, stroke) = text_paragraphs(node, paint, width);
     let finite = width.is_finite() && width > 0.0;
     let ellipsis = paint.no_wrap && matches!(paint.text_overflow, style::TextOverflow::Ellipsis);
     let clamped = paint.line_clamp.is_some();
@@ -828,6 +872,7 @@ pub fn layout_paragraph(node: &TextNode, paint: &PaintStyle, width: f32) -> f32 
         width
     };
     *node.paragraph.lock().unwrap() = Some(paragraph);
+    *node.stroke_paragraph.lock().unwrap() = stroke;
     used
 }
 pub fn span(text: String, paint: &PaintStyle) -> TextSpan {

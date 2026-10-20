@@ -160,6 +160,8 @@ pub struct PaintStyle {
     pub text_stroke_width: f32,
     /// Stroke color. `None` is currentColor.
     pub text_stroke_color: Option<Color>,
+    /// Text `paint-order`. `true` paints the stroke over the fill, the CSS `normal` order.
+    pub stroke_over_fill: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -981,6 +983,7 @@ pub fn translate(
         text_shadow: None,
         text_stroke_width: 0.0,
         text_stroke_color: None,
+        stroke_over_fill: true,
     };
     if let Some(s) = values.get("font-size") {
         match px(s, m) {
@@ -1559,6 +1562,9 @@ pub fn translate(
                             _ => return Err("unsupported text-stroke".into()),
                         },
                     }
+                }
+                "paint-order" => {
+                    paint.stroke_over_fill = stroke_over_fill(s)?;
                 }
                 "direction" => {
                     if !matches!(s, "ltr" | "rtl") {
@@ -2398,6 +2404,32 @@ fn definite_px(values: &Values, name: &str, m: Metrics) -> Option<f32> {
     let raw = values.get(name)?;
     let px = px(raw, m).ok()?;
     (px > 0.0).then_some(px)
+}
+
+/// Reads `paint-order` for text. Unlisted layers follow the listed ones in the order fill, stroke, markers.
+fn stroke_over_fill(value: &str) -> Result<bool, String> {
+    let layers: Vec<&str> = value.split_whitespace().collect();
+    if layers.len() == 1 && layers[0].eq_ignore_ascii_case("normal") {
+        return Ok(true);
+    }
+    let mut seen: Vec<String> = Vec::new();
+    for layer in &layers {
+        let layer = layer.to_ascii_lowercase();
+        if !matches!(layer.as_str(), "fill" | "stroke" | "markers") || seen.contains(&layer) {
+            return Err(format!("unsupported paint-order '{value}'"));
+        }
+        seen.push(layer);
+    }
+    if seen.is_empty() {
+        return Err(format!("unsupported paint-order '{value}'"));
+    }
+    let fill = seen.iter().position(|layer| layer == "fill");
+    let stroke = seen.iter().position(|layer| layer == "stroke");
+    Ok(match (stroke, fill) {
+        (Some(stroke), Some(fill)) => fill < stroke,
+        (Some(_), None) => false,
+        _ => true,
+    })
 }
 
 #[cfg(test)]

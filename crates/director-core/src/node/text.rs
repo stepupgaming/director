@@ -82,6 +82,12 @@ pub struct TextNode {
 
     // Skia Text Layout
     pub paragraph: Mutex<Option<Paragraph>>,
+    /// Stroke-only paragraph painted with `paragraph` at the same layout width.
+    /// The HTML compiler sets it when a text stroke colour differs from an opaque fill.
+    pub stroke_paragraph: Mutex<Option<Paragraph>>,
+    /// Paint `stroke_paragraph` over the fill, matching CSS `paint-order: normal`.
+    /// `false` paints it under the fill.
+    pub stroke_over_fill: bool,
     pub font_collection: Arc<Mutex<FontCollection>>,
 
     // Layout & Styling
@@ -122,6 +128,8 @@ impl Clone for TextNode {
             default_color: self.default_color.clone(),
             opacity: self.opacity.clone(),
             paragraph: Mutex::new(None), // Must rebuild
+            stroke_paragraph: Mutex::new(None),
+            stroke_over_fill: self.stroke_over_fill,
             font_collection: self.font_collection.clone(),
             fit_mode: self.fit_mode.clone(),
             fitted_font_size: self.fitted_font_size,
@@ -138,6 +146,27 @@ impl Clone for TextNode {
             counter: self.counter.clone(),
             counter_value: self.counter_value.clone(),
         }
+    }
+}
+
+/// Paints the fill paragraph and the optional stroke paragraph in paint order.
+fn paint_with_stroke(
+    canvas: &Canvas,
+    fill: &Paragraph,
+    stroke: Option<&Paragraph>,
+    stroke_over_fill: bool,
+    origin: (f32, f32),
+) {
+    match stroke {
+        Some(stroke) if stroke_over_fill => {
+            fill.paint(canvas, origin);
+            stroke.paint(canvas, origin);
+        }
+        Some(stroke) => {
+            stroke.paint(canvas, origin);
+            fill.paint(canvas, origin);
+        }
+        None => fill.paint(canvas, origin),
     }
 }
 
@@ -158,6 +187,8 @@ impl TextNode {
             default_color: Animated::new(Color::WHITE),
             opacity: Animated::new(1.0),
             paragraph: Mutex::new(None),
+            stroke_paragraph: Mutex::new(None),
+            stroke_over_fill: true,
             font_collection,
             fit_mode: TextFit::None,
             fitted_font_size: None,
@@ -793,6 +824,14 @@ impl Element for TextNode {
                 rect.width()
             };
             paragraph.layout(layout_width);
+            let mut stroke_guard = self.stroke_paragraph.lock().ok();
+            let stroke: Option<&Paragraph> = stroke_guard
+                .as_mut()
+                .and_then(|guard| guard.as_mut())
+                .map(|stroke| {
+                    stroke.layout(layout_width);
+                    &*stroke
+                });
 
             canvas.save();
 
@@ -839,8 +878,11 @@ impl Element for TextNode {
                             .bounds(&shadow_bounds)
                             .paint(&shadow_paint),
                     );
-                    paragraph.paint(
+                    paint_with_stroke(
                         canvas,
+                        paragraph,
+                        stroke,
+                        self.stroke_over_fill,
                         (rect.x() + shadow.offset.0, rect.y() + shadow.offset.1),
                     );
                     canvas.restore();
@@ -855,10 +897,22 @@ impl Element for TextNode {
                             .bounds(&rect)
                             .paint(&paint),
                     );
-                    paragraph.paint(canvas, (rect.x(), rect.y()));
+                    paint_with_stroke(
+                        canvas,
+                        paragraph,
+                        stroke,
+                        self.stroke_over_fill,
+                        (rect.x(), rect.y()),
+                    );
                     canvas.restore();
                 } else {
-                    paragraph.paint(canvas, (rect.x(), rect.y()));
+                    paint_with_stroke(
+                        canvas,
+                        paragraph,
+                        stroke,
+                        self.stroke_over_fill,
+                        (rect.x(), rect.y()),
+                    );
                 }
 
                 // Apply gradient fill overlay if any span has fill_gradient.
