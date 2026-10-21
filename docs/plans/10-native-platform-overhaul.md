@@ -97,8 +97,9 @@ One row per check, holding the most recent passing count. Replace the row when a
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
 | padded_text | 1 | 2026-10-20 | `cargo test -p director-html --release --test padded_text` |
+| rich_text | 5 | 2026-10-21 | `cargo test -p director-html --release --test rich_text` |
 | director-core doctest | 1 | 2026-10-19 | `cargo test -p director-core --doc --release` |
-| director-html lib | 101 | 2026-10-17 | `cargo test -p director-html --release` |
+| director-html lib | 110 | 2026-10-21 | `cargo test -p director-html --release` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
 | object_position_css, gradient_hints, project, shader | 9, 8, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |
 | mixed_calc, gradient_calc | 12, 3 | 2026-10-18 | `cargo test -p director-html --release --test mixed_calc --test gradient_calc` |

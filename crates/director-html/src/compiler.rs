@@ -1613,7 +1613,7 @@ impl Builder {
                 spans.push(span(text.to_string(), paint));
             } else if let Some(child) = ElementRef::wrap(node) {
                 if child.value().name() == "br" {
-                    spans.push(span("\n".into(), paint));
+                    spans.push(span(HARD_BREAK.to_string(), paint));
                     continue;
                 }
                 if matches!(child.value().name(), "script" | "style" | "link") {
@@ -1621,10 +1621,9 @@ impl Builder {
                 }
                 let mut child_values = self.css.cascade(child, values)?;
                 child_values.remove("display");
-                if child_values
-                    .keys()
-                    .any(|k| !crate::css::inherited(k) && !k.starts_with("font-"))
-                {
+                if child_values.iter().any(|(k, v)| {
+                    !crate::css::inherited(k) && !k.starts_with("font-") && !inert_on_inline(k, v)
+                }) {
                     return Err(CompileError::Input(format!(
                         "{}: styled inline boxes require extraction",
                         label(child)
@@ -1656,15 +1655,36 @@ impl Builder {
     }
 }
 
+/// Stands in for `<br>` until `normalize`. Parsed body text never holds U+0000, so
+/// the break survives the space collapsing that turns source newlines into spaces.
+const HARD_BREAK: char = '\0';
+
+/// A declaration an inline box ignores, such as the `* { margin: 0; padding: 0;
+/// box-sizing: border-box }` reset that every span matches.
+fn inert_on_inline(name: &str, value: &str) -> bool {
+    name == "box-sizing"
+        || ((name.starts_with("margin-") || name.starts_with("padding-"))
+            && matches!(value.trim(), "0" | "0px"))
+}
+
 fn normalize(spans: &mut Vec<TextSpan>, preserve: bool) {
     if preserve {
+        for span in spans.iter_mut() {
+            span.text = span.text.replace(HARD_BREAK, "\n");
+        }
         return;
     }
     let mut last_space = true;
     for span in spans.iter_mut() {
         let mut text = String::new();
         for c in span.text.chars() {
-            if c.is_whitespace() {
+            if c == HARD_BREAK {
+                if text.ends_with(' ') {
+                    text.pop();
+                }
+                text.push('\n');
+                last_space = true;
+            } else if c.is_whitespace() {
                 if !last_space {
                     text.push(' ');
                 }
@@ -1675,6 +1695,13 @@ fn normalize(spans: &mut Vec<TextSpan>, preserve: bool) {
             }
         }
         span.text = text;
+    }
+    spans.retain(|s| !s.text.is_empty());
+    // A collapsed space before a hard break would hang past the line and shift centred text.
+    for i in 1..spans.len() {
+        if spans[i].text.starts_with('\n') && spans[i - 1].text.ends_with(' ') {
+            spans[i - 1].text.pop();
+        }
     }
     spans.retain(|s| !s.text.is_empty());
     if let Some(last) = spans.last_mut() {
