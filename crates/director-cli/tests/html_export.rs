@@ -66,6 +66,36 @@ fn native_html_export_keeps_audio_and_video_duration_aligned() {
 }
 
 #[test]
+fn export_tags_bt709_primaries_and_transfer() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("colour.html");
+    let output = temp.path().join("colour.mp4");
+    std::fs::write(&input, "<div data-composition-id='colour' data-no-timeline data-width='32' data-height='32' data-fps='30' data-duration='0.2' style='background:#2060a0'></div>").unwrap();
+    let rendered = Command::new(env!("CARGO_BIN_EXE_director-engine"))
+        .args(["html", "render"])
+        .arg(input)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .expect("run native exporter");
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    let probe = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0", "-show_streams", "-of", "json"])
+        .arg(&output)
+        .output()
+        .expect("ffprobe must be installed for export verification");
+    let meta: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
+    let video = &meta["streams"][0];
+    for key in ["color_space", "color_transfer", "color_primaries"] {
+        assert_eq!(video[key], "bt709", "{key}");
+    }
+}
+
+#[test]
 fn alpha_export_keeps_empty_pixels_transparent_and_alpha_straight() {
     let temp = tempfile::tempdir().unwrap();
     let input = temp.path().join("alpha.html");

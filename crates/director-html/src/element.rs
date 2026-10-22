@@ -314,6 +314,34 @@ impl Element for HtmlElement {
             &matrix,
         ))
     }
+    fn local_transform(&self, width: f32, height: f32) -> Option<Matrix> {
+        // A 3D transform contributes its planar part; perspective is dropped.
+        let matrix = match canvas_transform(&self.paint.transform, self.metrics, (width, height)) {
+            CanvasTransform::Affine(matrix) => matrix,
+            CanvasTransform::Projective(m) => Matrix::new_all(
+                m.rc(0, 0),
+                m.rc(0, 1),
+                m.rc(0, 3),
+                m.rc(1, 0),
+                m.rc(1, 1),
+                m.rc(1, 3),
+                0.0,
+                0.0,
+                1.0,
+            ),
+        };
+        if matrix.is_identity() {
+            return None;
+        }
+        let origin = (
+            resolve(self.paint.origin.0, width),
+            resolve(self.paint.origin.1, height),
+        );
+        let mut about_origin = Matrix::translate(origin);
+        about_origin.pre_concat(&matrix);
+        about_origin.pre_translate((-origin.0, -origin.1));
+        Some(about_origin)
+    }
     fn render(
         &self,
         canvas: &Canvas,

@@ -121,6 +121,7 @@
 ### CSS animation
 
 - Authored `@keyframes` become native animation tracks whose duration, easing, and values stay editable on HTML recompile. Scroll-driven keyframes fail. GSAP and JS timelines never become tracks.
+- `HtmlElement::local_transform` gives the core motion policy the animated transform about its origin, so keyframed movement counts toward motion scoring. A 3D transform contributes its planar part. `tests/motion_policy.rs` covers a static box, a moving box, and one over the speed limit.
 - `animation-direction` accepts `normal`, `reverse`, `alternate`, and `alternate-reverse`. `animation-fill-mode` accepts `none`, `forwards`, `backwards`, and `both`. `steps()` with `jump-none` or `jump-both` fails.
 
 ## Work Guidance

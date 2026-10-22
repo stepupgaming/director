@@ -313,6 +313,8 @@ five 640x360 premultiplied RGBA frames per workload via
 - Export passes per-channel sample-frame counts to `mix_audio`, which returns interleaved stereo. The total output remains `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`.
 - Software x264 defaults to preset `slow` and CRF 18. `software_x264_quality(true)` is `ultrafast` and CRF 30. Hardware qp and the alpha VP9 settings stay put under the draft switch. `render_export` keeps draft off. Unit test: `draft_software_x264`.
 - End-to-end A/V acceptance is `cargo test -p director-cli --test html_export`, with FFmpeg and ffprobe in PATH.
+- Opaque export is full-range `yuv420p` tagged BT.709. FFmpeg 7.1+ takes primaries and transfer from the frames and ignores `-color_primaries` and `-color_trc`, so the encoder runs `setparams=color_primaries=bt709:color_trc=bt709` first. Acceptance: `export_tags_bt709_primaries_and_transfer`.
+- `FFmpegDriver::ensure_available` reads `libavcodec_version` and warns below 61.19 (FFmpeg 7.1). Git builds print `N-...` in place of a release number, so the libavcodec line is the only reliable version. Unit test: `reads_libavcodec_version_from_release_and_git_builds`.
 - Alpha export (`--alpha`, lossless VP9 `yuva420p` at `-deadline realtime -cpu-used 8`, where the speed only changes file size) sets `Director::transparent_background`, so every frame clears to transparent, and reads unpremultiplied pixels because FFmpeg treats `rgba` input as straight alpha. Opaque export clears to black. Decode alpha WebM with `-c:v libvpx-vp9` before `-i` to keep the alpha plane. Acceptance: `alpha_export_keeps_empty_pixels_transparent_and_alpha_straight` in `crates/director-cli/tests/html_export.rs`.
 
 ## Video decoder lifecycle and verification
@@ -402,6 +404,17 @@ five 640x360 premultiplied RGBA frames per workload via
   and layout context is still set up correctly for the dirty subtree.
 - `render_export` calls `compile()` before the frame loop so the graph is available
   during export.
+- `compile()` also scores `style_policy`. Motion sampling reads `node.transform`
+  composed with `Element::local_transform`, which elements that animate their own
+  transform (HTML CSS keyframes) implement. Layout does not run while sampling, so
+  `layout_rect` keeps its pre-layout size and percent lengths and origins resolve
+  against it. Animated `left` and `top` do not count as motion.
+- The audio policy meters each track as `AudioMixer::mix` plays it
+  (`mixed_track_samples`): volume and constant-power pan in 10 ms blocks, cut at
+  the track duration, effects left out. The decoder copies mono to both channels at
+  full level and center pan plays each at 0.707, so a mono file exports at its own
+  mono loudness. Tests: `audio_loudness_matches_the_mixed_export`,
+  `audio_loudness_ignores_samples_past_the_track_duration`.
 - Rhai API: `compile(movie)`, `invalidate_entity(movie, uuid)`,
   `invalidate_audio_track(movie, idx)`, `invalidate_node(movie, id)`,
   `dirty_nodes(movie)`, `compiler_edge_count(movie)`.

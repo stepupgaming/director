@@ -18,6 +18,8 @@
 //! - `PolicyScore`: Aggregate score and violation list.
 //! - `StylePolicyScorer`: Evaluates a `Director` against a policy.
 
+use crate::audio::AudioTrack;
+use crate::audio_effects::pan_gains;
 use crate::director::Director;
 use crate::loudness::analyze_stereo;
 use crate::node::caption::CaptionNode;
@@ -448,14 +450,23 @@ impl StylePolicyScorer {
 
             let mut current_state: Vec<(NodeId, f64, f64, f64, f64, f64)> = Vec::new();
             for (id, node) in sampled_director.scene.iter_alive() {
-                current_state.push((
-                    id,
-                    node.transform.translate_x.current_value as f64,
-                    node.transform.translate_y.current_value as f64,
-                    node.transform.rotation.current_value as f64,
-                    node.transform.scale_x.current_value as f64,
-                    node.transform.scale_y.current_value as f64,
-                ));
+                let mut x = node.transform.translate_x.current_value as f64;
+                let mut y = node.transform.translate_y.current_value as f64;
+                let mut rotation = node.transform.rotation.current_value as f64;
+                let mut scale_x = node.transform.scale_x.current_value as f64;
+                let mut scale_y = node.transform.scale_y.current_value as f64;
+                // Elements that animate their own transform (HTML CSS keyframes)
+                // move the box center without touching `node.transform`.
+                let (w, h) = (node.layout_rect.width(), node.layout_rect.height());
+                if let Some(m) = node.element.local_transform(w, h) {
+                    let center = m.map_point((w / 2.0, h / 2.0));
+                    x += (center.x - w / 2.0) as f64;
+                    y += (center.y - h / 2.0) as f64;
+                    rotation += (m.skew_y() as f64).atan2(m.scale_x() as f64).to_degrees();
+                    scale_x *= (m.scale_x() as f64).hypot(m.skew_y() as f64);
+                    scale_y *= (m.skew_x() as f64).hypot(m.scale_y() as f64);
+                }
+                current_state.push((id, x, y, rotation, scale_x, scale_y));
             }
 
             if !prev_state.is_empty() {
@@ -637,12 +648,12 @@ impl StylePolicyScorer {
         for (idx, track_opt) in director.audio_mixer.tracks.iter().enumerate() {
             let Some(track) = track_opt else { continue };
             has_tracks = true;
-            let samples = &track.samples;
-            if samples.is_empty() {
+            if track.samples.is_empty() {
                 continue;
             }
 
-            let analysis = analyze_stereo(samples, director.audio_mixer.sample_rate);
+            let samples = mixed_track_samples(track, director.audio_mixer.sample_rate);
+            let analysis = analyze_stereo(&samples, director.audio_mixer.sample_rate);
             if !analysis.is_valid() {
                 continue;
             }
@@ -712,6 +723,27 @@ impl StylePolicyScorer {
 /// Compute total timeline duration in minutes from track clips.
 pub(crate) fn total_duration_minutes(director: &Director) -> f64 {
     director.timeline_duration() / 60.0
+}
+
+/// The track as `AudioMixer::mix` plays it: volume and pan gains applied in
+/// 10 ms blocks, cut at its duration. Effects are not applied.
+fn mixed_track_samples(track: &AudioTrack, sample_rate: u32) -> Vec<f32> {
+    let mut frames = track.samples.len() / 2;
+    if let Some(dur) = track.duration.filter(|d| d.is_finite() && *d > 0.0) {
+        frames = frames.min((dur * sample_rate as f64) as usize);
+    }
+    let block = (sample_rate as usize / 100).max(1);
+    let mut out = Vec::with_capacity(frames * 2);
+    for start in (0..frames).step_by(block) {
+        let t = track.start_time + start as f64 / sample_rate as f64;
+        let volume = track.volume.value_at(t);
+        let (left, right) = pan_gains(track.pan.value_at(t));
+        for frame in start..(start + block).min(frames) {
+            out.push(track.samples[frame * 2] * volume * left);
+            out.push(track.samples[frame * 2 + 1] * volume * right);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -832,7 +864,8 @@ mod tests {
     #[test]
     fn detects_audio_peak_violation() {
         let mut director = empty_director();
-        let samples = vec![1.2f32; 48000 * 2];
+        // Center pan plays each channel at 0.707, so 1.6 peaks near +1 dBTP.
+        let samples = vec![1.6f32; 48000 * 2];
         director.add_global_audio(samples);
 
         let policy = StylePolicy::default();
@@ -840,6 +873,55 @@ mod tests {
         let score = scorer.score(&director, &policy, (0.0, 1.0), 2);
 
         assert!(score.violations.iter().any(|v| v.rule == "audio.max_true_peak"));
+    }
+
+    fn sine(amplitude: f32, seconds: usize) -> Vec<f32> {
+        (0..48000 * seconds)
+            .flat_map(|i| {
+                let s = amplitude * (i as f32 * 997.0 * std::f32::consts::TAU / 48000.0).sin();
+                [s, s]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn audio_loudness_matches_the_mixed_export() {
+        let mut director = empty_director();
+        director.add_global_audio(sine(0.25, 4));
+        director.audio_mixer.tracks[0].as_mut().unwrap().volume = crate::animation::Animated::new(0.5);
+        let rate = director.audio_mixer.sample_rate;
+        let mixed = director.audio_mixer.clone().mix(48000 * 4, 0.0);
+        let exported = crate::loudness::analyze_stereo(&mixed, rate).integrated_lufs;
+
+        let mut policy = StylePolicy::default();
+        policy.audio.target_loudness_db = exported as f32;
+        policy.audio.loudness_tolerance_db = 0.1;
+        let score = StylePolicyScorer::new().score(&director, &policy, (0.0, 1.0), 2);
+        assert!(
+            !score.violations.iter().any(|v| v.rule == "audio.target_loudness"),
+            "{:?}",
+            score.violations
+        );
+    }
+
+    #[test]
+    fn audio_loudness_ignores_samples_past_the_track_duration() {
+        let mut director = empty_director();
+        let mut samples = sine(0.25, 2);
+        samples.extend(sine(0.9, 2));
+        director.add_global_audio(samples);
+        director.audio_mixer.tracks[0].as_mut().unwrap().duration = Some(2.0);
+
+        let quiet = crate::loudness::analyze_stereo(&sine(0.25 * 0.5f32.sqrt(), 2), 48000).integrated_lufs;
+        let mut policy = StylePolicy::default();
+        policy.audio.target_loudness_db = quiet as f32;
+        policy.audio.loudness_tolerance_db = 0.1;
+        let score = StylePolicyScorer::new().score(&director, &policy, (0.0, 1.0), 2);
+        assert!(
+            !score.violations.iter().any(|v| v.rule == "audio.target_loudness"),
+            "{:?}",
+            score.violations
+        );
     }
 
     #[test]

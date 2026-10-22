@@ -159,6 +159,12 @@ pub trait Element: std::fmt::Debug + ElementClone {
         None
     }
 
+    /// The element's own 2D transform about its origin, sampled by the motion
+    /// policy. `None` means the element has no transform of its own.
+    fn local_transform(&self, _width: f32, _height: f32) -> Option<skia_safe::Matrix> {
+        None
+    }
+
     /// Animates a specific named property.
     ///
     /// Returns `Err` for unknown property names or invalid easing strings.

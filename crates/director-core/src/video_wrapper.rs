@@ -36,14 +36,8 @@ impl FFmpegDriver {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let first_line = stdout.lines().next().unwrap_or_default();
-        let version_token = first_line.split_whitespace().nth(2).unwrap_or_default();
-        let major_version = version_token
-            .split('.')
-            .next()
-            .and_then(|value| value.parse::<u32>().ok());
-
-        if !matches!(major_version, Some(7..)) {
+        // FFmpeg 7.1 ships libavcodec 61.19.
+        if !matches!(libavcodec_version(&stdout), Some(v) if v >= (61, 19)) {
             tracing::warn!("FFmpeg version might be older than 7.1. Recommended: 7.1+");
         }
         Ok(())
@@ -427,7 +421,11 @@ impl Encoder {
                 if is_hardware { "Hardware" } else { "Software" }
             );
 
-            cmd.arg("-c:v")
+            // FFmpeg 7.1+ takes primaries and transfer from the frames and
+            // ignores the output flags below, so tag the frames first.
+            cmd.arg("-vf")
+                .arg("setparams=color_primaries=bt709:color_trc=bt709")
+                .arg("-c:v")
                 .arg(codec)
                 .arg("-pix_fmt")
                 .arg("yuv420p")
@@ -878,6 +876,19 @@ pub struct VideoProbe {
     pub fps: f64,
 }
 
+/// Reads `(major, minor)` from the `libavcodec` line of `ffmpeg -version`.
+/// Release and git builds (`N-123778-g...`) both print it.
+pub fn libavcodec_version(version_output: &str) -> Option<(u32, u32)> {
+    let rest = version_output
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("libavcodec"))?;
+    // "     62. 29.101 / 62. 29.101": compile-time version before the slash.
+    let mut fields = rest.split('/').next()?.split('.').map(str::trim);
+    let major = fields.next()?.parse().ok()?;
+    let minor = fields.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
 /// Parses an ffprobe `avg_frame_rate` / `r_frame_rate` token (`"num/den"`).
 /// Returns `None` for `0/0`, zero denominators, and unparsable input.
 /// A stream with side data (an ICC profile, a display matrix) makes the CSV
@@ -1107,8 +1118,8 @@ impl VideoLoader {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_frame_rate, parse_video_size, DecodeSession, FFmpegDriver, RenderMode, SyncDecoder,
-        ThreadedDecoder, VideoResponse, MAX_CACHED_FRAMES, MAX_SKIP_AHEAD,
+        libavcodec_version, parse_frame_rate, parse_video_size, DecodeSession, FFmpegDriver,
+        RenderMode, SyncDecoder, ThreadedDecoder, VideoResponse, MAX_CACHED_FRAMES, MAX_SKIP_AHEAD,
     };
     use std::process::Command;
     #[cfg(unix)]
@@ -1139,6 +1150,16 @@ mod tests {
         assert_eq!(parse_video_size("1280x720\n"), Some((1280, 720)));
         assert_eq!(parse_video_size("x\n"), None);
         assert_eq!(parse_video_size(""), None);
+    }
+
+    #[test]
+    fn reads_libavcodec_version_from_release_and_git_builds() {
+        let git = "ffmpeg version N-123778-g3b55818764-20260331 Copyright (c) 2000-2026\r\nlibavutil      60. 26.100 / 60. 26.100\r\nlibavcodec     62. 29.101 / 62. 29.101\r\n";
+        assert_eq!(libavcodec_version(git), Some((62, 29)));
+        let release = "ffmpeg version 7.1 Copyright (c) 2000-2024\nlibavcodec     61. 19.100 / 61. 19.100\n";
+        assert_eq!(libavcodec_version(release), Some((61, 19)));
+        assert!(libavcodec_version("ffmpeg version 7.0\nlibavcodec     61.  3.100 / 61.  3.100\n").unwrap() < (61, 19));
+        assert_eq!(libavcodec_version("ffmpeg version 7.1\n"), None);
     }
 
     #[test]
