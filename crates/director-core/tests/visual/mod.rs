@@ -58,12 +58,12 @@ pub fn golden_path(module: &str, name: &str) -> PathBuf {
         .join(format!("{name}.png"))
 }
 
+/// Cargo sets `CARGO_TARGET_TMPDIR` only while compiling integration tests,
+/// so it is read with `env!`. CI uploads `target/tmp/**/*.png` from here.
 fn artifact_dir(module: &str) -> PathBuf {
-    let base = std::env::var_os("CARGO_TARGET_TMPDIR")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("director-visual").join(module)
+    Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("director-visual")
+        .join(module)
 }
 
 struct ManifestAssetLoader;
