@@ -446,7 +446,7 @@ impl Element for HtmlElement {
                         let repeats = repeat.0 != AxisRepeat::NoRepeat
                             || repeat.1 != AxisRepeat::NoRepeat;
                         let shader = if custom && repeats {
-                            gradient.shader_with(tile_rect, TileMode::Repeat)
+                            tiled_gradient(gradient, tile_rect, repeat)
                         } else if custom {
                             gradient.shader(tile_rect)
                         } else {
@@ -1022,6 +1022,36 @@ fn gradient_tile(area: Rect, size: BackgroundFit, position: (AxisPos, AxisPos)) 
     let x = area.left() + (area.width() - tw) * position.0.percent + position.0.length;
     let y = area.top() + (area.height() - th) * position.1.percent + position.1.length;
     Rect::from_xywh(x, y, tw.max(1.0), th.max(1.0))
+}
+
+/// A sized gradient repeats as a 2D image tile, as CSS does. A gradient
+/// shader's own repeat mode runs along the gradient line instead, which turns
+/// a radial dot into concentric rings and a diagonal tile into long stripes.
+fn tiled_gradient(
+    gradient: &crate::gradient::NativeGradient,
+    tile: Rect,
+    repeat: (AxisRepeat, AxisRepeat),
+) -> Option<skia_safe::Shader> {
+    let bounds = Rect::from_wh(tile.width(), tile.height());
+    let mut p = skia_safe::Paint::default();
+    p.set_shader(gradient.shader(bounds)?);
+    p.set_anti_alias(true);
+    let mut recorder = skia_safe::PictureRecorder::new();
+    recorder.begin_recording(bounds, false).draw_rect(bounds, &p);
+    let picture = recorder.finish_recording_as_picture(Some(&bounds))?;
+    let mode = |axis: AxisRepeat| {
+        if axis == AxisRepeat::NoRepeat {
+            TileMode::Decal
+        } else {
+            TileMode::Repeat
+        }
+    };
+    Some(picture.to_shader(
+        (mode(repeat.0), mode(repeat.1)),
+        FilterMode::Linear,
+        &Matrix::translate((tile.left(), tile.top())),
+        &bounds,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

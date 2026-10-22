@@ -51,3 +51,16 @@ fn sized_linear_gradient_repeats_across_the_box() {
     assert!(red(pixel(&tiled, 17, 32)), "second stripe {:?}", pixel(&tiled, 17, 32));
     assert!(dark(pixel(&full, 17, 32)), "unsized stripe repeated");
 }
+
+#[test]
+fn sized_radial_gradient_tiles_as_dots() {
+    let tiled = frame(
+        "<style>body{margin:0}div{width:64px;height:64px;background-image:radial-gradient(circle, red 3px, transparent 3.5px);background-size:16px 16px}</style><div></div>",
+    );
+    for (x, y) in [(8, 8), (24, 8), (8, 24), (40, 56)] {
+        assert!(red(pixel(&tiled, x, y)), "dot at {x},{y} {:?}", pixel(&tiled, x, y));
+    }
+    for (x, y) in [(16, 16), (0, 0), (16, 8)] {
+        assert!(dark(pixel(&tiled, x, y)), "gap at {x},{y} {:?}", pixel(&tiled, x, y));
+    }
+}

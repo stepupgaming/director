@@ -1398,6 +1398,17 @@ pub fn translate(
                         return Err("oblique font style unsupported".into());
                     }
                 }
+                // The `font` shorthand expands to both, so `normal` must pass.
+                "font-stretch" => {
+                    if !matches!(s.trim(), "normal" | "100%") {
+                        return Err("font-stretch other than normal unsupported".into());
+                    }
+                }
+                "font-variant-caps" => {
+                    if s.trim() != "normal" {
+                        return Err("font-variant-caps other than normal unsupported".into());
+                    }
+                }
                 "font-variant-numeric" => {
                     paint.tabular_nums = match s.trim() {
                         "normal" => false,
