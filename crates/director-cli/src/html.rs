@@ -342,6 +342,18 @@ fn peak_memory() -> Option<usize> {
     }
 }
 
+#[cfg(not(windows))]
+fn peak_memory() -> Option<usize> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("VmHWM:")
+                .and_then(|s| s.split_whitespace().next()?.parse::<usize>().ok())
+                .map(|kb| kb * 1024)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,15 +415,4 @@ mod tests {
             _ => panic!("expected benchmark"),
         }
     }
-}
-#[cfg(not(windows))]
-fn peak_memory() -> Option<usize> {
-    std::fs::read_to_string("/proc/self/status")
-        .ok()?
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("VmHWM:")
-                .and_then(|s| s.split_whitespace().next()?.parse::<usize>().ok())
-                .map(|kb| kb * 1024)
-        })
 }
