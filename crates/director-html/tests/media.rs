@@ -358,15 +358,14 @@ fn data_uri(bytes: &[u8]) -> String {
 fn base64_encode(data: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
-    let mut chunks = data.chunks_exact(3);
-    for chunk in chunks.by_ref() {
-        let n = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | chunk[2] as u32;
+    let (chunks, rest) = data.as_chunks::<3>();
+    for &[a, b, c] in chunks {
+        let n = ((a as u32) << 16) | ((b as u32) << 8) | c as u32;
         out.push(TABLE[((n >> 18) & 63) as usize] as char);
         out.push(TABLE[((n >> 12) & 63) as usize] as char);
         out.push(TABLE[((n >> 6) & 63) as usize] as char);
         out.push(TABLE[(n & 63) as usize] as char);
     }
-    let rest = chunks.remainder();
     if rest.len() == 1 {
         let n = (rest[0] as u32) << 16;
         out.push(TABLE[((n >> 18) & 63) as usize] as char);
