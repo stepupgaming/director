@@ -322,6 +322,7 @@ five 640x360 premultiplied RGBA frames per workload via
 - Decoder unit tests require FFmpeg and ffprobe in PATH. Generate lossless, frame-numbered fixtures in temporary directories; fail on missing tools or fixture-generation errors instead of silently passing.
 - Verify exact RGBA content, child PID reuse, eight-frame cache eviction, uncached backward and large forward seeks, EOF recovery, and worker shutdown. Cover 24, 25, 30000/1001, 30, and 60 FPS.
 - Run `cargo test -p director-core --lib video_wrapper::tests` for decoder verification. Exact VFR presentation-timestamp sampling remains unsupported.
+- `parse_video_size` reads the first two `x`-separated fields and `parse_frame_rate` the first comma field. A stream with side data, such as the ICC profile a screen recorder writes, makes ffprobe's CSV writer add an empty trailing field (`1920x1080x`, `30/1,`). Unit test: `reads_probe_output_with_a_side_data_field`.
 
 ## Semantic Entity Registry
 

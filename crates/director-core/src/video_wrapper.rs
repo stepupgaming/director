@@ -880,8 +880,10 @@ pub struct VideoProbe {
 
 /// Parses an ffprobe `avg_frame_rate` / `r_frame_rate` token (`"num/den"`).
 /// Returns `None` for `0/0`, zero denominators, and unparsable input.
+/// A stream with side data (an ICC profile, a display matrix) makes the CSV
+/// writer append an empty field (`"30/1,"`), so only the first field counts.
 pub fn parse_frame_rate(token: &str) -> Option<f64> {
-    let token = token.trim();
+    let token = token.trim().split(',').next()?.trim();
     let (num, den) = token.split_once('/')?;
     let num: f64 = num.trim().parse().ok()?;
     let den: f64 = den.trim().parse().ok()?;
@@ -940,15 +942,20 @@ pub fn probe_video(path: &Path) -> Result<VideoProbe> {
         .output()?;
 
     let out = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = out.trim().split('x').collect();
-    if parts.len() == 2 {
-        let width = parts[0].parse()?;
-        let height = parts[1].parse()?;
-        let fps = probe_frame_rate(path);
-        Ok(VideoProbe { width, height, fps })
-    } else {
-        Err(anyhow::anyhow!("Failed to probe video size"))
-    }
+    let (width, height) =
+        parse_video_size(&out).ok_or_else(|| anyhow::anyhow!("Failed to probe video size"))?;
+    let fps = probe_frame_rate(path);
+    Ok(VideoProbe { width, height, fps })
+}
+
+/// Parses ffprobe `stream=width,height` output in `csv=s=x:p=0` form
+/// (`"1920x1080"`). Side data adds an empty trailing field (`"1920x1080x"`),
+/// so the first two fields are read and the rest ignored.
+pub fn parse_video_size(out: &str) -> Option<(u32, u32)> {
+    let mut fields = out.trim().split('x').map(str::trim);
+    let width = fields.next()?.parse().ok()?;
+    let height = fields.next()?.parse().ok()?;
+    Some((width, height))
 }
 
 pub fn probe(path: &Path) -> Result<(u32, u32)> {
@@ -1100,8 +1107,8 @@ impl VideoLoader {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_frame_rate, DecodeSession, FFmpegDriver, RenderMode, SyncDecoder, ThreadedDecoder,
-        VideoResponse, MAX_CACHED_FRAMES, MAX_SKIP_AHEAD,
+        parse_frame_rate, parse_video_size, DecodeSession, FFmpegDriver, RenderMode, SyncDecoder,
+        ThreadedDecoder, VideoResponse, MAX_CACHED_FRAMES, MAX_SKIP_AHEAD,
     };
     use std::process::Command;
     #[cfg(unix)]
@@ -1123,6 +1130,15 @@ mod tests {
         assert!((parse_frame_rate("30000/1001").unwrap() - 29.97002997).abs() < 1e-6);
         assert!((parse_frame_rate("24000/1001").unwrap() - 23.976023976).abs() < 1e-6);
         assert!((parse_frame_rate("25/1").unwrap() - 25.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn reads_probe_output_with_a_side_data_field() {
+        assert!((parse_frame_rate("30/1,\r\n").unwrap() - 30.0).abs() < 1e-9);
+        assert_eq!(parse_video_size("1920x1080x\r\n"), Some((1920, 1080)));
+        assert_eq!(parse_video_size("1280x720\n"), Some((1280, 720)));
+        assert_eq!(parse_video_size("x\n"), None);
+        assert_eq!(parse_video_size(""), None);
     }
 
     #[test]
