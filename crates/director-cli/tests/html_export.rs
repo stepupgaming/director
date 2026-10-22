@@ -96,6 +96,53 @@ fn export_tags_bt709_primaries_and_transfer() {
 }
 
 #[test]
+fn export_samples_are_full_range_bt709_like_their_tags() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("samples.html");
+    let output = temp.path().join("samples.mp4");
+    std::fs::write(&input, "<style>html,body{margin:0}</style><div data-composition-id='samples' data-no-timeline data-width='32' data-height='32' data-fps='30' data-duration='0.2' style='position:relative;width:32px;height:32px;background:#000'><div style='position:absolute;left:0;top:0;width:16px;height:32px;background:#f00'></div></div>").unwrap();
+    let rendered = Command::new(env!("CARGO_BIN_EXE_director-engine"))
+        .args(["html", "render"])
+        .arg(input)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .expect("run native exporter");
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    // Decode as full-range BT.709 whatever the tags say. Limited-range samples
+    // lift black to 16, and BT.601 samples lift red's green to about 25.
+    let decoded = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(&output)
+        .args(["-frames:v", "1", "-vf", "scale=in_color_matrix=bt709:in_range=full,format=rgb24"])
+        .args(["-f", "rawvideo", "-"])
+        .output()
+        .expect("ffmpeg must be installed for export verification");
+    assert!(
+        decoded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&decoded.stderr)
+    );
+    let frame = decoded.stdout;
+    assert_eq!(frame.len(), 32 * 32 * 3);
+    let pixel = |x: usize, y: usize| -> [u8; 3] {
+        let i = (y * 32 + x) * 3;
+        [frame[i], frame[i + 1], frame[i + 2]]
+    };
+    let red = pixel(4, 16);
+    assert!(
+        red[0] >= 245 && red[1] <= 8 && red[2] <= 8,
+        "red {red:?}, expected about [255, 0, 0]"
+    );
+    let black = pixel(28, 16);
+    assert!(black.iter().all(|&c| c <= 6), "black {black:?}, expected about [0, 0, 0]");
+}
+
+#[test]
 fn alpha_export_keeps_empty_pixels_transparent_and_alpha_straight() {
     let temp = tempfile::tempdir().unwrap();
     let input = temp.path().join("alpha.html");

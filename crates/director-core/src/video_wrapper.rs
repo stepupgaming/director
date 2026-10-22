@@ -394,7 +394,11 @@ impl Encoder {
         if settings.alpha {
             let codec = "libvpx-vp9";
             tracing::info!("Initializing video encoder: {} (Software, Alpha)", codec);
-            cmd.arg("-c:v")
+            // FFmpeg before 7.1 only tags the output range and converts to
+            // limited range, so the scale filter converts to full range itself.
+            cmd.arg("-vf")
+                .arg("scale=out_range=full")
+                .arg("-c:v")
                 .arg(codec)
                 .arg("-pix_fmt")
                 .arg("yuva420p")
@@ -422,9 +426,11 @@ impl Encoder {
             );
 
             // FFmpeg 7.1+ takes primaries and transfer from the frames and
-            // ignores the output flags below, so tag the frames first.
+            // ignores the output flags below, so tag the frames first. FFmpeg
+            // before 7.1 converts to limited-range BT.601 whatever the flags
+            // say, so the scale filter names the range and matrix.
             cmd.arg("-vf")
-                .arg("setparams=color_primaries=bt709:color_trc=bt709")
+                .arg("setparams=color_primaries=bt709:color_trc=bt709,scale=out_color_matrix=bt709:out_range=full")
                 .arg("-c:v")
                 .arg(codec)
                 .arg("-pix_fmt")
