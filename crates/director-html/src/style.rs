@@ -1875,6 +1875,24 @@ fn wrap_turn(angle: &mut Angle) {
     *angle = Angle::Deg(if degrees == 360.0 { 0.0 } else { degrees });
 }
 
+// lightningcss builds no matrix for an angle below 0 or at a full turn and above.
+fn wrap_angles(transform: &mut Transform) {
+    match transform {
+        Transform::Rotate(angle)
+        | Transform::RotateX(angle)
+        | Transform::RotateY(angle)
+        | Transform::RotateZ(angle)
+        | Transform::Rotate3d(_, _, _, angle)
+        | Transform::SkewX(angle)
+        | Transform::SkewY(angle) => wrap_turn(angle),
+        Transform::Skew(x, y) => {
+            wrap_turn(x);
+            wrap_turn(y);
+        }
+        _ => {}
+    }
+}
+
 fn is_projective(transform: &Transform) -> bool {
     matches!(
         transform,
@@ -1917,12 +1935,7 @@ fn prepare_projective(list: &TransformList, m: Metrics, size: (f32, f32)) -> Tra
                     *z = Length::px(value);
                 }
             }
-            Transform::Rotate(angle)
-            | Transform::RotateX(angle)
-            | Transform::RotateY(angle)
-            | Transform::RotateZ(angle)
-            | Transform::Rotate3d(_, _, _, angle) => wrap_turn(angle),
-            _ => {}
+            other => wrap_angles(other),
         }
     }
     resolved
@@ -1980,7 +1993,7 @@ pub fn transform_matrix(list: &TransformList, m: Metrics, size: (f32, f32)) -> M
             }
             Transform::TranslateX(x) => cv(x, size.0),
             Transform::TranslateY(y) => cv(y, size.1),
-            _ => {}
+            other => wrap_angles(other),
         }
     }
     if let Some(mat) = resolved.to_matrix().and_then(|m| m.to_matrix2d()) {

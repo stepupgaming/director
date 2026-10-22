@@ -94,7 +94,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 429 | 2026-10-22 | `cargo test -p director-core --release` |
 | visual_suite | 41 | 2026-10-22 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 939 | 2026-10-22 | `cargo test --workspace --release` |
+| workspace release tests | 942 | 2026-10-22 | `cargo test --workspace --release` |
 | Vulkan engine clippy | pass | 2026-10-22 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
@@ -103,6 +103,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | font_shorthand | 4 | 2026-10-21 | `cargo test -p director-html --release --test font_shorthand` |
 | gradient_tiles | 2 | 2026-10-21 | `cargo test -p director-html --release --test gradient_tiles` |
 | motion_policy | 3 | 2026-10-21 | `cargo test -p director-html --release --test motion_policy` |
+| transform_angles | 3 | 2026-10-22 | `cargo test -p director-html --release --test transform_angles` |
 | director-core doctest | 1 | 2026-10-22 | `cargo test -p director-core --doc --release` |
 | director-html lib | 110 | 2026-10-22 | `cargo test -p director-html --release` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
