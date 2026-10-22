@@ -1,4 +1,4 @@
-use crate::{prelude::*, ISize, Matrix};
+use crate::{ISize, Matrix, prelude::*};
 use skia_bindings::{self as sb, SkEncodedOrigin};
 
 // Even though possible, we are not using the original SkEncodedOrigin enum, because of the
@@ -42,6 +42,20 @@ impl EncodedOrigin {
         let mut m = Matrix::default();
         unsafe {
             sb::C_SkEncodedOriginToMatrix(
+                self.into_native(),
+                size.width,
+                size.height,
+                m.native_mut(),
+            )
+        };
+        m
+    }
+
+    pub fn to_matrix_inverse(self, size: impl Into<ISize>) -> Matrix {
+        let size = size.into();
+        let mut m = Matrix::default();
+        unsafe {
+            sb::C_SkEncodedOriginToMatrixInverse(
                 self.into_native(),
                 size.width,
                 size.height,

@@ -90,10 +90,12 @@ One row per check, holding the most recent passing count. Replace the row when a
 
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
-| workspace clippy | pass | 2026-10-21 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
-| director-core release tests | 429 | 2026-10-21 | `cargo test -p director-core --release` |
-| html_export | 4 | 2026-10-21 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 939 | 2026-10-21 | `cargo test --workspace --release` |
+| workspace clippy | pass | 2026-10-22 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
+| director-core release tests | 429 | 2026-10-22 | `cargo test -p director-core --release` |
+| visual_suite | 41 | 2026-10-22 | `cargo test -p director-core --release --test visual_suite` |
+| html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
+| workspace release tests | 939 | 2026-10-22 | `cargo test --workspace --release` |
+| Vulkan engine clippy | pass | 2026-10-22 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
 | padded_text | 1 | 2026-10-20 | `cargo test -p director-html --release --test padded_text` |
@@ -101,8 +103,8 @@ One row per check, holding the most recent passing count. Replace the row when a
 | font_shorthand | 4 | 2026-10-21 | `cargo test -p director-html --release --test font_shorthand` |
 | gradient_tiles | 2 | 2026-10-21 | `cargo test -p director-html --release --test gradient_tiles` |
 | motion_policy | 3 | 2026-10-21 | `cargo test -p director-html --release --test motion_policy` |
-| director-core doctest | 1 | 2026-10-19 | `cargo test -p director-core --doc --release` |
-| director-html lib | 110 | 2026-10-21 | `cargo test -p director-html --release` |
+| director-core doctest | 1 | 2026-10-22 | `cargo test -p director-core --doc --release` |
+| director-html lib | 110 | 2026-10-22 | `cargo test -p director-html --release` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
 | object_position_css, gradient_hints, project, shader | 9, 8, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |
 | mixed_calc, gradient_calc | 12, 3 | 2026-10-18 | `cargo test -p director-html --release --test mixed_calc --test gradient_calc` |
@@ -118,13 +120,15 @@ One row per check, holding the most recent passing count. Replace the row when a
 
 The 2026-10-19 workspace release run passed every target after two fixture updates: a rejected preview reload now uses `perspective:0`, and SVG text with no font family is no longer treated as a compile error. The `Director::new` doctest passes `fps` as `30.0`.
 
-Linux CI on the next push still has to confirm the Windows-rendered text goldens.
+The 2026-10-22 skia-safe 0.153.3 upgrade (Skia m153) left every golden in place. Under the release engine, the four HTML examples, a 3 s `native-motion` export and 8-frame contact sheets of all 59 example scripts match 0.90.0 pixel for pixel.
+
+Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases glyphs differently from DirectWrite. Linux text goldens are an open decision.
 
 ## Next action
 
 1. Extend `director-scene` export until every golden scene round-trips through JSON without loss. `box` and `text` bodies are copied today. Other kinds export as `NodeBody::Unspecified`.
 2. Read a document back into a `Director` only when phase 3 needs it.
-3. Push when asked. Linux CI still has to confirm the Windows-rendered text goldens.
+3. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification
 

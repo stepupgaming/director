@@ -415,7 +415,7 @@ pub(crate) fn load_fonts(
     for (family, src) in fonts {
         let bytes = decoded_font(family, assets.read(&url(src)?)?)?;
         let face = skia_safe::FontMgr::new()
-            .new_from_data(&bytes, 0)
+            .new_from_bytes(&bytes, 0)
             .ok_or_else(|| {
                 CompileError::Input(format!("font '{family}' is not decodable by Skia"))
             })?;

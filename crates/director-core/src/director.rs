@@ -32,7 +32,7 @@ use crate::types::NodeId;
 use crate::video_wrapper::{EncoderMode, RenderMode};
 use crate::AssetLoader;
 use skia_safe::textlayout::{FontCollection, TypefaceFontProvider};
-use skia_safe::{Data, FontMgr};
+use skia_safe::FontMgr;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::instrument;
@@ -289,8 +289,7 @@ impl Director {
             for (filename, aliases, required) in BUNDLED_FONTS {
                 match asset_loader.load_bytes(&format!("fonts/{}", filename)) {
                     Ok(bytes) => {
-                        let data = Data::new_copy(&bytes);
-                        if let Some(typeface) = FontMgr::new().new_from_data(&data, 0) {
+                        if let Some(typeface) = FontMgr::new().new_from_bytes(&bytes, 0) {
                             for alias in *aliases {
                                 font_provider.register_typeface(typeface.clone(), Some(*alias));
                             }
@@ -327,8 +326,7 @@ impl Director {
 
             // Load fallback font (e.g. Emoji) if available
             if let Some(bytes) = asset_loader.load_font_fallback() {
-                let data = Data::new_copy(&bytes);
-                if let Some(typeface) = FontMgr::new().new_from_data(&data, 0) {
+                if let Some(typeface) = FontMgr::new().new_from_bytes(&bytes, 0) {
                     font_provider.register_typeface(typeface, Some("Fallback"));
                 }
             }

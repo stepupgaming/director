@@ -9,9 +9,9 @@ use skia_bindings::{self as sb, SkCodec, SkCodec_FrameInfo, SkCodec_Options};
 
 use super::codec_animation;
 use crate::{
-    interop::RustStream, prelude::*, yuva_pixmap_info::SupportedDataTypes, AlphaType, Data,
-    EncodedImageFormat, EncodedOrigin, IRect, ISize, Image, ImageInfo, Pixmap, YUVAPixmapInfo,
-    YUVAPixmaps,
+    AlphaType, Data, EncodedImageFormat, EncodedOrigin, IRect, ISize, Image, ImageInfo, Pixmap,
+    YUVAPixmapInfo, YUVAPixmaps, interop::RustStream, prelude::*,
+    yuva_pixmap_info::SupportedDataTypes,
 };
 
 pub use sb::SkCodec_Result as Result;
@@ -37,6 +37,19 @@ pub struct Options {
     pub subset: Option<IRect>,
     pub frame_index: usize,
     pub prior_frame: Option<usize>,
+    pub max_decode_memory: Option<usize>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            zero_initialized: ZeroInitialized::No,
+            subset: None,
+            frame_index: 0,
+            prior_frame: None,
+            max_decode_memory: None,
+        }
+    }
 }
 
 pub const NO_FRAME: i32 = sb::SkCodec_kNoFrame;
@@ -180,9 +193,6 @@ impl Codec<'_> {
         unsafe { sb::C_SkCodec_getEncodedFormat(self.native()) }
     }
 
-    // TODO: May wrap `getEncodedData()`. But how? It would return the stream, which is already
-    // mutably borrowed.
-
     pub fn get_pixels_with_options(
         &mut self,
         info: &ImageInfo,
@@ -213,8 +223,10 @@ impl Codec<'_> {
         pixels: *mut ffi::c_void,
         row_bytes: usize,
     ) -> Result {
-        self.native_mut()
-            .getPixels(info.native(), pixels, row_bytes, ptr::null())
+        unsafe {
+            self.native_mut()
+                .getPixels(info.native(), pixels, row_bytes, ptr::null())
+        }
     }
 
     #[allow(clippy::missing_safety_doc)]
@@ -223,13 +235,15 @@ impl Codec<'_> {
         pixmap: &Pixmap,
         options: Option<&Options>,
     ) -> Result {
-        let native_options = options.map(|options| Self::native_options(options));
-        self.native_mut().getPixels(
-            pixmap.info().native(),
-            pixmap.writable_addr(),
-            pixmap.row_bytes(),
-            native_options.as_ptr_or_null(),
-        )
+        unsafe {
+            let native_options = options.map(|options| Self::native_options(options));
+            self.native_mut().getPixels(
+                pixmap.info().native(),
+                pixmap.writable_addr(),
+                pixmap.row_bytes(),
+                native_options.as_ptr_or_null(),
+            )
+        }
     }
 
     unsafe fn native_options(options: &Options) -> SkCodec_Options {
@@ -241,6 +255,7 @@ impl Codec<'_> {
                 None => sb::SkCodec_kNoFrame,
                 Some(frame) => frame.try_into().expect("invalid prior frame"),
             },
+            fMaxDecodeMemory: options.max_decode_memory.unwrap_or(0),
         }
     }
 
@@ -414,7 +429,7 @@ pub mod codecs {
     use skia_bindings::{self as sb, SkCodecs_Decoder};
 
     use super::Result;
-    use crate::{interop::RustStream, prelude::*, AlphaType, Codec, Image};
+    use crate::{AlphaType, Codec, Image, interop::RustStream, prelude::*};
 
     pub type Decoder = Handle<SkCodecs_Decoder>;
     unsafe_send_sync!(Decoder);

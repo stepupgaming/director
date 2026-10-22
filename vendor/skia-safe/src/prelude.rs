@@ -10,18 +10,22 @@ use std::{
 };
 
 use skia_bindings::{
-    sk_sp, C_SkRefCntBase_ref, C_SkRefCntBase_unique, C_SkRefCntBase_unref, SkRefCnt, SkRefCntBase,
+    C_SkRefCntBase_ref, C_SkRefCntBase_unique, C_SkRefCntBase_unref, SkRefCnt, SkRefCntBase, sk_sp,
 };
 
 /// Convert any reference into any other.
 pub(crate) unsafe fn transmute_ref<FromT, ToT>(from: &FromT) -> &ToT {
-    assert_layout_compatible::<FromT, ToT>();
-    &*(from as *const FromT as *const ToT)
+    unsafe {
+        assert_layout_compatible::<FromT, ToT>();
+        &*(from as *const FromT as *const ToT)
+    }
 }
 
 pub(crate) unsafe fn transmute_ref_mut<FromT, ToT>(from: &mut FromT) -> &mut ToT {
-    assert_layout_compatible::<FromT, ToT>();
-    &mut *(from as *mut FromT as *mut ToT)
+    unsafe {
+        assert_layout_compatible::<FromT, ToT>();
+        &mut *(from as *mut FromT as *mut ToT)
+    }
 }
 
 pub(crate) trait IntoNonNull {
@@ -194,7 +198,7 @@ pub trait NativeHash {
 #[repr(transparent)]
 pub struct Handle<N: NativeDrop>(
     // UnsafeCell is used for disabling niche optimization, because we don't care about the proper
-    // representations of bindgen types as long the size and alighment matches.
+    // representations of bindgen types as long the size and alignment matches.
     UnsafeCell<N>,
     // `*const` is needed to prevent automatic Send implementation, which happens when the
     // native type is Send.
@@ -382,9 +386,11 @@ where
     }
 
     unsafe fn native_ptr_or_null_mut_force(&self) -> *mut N {
-        match self {
-            Some(handle) => handle.native_mut_force(),
-            None => ptr::null_mut(),
+        unsafe {
+            match self {
+                Some(handle) => handle.native_mut_force(),
+                None => ptr::null_mut(),
+            }
         }
     }
 }
@@ -509,6 +515,11 @@ impl<N: NativeRefCounted> RCHandle<N> {
         ptr::NonNull::new(ptr).map(Self)
     }
 
+    #[inline]
+    pub(crate) fn from_ptr_const(ptr: *const N) -> Option<Self> {
+        ptr::NonNull::new(ptr as *mut N).map(Self)
+    }
+
     /// Creates an reference counted handle from a pointer.
     ///
     /// Returns `None` if the pointer is `null`.
@@ -549,7 +560,7 @@ mod rc_handle_tests {
 
     use skia_bindings::{SkFontMgr, SkTypeface};
 
-    use crate::{prelude::NativeAccess, FontMgr, Typeface};
+    use crate::{FontMgr, Typeface, prelude::NativeAccess};
 
     #[test]
     fn rc_native_ref_null() {
@@ -992,13 +1003,15 @@ pub(crate) mod safer {
     ///
     /// Panics if `len` != 0 and `ptr` is `null`.
     pub unsafe fn from_raw_parts<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
-        let ptr = if len == 0 {
-            ptr::NonNull::dangling().as_ptr()
-        } else {
-            assert!(!ptr.is_null());
-            ptr
-        };
-        slice::from_raw_parts(ptr, len)
+        unsafe {
+            let ptr = if len == 0 {
+                ptr::NonNull::dangling().as_ptr()
+            } else {
+                assert!(!ptr.is_null());
+                ptr
+            };
+            slice::from_raw_parts(ptr, len)
+        }
     }
 
     /// Invokes [slice::from_raw_parts_mut] with the `ptr` only if `len` != 0, otherwise passes
@@ -1006,13 +1019,15 @@ pub(crate) mod safer {
     ///
     /// Panics if `len` != 0 and `ptr` is `null`.
     pub unsafe fn from_raw_parts_mut<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
-        let ptr = if len == 0 {
-            ptr::NonNull::dangling().as_ptr() as *mut _
-        } else {
-            assert!(!ptr.is_null());
-            ptr
-        };
-        slice::from_raw_parts_mut(ptr, len)
+        unsafe {
+            let ptr = if len == 0 {
+                ptr::NonNull::dangling().as_ptr() as *mut _
+            } else {
+                assert!(!ptr.is_null());
+                ptr
+            };
+            slice::from_raw_parts_mut(ptr, len)
+        }
     }
 }
 

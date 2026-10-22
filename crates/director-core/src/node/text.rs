@@ -924,8 +924,8 @@ impl Element for TextNode {
                     if let Some(gradient) =
                         self.spans.iter().find_map(|s| s.fill_gradient.as_ref())
                     {
-                        let skia_colors: Vec<skia_safe::Color> =
-                            gradient.colors.iter().map(|c| c.to_skia()).collect();
+                        let skia_colors: Vec<skia_safe::Color4f> =
+                            gradient.colors.iter().map(|c| c.to_skia().into()).collect();
                         let start = skia_safe::Point::new(
                             rect.left + gradient.start.0 * rect.width(),
                             rect.top + gradient.start.1 * rect.height(),
@@ -934,14 +934,18 @@ impl Element for TextNode {
                             rect.left + gradient.end.0 * rect.width(),
                             rect.top + gradient.end.1 * rect.height(),
                         );
-                        if let Some(shader) = skia_safe::gradient_shader::linear(
-                            (start, end),
-                            skia_colors.as_slice(),
-                            gradient.positions.as_deref(),
-                            TileMode::Clamp,
-                            None,
-                            None,
-                        ) {
+                        let ramp = skia_safe::gradient::Gradient::new(
+                            skia_safe::gradient::Colors::new(
+                                &skia_colors,
+                                gradient.positions.as_deref(),
+                                TileMode::Clamp,
+                                None,
+                            ),
+                            skia_safe::gradient::Interpolation::default(),
+                        );
+                        if let Some(shader) =
+                            skia_safe::shaders::linear_gradient((start, end), &ramp, None)
+                        {
                             let mut gradient_paint = Paint::default();
                             gradient_paint.set_shader(shader);
                             gradient_paint.set_blend_mode(skia_safe::BlendMode::SrcIn);

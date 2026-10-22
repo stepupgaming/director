@@ -70,24 +70,24 @@ fn main() -> anyhow::Result<()> {
 mod window {
     use anyhow::Result;
     use windows::{
-        core::Interface,
         Win32::{
             Foundation::HWND,
             Graphics::{
                 Direct3D::D3D_FEATURE_LEVEL_11_0,
-                Direct3D12::{D3D12CreateDevice, ID3D12Device, D3D12_RESOURCE_STATE_COMMON},
+                Direct3D12::{D3D12_RESOURCE_STATE_COMMON, D3D12CreateDevice, ID3D12Device},
                 Dxgi::{
                     Common::{
                         DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
                         DXGI_STANDARD_MULTISAMPLE_QUALITY_PATTERN,
                     },
-                    CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory4, IDXGISwapChain3,
-                    DXGI_ADAPTER_FLAG, DXGI_ADAPTER_FLAG_NONE, DXGI_ADAPTER_FLAG_SOFTWARE,
-                    DXGI_PRESENT, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_DISCARD,
-                    DXGI_USAGE_RENDER_TARGET_OUTPUT,
+                    CreateDXGIFactory1, DXGI_ADAPTER_FLAG, DXGI_ADAPTER_FLAG_NONE,
+                    DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_PRESENT, DXGI_SWAP_CHAIN_DESC1,
+                    DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter1,
+                    IDXGIFactory4, IDXGISwapChain3,
                 },
             },
         },
+        core::Interface,
     };
     use winit::{
         dpi::{LogicalSize, Size},
@@ -96,11 +96,13 @@ mod window {
     };
 
     use skia_safe::{
+        Color, ColorType, Paint, Rect, Surface,
         gpu::{
+            self, BackendRenderTarget, DirectContext, Protected, SurfaceOrigin,
             d3d::{BackendContext, TextureResourceInfo},
-            surfaces, BackendRenderTarget, DirectContext, Protected, SurfaceOrigin,
+            surfaces,
         },
-        paint, Color, ColorType, Paint, Rect, Surface,
+        paint,
     };
 
     const BUFFER_COUNT: usize = 2;
@@ -143,7 +145,7 @@ mod window {
                 protected_context: Protected::No,
             };
             let mut direct_context =
-                unsafe { DirectContext::new_d3d(&backend_context, None) }.unwrap();
+                unsafe { gpu::direct_contexts::make_d3d(&backend_context, None) }.unwrap();
 
             let swap_chain: IDXGISwapChain3 = unsafe {
                 factory.CreateSwapChainForHwnd(
@@ -171,7 +173,7 @@ mod window {
             let surfaces: [_; BUFFER_COUNT] = std::array::from_fn(|i| {
                 let resource = unsafe { swap_chain.GetBuffer(i as u32).unwrap() };
 
-                let backend_render_target = BackendRenderTarget::new_d3d(
+                let backend_render_target = gpu::backend_render_targets::make_d3d(
                     window.inner_size().into(),
                     &TextureResourceInfo {
                         resource,

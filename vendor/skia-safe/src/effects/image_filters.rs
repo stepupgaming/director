@@ -3,9 +3,9 @@ use std::ptr;
 use skia_bindings::{self as sb, SkImageFilter, SkRect};
 
 use crate::{
-    prelude::*, scalar, Blender, Color, Color4f, ColorChannel, ColorFilter, ColorSpace,
-    CubicResampler, IPoint, IRect, ISize, Image, ImageFilter, Matrix, Picture, Point3, Rect,
-    SamplingOptions, Shader, TileMode, Vector,
+    Blender, Color, Color4f, ColorChannel, ColorFilter, ColorSpace, CubicResampler, IPoint, IRect,
+    ISize, Image, ImageFilter, Matrix, Picture, Point3, Rect, SamplingOptions, Shader, TileMode,
+    Vector, prelude::*, scalar,
 };
 
 /// This is just a convenience type to allow passing [`IRect`]s, [`Rect`]s, and optional references
@@ -491,13 +491,49 @@ pub fn runtime_shader(
     child_shader_name: impl AsRef<str>,
     input: impl Into<Option<ImageFilter>>,
 ) -> Option<ImageFilter> {
+    runtime_shader_with_options(builder, 0.0, child_shader_name, input, false)
+}
+
+/// Creates a runtime-shader image filter and optionally restricts its output to its input bounds.
+///
+/// Set `restrict_output_to_input_bounds` only when the shader evaluates to transparent black
+/// wherever its child shader does. This allows downstream filters to retain finite content bounds.
+pub fn runtime_shader_with_output_bounds(
+    builder: &RuntimeShaderBuilder,
+    child_shader_name: impl AsRef<str>,
+    input: impl Into<Option<ImageFilter>>,
+    restrict_output_to_input_bounds: bool,
+) -> Option<ImageFilter> {
+    runtime_shader_with_options(
+        builder,
+        0.0,
+        child_shader_name,
+        input,
+        restrict_output_to_input_bounds,
+    )
+}
+
+/// Creates a runtime-shader image filter with a child-shader sampling radius and optionally
+/// restricts its output to its input bounds.
+///
+/// `sample_radius` is the maximum absolute offset in either axis between coordinates passed to the
+/// runtime shader and coordinates used to sample its child shader.
+pub fn runtime_shader_with_options(
+    builder: &RuntimeShaderBuilder,
+    sample_radius: scalar,
+    child_shader_name: impl AsRef<str>,
+    input: impl Into<Option<ImageFilter>>,
+    restrict_output_to_input_bounds: bool,
+) -> Option<ImageFilter> {
     let child_shader_name = child_shader_name.as_ref();
     unsafe {
         ImageFilter::from_ptr(sb::C_SkImageFilters_RuntimeShader(
             builder.native() as *const _,
+            sample_radius,
             child_shader_name.as_ptr() as *const _,
             child_shader_name.len(),
             input.into().into_ptr_or_null(),
+            restrict_output_to_input_bounds,
         ))
     }
 }
@@ -509,7 +545,7 @@ variant_name!(Dither::Yes);
 
 /// Create a filter that fills the output with the per-pixel evaluation of the [`Shader`]. The
 /// shader is defined in the image filter's local coordinate system, so will automatically
-/// be affected by [`Canvas'`] transform.
+/// be affected by [`crate::Canvas`]'s transform.
 ///
 /// Like `image()` and Picture(), this is a leaf filter that can be used to introduce inputs to
 /// a complex filter graph, but should generally be combined with a filter that as at least

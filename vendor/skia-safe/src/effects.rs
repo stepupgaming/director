@@ -6,6 +6,8 @@ pub mod color_matrix_filter;
 pub mod corner_path_effect;
 pub mod dash_path_effect;
 pub mod discrete_path_effect;
+pub mod gradient;
+#[deprecated(since = "0.94.0", note = "Use the skia_safe::gradient module")]
 pub mod gradient_shader;
 pub mod high_contrast_filter;
 pub mod image_filters;
@@ -22,5 +24,5 @@ pub mod trim_path_effect;
 pub use _1d_path_effect::*;
 pub use _2d_path_effect::*;
 pub use color_matrix::ColorMatrix;
-pub use high_contrast_filter::{high_contrast_config, HighContrastConfig};
+pub use high_contrast_filter::{HighContrastConfig, high_contrast_config};
 pub use runtime_effect::RuntimeEffect;

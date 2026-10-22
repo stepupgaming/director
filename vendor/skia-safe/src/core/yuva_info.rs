@@ -1,5 +1,5 @@
 use super::image_info;
-use crate::{prelude::*, EncodedOrigin, ISize, Matrix};
+use crate::{EncodedOrigin, ISize, Matrix, prelude::*};
 use skia_bindings::{self as sb, SkYUVAInfo, SkYUVAInfo_Subsampling};
 use std::{fmt, ptr};
 
@@ -226,7 +226,11 @@ impl YUVAInfo {
     }
 
     pub fn origin_matrix(&self) -> Matrix {
-        self.origin().to_matrix((self.width(), self.height()))
+        self.origin().to_matrix(self.dimensions())
+    }
+
+    pub fn inverse_origin_matrix(&self) -> Matrix {
+        self.origin().to_matrix_inverse(self.dimensions())
     }
 
     pub fn has_alpha(&self) -> bool {

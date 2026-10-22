@@ -8,11 +8,11 @@ use lottie_core::{
 };
 use skia_safe::color_filters::Clamp;
 use skia_safe::{
-    canvas::SaveLayerRec, color_filters, gradient_shader, image_filters,
-    runtime_effect::RuntimeShaderBuilder, surfaces, BlendMode, Canvas, ClipOp, Color, Color4f,
-    ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix, Paint, PaintStyle,
-    Path, PathBuilder, PathEffect, PathFillType, PathOp, Point, Rect, RuntimeEffect, StrokeRec,
-    TextBlob, TileMode, M44,
+    canvas::SaveLayerRec, color_filters, gradient, image_filters,
+    runtime_effect::RuntimeShaderBuilder, shaders, surfaces, BlendMode, Canvas, ClipOp, Color,
+    Color4f, ColorChannel, Data, Font, FontMgr, FontStyle, Image as SkImage, Matrix, Paint,
+    PaintStyle, Path, PathBuilder, PathEffect, PathFillType, PathOp, Point, Rect, RuntimeEffect,
+    StrokeRec, TextBlob, TileMode, M44,
 };
 
 pub trait LottieContext: Send + Sync {
@@ -447,7 +447,9 @@ fn collect_content_path(content: &NodeContent) -> Path {
                     if let Some(res) = group_path.op(&child_path, PathOp::Union) {
                         group_path = res;
                     } else {
-                        group_path.add_path(&child_path, (0.0, 0.0), None);
+                        let mut builder = PathBuilder::new_path(&group_path);
+                        builder.add_path(&child_path, None);
+                        group_path = builder.detach();
                     }
                 }
             }
@@ -463,12 +465,12 @@ fn resolve_geometry(geometry: &ShapeGeometry) -> Path {
         ShapeGeometry::Path(p) => kurbo_to_skia_path(p),
         ShapeGeometry::Boolean { mode, shapes } => {
             if matches!(mode, MergeMode::Merge) {
-                let mut path = Path::new();
+                let mut builder = PathBuilder::new();
                 for shape in shapes {
                     let sub_path = resolve_geometry(shape);
-                    path.add_path(&sub_path, (0.0, 0.0), None);
+                    builder.add_path(&sub_path, None);
                 }
-                path
+                builder.detach()
             } else {
                 let mut path = Path::new();
                 for (i, shape) in shapes.iter().enumerate() {
@@ -507,7 +509,7 @@ fn resolve_mask_path(mask: &lottie_core::Mask) -> Path {
         let stroke_rec = StrokeRec::from_paint(&paint, PaintStyle::Stroke, 1.0);
         let mut builder = PathBuilder::new();
         if stroke_rec.apply_to_path(&mut builder, &path) {
-            let stroke_path = builder.detach(None);
+            let stroke_path = builder.detach();
             if let Some(res) = path.op(&stroke_path, PathOp::Union) {
                 path = res;
             }
@@ -547,7 +549,9 @@ fn apply_standard_masks(canvas: &Canvas, masks: &[lottie_core::Mask]) {
                 if let Some(result) = add_path.op(&path, PathOp::Union) {
                     add_path = result;
                 } else {
-                    add_path.add_path(&path, (0.0, 0.0), None);
+                    let mut builder = PathBuilder::new_path(&add_path);
+                    builder.add_path(&path, None);
+                    add_path = builder.detach();
                 }
             }
         }
@@ -680,35 +684,24 @@ fn setup_paint_shader(paint: &mut Paint, core_paint: &CorePaint) {
             paint.set_color4f(c, None);
         }
         CorePaint::Gradient(grad) => {
-            let colors: Vec<Color> = grad
+            let colors: Vec<Color4f> = grad
                 .stops
                 .iter()
-                .map(|s| glam_to_skia_color_legacy(s.color))
+                .map(|s| Color4f::from(glam_to_skia_color_legacy(s.color)))
                 .collect();
             let pos: Vec<f32> = grad.stops.iter().map(|s| sanitize(s.offset)).collect();
             let pt1 = Point::new(sanitize(grad.start.x), sanitize(grad.start.y));
             let pt2 = Point::new(sanitize(grad.end.x), sanitize(grad.end.y));
+            let gradient = gradient::Gradient::new(
+                gradient::Colors::new(&colors, Some(&pos), TileMode::Clamp, None),
+                gradient::Interpolation::default(),
+            );
 
             let shader = match grad.kind {
-                GradientKind::Linear => gradient_shader::linear(
-                    (pt1, pt2),
-                    colors.as_slice(),
-                    Some(pos.as_slice()),
-                    TileMode::Clamp,
-                    None,
-                    None,
-                ),
+                GradientKind::Linear => shaders::linear_gradient((pt1, pt2), &gradient, None),
                 GradientKind::Radial => {
                     let radius = Point::distance(pt1, pt2);
-                    gradient_shader::radial(
-                        pt1,
-                        radius,
-                        colors.as_slice(),
-                        Some(pos.as_slice()),
-                        TileMode::Clamp,
-                        None,
-                        None,
-                    )
+                    shaders::radial_gradient((pt1, radius), &gradient, None)
                 }
             };
             paint.set_shader(shader);
@@ -781,7 +774,7 @@ fn glam_to_skia_color_legacy(v: Vec4) -> Color {
 }
 
 fn kurbo_to_skia_path(bez_path: &BezPath) -> Path {
-    let mut path = Path::new();
+    let mut path = PathBuilder::new();
     for el in bez_path.elements() {
         match el {
             PathEl::MoveTo(p) => {
@@ -808,7 +801,7 @@ fn kurbo_to_skia_path(bez_path: &BezPath) -> Path {
             }
         }
     }
-    path
+    path.detach()
 }
 
 fn convert_blend_mode(mode: CoreBlendMode) -> BlendMode {
@@ -1408,10 +1401,9 @@ fn build_filter(effects: &[Effect]) -> Option<skia_safe::ImageFilter> {
 }
 
 fn collect_node_path(node: &RenderNode) -> Path {
-    let mut path = collect_content_path(&node.content);
+    let path = collect_content_path(&node.content);
     let matrix = glam_mat4_to_skia_matrix_2d(node.transform);
-    path.transform(&matrix);
-    path
+    path.with_transform(&matrix)
 }
 
 // Helper for Layer Styles

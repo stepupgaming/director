@@ -1,17 +1,18 @@
 use std::{fmt, os::raw::c_uint};
 
 use skia_bindings::{
-    GrD3DAlloc, GrD3DMemoryAllocator, GrD3DSurfaceInfo, GrD3DTextureResourceInfo, SkRefCntBase,
+    self as sb, GrD3DAlloc, GrD3DFenceInfo, GrD3DMemoryAllocator, GrD3DSurfaceInfo,
+    GrD3DTextureResourceInfo, SkRefCntBase,
 };
 use windows::Win32::Graphics::{
-    Direct3D12::{ID3D12Fence, D3D12_RESOURCE_STATE_COMMON},
+    Direct3D12::{D3D12_RESOURCE_STATE_COMMON, ID3D12Fence},
     Dxgi::Common::{DXGI_FORMAT_UNKNOWN, DXGI_STANDARD_MULTISAMPLE_QUALITY_PATTERN},
 };
 
 use crate::{
     gpu::{
         self,
-        d3d::{ID3D12Resource, D3D12_RESOURCE_STATES, DXGI_FORMAT},
+        d3d::{D3D12_RESOURCE_STATES, DXGI_FORMAT, ID3D12Resource},
     },
     prelude::*,
 };
@@ -58,7 +59,17 @@ pub struct TextureResourceInfo {
     pub sample_quality_pattern: std::os::raw::c_uint,
     pub protected: gpu::Protected,
 }
+
+native_transmutable!(GrD3DTextureResourceInfo, TextureResourceInfo);
 unsafe_send_sync!(TextureResourceInfo);
+
+impl PartialEq for TextureResourceInfo {
+    fn eq(&self, rhs: &Self) -> bool {
+        unsafe { sb::C_GrD3DTextureResourceInfo_Equals(self.native(), rhs.native()) }
+    }
+}
+
+impl Eq for TextureResourceInfo {}
 
 impl TextureResourceInfo {
     pub fn from_resource(resource: ID3D12Resource) -> Self {
@@ -89,8 +100,6 @@ impl From<ID3D12Resource> for TextureResourceInfo {
     }
 }
 
-native_transmutable!(GrD3DTextureResourceInfo, TextureResourceInfo);
-
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct FenceInfo {
@@ -99,6 +108,7 @@ pub struct FenceInfo {
 }
 
 unsafe_send_sync!(FenceInfo);
+native_transmutable!(GrD3DFenceInfo, FenceInfo);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(C)]

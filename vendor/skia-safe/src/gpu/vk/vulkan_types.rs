@@ -1,8 +1,37 @@
+use std::{ffi::CStr, os::raw};
+
 use skia_bindings::{
     self as sb, skgpu_VulkanAlloc, skgpu_VulkanBackendMemory, skgpu_VulkanYcbcrConversionInfo,
 };
 
 use crate::{gpu::vk, prelude::*};
+
+// TODO: Tried to use CStr here, but &CStr needs a lifetime parameter
+//       which would make the whole GetProc trait generic.
+#[derive(Copy, Clone, Debug)]
+pub enum GetProcOf {
+    Instance(vk::Instance, *const raw::c_char),
+    Device(vk::Device, *const raw::c_char),
+}
+
+impl GetProcOf {
+    /// # Safety
+    /// The referred raw `name` strings must outlive the returned CStr reference.
+    pub unsafe fn name(&self) -> &CStr {
+        match *self {
+            GetProcOf::Instance(_, name) => unsafe { CStr::from_ptr(name) },
+            GetProcOf::Device(_, name) => unsafe { CStr::from_ptr(name) },
+        }
+    }
+}
+
+// TODO: Really would like to see a fn() signature here, but I'm always running
+//       into a conflict between extern "C" and extern "system".
+pub type GetProcResult = *const raw::c_void;
+
+// GetProc is a trait alias for Fn...
+pub trait GetProc: Fn(GetProcOf) -> GetProcResult {}
+impl<T> GetProc for T where T: Fn(GetProcOf) -> GetProcResult {}
 
 #[deprecated(since = "0.76.0", note = "Use BackendMemory")]
 pub type GraphicsBackendMemory = skgpu_VulkanBackendMemory;
@@ -70,19 +99,21 @@ impl Alloc {
     }
 }
 
+// Robustness: All fields turned private in m144, so it's probably best to convert this to a Handle.
 #[derive(Copy, Clone, Eq, Debug)]
 #[repr(C)]
 pub struct YcbcrConversionInfo {
-    pub format: vk::Format,
-    pub external_format: u64,
-    pub ycbcr_model: vk::SamplerYcbcrModelConversion,
-    pub ycbcr_range: vk::SamplerYcbcrRange,
-    pub x_chroma_offset: vk::ChromaLocation,
-    pub y_chroma_offset: vk::ChromaLocation,
-    pub chroma_filter: vk::Filter,
-    pub force_explicit_reconstruction: vk::Bool32,
-    pub format_features: vk::FormatFeatureFlags,
-    pub components: vk::ComponentMapping,
+    format: vk::Format,
+    external_format: u64,
+    ycbcr_model: vk::SamplerYcbcrModelConversion,
+    ycbcr_range: vk::SamplerYcbcrRange,
+    x_chroma_offset: vk::ChromaLocation,
+    y_chroma_offset: vk::ChromaLocation,
+    chroma_filter: vk::Filter,
+    force_explicit_reconstruction: vk::Bool32,
+    components: vk::ComponentMapping,
+    sampler_filter_must_match_chroma_filter: bool,
+    supports_linear_filter: bool,
 }
 
 native_transmutable!(skgpu_VulkanYcbcrConversionInfo, YcbcrConversionInfo);
@@ -95,7 +126,7 @@ impl PartialEq for YcbcrConversionInfo {
 
 impl Default for YcbcrConversionInfo {
     fn default() -> Self {
-        YcbcrConversionInfo {
+        Self {
             format: vk::Format::UNDEFINED,
             external_format: 0,
             ycbcr_model: vk::SamplerYcbcrModelConversion::RGB_IDENTITY,
@@ -104,21 +135,21 @@ impl Default for YcbcrConversionInfo {
             y_chroma_offset: vk::ChromaLocation::COSITED_EVEN,
             chroma_filter: vk::Filter::NEAREST,
             force_explicit_reconstruction: 0,
-            format_features: 0,
             components: vk::ComponentMapping {
                 r: vk::ComponentSwizzle::VK_COMPONENT_SWIZZLE_IDENTITY,
                 g: vk::ComponentSwizzle::VK_COMPONENT_SWIZZLE_IDENTITY,
                 b: vk::ComponentSwizzle::VK_COMPONENT_SWIZZLE_IDENTITY,
                 a: vk::ComponentSwizzle::VK_COMPONENT_SWIZZLE_IDENTITY,
             },
+            sampler_filter_must_match_chroma_filter: true,
+            supports_linear_filter: false,
         }
     }
 }
 
 impl YcbcrConversionInfo {
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_format(
-        format: vk::Format,
+    pub fn new_with_external_format(
         external_format: u64,
         ycbcr_model: vk::SamplerYcbcrModelConversion,
         ycbcr_range: vk::SamplerYcbcrRange,
@@ -126,50 +157,102 @@ impl YcbcrConversionInfo {
         y_chroma_offset: vk::ChromaLocation,
         chroma_filter: vk::Filter,
         force_explicit_reconstruction: vk::Bool32,
-        format_features: vk::FormatFeatureFlags,
-    ) -> YcbcrConversionInfo {
-        debug_assert!(ycbcr_model != vk::SamplerYcbcrModelConversion::RGB_IDENTITY);
-        debug_assert!((format != vk::Format::UNDEFINED) ^ (external_format != 0));
-        YcbcrConversionInfo {
-            format,
-            external_format,
-            ycbcr_model,
-            ycbcr_range,
-            x_chroma_offset,
-            y_chroma_offset,
-            chroma_filter,
-            force_explicit_reconstruction,
-            format_features,
-            ..YcbcrConversionInfo::default()
-        }
+        components: vk::ComponentMapping,
+        external_format_features: vk::FormatFeatureFlags,
+    ) -> Self {
+        Self::construct(|ci| unsafe {
+            sb::C_VulkanYcbcrConversionInfo_Construct_ExternalFormat(
+                ci,
+                external_format,
+                ycbcr_model,
+                ycbcr_range,
+                x_chroma_offset,
+                y_chroma_offset,
+                chroma_filter,
+                force_explicit_reconstruction,
+                components,
+                external_format_features,
+            )
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new_with_format(
+        format: vk::Format,
         ycbcr_model: vk::SamplerYcbcrModelConversion,
         ycbcr_range: vk::SamplerYcbcrRange,
         x_chroma_offset: vk::ChromaLocation,
         y_chroma_offset: vk::ChromaLocation,
         chroma_filter: vk::Filter,
         force_explicit_reconstruction: vk::Bool32,
-        external_format: u64,
-        external_format_features: vk::FormatFeatureFlags,
-    ) -> YcbcrConversionInfo {
-        Self::new_with_format(
-            vk::Format::UNDEFINED,
-            external_format,
-            ycbcr_model,
-            ycbcr_range,
-            x_chroma_offset,
-            y_chroma_offset,
-            chroma_filter,
-            force_explicit_reconstruction,
-            external_format_features,
-        )
+        components: vk::ComponentMapping,
+        format_features: vk::FormatFeatureFlags,
+    ) -> Self {
+        Self::construct(|ci| unsafe {
+            sb::C_VulkanYcbcrConversionInfo_Construct_Format(
+                ci,
+                format,
+                ycbcr_model,
+                ycbcr_range,
+                x_chroma_offset,
+                y_chroma_offset,
+                chroma_filter,
+                force_explicit_reconstruction,
+                components,
+                format_features,
+            )
+        })
     }
-
     pub fn is_valid(&self) -> bool {
         self.ycbcr_model != vk::SamplerYcbcrModelConversion::RGB_IDENTITY
-            || self.external_format != 0
+            || self.has_external_format()
+    }
+
+    pub fn format(&self) -> vk::Format {
+        self.format
+    }
+
+    pub fn has_external_format(&self) -> bool {
+        self.external_format != 0
+    }
+
+    pub fn external_format(&self) -> u64 {
+        self.external_format
+    }
+
+    pub fn model(&self) -> vk::SamplerYcbcrModelConversion {
+        self.ycbcr_model
+    }
+
+    pub fn range(&self) -> vk::SamplerYcbcrRange {
+        self.ycbcr_range
+    }
+
+    pub fn x_chroma_offset(&self) -> vk::ChromaLocation {
+        self.x_chroma_offset
+    }
+
+    pub fn y_chroma_offset(&self) -> vk::ChromaLocation {
+        self.y_chroma_offset
+    }
+
+    pub fn chroma_filter(&self) -> vk::Filter {
+        self.chroma_filter
+    }
+
+    pub fn force_explicit_reconstruction(&self) -> vk::Bool32 {
+        self.force_explicit_reconstruction
+    }
+
+    pub fn components(&self) -> vk::ComponentMapping {
+        self.components
+    }
+
+    pub fn sampler_filter_must_match_chroma_filter(&self) -> bool {
+        self.sampler_filter_must_match_chroma_filter
+    }
+
+    pub fn supports_linear_filter(&self) -> bool {
+        self.supports_linear_filter
     }
 }

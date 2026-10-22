@@ -7,7 +7,7 @@ use lottie_core::{LottieAsset, LottiePlayer};
 use lottie_data::model::LottieJson;
 use lottie_skia::{LottieContext, SkiaRenderer};
 use skia_safe::{
-    surfaces, AlphaType, Canvas, Color, ColorType, Data, FontMgr, Image, ImageInfo, Paint, Rect,
+    surfaces, AlphaType, Canvas, Color, ColorType, FontMgr, Image, ImageInfo, Paint, Rect,
     SamplingOptions,
 };
 use std::any::Any;
@@ -43,8 +43,7 @@ impl LottieContext for LottieAssetManager {
 
         for path in candidates {
             if let Some(bytes) = self.load_bytes(&path) {
-                let data = Data::new_copy(&bytes);
-                return FontMgr::new().new_from_data(&data, 0);
+                return FontMgr::new().new_from_bytes(&bytes, 0);
             }
         }
         None

@@ -2,15 +2,18 @@ use std::{ops::Deref, ptr};
 
 use skia_bindings as sb;
 
-mod vulkan_backend_context;
+pub mod vulkan_backend_context;
+mod vulkan_backend_context_builder;
 mod vulkan_mutable_texture_state;
 mod vulkan_types;
 
+#[cfg(feature = "ganesh")]
 pub use super::ganesh::vk::vk_types::*;
 pub use vulkan_backend_context::*;
 pub use vulkan_mutable_texture_state::*;
 pub use vulkan_types::*;
 
+#[cfg(feature = "ganesh")]
 pub use crate::gpu::ganesh::vk::BackendDrawableInfo;
 
 //
@@ -45,6 +48,7 @@ pub use sb::VkRect2D as Rect2D;
 pub use sb::VkRenderPass as RenderPass;
 pub use sb::VkSamplerYcbcrModelConversion as SamplerYcbcrModelConversion;
 pub use sb::VkSamplerYcbcrRange as SamplerYcbcrRange;
+pub use sb::VkSemaphore as Semaphore;
 pub use sb::VkSharingMode as SharingMode;
 
 pub const QUEUE_FAMILY_IGNORED: u32 = !0;

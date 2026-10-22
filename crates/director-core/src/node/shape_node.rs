@@ -3,7 +3,9 @@ use crate::element::Element;
 use crate::errors::RenderError;
 use crate::node::parse_easing;
 use crate::types::{Color, GradientConfig};
-use skia_safe::{Canvas, Paint, PaintStyle, Path, Point, Rect, TileMode};
+use skia_safe::{
+    gradient, shaders, Canvas, Paint, PaintStyle, Path, PathBuilder, Point, Rect, TileMode,
+};
 use std::any::Any;
 use taffy::geometry::Size;
 use taffy::style::{AvailableSpace, Style};
@@ -73,7 +75,7 @@ impl ShapeNode {
 
     /// Build a Skia Path from the shape definition, offset into the layout rect.
     fn build_skia_path(&self, rect: &Rect) -> Path {
-        let mut path = Path::new();
+        let mut path = PathBuilder::new();
         match &self.shape {
             ShapeType::Circle { cx, cy, r } => {
                 let center = Point::new(rect.left + cx, rect.top + cy);
@@ -81,7 +83,7 @@ impl ShapeNode {
             }
             ShapeType::Ellipse { cx, cy, rx, ry } => {
                 let oval = Rect::from_xywh(rect.left + cx - rx, rect.top + cy - ry, rx * 2.0, ry * 2.0);
-                path.add_oval(oval, Some((skia_safe::PathDirection::CW, 1)));
+                path.add_oval(oval, skia_safe::PathDirection::CW, 1);
             }
             ShapeType::Path { commands } => {
                 for cmd in commands {
@@ -140,7 +142,7 @@ impl ShapeNode {
                 }
             }
         }
-        path
+        path.detach()
     }
 
     /// Configure a paint for filling the shape.
@@ -149,8 +151,8 @@ impl ShapeNode {
         paint.set_style(PaintStyle::Fill);
 
         if let Some(gradient) = &self.fill_gradient {
-            let skia_colors: Vec<skia_safe::Color> =
-                gradient.colors.iter().map(|c| c.to_skia()).collect();
+            let skia_colors: Vec<skia_safe::Color4f> =
+                gradient.colors.iter().map(|c| c.to_skia().into()).collect();
             let start = Point::new(
                 rect.left + gradient.start.0 * rect.width(),
                 rect.top + gradient.start.1 * rect.height(),
@@ -159,14 +161,16 @@ impl ShapeNode {
                 rect.left + gradient.end.0 * rect.width(),
                 rect.top + gradient.end.1 * rect.height(),
             );
-            if let Some(shader) = skia_safe::gradient_shader::linear(
-                (start, end),
-                skia_colors.as_slice(),
-                gradient.positions.as_deref(),
-                TileMode::Clamp,
-                None,
-                None,
-            ) {
+            let ramp = gradient::Gradient::new(
+                gradient::Colors::new(
+                    &skia_colors,
+                    gradient.positions.as_deref(),
+                    TileMode::Clamp,
+                    None,
+                ),
+                gradient::Interpolation::default(),
+            );
+            if let Some(shader) = shaders::linear_gradient((start, end), &ramp, None) {
                 paint.set_shader(shader);
             }
         } else if let Some(fill) = &self.fill_color {

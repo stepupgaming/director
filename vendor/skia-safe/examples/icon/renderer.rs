@@ -4,7 +4,7 @@
 #![allow(unknown_lints)]
 #![allow(clippy::unusual_byte_groupings)]
 use skia_safe::{
-    gradient_shader, Color, Matrix, Paint, PaintJoin, PaintStyle, Path, Point, TileMode,
+    Color, Color4f, Matrix, Paint, PaintJoin, PaintStyle, PathBuilder, Point, TileMode, gradient,
 };
 use std::cmp::min;
 
@@ -145,7 +145,7 @@ fn chain_ring(
     let teeth_bottom_gap = 0.2 * delta;
 
     let mut alpha = PI / 2.0;
-    let mut path = Path::new();
+    let mut path = PathBuilder::new();
     for i in 0..teeth_count {
         let mut a = alpha - delta / 2.0 + teeth_bottom_gap / 2.0;
         let v = point_in_circle(c, outer_radius - teeth_length, a);
@@ -222,25 +222,34 @@ fn chain_ring(
 
     paint.set_style(PaintStyle::Fill);
     // Rust shade, from steel gray to rust color:
-    paint.set_shader(gradient_shader::radial(
-        (0.0, 0.04 * ridge_radius),
-        ridge_radius,
-        [Color::from(0xff_555555), Color::from(0xff_7b492d)].as_ref(),
-        [0.8, 1.0].as_ref(),
+    let gradient_colors: [Color4f; 2] = [
+        Color::from(0xff_555555).into(),
+        Color::from(0xff_7b492d).into(),
+    ];
+    let gradient_positions = [0.8, 1.0];
+    let gradient_colors = gradient::Colors::new(
+        &gradient_colors,
+        Some(&gradient_positions),
         TileMode::Clamp,
         None,
+    );
+    let ring_gradient =
+        gradient::Gradient::new(gradient_colors, gradient::Interpolation::default());
+    paint.set_shader(gradient::shaders::radial_gradient(
+        ((0.0, 0.04 * ridge_radius), ridge_radius),
+        &ring_gradient,
         None,
     ));
-    canvas.draw_path(&path, &paint);
+    canvas.draw_path(&path.snapshot(), &paint);
     paint.set_shader(None); // Remove gradient.
     paint.set_style(PaintStyle::Stroke);
     paint.set_color(0xff_592e1f);
-    canvas.draw_path(&path, &paint);
+    canvas.draw_path(&path.detach(), &paint);
 
     canvas.restore();
 
     // Ridge around the chain ring, under the gear teeth:
-    gradient(
+    apply_gradient(
         &mut paint,
         (0.0, -ridge_radius),
         (2.0 * ridge_radius, 2.0 * ridge_radius),
@@ -268,7 +277,7 @@ fn triangle(
     let side = r / ((PI - delta) / 2.0).cos() * 2.0;
 
     let mut alpha = degrees * DEGREES_IN_RADIANS;
-    let mut path = Path::new();
+    let mut path = PathBuilder::new();
     let mut paint = Paint::default();
     match vertex {
         Some(index) => {
@@ -291,7 +300,7 @@ fn triangle(
                 }
                 i => panic!("Invalid vertex index {i} for triangle."),
             };
-            gradient(&mut paint, center, radii, (color, Color::from(0x00_0000ff)))
+            apply_gradient(&mut paint, center, radii, (color, Color::from(0x00_0000ff)))
         }
         None => {
             paint.set_anti_alias(true);
@@ -301,13 +310,14 @@ fn triangle(
             paint.set_style(PaintStyle::Stroke);
             paint.set_stroke_join(PaintJoin::Bevel);
             // Highlight reflection on the top triangle edge:
-            paint.set_shader(gradient_shader::radial(
-                (c.0, c.1 - 0.5 * r),
-                0.5 * r,
-                [Color::from(0xff_ffffff), color].as_ref(),
-                None,
-                TileMode::Clamp,
-                None,
+            let gradient_colors: [Color4f; 2] = [Color::from(0xff_ffffff).into(), color.into()];
+            let gradient_colors =
+                gradient::Colors::new_evenly_spaced(&gradient_colors, TileMode::Clamp, None);
+            let highlight_gradient =
+                gradient::Gradient::new(gradient_colors, gradient::Interpolation::default());
+            paint.set_shader(gradient::shaders::radial_gradient(
+                ((c.0, c.1 - 0.5 * r), 0.5 * r),
+                &highlight_gradient,
                 None,
             ));
         }
@@ -328,20 +338,26 @@ fn triangle(
         alpha += delta;
     }
     path.close();
-    canvas.draw_path(&path, &paint);
+    canvas.draw_path(&path.detach(), &paint);
 }
 
-fn gradient(paint: &mut Paint, center: (f32, f32), radii: (f32, f32), colors: (Color, Color)) {
+fn apply_gradient(
+    paint: &mut Paint,
+    center: (f32, f32),
+    radii: (f32, f32),
+    colors: (Color, Color),
+) {
     let mut matrix = Matrix::scale((1.0, radii.1 / radii.0));
     matrix.post_translate((center.0, center.1));
     #[allow(clippy::tuple_array_conversions)]
-    paint.set_shader(gradient_shader::radial(
-        (0.0, 0.0),
-        radii.0,
-        [colors.0, colors.1].as_ref(),
-        None,
-        TileMode::Clamp,
-        None,
+    let gradient_colors: [Color4f; 2] = [colors.0.into(), colors.1.into()];
+    let gradient_colors =
+        gradient::Colors::new_evenly_spaced(&gradient_colors, TileMode::Clamp, None);
+    let shader_gradient =
+        gradient::Gradient::new(gradient_colors, gradient::Interpolation::default());
+    paint.set_shader(gradient::shaders::radial_gradient(
+        ((0.0, 0.0), radii.0),
+        &shader_gradient,
         &matrix,
     ));
 }

@@ -18,6 +18,7 @@ pub mod color_filter;
 mod color_space;
 mod color_table;
 mod color_type;
+mod context;
 pub mod contour_measure;
 mod coverage_mode;
 mod cpu_recorder;
@@ -30,7 +31,7 @@ mod flattenable;
 pub mod font;
 pub mod font_arguments;
 pub mod font_metrics;
-mod font_mgr;
+pub mod font_mgr;
 pub mod font_parameters;
 mod font_scanner;
 pub mod font_style;
@@ -48,7 +49,7 @@ mod mesh;
 mod milestone;
 pub mod paint;
 pub mod path;
-mod path_builder;
+pub mod path_builder;
 pub mod path_effect;
 mod path_iter;
 pub mod path_measure;
@@ -70,6 +71,7 @@ pub mod sampling_options;
 mod scalar_;
 pub mod shader;
 mod size;
+mod strike_ref;
 pub mod stroke_rec;
 pub mod surface;
 mod surface_props;
@@ -97,10 +99,11 @@ pub use blur_types::*;
 pub use canvas::{AutoCanvasRestore, Canvas, OwnedCanvas};
 pub use clip_op::*;
 pub use color::*;
-pub use color_filter::{color_filters, ColorFilter};
+pub use color_filter::{ColorFilter, color_filters};
 pub use color_space::*;
 pub use color_table::*;
 pub use color_type::*;
+pub use context::{Context, ContextOptions};
 pub use contour_measure::{ContourMeasure, ContourMeasureIter};
 pub use coverage_mode::*;
 pub use cubic_map::*;
@@ -112,11 +115,11 @@ pub use flattenable::*;
 pub use font::Font;
 pub use font_arguments::FontArguments;
 pub use font_metrics::FontMetrics;
-pub use font_mgr::*;
+pub use font_mgr::{FontMgr, FontStyleSet};
 pub use font_style::FontStyle;
 pub use font_types::*;
 pub use four_byte_tag::*;
-pub use image::{images, Image};
+pub use image::{Image, images};
 pub use image_filter::ImageFilter;
 pub use image_generator::*;
 pub use image_info::*;
@@ -158,12 +161,14 @@ pub use sampling_options::{
 pub use scalar_::*;
 pub use shader::Shader;
 pub use size::*;
+pub use strike_ref::StrikeRef;
 pub use stroke_rec::StrokeRec;
-pub use surface::{surfaces, Surface};
+pub use surface::{Surface, surfaces};
 pub use surface_props::*;
 pub use swizzle::*;
 pub use text_blob::*;
 pub use texture_compression_type::*;
+#[allow(unused)]
 pub use time::*;
 #[allow(unused)]
 pub use trace_memory_dump::*;
@@ -173,7 +178,7 @@ pub use types::*;
 pub use un_pre_multiply::*;
 pub use vertices::Vertices;
 pub use yuva_info::YUVAInfo;
-pub use yuva_pixmaps::{yuva_pixmap_info, YUVAPixmapInfo, YUVAPixmaps};
+pub use yuva_pixmaps::{YUVAPixmapInfo, YUVAPixmaps, yuva_pixmap_info};
 //
 // Skia specific traits used for overloading functions.
 //
@@ -188,7 +193,7 @@ pub trait QuickReject<T> {
 
 pub mod shaders {
     pub use super::shader::shaders::*;
-    use crate::{prelude::*, scalar, ISize, Shader};
+    use crate::{ISize, Shader, prelude::*, scalar};
     use skia_bindings as sb;
 
     impl Shader {

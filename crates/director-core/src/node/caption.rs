@@ -2131,7 +2131,7 @@ mod tests {
     use super::*;
     use crate::{AssetLoader, DefaultAssetLoader};
     use skia_safe::textlayout::TypefaceFontProvider;
-    use skia_safe::{Data, FontMgr};
+    use skia_safe::FontMgr;
 
     fn test_font_collection() -> Arc<Mutex<FontCollection>> {
         let loader = DefaultAssetLoader;
@@ -2143,8 +2143,7 @@ mod tests {
             ("fonts/Poppins-Bold.ttf", &["Poppins"][..]),
         ] {
             if let Ok(bytes) = loader.load_bytes(file) {
-                let data = Data::new_copy(&bytes);
-                if let Some(tf) = FontMgr::new().new_from_data(&data, 0) {
+                if let Some(tf) = FontMgr::new().new_from_bytes(&bytes, 0) {
                     for alias in aliases {
                         font_provider.register_typeface(tf.clone(), Some(*alias));
                     }

@@ -23,7 +23,9 @@ pub use skia_bindings::skgpu_Mipmapped as Mipmapped;
 pub use skia_bindings::skgpu_Protected as Protected;
 variant_name!(Protected::Yes);
 
+#[cfg(feature = "ganesh")]
 pub use skia_bindings::skgpu_Renderable as Renderable;
+#[cfg(feature = "ganesh")]
 variant_name!(Renderable::No);
 
 pub use skia_bindings::skgpu_Origin as Origin;
@@ -34,6 +36,7 @@ bitflags! {
     pub struct GpuStatsFlags : u32 {
         const NONE = sb::skgpu_GpuStatsFlags_kNone as _;
         const ELAPSED_TIME = sb::skgpu_GpuStatsFlags_kElapsedTime as _;
+        const OCCLUSION_PASS_SAMPLES = sb::skgpu_GpuStatsFlags_kOcclusionPassSamples as _;
     }
 }
 
@@ -41,6 +44,7 @@ bitflags! {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct GpuStats {
     pub elapsed_time: u64,
+    pub num_occlusion_pass_samples: u64,
 }
 
 native_transmutable!(skgpu_GpuStats, GpuStats);

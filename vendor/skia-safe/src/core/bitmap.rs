@@ -3,8 +3,8 @@ use std::{ffi, fmt, ptr};
 use skia_bindings::{self as sb, SkBitmap};
 
 use crate::{
-    prelude::*, AlphaType, Color, Color4f, ColorSpace, ColorType, IPoint, IRect, ISize, Image,
-    ImageInfo, Matrix, Paint, PixelRef, Pixmap, SamplingOptions, Shader, TileMode,
+    AlphaType, Color, Color4f, ColorSpace, ColorType, IPoint, IRect, ISize, Image, ImageInfo,
+    Matrix, Paint, PixelRef, Pixmap, SamplingOptions, Shader, TileMode, prelude::*,
 };
 
 /// [`Bitmap`] describes a two-dimensional raster pixel array. [`Bitmap`] is built on [`ImageInfo`],
@@ -139,7 +139,7 @@ impl Bitmap {
     /// Does not check if [`PixelRef`] is `None`; call `draws_nothing()` to check `width()`,
     /// `height()`, and [`PixelRef`].
     pub fn is_empty(&self) -> bool {
-        self.info().is_empty()
+        self.pixmap().is_empty()
     }
 
     /// Returns `true` if [`PixelRef`] is `None`.
@@ -448,8 +448,10 @@ impl Bitmap {
         pixels: *mut ffi::c_void,
         row_bytes: usize,
     ) -> bool {
-        self.native_mut()
-            .installPixels(info.native(), pixels, row_bytes, None, ptr::null_mut())
+        unsafe {
+            self.native_mut()
+                .installPixels(info.native(), pixels, row_bytes, None, ptr::null_mut())
+        }
     }
 
     // TODO: wrap installPixels with SkPixmap&
@@ -545,9 +547,9 @@ impl Bitmap {
     }
 
     /// Replaces pixel values with `c`, interpreted as being in the sRGB [`ColorSpace`]. All pixels
-    /// contained by [`bounds(&self)`] are affected. If the [`color_type(&self)`] is
+    /// contained by [`Self::bounds()`] are affected. If the [`Self::color_type()`] is
     /// [`ColorType::Gray8`] or [`ColorType::RGB565`], then alpha is ignored; RGB is treated as
-    /// opaque. If [`color_type(&self)`] is [`ColorType::Alpha8`], then RGB is ignored.
+    /// opaque. If [`Self::color_type()`] is [`ColorType::Alpha8`], then RGB is ignored.
     ///
     /// Input color is ultimately converted to an [`Color4f`], so [`Self::erase_color_4f`] will have
     /// higher color resolution.
@@ -556,17 +558,17 @@ impl Bitmap {
     }
 
     /// Replaces pixel values with `c`, interpreted as being in the sRGB [`ColorSpace`]. All pixels
-    /// contained by [`bounds(&self)`] are affected. If the [`color_type(&self)`] is
+    /// contained by [`Self::bounds()`] are affected. If the [`Self::color_type()`] is
     /// [`ColorType::Gray8`] or [ColorType::RGB565], then alpha is ignored; RGB is treated as
-    /// opaque. If [`color_type(&self)`] is [`ColorType::Alpha8`], then RGB is ignored.
+    /// opaque. If [`Self::color_type()`] is [`ColorType::Alpha8`], then RGB is ignored.
     pub fn erase_color_4f(&self, c: impl AsRef<Color4f>) {
         unsafe { self.native().eraseColor(c.as_ref().into_native()) }
     }
 
     /// Replaces pixel values with unpremultiplied color built from `a`, `r`, `g`, and `b`,
-    /// interpreted as being in the sRGB [`ColorSpace`]. All pixels contained by [`bounds(&self)`]
-    /// are affected. If the [`color_type(&self)`] is [`ColorType::Gray8`] or [`ColorType::RGB565`],
-    /// then `a` is ignored; `r`, `g`, and `b` are treated as opaque. If [`color_type(&self)`] is
+    /// interpreted as being in the sRGB [`ColorSpace`]. All pixels contained by [`Self::bounds()`]
+    /// are affected. If the [`Self::color_type()`] is [`ColorType::Gray8`] or [`ColorType::RGB565`],
+    /// then `a` is ignored; `r`, `g`, and `b` are treated as opaque. If [`Self::color_type()`] is
     /// [`ColorType::Alpha8`], then `r`, `g`, and `b` are ignored.
     pub fn erase_argb(&self, a: u8, r: u8, g: u8, b: u8) {
         unsafe { sb::C_SkBitmap_eraseARGB(self.native(), a.into(), r.into(), g.into(), b.into()) }
@@ -699,8 +701,10 @@ impl Bitmap {
         src_x: i32,
         src_y: i32,
     ) -> bool {
-        self.native()
-            .readPixels(dst_info.native(), dst_pixels, dst_row_bytes, src_x, src_y)
+        unsafe {
+            self.native()
+                .readPixels(dst_info.native(), dst_pixels, dst_row_bytes, src_x, src_y)
+        }
     }
 
     // TODO: read_pixels(Pixmap)
@@ -727,7 +731,7 @@ impl Bitmap {
     }
 
     /// Copies [`Bitmap`] pixel address, row bytes, and [`ImageInfo`] to pixmap, if address is
-    /// available, and returns [`Some(Pixmap)`]. If pixel address is not available, return `None`
+    /// available, and returns `Some(Pixmap)`. If pixel address is not available, return `None`
     /// and leave pixmap unchanged.
     ///
     /// example: <https://fiddle.skia.org/c/@Bitmap_peekPixels>

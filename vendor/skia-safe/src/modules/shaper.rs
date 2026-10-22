@@ -11,9 +11,10 @@ use skia_bindings::{
     SkShaper_ScriptRunIterator, SkTextBlobBuilderRunHandler,
 };
 
-use crate::{prelude::*, scalar, Font, FontMgr, FourByteTag, Point, TextBlob};
+use crate::{Font, FontMgr, FourByteTag, Point, TextBlob, prelude::*, scalar};
 
 // The following three are re-exported in `modules.rs` via `mod shapers {}`.
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "visionos"))]
 pub(crate) mod core_text;
 pub(crate) mod harfbuzz;
 pub(crate) mod unicode;
@@ -71,11 +72,12 @@ impl Shaper {
         unsafe { sb::SkShaper_PurgeHarfBuzzCache() }
     }
 
-    pub fn new_core_text() -> Option<Self> {
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "visionos"))]
+    pub fn new_core_text(line_break_mode: crate::shapers::ct::LineBreakMode) -> Self {
         #[cfg(feature = "embed-icudtl")]
         crate::icu::init();
 
-        Self::from_ptr(unsafe { sb::C_SkShaper_MakeCoreText() })
+        Self::from_ptr(unsafe { sb::C_SkShaper_MakeCoreText(line_break_mode) }).unwrap()
     }
 
     pub fn new(font_mgr: impl Into<Option<FontMgr>>) -> Self {
@@ -333,13 +335,11 @@ impl Shaper {
 }
 
 pub mod run_handler {
-    use crate::prelude::*;
-    use crate::{Font, GlyphId, Point, Vector};
-    use skia_bindings::{
-        SkShaper_RunHandler_Buffer, SkShaper_RunHandler_Range, SkShaper_RunHandler_RunInfo,
-    };
-    use std::ops::Range;
-    use std::slice;
+    use std::{ffi::CStr, ops::Range, slice};
+
+    use skia_bindings::{SkShaper_RunHandler_Buffer, SkShaper_RunHandler_RunInfo};
+
+    use crate::{Font, FourByteTag, GlyphId, Point, Vector, prelude::*};
 
     pub trait RunHandler {
         fn begin_line(&mut self);
@@ -354,6 +354,8 @@ pub mod run_handler {
     pub struct RunInfo<'a> {
         pub font: &'a Font,
         pub bidi_level: u8,
+        pub script: FourByteTag,
+        pub language: Option<&'a str>,
         pub advance: Vector,
         pub glyph_count: usize,
         pub utf8_range: Range<usize>,
@@ -361,28 +363,21 @@ pub mod run_handler {
 
     impl RunInfo<'_> {
         pub(crate) fn from_native(ri: &SkShaper_RunHandler_RunInfo) -> Self {
-            // TODO: should we avoid that copy and wrap RunInfo with functions?
             let utf8_range = ri.utf8Range;
             RunInfo {
                 font: Font::from_native_ref(unsafe { &*ri.fFont }),
                 bidi_level: ri.fBidiLevel,
+                script: ri.fScript.into(),
+                language: unsafe {
+                    if ri.fLanguage.is_null() {
+                        None
+                    } else {
+                        CStr::from_ptr(ri.fLanguage).to_str().ok()
+                    }
+                },
                 advance: Vector::from_native_c(ri.fAdvance),
                 glyph_count: ri.glyphCount,
                 utf8_range: utf8_range.fBegin..utf8_range.fBegin + utf8_range.fSize,
-            }
-        }
-
-        #[allow(unused)]
-        pub(crate) fn to_native(&self) -> SkShaper_RunHandler_RunInfo {
-            SkShaper_RunHandler_RunInfo {
-                fFont: self.font.native(),
-                fBidiLevel: self.bidi_level,
-                fAdvance: self.advance.into_native(),
-                glyphCount: self.glyph_count,
-                utf8Range: SkShaper_RunHandler_Range {
-                    fBegin: self.utf8_range.start,
-                    fSize: self.utf8_range.end - self.utf8_range.start,
-                },
             }
         }
     }
@@ -416,21 +411,22 @@ pub mod run_handler {
             buffer: &SkShaper_RunHandler_Buffer,
             glyph_count: usize,
         ) -> Buffer {
-            let offsets = buffer.offsets.into_non_null().map(|mut offsets| {
+            let offsets = buffer.offsets.into_non_null().map(|mut offsets| unsafe {
                 slice::from_raw_parts_mut(Point::from_native_ref_mut(offsets.as_mut()), glyph_count)
             });
 
-            let clusters = buffer
-                .clusters
-                .into_non_null()
-                .map(|clusters| slice::from_raw_parts_mut(clusters.as_ptr(), glyph_count));
+            let clusters = buffer.clusters.into_non_null().map(|clusters| unsafe {
+                slice::from_raw_parts_mut(clusters.as_ptr(), glyph_count)
+            });
 
             Buffer {
-                glyphs: safer::from_raw_parts_mut(buffer.glyphs, glyph_count),
-                positions: safer::from_raw_parts_mut(
-                    Point::from_native_ptr_mut(buffer.positions),
-                    glyph_count,
-                ),
+                glyphs: unsafe { safer::from_raw_parts_mut(buffer.glyphs, glyph_count) },
+                positions: unsafe {
+                    safer::from_raw_parts_mut(
+                        Point::from_native_ptr_mut(buffer.positions),
+                        glyph_count,
+                    )
+                },
                 offsets,
                 clusters,
                 point: Point::from_native_c(buffer.point),
@@ -582,7 +578,7 @@ mod rust_run_handler {
 
     use crate::{
         prelude::*,
-        shaper::{run_handler::RunInfo, AsNativeRunHandler, RunHandler},
+        shaper::{AsNativeRunHandler, RunHandler, run_handler::RunInfo},
     };
 
     impl NativeBase<SkShaper_RunHandler> for RustRunHandler {}
@@ -595,7 +591,7 @@ mod rust_run_handler {
 
     pub unsafe fn new_param(run_handler: &mut dyn RunHandler) -> RustRunHandler_Param {
         RustRunHandler_Param {
-            trait_: mem::transmute::<&mut dyn RunHandler, TraitObject>(run_handler),
+            trait_: unsafe { mem::transmute::<&mut dyn RunHandler, TraitObject>(run_handler) },
             beginLine: Some(begin_line),
             runInfo: Some(run_info),
             commitRunInfo: Some(commit_run_info),

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::{prelude::*, yuva_pixmap_info, Data, ImageInfo, Recorder, YUVAPixmapInfo};
+use crate::{Data, ImageInfo, Recorder, YUVAPixmapInfo, prelude::*, yuva_pixmap_info};
 use skia_bindings::{self as sb, SkImageGenerator};
 
 pub type ImageGenerator = RefHandle<SkImageGenerator>;
@@ -27,7 +27,7 @@ impl ImageGenerator {
     }
 
     pub fn encoded_data(&mut self) -> Option<Data> {
-        Data::from_ptr(unsafe { sb::C_SkImageGenerator_refEncodedData(self.native_mut()) })
+        Data::from_ptr_const(unsafe { sb::C_SkImageGenerator_refEncodedData(self.native_mut()) })
     }
 
     pub fn info(&self) -> &ImageInfo {

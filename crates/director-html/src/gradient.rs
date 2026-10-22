@@ -252,6 +252,22 @@ fn expand_hints(
     Ok((colors, offsets))
 }
 
+/// Widens the 8-bit sRGB ramp colors for Skia's float gradient API.
+fn color4f(colors: &[skia_safe::Color]) -> Vec<skia_safe::Color4f> {
+    colors.iter().map(|&c| c.into()).collect()
+}
+
+fn ramp_gradient<'a>(
+    colors: &'a [skia_safe::Color4f],
+    stops: &'a [f32],
+    tile: TileMode,
+) -> skia_safe::gradient::Gradient<'a> {
+    skia_safe::gradient::Gradient::new(
+        skia_safe::gradient::Colors::new(colors, Some(stops), tile, None),
+        skia_safe::gradient::Interpolation::default(),
+    )
+}
+
 impl NativeGradient {
     pub fn parse(s: &str, m: Metrics, current: Color) -> Result<Self, String> {
         let gradient = Gradient::parse_string(s).map_err(|e| format!("gradient: {e:?}"))?;
@@ -473,12 +489,10 @@ impl NativeGradient {
                 let start = (center.x - dx * extent / 2.0, center.y - dy * extent / 2.0);
                 let end = (center.x + dx * extent / 2.0, center.y + dy * extent / 2.0);
                 let (colors, stops) = self.ramp(extent)?;
-                skia_safe::gradient_shader::linear(
+                let colors = color4f(&colors);
+                skia_safe::shaders::linear_gradient(
                     (start, end),
-                    colors.as_slice(),
-                    stops.as_slice(),
-                    tile,
-                    None,
+                    &ramp_gradient(&colors, &stops, tile),
                     None,
                 )
             }
@@ -548,13 +562,10 @@ impl NativeGradient {
                     1.0,
                 );
                 let (colors, stops) = self.ramp(rx)?;
-                skia_safe::gradient_shader::radial(
-                    (0.0, 0.0),
-                    1.0,
-                    colors.as_slice(),
-                    stops.as_slice(),
-                    tile,
-                    None,
+                let colors = color4f(&colors);
+                skia_safe::shaders::radial_gradient(
+                    ((0.0, 0.0), 1.0),
+                    &ramp_gradient(&colors, &stops, tile),
                     Some(&matrix),
                 )
             }
@@ -566,13 +577,11 @@ impl NativeGradient {
                 let mut matrix = Matrix::new_identity();
                 matrix.set_rotate(*angle - 90.0, Some(c.into()));
                 let (colors, stops) = self.ramp(1.0)?;
-                skia_safe::gradient_shader::sweep(
+                let colors = color4f(&colors);
+                skia_safe::shaders::sweep_gradient(
                     c,
-                    colors.as_slice(),
-                    stops.as_slice(),
-                    tile,
-                    Some((0.0, 360.0)),
-                    None,
+                    (0.0, 360.0),
+                    &ramp_gradient(&colors, &stops, tile),
                     Some(&matrix),
                 )
             }

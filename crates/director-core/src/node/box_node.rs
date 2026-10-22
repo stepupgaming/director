@@ -4,7 +4,9 @@ use crate::element::Element;
 use crate::errors::RenderError;
 use crate::node::{build_effect_filter, EffectType};
 use crate::types::{Color, GradientConfig, GradientType};
-use skia_safe::{Canvas, ClipOp, Paint, PaintStyle, Point, RRect, Rect, TileMode};
+use skia_safe::{
+    gradient, shaders, Canvas, ClipOp, Paint, PaintStyle, Point, RRect, Rect, TileMode,
+};
 use std::any::Any;
 use taffy::style::{AlignItems, FlexDirection, JustifyContent, Style};
 
@@ -155,7 +157,7 @@ impl Element for BoxNode {
         // Clip-path polygon: clip to a custom shape defined by normalized points
         if let Some(points) = &self.clip_path {
             if points.len() >= 3 {
-                let mut path = skia_safe::Path::new();
+                let mut path = skia_safe::PathBuilder::new();
                 let first = points[0];
                 path.move_to(skia_safe::Point::new(
                     rect.left + first.0 * rect.width(),
@@ -168,7 +170,7 @@ impl Element for BoxNode {
                     ));
                 }
                 path.close();
-                canvas.clip_path(&path, ClipOp::Intersect, true);
+                canvas.clip_path(&path.detach(), ClipOp::Intersect, true);
             }
         }
 
@@ -229,8 +231,17 @@ impl Element for BoxNode {
         }
 
         if let Some(gradient) = &self.bg_gradient {
-            let skia_colors: Vec<skia_safe::Color> =
-                gradient.colors.iter().map(|c| c.to_skia()).collect();
+            let skia_colors: Vec<skia_safe::Color4f> =
+                gradient.colors.iter().map(|c| c.to_skia().into()).collect();
+            let ramp = gradient::Gradient::new(
+                gradient::Colors::new(
+                    &skia_colors,
+                    gradient.positions.as_deref(),
+                    TileMode::Clamp,
+                    None,
+                ),
+                gradient::Interpolation::default(),
+            );
 
             let shader_opt = match gradient.gradient_type {
                 GradientType::Linear => {
@@ -242,14 +253,7 @@ impl Element for BoxNode {
                         rect.left + gradient.end.0 * rect.width(),
                         rect.top + gradient.end.1 * rect.height(),
                     );
-                    skia_safe::gradient_shader::linear(
-                        (start, end),
-                        skia_colors.as_slice(),
-                        gradient.positions.as_deref(),
-                        TileMode::Clamp,
-                        None,
-                        None,
-                    )
+                    shaders::linear_gradient((start, end), &ramp, None)
                 }
                 GradientType::Radial => {
                     let center = Point::new(
@@ -259,28 +263,17 @@ impl Element for BoxNode {
                     // Radius relative to the shorter dimension
                     let min_dim = rect.width().min(rect.height());
                     let radius = gradient.radius * min_dim;
-                    skia_safe::gradient_shader::radial(
-                        center,
-                        radius.max(1.0),
-                        skia_colors.as_slice(),
-                        gradient.positions.as_deref(),
-                        TileMode::Clamp,
-                        None,
-                        None,
-                    )
+                    shaders::radial_gradient((center, radius.max(1.0)), &ramp, None)
                 }
                 GradientType::Conic => {
                     let center = Point::new(
                         rect.left + gradient.center.0 * rect.width(),
                         rect.top + gradient.center.1 * rect.height(),
                     );
-                    skia_safe::gradient_shader::sweep(
+                    shaders::sweep_gradient(
                         center,
-                        skia_colors.as_slice(),
-                        gradient.positions.as_deref(),
-                        TileMode::Clamp,
-                        Some((gradient.angle, gradient.angle + 360.0)),
-                        None,
+                        (gradient.angle, gradient.angle + 360.0),
+                        &ramp,
                         None,
                     )
                 }

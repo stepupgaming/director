@@ -158,13 +158,15 @@ pub fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
     let get_proc = Box::leak(Box::new(get_proc_impl));
 
     let backend_context = unsafe {
-        BackendContext::new(
+        BackendContext::new_builder(
             instance.handle().as_raw() as sk_vk::Instance,
             physical_device.as_raw() as sk_vk::PhysicalDevice,
             device.handle().as_raw() as sk_vk::Device,
             (queue.as_raw() as sk_vk::Queue, queue_family_index as usize),
             &*get_proc,
+            None,
         )
+        .build()
     };
 
     let context = direct_contexts::make_vulkan(&backend_context, None)?;
@@ -276,7 +278,8 @@ mod tests {
         ] {
             surface.canvas().clear(color);
             read_pixels(&mut surface, &mut context, &mut pixels).unwrap();
-            assert!(pixels.chunks_exact(4).all(|pixel| pixel == expected));
+            let (texels, _) = pixels.as_chunks::<4>();
+            assert!(texels.iter().all(|pixel| *pixel == expected));
         }
     }
 }

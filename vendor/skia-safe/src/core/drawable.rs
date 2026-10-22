@@ -2,7 +2,7 @@ use std::fmt;
 
 use skia_bindings::{self as sb, SkDrawable, SkFlattenable, SkRefCntBase};
 
-use crate::{prelude::*, Canvas, Matrix, NativeFlattenable, Picture, Point, Rect};
+use crate::{Canvas, Matrix, NativeFlattenable, Picture, Point, Rect, prelude::*};
 
 pub type Drawable = RCHandle<SkDrawable>;
 
@@ -46,7 +46,7 @@ impl Drawable {
         }
     }
 
-    #[cfg(feature = "gpu")]
+    #[cfg(feature = "ganesh")]
     pub fn snap_gpu_draw_handler(
         &mut self,
         api: crate::gpu::BackendAPI,
@@ -87,10 +87,10 @@ impl Drawable {
     }
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(feature = "ganesh")]
 pub use gpu_draw_handler::*;
 
-#[cfg(feature = "gpu")]
+#[cfg(feature = "ganesh")]
 pub mod gpu_draw_handler {
     use std::fmt;
 

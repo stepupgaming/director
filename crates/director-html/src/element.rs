@@ -399,13 +399,13 @@ impl Element for HtmlElement {
         }
         if let Some(points) = &self.paint.box_node.clip_path {
             if let Some(first) = points.first() {
-                let mut path = skia_safe::Path::new();
+                let mut path = skia_safe::PathBuilder::new();
                 path.move_to((first.0 * rect.width(), first.1 * rect.height()));
                 for p in &points[1..] {
                     path.line_to((p.0 * rect.width(), p.1 * rect.height()));
                 }
                 path.close();
-                canvas.clip_path(&path, skia_safe::ClipOp::Intersect, true);
+                canvas.clip_path(&path.detach(), skia_safe::ClipOp::Intersect, true);
             }
         }
         let mut layer_paint = skia_safe::Paint::default();
@@ -521,10 +521,10 @@ impl Element for HtmlElement {
                 + shadow.spread.abs();
             let mut coverage = rect;
             coverage.outset((extent, extent));
-            let mut path = skia_safe::Path::new();
+            let mut path = skia_safe::PathBuilder::new();
             path.set_fill_type(skia_safe::PathFillType::EvenOdd);
-            path.add_rect(coverage, None);
-            path.add_rrect(hole, None);
+            path.add_rect(coverage, None, None);
+            path.add_rrect(hole, None, None);
             let mut paint = skia_safe::Paint::default();
             paint.set_color4f(shadow.color.to_color4f(), None);
             paint.set_anti_alias(true);
@@ -534,7 +534,7 @@ impl Element for HtmlElement {
                 None,
                 None,
             ));
-            canvas.draw_path(&path, &paint);
+            canvas.draw_path(&path.detach(), &paint);
             canvas.restore();
         }
         canvas.save();
@@ -542,14 +542,14 @@ impl Element for HtmlElement {
             canvas.clip_rrect(outer, skia_safe::ClipOp::Intersect, true);
         }
         if let Some(points) = &bg.clip_path {
-            let mut path = skia_safe::Path::new();
+            let mut path = skia_safe::PathBuilder::new();
             if let Some(first) = points.first() {
                 path.move_to((first.0 * rect.width(), first.1 * rect.height()));
                 for p in &points[1..] {
                     path.line_to((p.0 * rect.width(), p.1 * rect.height()));
                 }
                 path.close();
-                canvas.clip_path(&path, skia_safe::ClipOp::Intersect, true);
+                canvas.clip_path(&path.detach(), skia_safe::ClipOp::Intersect, true);
             }
         }
         let mut content_error = Ok(());
@@ -734,7 +734,7 @@ fn paint_borders(
         if lines[i] != BorderLine::Solid || widths[i] <= 0.0 {
             continue;
         }
-        let mut path = skia_safe::Path::new();
+        let mut path = skia_safe::PathBuilder::new();
         path.move_to(points[0]);
         for p in &points[1..] {
             path.line_to(*p);
@@ -743,7 +743,7 @@ fn paint_borders(
         let mut p = skia_safe::Paint::default();
         p.set_anti_alias(true);
         p.set_color4f(paint.border_colors[i].to_color4f(), None);
-        canvas.draw_path(&path, &p);
+        canvas.draw_path(&path.detach(), &p);
     }
     let sides = [
         [(0.0, top / 2.0), (rect.width(), top / 2.0)],
@@ -761,7 +761,7 @@ fn paint_borders(
         if widths[i] <= 0.0 || !matches!(lines[i], BorderLine::Dashed | BorderLine::Dotted) {
             continue;
         }
-        let mut path = skia_safe::Path::new();
+        let mut path = skia_safe::PathBuilder::new();
         path.move_to(start);
         path.line_to(end);
         let mut p = skia_safe::Paint::default();
@@ -781,7 +781,7 @@ fn paint_borders(
         if dotted {
             p.set_stroke_cap(skia_safe::paint::Cap::Round);
         }
-        canvas.draw_path(&path, &p);
+        canvas.draw_path(&path.detach(), &p);
     }
     paint_styled_borders(canvas, rect, paint, widths);
     canvas.restore();
@@ -935,7 +935,7 @@ fn fill_poly(
     color: director_core::types::Color,
     anti_alias: bool,
 ) {
-    let mut path = skia_safe::Path::new();
+    let mut path = skia_safe::PathBuilder::new();
     path.move_to(points[0]);
     path.line_to(points[1]);
     path.line_to(points[2]);
@@ -943,7 +943,7 @@ fn fill_poly(
     let mut p = skia_safe::Paint::default();
     p.set_anti_alias(anti_alias);
     p.set_color4f(color.to_color4f(), None);
-    canvas.draw_path(&path, &p);
+    canvas.draw_path(&path.detach(), &p);
 }
 
 fn origin_edge(origin: BackgroundOrigin) -> BoxEdge {
@@ -1495,7 +1495,7 @@ fn fill_decoration(
                 canvas.draw_rect(Rect::from_xywh(x, y, w, h), paint);
             }
             crate::decoration_marks::Mark::Stroke { points, width } => {
-                let mut path = skia_safe::Path::new();
+                let mut path = skia_safe::PathBuilder::new();
                 let mut drawn = false;
                 for (px, py) in points {
                     if drawn {
@@ -1508,7 +1508,7 @@ fn fill_decoration(
                 let mut stroke = paint.clone();
                 stroke.set_style(skia_safe::paint::Style::Stroke);
                 stroke.set_stroke_width(width);
-                canvas.draw_path(&path, &stroke);
+                canvas.draw_path(&path.detach(), &stroke);
             }
         }
     }

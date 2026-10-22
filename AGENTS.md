@@ -94,7 +94,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Use parallel subagents on file-disjoint slices when it helps. Default subagents to Grok 4.7 (`grok-4.7-xhigh`). Give them explicit step-by-step prompts with exact files, allowed edits and the report format, and review their diffs before landing. Subagents do not compile, run tests, commit, or edit `vendor/`, `Cargo.toml`, `Cargo.lock`, AGENTS.md, README, or docs. The parent runs one release test pass after their edits land, does the DOX pass, and commits.
 - Commit each finished slice with one imperative sentence. Never commit `.freebuff/`. Push only when asked.
 - Ask before GPU- or browser-heavy work: the Hyper CN registry smoke, Chrome launches, and long benchmarks.
-- On a Windows `LNK1181` link failure for skia-bindings 0.90.0, restore `skia.lib` and `skunicode_icu.lib` beside `skunicode_core.lib` from the matching `pdf-textlayout` prebuilt archive. Do not start a Skia source build.
+- On a Windows `LNK1181` link failure for skia-bindings 0.153.3, restore `skia.lib` and `skunicode_icu.lib` beside `skunicode_core.lib` from the matching prebuilt archive: `jpegd-jpege-pdf-textlayout` for the CPU build, `ganesh-jpegd-jpege-pdf-textlayout-vulkan` for `--features vulkan`. Do not start a Skia source build.
 
 ## Work Guidance
 
@@ -108,7 +108,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - For Python scripts, keep dependencies executable through existing tooling and install packages only with `uv` when installation is necessary.
 - Product direction: high-quality native video production for agents and developers, covering short-form and long-form (Shorts, Reels, TikTok, YouTube). Keep preview, editing, inspection and export consistent across supported authoring inputs. Web research as an input belongs at orchestration layers outside the render core.
 - `vendor/` contains third-party source selected by local Cargo patches. Do not modify vendor sources without updating its `AGENTS.md`; exclude vendored packages from workspace membership.
-- `vendor/skia-safe/` is skia-safe 0.90.0 with two edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.
+- `vendor/skia-safe/` is skia-safe 0.153.3 with three edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.
 
 ## Verification
 

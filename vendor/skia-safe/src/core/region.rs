@@ -1,6 +1,6 @@
 use std::{fmt, iter, marker::PhantomData, mem, ptr};
 
-use crate::{prelude::*, Contains, IPoint, IRect, IVector, Path, PathBuilder, QuickReject};
+use crate::{Contains, IPoint, IRect, IVector, Path, PathBuilder, QuickReject, prelude::*};
 use skia_bindings::{
     self as sb, SkRegion, SkRegion_Cliperator, SkRegion_Iterator, SkRegion_RunHead,
     SkRegion_Spanerator,
@@ -85,13 +85,16 @@ impl Region {
         unsafe { self.native().addBoundaryPath(path.native_mut()) }
     }
 
+    #[deprecated(since = "0.91.0", note = "Use boundary_path()")]
     pub fn get_boundary_path(&self, path: &mut Path) -> bool {
-        unsafe { self.native().getBoundaryPath1(path.native_mut()) }
+        unsafe { sb::C_SkRegion_getBoundaryPath(self.native(), path.native_mut()) };
+        !path.is_empty()
     }
 
     pub fn boundary_path(&self) -> Option<Path> {
         let mut path = Path::default();
-        unsafe { self.native().getBoundaryPath1(path.native_mut()) }.then_some(path)
+        unsafe { sb::C_SkRegion_getBoundaryPath(self.native(), path.native_mut()) };
+        (!path.is_empty()).then_some(path)
     }
 
     pub fn set_empty(&mut self) -> bool {
@@ -104,8 +107,11 @@ impl Region {
 
     pub fn set_rects(&mut self, rects: &[IRect]) -> bool {
         unsafe {
-            self.native_mut()
-                .setRects(rects.native().as_ptr(), rects.len().try_into().unwrap())
+            sb::C_SkRegion_setRects(
+                self.native_mut(),
+                rects.native().as_ptr(),
+                rects.len().try_into().unwrap(),
+            )
         }
     }
 
@@ -117,7 +123,7 @@ impl Region {
         unsafe { self.native_mut().setPath(path.native(), clip.native()) }
     }
 
-    // there is also a trait for intersects() below.
+    // There is also a trait for intersects() below.
 
     pub fn intersects_rect(&self, rect: impl AsRef<IRect>) -> bool {
         unsafe { self.native().intersects(rect.as_ref().native()) }
@@ -146,7 +152,7 @@ impl Region {
         unsafe { sb::C_SkRegion_quickContains(self.native(), r.native()) }
     }
 
-    // see also the quick_reject() trait below.
+    // See also the quick_reject() trait below.
 
     pub fn quick_reject_rect(&self, rect: impl AsRef<IRect>) -> bool {
         let rect = rect.as_ref();

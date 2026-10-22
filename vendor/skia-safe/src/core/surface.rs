@@ -3,14 +3,14 @@ use std::{fmt, ptr};
 use skia_bindings::{self as sb, SkRefCntBase, SkSurface};
 
 use crate::{
-    gpu, prelude::*, Bitmap, Canvas, IPoint, IRect, ISize, Image, ImageInfo, Paint, Pixmap, Point,
-    SamplingOptions, SurfaceProps,
+    Bitmap, Canvas, IPoint, IRect, ISize, Image, ImageInfo, Paint, Pixmap, Point, SamplingOptions,
+    SurfaceProps, gpu, prelude::*,
 };
 
 pub mod surfaces {
     use skia_bindings::{self as sb};
 
-    use crate::{prelude::*, ISize, ImageInfo, Surface, SurfaceProps};
+    use crate::{ISize, ImageInfo, Surface, SurfaceProps, prelude::*};
 
     pub use sb::SkSurfaces_BackendSurfaceAccess as BackendSurfaceAccess;
     variant_name!(BackendSurfaceAccess::Present);
@@ -140,9 +140,8 @@ pub mod surfaces {
 pub use skia_bindings::SkSurface_ContentChangeMode as ContentChangeMode;
 variant_name!(ContentChangeMode::Retain);
 
-#[cfg(feature = "gpu")]
 pub use skia_bindings::SkSurface_BackendHandleAccess as BackendHandleAccess;
-#[cfg(feature = "gpu")]
+#[cfg(feature = "ganesh")]
 variant_name!(BackendHandleAccess::FlushWrite);
 
 /// [`Surface`] is responsible for managing the pixels that a canvas draws into. The pixels can be
@@ -254,219 +253,6 @@ impl Surface {
     }
 }
 
-#[cfg(feature = "gpu")]
-impl Surface {
-    /// Wraps a GPU-backed texture into [`Surface`]. Caller must ensure the texture is
-    /// valid for the lifetime of returned [`Surface`]. If `sample_cnt` greater than zero,
-    /// creates an intermediate MSAA [`Surface`] which is used for drawing `backend_texture`.
-    ///
-    /// [`Surface`] is returned if all parameters are valid. `backend_texture` is valid if
-    /// its pixel configuration agrees with `color_space` and context; for instance, if
-    /// `backend_texture` has an sRGB configuration, then context must support sRGB,
-    /// and `color_space` must be present. Further, `backend_texture` width and height must
-    /// not exceed context capabilities, and the context must be able to support
-    /// back-end textures.
-    ///
-    /// * `context` - GPU context
-    /// * `backend_texture` - texture residing on GPU
-    /// * `sample_cnt` - samples per pixel, or 0 to disable full scene anti-aliasing
-    /// * `color_space` - range of colors; may be `None`
-    /// * `surface_props` - LCD striping orientation and setting for device independent
-    ///                            fonts; may be `None`
-    ///
-    /// Returns: [`Surface`] if all parameters are valid; otherwise, `None`
-    #[deprecated(since = "0.64.0", note = "use gpu::surfaces::wrap_backend_texture()")]
-    pub fn from_backend_texture(
-        context: &mut gpu::RecordingContext,
-        backend_texture: &gpu::BackendTexture,
-        origin: gpu::SurfaceOrigin,
-        sample_cnt: impl Into<Option<usize>>,
-        color_type: crate::ColorType,
-        color_space: impl Into<Option<crate::ColorSpace>>,
-        surface_props: Option<&SurfaceProps>,
-    ) -> Option<Self> {
-        gpu::surfaces::wrap_backend_texture(
-            context,
-            backend_texture,
-            origin,
-            sample_cnt,
-            color_type,
-            color_space,
-            surface_props,
-        )
-    }
-
-    /// Wraps a GPU-backed buffer into [`Surface`]. Caller must ensure `backend_render_target`
-    /// is valid for the lifetime of returned [`Surface`].
-    ///
-    /// [`Surface`] is returned if all parameters are valid. `backend_render_target` is valid if
-    /// its pixel configuration agrees with `color_space` and context; for instance, if
-    /// `backend_render_target` has an sRGB configuration, then context must support sRGB,
-    /// and `color_space` must be present. Further, `backend_render_target` width and height must
-    /// not exceed context capabilities, and the context must be able to support
-    /// back-end render targets.
-    ///
-    /// * `context` - GPU context
-    /// * `backend_render_target` - GPU intermediate memory buffer
-    /// * `color_space` - range of colors
-    /// * `surface_props` - LCD striping orientation and setting for device independent
-    ///                                 fonts; may be `None`
-    ///
-    /// Returns: [`Surface`] if all parameters are valid; otherwise, `None`
-    #[deprecated(
-        since = "0.64.0",
-        note = "use gpu::surfaces::wrap_backend_render_target()"
-    )]
-    pub fn from_backend_render_target(
-        context: &mut gpu::RecordingContext,
-        backend_render_target: &gpu::BackendRenderTarget,
-        origin: gpu::SurfaceOrigin,
-        color_type: crate::ColorType,
-        color_space: impl Into<Option<crate::ColorSpace>>,
-        surface_props: Option<&SurfaceProps>,
-    ) -> Option<Self> {
-        gpu::surfaces::wrap_backend_render_target(
-            context,
-            backend_render_target,
-            origin,
-            color_type,
-            color_space,
-            surface_props,
-        )
-    }
-
-    /// Returns [`Surface`] on GPU indicated by context. Allocates memory for
-    /// pixels, based on the width, height, and [`crate::ColorType`] in [`ImageInfo`].  budgeted
-    /// selects whether allocation for pixels is tracked by context. `image_info`
-    /// describes the pixel format in [`crate::ColorType`], and transparency in
-    /// [`crate::AlphaType`], and color matching in [`crate::ColorSpace`].
-    ///
-    /// `sample_count` requests the number of samples per pixel.
-    /// Pass zero to disable multi-sample anti-aliasing.  The request is rounded
-    /// up to the next supported count, or rounded down if it is larger than the
-    /// maximum supported count.
-    ///
-    /// `surface_origin` pins either the top-left or the bottom-left corner to the origin.
-    ///
-    /// `should_create_with_mips` hints that [`Image`] returned by [`Image::image_snapshot`] is mip map.
-    ///
-    /// * `context` - GPU context
-    /// * `image_info` - width, height, [`crate::ColorType`], [`crate::AlphaType`], [`crate::ColorSpace`];
-    ///                              width, or height, or both, may be zero
-    /// * `sample_count` - samples per pixel, or 0 to disable full scene anti-aliasing
-    /// * `surface_props` - LCD striping orientation and setting for device independent
-    ///                              fonts; may be `None`
-    /// * `should_create_with_mips` - hint that [`Surface`] will host mip map images
-    ///
-    /// Returns: [`Surface`] if all parameters are valid; otherwise, `None`
-    #[deprecated(since = "0.64.0", note = "use gpu::surfaces::render_target()")]
-    pub fn new_render_target(
-        context: &mut gpu::RecordingContext,
-        budgeted: gpu::Budgeted,
-        image_info: &ImageInfo,
-        sample_count: impl Into<Option<usize>>,
-        surface_origin: impl Into<Option<gpu::SurfaceOrigin>>,
-        surface_props: Option<&SurfaceProps>,
-        should_create_with_mips: impl Into<Option<bool>>,
-    ) -> Option<Self> {
-        gpu::surfaces::render_target(
-            context,
-            budgeted,
-            image_info,
-            sample_count,
-            surface_origin,
-            surface_props,
-            should_create_with_mips,
-            None,
-        )
-    }
-
-    /// Creates [`Surface`] from CAMetalLayer.
-    /// Returned [`Surface`] takes a reference on the CAMetalLayer. The ref on the layer will be
-    /// released when the [`Surface`] is destroyed.
-    ///
-    /// Only available when Metal API is enabled.
-    ///
-    /// Will grab the current drawable from the layer and use its texture as a `backend_rt` to
-    /// create a renderable surface.
-    ///
-    /// * `context` - GPU context
-    /// * `layer` - [`gpu::mtl::Handle`] (expected to be a CAMetalLayer*)
-    /// * `sample_cnt` - samples per pixel, or 0 to disable full scene anti-aliasing
-    /// * `color_space` - range of colors; may be `None`
-    /// * `surface_props` - LCD striping orientation and setting for device independent
-    ///                        fonts; may be `None`
-    /// * `drawable` - Pointer to drawable to be filled in when this surface is
-    ///                        instantiated; may not be `None`
-    ///
-    /// Returns: created [`Surface`], or `None`
-    #[deprecated(since = "0.65.0", note = "Use gpu::surfaces::wrap_ca_metal_layer")]
-    #[allow(clippy::missing_safety_doc)]
-    #[allow(clippy::too_many_arguments)]
-    #[cfg(feature = "metal")]
-    pub unsafe fn from_ca_metal_layer(
-        context: &mut gpu::RecordingContext,
-        layer: gpu::mtl::Handle,
-        origin: gpu::SurfaceOrigin,
-        sample_cnt: impl Into<Option<usize>>,
-        color_type: crate::ColorType,
-        color_space: impl Into<Option<crate::ColorSpace>>,
-        surface_props: Option<&SurfaceProps>,
-        drawable: *mut gpu::mtl::Handle,
-    ) -> Option<Self> {
-        gpu::surfaces::wrap_ca_metal_layer(
-            context,
-            layer,
-            origin,
-            sample_cnt,
-            color_type,
-            color_space,
-            surface_props,
-            drawable,
-        )
-    }
-
-    /// Creates [`Surface`] from MTKView.
-    /// Returned [`Surface`] takes a reference on the `MTKView`. The ref on the layer will be
-    /// released when the [`Surface`] is destroyed.
-    ///
-    /// Only available when Metal API is enabled.
-    ///
-    /// Will grab the current drawable from the layer and use its texture as a `backend_rt` to
-    /// create a renderable surface.
-    ///
-    /// * `context` - GPU context
-    /// * `layer` - [`gpu::mtl::Handle`] (expected to be a `MTKView*`)
-    /// * `sample_cnt` - samples per pixel, or 0 to disable full scene anti-aliasing
-    /// * `color_space` - range of colors; may be `None`
-    /// * `surface_props` - LCD striping orientation and setting for device independent
-    ///                        fonts; may be `None`
-    ///
-    /// Returns: created [`Surface`], or `None`
-    #[deprecated(since = "0.65.0", note = "Use gpu::surfaces::wrap_mtk_view")]
-    #[allow(clippy::missing_safety_doc)]
-    #[cfg(feature = "metal")]
-    pub unsafe fn from_mtk_view(
-        context: &mut gpu::RecordingContext,
-        mtk_view: gpu::mtl::Handle,
-        origin: gpu::SurfaceOrigin,
-        sample_count: impl Into<Option<usize>>,
-        color_type: crate::ColorType,
-        color_space: impl Into<Option<crate::ColorSpace>>,
-        surface_props: Option<&SurfaceProps>,
-    ) -> Option<Self> {
-        gpu::surfaces::wrap_mtk_view(
-            context,
-            mtk_view,
-            origin,
-            sample_count,
-            color_type,
-            color_space,
-            surface_props,
-        )
-    }
-}
-
 impl Surface {
     /// Returns [`Surface`] without backing pixels. Drawing to [`Canvas`] returned from [`Surface`]
     /// has no effect. Calling [`Self::image_snapshot()`] on returned [`Surface`] returns `None`.
@@ -525,7 +311,7 @@ impl Surface {
     }
 }
 
-#[cfg(not(feature = "gpu"))]
+#[cfg(not(feature = "ganesh"))]
 impl Surface {
     /// Returns the recording context being used by the [`Surface`].
     pub fn recording_context(&self) -> Option<gpu::RecordingContext> {
@@ -538,7 +324,7 @@ impl Surface {
     }
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(feature = "ganesh")]
 impl Surface {
     /// Returns the recording context being used by the [`Surface`].
     ///
@@ -551,38 +337,6 @@ impl Surface {
     pub fn direct_context(&self) -> Option<gpu::DirectContext> {
         self.recording_context()
             .and_then(|mut ctx| ctx.as_direct_context())
-    }
-
-    /// Retrieves the back-end texture. If [`Surface`] has no back-end texture, `None`
-    /// is returned.
-    ///
-    /// The returned [`gpu::BackendTexture`] should be discarded if the [`Surface`] is drawn to or deleted.
-    ///
-    /// Returns: GPU texture reference; `None` on failure
-    #[deprecated(since = "0.64.0", note = "use gpu::surfaces::get_backend_texture()")]
-    pub fn get_backend_texture(
-        &mut self,
-        handle_access: BackendHandleAccess,
-    ) -> Option<gpu::BackendTexture> {
-        gpu::surfaces::get_backend_texture(self, handle_access)
-    }
-
-    /// Retrieves the back-end render target. If [`Surface`] has no back-end render target, `None`
-    /// is returned.
-    ///
-    /// The returned [`gpu::BackendRenderTarget`] should be discarded if the [`Surface`] is drawn to
-    /// or deleted.
-    ///
-    /// Returns: GPU render target reference; `None` on failure
-    #[deprecated(
-        since = "0.64.0",
-        note = "use gpu::surfaces::get_backend_render_target()"
-    )]
-    pub fn get_backend_render_target(
-        &mut self,
-        handle_access: BackendHandleAccess,
-    ) -> Option<gpu::BackendRenderTarget> {
-        gpu::surfaces::get_backend_render_target(self, handle_access)
     }
 
     // TODO: support variant with TextureReleaseProc and ReleaseContext
@@ -939,28 +693,42 @@ impl Surface {
         SurfaceProps::from_native_ref(unsafe { &*sb::C_SkSurface_props(self.native()) })
     }
 
-    // TODO: wait()
+    /// Inserts a list of GPU semaphores that the current GPU-backed API
+    /// must wait on before executing any more commands on the GPU for
+    /// this surface. If this call returns `false`, then the GPU back-end
+    /// will not wait on any passed-in semaphores, and the client will
+    /// still own the semaphores, regardless of the value of
+    /// `delete_semaphores_after_wait`.
+    ///
+    /// If `delete_semaphores_after_wait` is `false` then Skia will not
+    /// delete the semaphores. In this case it is the client's
+    /// responsibility to not destroy or attempt to reuse the semaphores
+    /// until it knows that Skia has finished waiting on them. This can
+    /// be done by using `finished_proc`s on flush calls.
+    ///
+    /// Returns: `true` if the GPU is waiting on the semaphores
+    #[cfg(feature = "ganesh")]
+    pub fn wait(
+        &mut self,
+        wait_semaphores: &[crate::gpu::BackendSemaphore],
+        delete_semaphores_after_wait: impl Into<Option<bool>>,
+    ) -> bool {
+        let delete_after_wait = delete_semaphores_after_wait.into().unwrap_or(true);
+        unsafe {
+            sb::SkSurface_wait(
+                self.native_mut(),
+                wait_semaphores
+                    .len()
+                    .try_into()
+                    .expect("wait_semaphores length exceeds c_int"),
+                wait_semaphores.native().as_ptr(),
+                delete_after_wait,
+            )
+        }
+    }
 }
 
 pub use surfaces::BackendSurfaceAccess;
-
-impl Surface {
-    /// If a surface is GPU texture backed, is being drawn with MSAA, and there is a resolve
-    /// texture, this call will insert a resolve command into the stream of gpu commands. In order
-    /// for the resolve to actually have an effect, the work still needs to be flushed and submitted
-    /// to the GPU after recording the resolve command. If a resolve is not supported or the
-    /// [`Surface`] has no dirty work to resolve, then this call is a no-op.
-    ///
-    /// This call is most useful when the [`Surface`] is created by wrapping a single sampled gpu
-    /// texture, but asking Skia to render with MSAA. If the client wants to use the wrapped texture
-    /// outside of Skia, the only way to trigger a resolve is either to call this command or use
-    /// [`Self::flush()`].
-    #[cfg(feature = "gpu")]
-    #[deprecated(since = "0.65.0", note = "Use gpu::surfaces::resolve_msaa")]
-    pub fn resolve_msaa(&mut self) {
-        gpu::surfaces::resolve_msaa(self)
-    }
-}
 
 #[cfg(test)]
 mod tests {

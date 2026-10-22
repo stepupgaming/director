@@ -13,20 +13,22 @@ Function level documentation is [not yet](https://github.com/rust-skia/rust-skia
 Skia-safe wraps most parts of the public Skia C++ APIs:
 
 - [x] Vector Geometry: Matrix, Rect, Point, Size, etc.
-- [x] Most drawing related classes and functions: Surface, Canvas, Paint, Path.
-- [x] Effects and Shaders.
-- [x] Utility classes we think are useful.
+- [x] Most drawing related classes and functions: Surface, Canvas, Paint, Path
+- [x] Effects and Shaders
+- [x] Utility classes we think are useful
 - [x] PDF & SVG rendering
 - [ ] Skia Modules
   - [x] Text shaping with [Harfbuzz](https://www.freedesktop.org/wiki/Software/HarfBuzz/) and [ICU](http://site.icu-project.org/home).
   - [x] Text layout (skparagraph)
-  - [ ] Animation via [Skottie](https://skia.org/user/modules/skottie)
-- [x] GPU Backends
-  - [x] Vulkan
-  - [x] OpenGL
-  - [x] Metal
-  - [x] Direct3D
-  - [ ] WebGPU [Dawn](https://dawn.googlesource.com/dawn/)
+  - [x] Animation via [Skottie](https://skia.org/docs/user/modules/skottie/)
+- [ ] GPU Backends
+  - [ ] Ganesh
+    - [x] Vulkan
+    - [x] OpenGL
+    - [x] Metal
+    - [x] Direct3D
+    - [ ] WebGPU [Dawn](https://dawn.googlesource.com/dawn/)
+  - [ ] Graphite
 
 Wrappers for functions that take callbacks and virtual classes are not supported right now. While we think they should be wrapped, the use cases related seem to be rather special, so we postponed that for now.
 
@@ -45,6 +47,8 @@ In addition to that, support for the WEBP image format can be enabled through th
 ## Features
 
 Skia-safe supports the following features that can be configured [via cargo](https://doc.rust-lang.org/cargo/reference/manifest.html#the-features-section):
+
+Skia provides the `ganesh` and `graphite` GPU rendering engines. Vulkan and Metal require one of these engine features to be selected explicitly. OpenGL and Direct3D use Ganesh and enable it implicitly.
 
 ### `gl`
 
@@ -66,17 +70,17 @@ These features are configure the Window manager integration. They are supported 
 
 ### `vulkan`
 
-Vulkan support can be enabled by adding the feature `vulkan`. To render the examples with Vulkan, use
+Vulkan support can be enabled by adding `vulkan` and either `ganesh` or `graphite`. To render the Ganesh examples with Vulkan, use
 
 ```bash
-(cd skia-org && cargo run --features vulkan [OUTPUT_DIR] --driver vulkan)
+(cd skia-org && cargo run --features ganesh,vulkan [OUTPUT_DIR] --driver vulkan)
 ```
 
 Note that Vulkan drivers need to be available. On Windows, they are most likely available already, on Linux [this article on linuxconfig.org](<https://linuxconfig.org/install-and-test-vulkan-on-linux>) might get you started, and on macOS with Metal support, [install the Vulkan SDK](<https://vulkan.lunarg.com/sdk/home>) for Mac and configure MoltenVK by setting the `DYLD_LIBRARY_PATH`, `VK_LAYER_PATH`, and `VK_ICD_FILENAMES` environment variables as described in `Documentation/getting_started_macos.html`.
 
 ### `metal`
 
-Support for Metal on macOS and iOS targets can be enabled by adding the feature `metal`.
+Support for Metal on macOS and iOS targets can be enabled by adding `metal` and either `ganesh` or `graphite`.
 
 ### `d3d`
 
@@ -91,6 +95,10 @@ The skshaper module can be accessed through `skia_safe::Shaper` and the Rust bi
 ### `svg`
 
 This feature enables support for rendering SVG files (`svg::Dom`).
+
+### `skottie`
+
+The Cargo feature `skottie` enables support for rendering Lottie animations through Skia's Skottie module. Skottie provides an API to load, parse, and render animations exported in the [Lottie JSON format](https://lottiefiles.github.io/lottie-docs/). The bindings are available in the `skia_safe::skottie` module.
 
 ### `webp-encode`, `webp-decode`, `webp`
 

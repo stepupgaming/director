@@ -1,4 +1,4 @@
-use crate::{interop, prelude::*, scalar, Matrix, Rect, Vector};
+use crate::{Matrix, Point, Rect, Vector, interop, prelude::*, scalar};
 use skia_bindings::{self as sb, SkRRect};
 use std::{fmt, mem, ptr};
 
@@ -128,6 +128,12 @@ impl RRect {
         rr
     }
 
+    pub fn new_rect_radii(rect: impl AsRef<Rect>, radii: &[Vector; 4]) -> Self {
+        let mut rr = Self::default();
+        rr.set_rect_radii(rect, radii);
+        rr
+    }
+
     pub fn new_nine_patch(
         rect: impl AsRef<Rect>,
         left_rad: scalar,
@@ -136,24 +142,7 @@ impl RRect {
         bottom_rad: scalar,
     ) -> Self {
         let mut r = Self::default();
-        unsafe {
-            r.native_mut().setNinePatch(
-                rect.as_ref().native(),
-                left_rad,
-                top_rad,
-                right_rad,
-                bottom_rad,
-            )
-        }
-        r
-    }
-
-    pub fn new_rect_radii(rect: impl AsRef<Rect>, radii: &[Vector; 4]) -> Self {
-        let mut r = Self::default();
-        unsafe {
-            r.native_mut()
-                .setRectRadii(rect.as_ref().native(), radii.native().as_ptr())
-        }
+        r.set_nine_patch(rect, left_rad, top_rad, right_rad, bottom_rad);
         r
     }
 
@@ -242,8 +231,15 @@ impl RRect {
         copied
     }
 
+    /// Returns true if `point` is inside the bounds and corner radii, and this rounded rectangle is
+    /// not empty.
+    pub fn contains_point(&self, point: impl Into<Point>) -> bool {
+        let point = point.into();
+        unsafe { sb::C_SkRRect_containsPoint(self.native(), point.native()) }
+    }
+
     pub fn contains(&self, rect: impl AsRef<Rect>) -> bool {
-        unsafe { self.native().contains(rect.as_ref().native()) }
+        unsafe { sb::C_SkRRect_containsRect(self.native(), rect.as_ref().native()) }
     }
 
     pub fn is_valid(&self) -> bool {
