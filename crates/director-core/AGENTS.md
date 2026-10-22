@@ -415,6 +415,10 @@ five 640x360 premultiplied RGBA frames per workload via
   full level and center pan plays each at 0.707, so a mono file exports at its own
   mono loudness. Tests: `audio_loudness_matches_the_mixed_export`,
   `audio_loudness_ignores_samples_past_the_track_duration`.
+- `compile()` logs the violation list only when it differs from
+  `last_policy_score`. The HTML frontend compiles and export compiles again, so an
+  unchanged list prints once. Test: `compile_logs_an_unchanged_violation_list_once`
+  in `tests/compiler.rs`.
 - Rhai API: `compile(movie)`, `invalidate_entity(movie, uuid)`,
   `invalidate_audio_track(movie, idx)`, `invalidate_node(movie, id)`,
   `dirty_nodes(movie)`, `compiler_edge_count(movie)`.

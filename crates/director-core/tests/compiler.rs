@@ -665,6 +665,49 @@ fn compile_emits_style_policy_violations() {
 }
 
 #[test]
+#[allow(clippy::arc_with_non_send_sync)]
+fn compile_logs_an_unchanged_violation_list_once() {
+    #[derive(Clone, Default)]
+    struct Log(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Log {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let log = Log::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+
+    let mut d = empty_director();
+    let mut text = TextNode::new(vec![], Arc::new(Mutex::new(FontCollection::new())));
+    text.default_font_size.current_value = 250.0;
+    let id = d.scene.add_node(Box::new(text));
+    d.scene.get_node_mut(id).unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
+    d.push_scene_root(id, 2.0);
+
+    // The HTML frontend compiles, then export compiles the same scene again.
+    tracing::subscriber::with_default(subscriber, || {
+        d.compile();
+        d.compile();
+        let node = d.scene.get_node_mut(id).unwrap();
+        let text = node.element.as_any_mut().downcast_mut::<TextNode>().unwrap();
+        text.default_font_size.current_value = 300.0;
+        d.compile();
+    });
+
+    let logged = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+    assert_eq!(logged.matches("font size 250.0px exceeds").count(), 1, "{logged}");
+    assert_eq!(logged.matches("font size 300.0px exceeds").count(), 1, "{logged}");
+}
+
+#[test]
 fn compile_emits_no_violations_for_empty_scene() {
     let mut d = empty_director();
     d.compile();

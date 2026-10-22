@@ -91,9 +91,9 @@ One row per check, holding the most recent passing count. Replace the row when a
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
 | workspace clippy | pass | 2026-10-21 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
-| director-core release tests | 428 | 2026-10-21 | `cargo test -p director-core --release` |
+| director-core release tests | 429 | 2026-10-21 | `cargo test -p director-core --release` |
 | html_export | 3 | 2026-10-21 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 937 | 2026-10-21 | `cargo test --workspace --release` |
+| workspace release tests | 938 | 2026-10-21 | `cargo test --workspace --release` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
 | padded_text | 1 | 2026-10-20 | `cargo test -p director-html --release --test padded_text` |

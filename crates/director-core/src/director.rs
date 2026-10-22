@@ -1091,8 +1091,20 @@ impl Director {
         self.input_hashes.retain(|&id, _| self.scene.get_node(id).is_some());
 
         // Run the style policy scorer over the timeline so violations are
-        // emitted as warnings/errors before export.
-        self.last_policy_score = Some(self.score_style_policy_for_compile());
+        // emitted as warnings/errors before export. Export compiles again
+        // after the HTML frontend has, so an unchanged violation list logs once.
+        let score = self.score_style_policy_for_compile();
+        let messages = policy_messages(&score);
+        if self.last_policy_score.as_ref().map(policy_messages).as_ref() != Some(&messages) {
+            for (severity, message) in messages {
+                match severity {
+                    IssueSeverity::Error => tracing::error!("{}", message),
+                    IssueSeverity::Warning => tracing::warn!("{}", message),
+                    IssueSeverity::Info => tracing::info!("{}", message),
+                }
+            }
+        }
+        self.last_policy_score = Some(score);
     }
 
     /// Score the scene against `style_policy` over the full timeline duration.
@@ -1103,26 +1115,7 @@ impl Director {
         let duration_minutes = crate::style_policy::total_duration_minutes(self);
         let duration = duration_minutes * 60.0;
         let time_range = if duration > 0.0 { (0.0, duration) } else { (0.0, 1.0) };
-        let score = self.score_style_policy(time_range, self.style_policy.samples.max(2));
-
-        for violation in &score.violations {
-            let message = format!(
-                "StylePolicy violation [{}]: {}{}",
-                violation.rule,
-                violation.description,
-                match violation.node_id {
-                    Some(id) => format!(" (node {})", id),
-                    None => String::new(),
-                }
-            );
-            match violation.severity {
-                IssueSeverity::Error => tracing::error!("{}", message),
-                IssueSeverity::Warning => tracing::warn!("{}", message),
-                IssueSeverity::Info => tracing::info!("{}", message),
-            }
-        }
-
-        score
+        self.score_style_policy(time_range, self.style_policy.samples.max(2))
     }
 
     /// Compute the transitive set of nodes affected by the given inputs
@@ -1187,6 +1180,25 @@ impl Director {
         StylePolicyScorer::new().score(self, &self.style_policy, time_range, samples.max(2))
     }
 
+}
+
+/// The log lines `compile()` emits for a score, with their severities.
+fn policy_messages(score: &PolicyScore) -> Vec<(IssueSeverity, String)> {
+    score
+        .violations
+        .iter()
+        .map(|violation| {
+            let node = match violation.node_id {
+                Some(id) => format!(" (node {})", id),
+                None => String::new(),
+            };
+            let message = format!(
+                "StylePolicy violation [{}]: {}{}",
+                violation.rule, violation.description, node
+            );
+            (violation.severity, message)
+        })
+        .collect()
 }
 
 #[cfg(test)]
