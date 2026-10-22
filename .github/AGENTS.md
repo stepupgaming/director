@@ -11,6 +11,7 @@
 
 - CI runs on push to `main`, on pull requests and on `workflow_dispatch`. The repository is public, so standard runners carry no minute quota.
 - CI commands match the local verification in the root `AGENTS.md`.
+- CI installs the latest stable Rust, so a new release can add clippy lints that an older local toolchain never reports. Run `rustup update stable` before the local gate. On 2026-10-21 Rust 1.99.1 flagged `chunks_exact` with a constant size, and the fix was `as_chunks::<N>()`.
 - Bundled fonts are committed under `crates/director-core/assets/fonts/`; CI downloads no fonts.
 - FFmpeg runs as a subprocess. CI installs the `ffmpeg` package and verifies `ffmpeg` and `ffprobe`; no FFmpeg development libraries are linked.
 

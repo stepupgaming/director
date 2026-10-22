@@ -52,7 +52,7 @@ fn max_channel_diff(a: &[u8], b: &[u8]) -> u8 {
 }
 
 fn has_opaque(pixels: &[u8], channel: usize) -> bool {
-    pixels.chunks_exact(4).any(|px| {
+    pixels.as_chunks::<4>().0.iter().any(|px| {
         px[3] > 200
             && px[channel] > 200
             && (0..3).filter(|i| *i != channel).all(|i| px[i] < 40)
