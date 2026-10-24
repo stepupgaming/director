@@ -154,8 +154,9 @@ pub struct PaintStyle {
     pub filter: Option<skia_safe::ImageFilter>,
     pub blend_mode: skia_safe::BlendMode,
     pub shadows: Vec<Shadow>,
-    /// One CSS `text-shadow`. `None` is `none`. A list or a non-zero spread stays an error.
-    pub text_shadow: Option<director_core::element::TextShadow>,
+    /// CSS `text-shadow` list in source order: the first shadow paints on top. Empty is
+    /// `none`. A non-zero spread stays an error.
+    pub text_shadows: Vec<director_core::element::TextShadow>,
     /// `-webkit-text-stroke` width in px. `0` or `none` paints no stroke.
     pub text_stroke_width: f32,
     /// Stroke color. `None` is currentColor.
@@ -980,7 +981,7 @@ pub fn translate(
         filter: Default::default(),
         blend_mode: skia_safe::BlendMode::SrcOver,
         shadows: Vec::new(),
-        text_shadow: None,
+        text_shadows: Vec::new(),
         text_stroke_width: 0.0,
         text_stroke_color: None,
         stroke_over_fill: true,
@@ -1520,7 +1521,7 @@ pub fn translate(
                     paint.text_underline_offset = parse_underline_offset(s, m)?;
                 }
                 "text-shadow" => {
-                    paint.text_shadow = text_shadow(s, m, paint.color)?;
+                    paint.text_shadows = text_shadows(s, m, paint.color)?;
                 }
                 "-webkit-text-stroke"
                 | "-webkit-text-stroke-width"
@@ -1710,32 +1711,34 @@ pub fn translate(
     }
 }
 
-fn text_shadow(
+/// Parses a CSS `text-shadow` list in source order. `none` is empty.
+fn text_shadows(
     s: &str,
     m: Metrics,
     current: Color,
-) -> Result<Option<director_core::element::TextShadow>, String> {
+) -> Result<Vec<director_core::element::TextShadow>, String> {
     if s.trim() == "none" {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    let parts = split(s, true);
-    if parts.len() != 1 {
-        return Err("text-shadow accepts a single shadow".into());
-    }
-    let parsed = lightningcss::properties::text::TextShadow::parse_string(&parts[0])
-        .map_err(|e| format!("text-shadow: {e:?}"))?;
-    let spread = shadow_length(&parsed.spread, m)?;
-    if spread != 0.0 {
-        return Err("text-shadow spread is unsupported".into());
-    }
-    Ok(Some(director_core::element::TextShadow {
-        color: css_color(&parsed.color, current)?,
-        blur: shadow_length(&parsed.blur, m)?.max(0.0),
-        offset: (
-            shadow_length(&parsed.x_offset, m)?,
-            shadow_length(&parsed.y_offset, m)?,
-        ),
-    }))
+    split(s, true)
+        .iter()
+        .map(|part| {
+            let parsed = lightningcss::properties::text::TextShadow::parse_string(part)
+                .map_err(|e| format!("text-shadow: {e:?}"))?;
+            let spread = shadow_length(&parsed.spread, m)?;
+            if spread != 0.0 {
+                return Err("text-shadow spread is unsupported".into());
+            }
+            Ok(director_core::element::TextShadow {
+                color: css_color(&parsed.color, current)?,
+                blur: shadow_length(&parsed.blur, m)?.max(0.0),
+                offset: (
+                    shadow_length(&parsed.x_offset, m)?,
+                    shadow_length(&parsed.y_offset, m)?,
+                ),
+            })
+        })
+        .collect()
 }
 
 fn shadow_length(length: &lightningcss::values::length::Length, m: Metrics) -> Result<f32, String> {

@@ -606,7 +606,7 @@ pub fn text_content(spans: Vec<TextSpan>, paint: &PaintStyle, director: &Directo
     node.default_font_size = director_core::animation::Animated::new(paint.font_size);
     node.default_color = director_core::animation::Animated::new(paint.color);
     node.set_text_align(paint.align);
-    node.shadow = paint.text_shadow.clone();
+    node.shadows = paint.text_shadows.clone();
     prepare_paragraph(&mut node, paint);
     node
 }

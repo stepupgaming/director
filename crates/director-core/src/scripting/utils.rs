@@ -1119,7 +1119,8 @@ pub fn text_node_to_json(t: &crate::node::text::TextNode) -> JsonMap<String, Jso
             _ => "auto",
         }),
     );
-    if let Some(sh) = &t.shadow {
+    // Rhai text props carry one shadow, so the first (top) shadow round-trips.
+    if let Some(sh) = t.shadows.first() {
         m.insert("text_shadow_color".into(), JsonValue::from(color_hex(sh.color)));
         m.insert("text_shadow_blur".into(), JsonValue::from(sh.blur as f64));
         m.insert("text_shadow_x".into(), JsonValue::from(sh.offset.0 as f64));

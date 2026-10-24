@@ -41,7 +41,7 @@ director-engine html benchmark examples/html/native-motion.html --gpu --export t
 | HTML | Block containers, headings/paragraphs, rich inline span/bold/italic text, raster images, SVG shapes and attribute dimensions, muted video and separate audio |
 | Cascade | Servo selectors, specificity/source order, inline style, important, inheritance, custom properties substituted before shorthand ranking, CSS nesting, and nested `@media` / `@supports` evaluated against the composition size |
 | Layout | Block/Flexbox/Grid via Taffy; dimensions/min/max, spacing, relative/absolute/fixed/sticky positioning, grow/shrink/wrap, tracks/repeat/auto-fit/auto-fill/minmax, named lines and `subgrid`; px/percent/em/rem/viewport/absolute units; `calc()`/`min()`/`max()`/`clamp()` including mixed percent and px against the containing block |
-| Typography | Bundled fonts and local/embedded font-face, WOFF/WOFF2 decoding, weight/italic/size/line-height/spacing/alignment, whitespace, `text-transform`, decoration lines and styles, one `text-shadow`, `overflow-wrap`/`word-break`, line clamp and ellipsis, text indent and stroke |
+| Typography | Bundled fonts and local/embedded font-face, WOFF/WOFF2 decoding, weight/italic/size/line-height/spacing/alignment, whitespace, `text-transform`, decoration lines and styles, `text-shadow` lists, `overflow-wrap`/`word-break`, line clamp and ellipsis, text indent and stroke |
 | Paint | Linear/radial/conic gradients including repeating gradients and sRGB color hints, layered `url()` backgrounds with per-layer size/position/repeat/origin/clip, elliptical corner radii, solid/dashed/dotted/double/groove/ridge/inset/outset borders, outer/inset shadows and spread, grouped opacity, polygon/circle/ellipse/inset clips, overflow clips, alpha and luminance masks, `object-fit` and `object-position` |
 | Effects | Ordered blur/brightness/contrast/saturation/grayscale/hue/invert/sepia/opacity/drop-shadow filters, backdrop blur, common blend modes |
 | Transforms | 2D and 3D lists in authored order, origin including absolute z, percentage translation on X and Y, absolute px on Z and perspective. Parent perspective projects descendants. `preserve-3d` depth-sorts planes and occludes crossing planes per pixel. Backface hiding uses the element's own matrix |
@@ -76,7 +76,7 @@ Exact rules for each supported property live in [`AGENTS.md`](AGENTS.md). These 
 - Named grid areas, mixed inline/block formatting, interactive scrolling, general stacking-context escapes, and browser margin collapsing.
 - Mixed `calc()` without a definite basis, `calc()` with three terms on a gradient stop, and `round`/`rem`/`mod`/`abs`/`sign`/`hypot`.
 - Percent `transform-origin` z and `perspective-origin` z.
-- A second `text-shadow`, a shadow spread, `word-break: keep-all`, `overflow-wrap: break-spaces`, and `text-transform: full-width | full-size-kana`.
+- A `text-shadow` spread, `word-break: keep-all`, `overflow-wrap: break-spaces`, and `text-transform: full-width | full-size-kana`.
 - `clip-path: url()` and `inset(... round ...)`, `wavy` borders, vendor-prefixed gradients, fixed or local background attachment, non-gradient HTML mask images, and mask modes other than alpha, match-source, and luminance.
 - External stylesheet `animation` on SVG, captured SVG `foreignObject` or SMIL, SVG scripts and nested images, and the SMIL features listed in `AGENTS.md`.
 - Image-url backgrounds in a capture, unmuted video, audio playback rate other than 1, and iframe.

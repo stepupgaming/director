@@ -3,8 +3,52 @@ use skia_safe::{AlphaType, Canvas, ColorSpace, ColorType, Data, Image, Paint, Re
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use taffy::style::Style;
-use tiny_skia::{Pixmap, Transform};
-use usvg::{Options, Tree};
+use tiny_skia::{IntRect, Pixmap, Transform};
+use usvg::{Group, Node, Options, Tree};
+
+/// Largest raster padding per side, as a multiple of the output extent.
+const MAX_LAYER_PADDING: u32 = 2;
+
+/// Pixels to add left of and above the SVG raster so nested layers keep their paint.
+///
+/// resvg clamps every isolated group layer (clip-path, mask, opacity, filter) to
+/// `-2 * size .. 3 * size` of the target pixmap, measured in the parent layer's own
+/// coordinates. A layer reaching past `-2 * size` on the left or top gets its origin
+/// pulled in, and the clamp of each deeper layer then sits further left in target
+/// coordinates. From the third nested layer on, the right or bottom clamp falls inside
+/// the visible area and paint vanishes. Right and bottom reach never move a layer
+/// origin, so only left and top reach need padding.
+///
+/// resvg floors a layer edge and grows it by 2 px, so a layer escapes the clamp when
+/// `floor(reach) + pad - 2 >= -2 * (extent + pad)`. The padding keeps a 1 px margin
+/// over that bound and stops at `MAX_LAYER_PADDING` times the extent.
+fn layer_padding(tree: &Tree, sx: f32, sy: f32, width: u32, height: u32) -> (u32, u32) {
+    /// Lowest left and top edge, in canvas units, of any isolated group layer.
+    fn reach(group: &Group, min: &mut (f32, f32)) {
+        if group.should_isolate() {
+            let bbox = group.abs_layer_bounding_box();
+            min.0 = min.0.min(bbox.left());
+            min.1 = min.1.min(bbox.top());
+        }
+        for node in group.children() {
+            if let Node::Group(child) = node {
+                reach(child, min);
+            }
+        }
+    }
+
+    let mut min = (0.0f32, 0.0f32);
+    reach(tree.root(), &mut min);
+    let pad = |edge: f32, extent: u32| {
+        let need = (3.0 - 2.0 * extent as f32 - edge.floor()) / 3.0;
+        if need > 0.0 {
+            (need.ceil() as u32).min(extent.saturating_mul(MAX_LAYER_PADDING))
+        } else {
+            0
+        }
+    };
+    (pad(min.0 * sx, width), pad(min.1 * sy, height))
+}
 
 /// A node that renders scalable vector graphics (SVG).
 ///
@@ -112,11 +156,26 @@ impl Element for VectorNode {
             let sx = width as f32 / tree_size.width();
             let sy = height as f32 / tree_size.height();
 
-            let transform = Transform::from_scale(sx, sy);
+            // Render into a padded pixmap so resvg's layer clamp sits past any left or
+            // top reach, then keep the window the layout asked for.
+            let (pad_x, pad_y) = layer_padding(&self.tree, sx, sy, width, height);
+            let transform = Transform::from_row(sx, 0.0, 0.0, sy, pad_x as f32, pad_y as f32);
 
-            if let Some(mut pixmap) = Pixmap::new(width, height) {
+            let pixmap = Pixmap::new(width + pad_x, height + pad_y).and_then(|mut pixmap| {
                 resvg::render(&self.tree, transform, &mut pixmap.as_mut());
+                if pad_x == 0 && pad_y == 0 {
+                    Some(pixmap)
+                } else {
+                    pixmap.clone_rect(IntRect::from_xywh(
+                        pad_x as i32,
+                        pad_y as i32,
+                        width,
+                        height,
+                    )?)
+                }
+            });
 
+            if let Some(pixmap) = pixmap {
                 // Convert to Skia Image
                 let data = Data::new_copy(pixmap.data());
                 let image_info = skia_safe::ImageInfo::new(
@@ -165,5 +224,76 @@ impl Element for VectorNode {
                 "unknown property '{other}' on vector; valid: opacity"
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIZE: i32 = 120;
+
+    /// Three nested clip-path groups, each clipping to the 40x40 viewBox, around `content`.
+    fn nested_clip_svg(content: &str) -> String {
+        format!(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'>\
+             <defs><clipPath id='c'><rect width='40' height='40'/></clipPath></defs>\
+             <g clip-path='url(#c)'><g clip-path='url(#c)'><g clip-path='url(#c)'>{content}</g></g></g>\
+             </svg>"
+        )
+    }
+
+    /// Renders `svg` at 3x into a SIZE x SIZE surface and returns unpremultiplied RGBA.
+    fn render(svg: &str) -> Vec<u8> {
+        let node = VectorNode::new(svg.as_bytes());
+        let mut surface = skia_safe::surfaces::raster_n32_premul((SIZE, SIZE)).unwrap();
+        node.render(
+            surface.canvas(),
+            Rect::from_wh(SIZE as f32, SIZE as f32),
+            1.0,
+            &mut |_| {},
+        )
+        .unwrap();
+        let info = skia_safe::ImageInfo::new(
+            (SIZE, SIZE),
+            ColorType::RGBA8888,
+            AlphaType::Unpremul,
+            None,
+        );
+        let mut pixels = vec![0; (SIZE * SIZE * 4) as usize];
+        assert!(surface.read_pixels(&info, &mut pixels, (SIZE * 4) as usize, (0, 0)));
+        pixels
+    }
+
+    fn assert_red(pixels: &[u8], label: &str) {
+        for (x, y) in [(2, 2), (60, 60), (117, 2), (2, 117), (117, 117)] {
+            let i = ((y * SIZE + x) * 4) as usize;
+            assert_eq!(
+                &pixels[i..i + 4],
+                &[255, 0, 0, 255],
+                "{label}: pixel ({x}, {y})"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_clip_layers_keep_paint_that_reaches_far_left() {
+        // The rect starts 360 px left of the 120 px raster, past resvg's -2 * width layer clamp.
+        let svg = nested_clip_svg("<rect x='-120' width='160' height='40' fill='#f00'/>");
+        assert_red(&render(&svg), "left reach");
+    }
+
+    #[test]
+    fn nested_clip_layers_keep_paint_that_reaches_far_up() {
+        let svg = nested_clip_svg("<rect y='-120' width='40' height='160' fill='#f00'/>");
+        assert_red(&render(&svg), "top reach");
+    }
+
+    #[test]
+    fn layer_padding_is_zero_inside_the_clamp() {
+        let svg = nested_clip_svg("<rect x='-60' width='100' height='40' fill='#f00'/>");
+        let node = VectorNode::new(svg.as_bytes());
+        assert_eq!(layer_padding(&node.tree, 3.0, 3.0, 120, 120), (0, 0));
+        assert_red(&render(&svg), "control");
     }
 }

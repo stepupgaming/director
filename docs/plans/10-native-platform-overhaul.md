@@ -90,11 +90,11 @@ One row per check, holding the most recent passing count. Replace the row when a
 
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
-| workspace clippy | pass | 2026-10-22 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
-| director-core release tests | 429 | 2026-10-22 | `cargo test -p director-core --release` |
-| visual_suite | 41 | 2026-10-22 | `cargo test -p director-core --release --test visual_suite` |
+| workspace clippy | pass | 2026-10-23 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
+| director-core release tests | 432 | 2026-10-23 | `cargo test -p director-core --release` |
+| visual_suite | 41 | 2026-10-23 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 942 | 2026-10-22 | `cargo test --workspace --release` |
+| workspace release tests | 946 | 2026-10-23 | `cargo test --workspace --release` |
 | Vulkan engine clippy | pass | 2026-10-22 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |

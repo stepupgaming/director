@@ -14,7 +14,7 @@ Feature contracts live in [`crates/director-html/AGENTS.md`](../../crates/direct
 - Gradient color hints, preserve-3d depth sort with per-pixel occlusion for crossing planes, and absolute `transform-origin` z.
 - External SVG presentation properties, markers, masks, SVG text, authored `foreignObject`, and authored SMIL.
 - CSS nesting with nested `@media` and `@supports`, containing-block mixed `calc()`, named grid lines and `subgrid`, fixed and sticky position.
-- Image backgrounds with per-layer lists, origin, clip, `space` and `round`; text decoration styles and color; `text-transform`, one `text-shadow`, `overflow-wrap` and `word-break`; `object-position`; luminance masks.
+- Image backgrounds with per-layer lists, origin, clip, `space` and `round`; text decoration styles and color; `text-transform`, `text-shadow` lists, `overflow-wrap` and `word-break`; `object-position`; luminance masks.
 - Static-subtree paint reuse on full render passes (issue #2).
 - Agent tooling: `sheet`, `audio`, `check --safe-zone`, `snapshot`, `onion`, `render --scale`, `--draft-encode`, `inspect --sample`, `project repair`, `batch --json`, and preview audio byte ranges.
 
@@ -35,7 +35,7 @@ These still produce a diagnostic and are the candidates for the next slices:
 - Captured SVG `foreignObject`, SMIL, scripts, and nested images.
 - Image-url backgrounds in a capture.
 - Percent `transform-origin` z and `perspective-origin` z. Separately, the preserve-3d depth key silently ignores parent perspective.
-- A second `text-shadow` and a non-zero shadow spread.
+- A non-zero `text-shadow` spread.
 - `word-break: keep-all`, `overflow-wrap: break-spaces`, `text-transform: full-width | full-size-kana`.
 - `clip-path: url()` and `inset(... round ...)`; `wavy` borders; fixed or local background attachment; a non-gradient HTML mask image.
 - `steps()` with `jump-none` or `jump-both`.

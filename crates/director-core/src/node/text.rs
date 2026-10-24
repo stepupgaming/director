@@ -97,7 +97,8 @@ pub struct TextNode {
     pub fitted_font_size: Option<f32>,
     pub min_size: f32,
     pub max_size: f32,
-    pub shadow: Option<TextShadow>,
+    /// Text shadows in CSS order: the first one paints on top.
+    pub shadows: Vec<TextShadow>,
     pub dirty_layout: bool,
     pub last_layout_rect: Rect,
     pub style: Style,
@@ -135,7 +136,7 @@ impl Clone for TextNode {
             fitted_font_size: self.fitted_font_size,
             min_size: self.min_size,
             max_size: self.max_size,
-            shadow: self.shadow.clone(),
+            shadows: self.shadows.clone(),
             dirty_layout: true,
             last_layout_rect: Rect::default(),
             style: self.style.clone(),
@@ -194,7 +195,7 @@ impl TextNode {
             fitted_font_size: None,
             min_size: 10.0,
             max_size: 200.0,
-            shadow: None,
+            shadows: Vec::new(),
             dirty_layout: true,
             last_layout_rect: Rect::default(),
             style: Style::default(),
@@ -502,25 +503,31 @@ impl TextNode {
         let full_text: String = self.spans.iter().map(|s| s.text.as_str()).collect();
         let chars: Vec<char> = full_text.chars().collect();
 
-        // Pre-build shadow image filter and color filter if a shadow is configured.
-        // These are reference-counted in Skia so reusing them per-glyph is cheap.
-        let shadow_filter = self.shadow.as_ref().map(|shadow| {
-            let blur = image_filters::blur(
-                (shadow.blur, shadow.blur),
-                TileMode::Decal,
-                None,
-                None,
-            );
-            let c = shadow.color;
-            let matrix: [f32; 20] = [
-                0.0, 0.0, 0.0, 0.0, c.r,
-                0.0, 0.0, 0.0, 0.0, c.g,
-                0.0, 0.0, 0.0, 0.0, c.b,
-                0.0, 0.0, 0.0, 1.0, 0.0,
-            ];
-            let cf = color_filters::matrix_row_major(&matrix, color_filters::Clamp::Yes);
-            (blur, cf, shadow.offset, shadow.blur, c.a)
-        });
+        // Pre-build each shadow's image filter and color filter, back to front so the
+        // first CSS shadow paints last and lands on top. These are reference-counted in
+        // Skia so reusing them per-glyph is cheap.
+        let shadow_filters: Vec<_> = self
+            .shadows
+            .iter()
+            .rev()
+            .map(|shadow| {
+                let blur = image_filters::blur(
+                    (shadow.blur, shadow.blur),
+                    TileMode::Decal,
+                    None,
+                    None,
+                );
+                let c = shadow.color;
+                let matrix: [f32; 20] = [
+                    0.0, 0.0, 0.0, 0.0, c.r,
+                    0.0, 0.0, 0.0, 0.0, c.g,
+                    0.0, 0.0, 0.0, 0.0, c.b,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ];
+                let cf = color_filters::matrix_row_major(&matrix, color_filters::Clamp::Yes);
+                (blur, cf, shadow.offset, shadow.blur, c.a)
+            })
+            .collect();
 
         // Get glyph rects
         for (i, _ch) in chars.iter().enumerate() {
@@ -568,9 +575,9 @@ impl TextNode {
             // Move back from center
             canvas.translate((-center_x, -center_y));
 
-            // Draw per-glyph shadow if configured
-            if let Some((blur, cf, offset, blur_radius, shadow_alpha)) = &shadow_filter {
-                let glyph_opacity = base_opacity * state.opacity;
+            // Draw per-glyph shadows, back to front
+            let glyph_opacity = base_opacity * state.opacity;
+            for (blur, cf, offset, blur_radius, shadow_alpha) in &shadow_filters {
                 if glyph_opacity > 0.001 {
                     // Inverse-transform the shadow offset so it stays in screen-space
                     // regardless of glyph rotation/scale.
@@ -837,12 +844,13 @@ impl Element for TextNode {
 
             let effective_opacity = self.opacity.current_value * opacity;
 
-            // Draw shadow behind the text (full paragraph, not per-glyph).
+            // Draw shadows behind the text (full paragraph, not per-glyph).
             // Skip shadow when kinetic typography animators are active —
             // a static full-paragraph shadow behind individually-moving glyphs
             // creates a distracting visual disconnect.
             if self.animators.is_empty() {
-                if let Some(shadow) = &self.shadow {
+                // Back to front: the first CSS shadow paints last, on top.
+                for shadow in self.shadows.iter().rev() {
                     let mut shadow_paint = Paint::default();
                     shadow_paint.set_alpha_f(effective_opacity * shadow.color.a);
                     shadow_paint.set_image_filter(image_filters::blur(

@@ -813,7 +813,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut text_node = TextNode::new(spans, font_collection);
             parse_layout_style(&props, &mut text_node.style);
             apply_text_props(&mut text_node, &props);
-            text_node.shadow = parse_text_shadow(&props);
+            text_node.shadows = parse_text_shadow(&props).into_iter().collect();
             text_node.init_paragraph();
 
             let id = d.scene.add_node(Box::new(text_node));
@@ -857,7 +857,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut text_node = TextNode::new(spans, font_collection);
             parse_layout_style(&props, &mut text_node.style);
             apply_text_props(&mut text_node, &props);
-            text_node.shadow = parse_text_shadow(&props);
+            text_node.shadows = parse_text_shadow(&props).into_iter().collect();
             text_node.init_paragraph();
 
             let id = d.scene.add_node(Box::new(text_node));
@@ -2562,7 +2562,7 @@ pub fn build_text_node_from_props(
     let mut text_node = TextNode::new(spans, font_collection);
     parse_layout_style(props, &mut text_node.style);
     apply_text_props(&mut text_node, props);
-    text_node.shadow = parse_text_shadow(props);
+    text_node.shadows = parse_text_shadow(props).into_iter().collect();
     text_node.init_paragraph();
     text_node
 }

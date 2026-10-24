@@ -478,8 +478,32 @@ fn text_shadow_paints_red_beside_white_text() {
         marked.chunks(4).any(|sample| sample[0] > 200 && sample[1] > 200 && sample[2] > 200),
         "white glyph missing"
     );
+}
+
+#[test]
+fn text_shadow_list_paints_every_shadow_with_the_first_on_top() {
+    let source = |shadows: &str| {
+        format!(
+            "<style>body{{margin:0}}div{{width:64px;height:64px;color:white;font-size:32px;line-height:1;text-shadow:{shadows}}}</style><div>T</div>"
+        )
+    };
+    // The two shadow glyphs overlap by most of their width, so the one on top shows more.
+    let red_first = frame(&source("20px 0 0 red, 24px 0 0 blue"));
+    let blue_first = frame(&source("24px 0 0 blue, 20px 0 0 red"));
+    let (red_top, blue_under) = (red_pixels(&red_first), blue_pixels(&red_first));
+    let (red_under, blue_top) = (red_pixels(&blue_first), blue_pixels(&blue_first));
+    assert!(red_top > 0 && blue_under > 0, "red {red_top}, blue {blue_under}");
+    assert!(red_under > 0 && blue_top > 0, "red {red_under}, blue {blue_top}");
+    assert!(red_top > blue_under, "first shadow red {red_top} under blue {blue_under}");
+    assert!(blue_top > red_under, "first shadow blue {blue_top} under red {red_under}");
+    assert!(
+        red_first
+            .chunks(4)
+            .any(|sample| sample[0] > 200 && sample[1] > 200 && sample[2] > 200),
+        "white glyph missing"
+    );
     let err = compile(
-        "<style>div{text-shadow:2px 2px red, 4px 4px blue}</style><div>T</div>",
+        "<style>div{text-shadow:2px 2px red, 4px 4px 0 1px blue}</style><div>T</div>",
         CompileOptions {
             width: 64,
             height: 64,
@@ -490,13 +514,20 @@ fn text_shadow_paints_red_beside_white_text() {
     .err()
     .unwrap()
     .to_string();
-    assert!(err.contains("text-shadow accepts a single shadow"), "{err}");
+    assert!(err.contains("text-shadow spread is unsupported"), "{err}");
 }
 
 fn red_pixels(pixels: &[u8]) -> usize {
     pixels
         .chunks(4)
         .filter(|sample| sample[0] > 200 && sample[1] < 30 && sample[2] < 30)
+        .count()
+}
+
+fn blue_pixels(pixels: &[u8]) -> usize {
+    pixels
+        .chunks(4)
+        .filter(|sample| sample[2] > 200 && sample[0] < 30 && sample[1] < 30)
         .count()
 }
 

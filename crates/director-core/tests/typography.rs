@@ -157,11 +157,11 @@ fn text_shadow() {
     let font_collection = director.assets.font_collection.clone();
     let mut text_node = TextNode::new(spans, font_collection);
 
-    text_node.shadow = Some(director_core::element::TextShadow {
+    text_node.shadows = vec![director_core::element::TextShadow {
         color: director_core::types::Color::new(0.0, 0.0, 0.0, 0.5),
         blur: 10.0,
         offset: (5.0, 5.0),
-    });
+    }];
 
     let id = director.scene.add_node(Box::new(text_node));
 
