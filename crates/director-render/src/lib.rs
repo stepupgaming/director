@@ -16,7 +16,7 @@ mod frame;
 mod live;
 mod paint;
 
-pub use export::frame_times;
+pub use export::{export_director, frame_times};
 pub use frame::{paint_root, render_frame, FrameState};
 pub use live::{output_dimensions, render_export, render_export_at_scale, set_output_scale, validate_scale, GpuContext};
 

@@ -180,14 +180,8 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
             write_png(surface.image_info(), &pixels, &output)?;
         } else {
             let started = Instant::now();
-            director_render::render_export(
-                &mut compiled.director,
-                output.clone(),
-                context.as_mut(),
-                None,
-                false,
-            )
-            .map_err(|e| (2, e.to_string()))?;
+            crate::renderer::export_video(&mut compiled.director, &output, context.as_mut(), false, 1.0, false)
+                .map_err(|e| (2, e.to_string()))?;
             eprintln!(
                 "HTML export: renderer={} encoder={} export_ms={:.3}",
                 if rendering.gpu { "vulkan" } else { "cpu" },
@@ -282,14 +276,8 @@ fn benchmark(
     drop(warm);
     let export_ms = if let Some(path) = export {
         let started = Instant::now();
-        director_render::render_export(
-            &mut compiled.director,
-            path,
-            context.as_mut(),
-            None,
-            false,
-        )
-        .map_err(|e| (2, e.to_string()))?;
+        crate::renderer::export_video(&mut compiled.director, &path, context.as_mut(), false, 1.0, false)
+            .map_err(|e| (2, e.to_string()))?;
         Some(started.elapsed().as_secs_f64() * 1000.0)
     } else {
         None

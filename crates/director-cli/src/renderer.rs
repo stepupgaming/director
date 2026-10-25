@@ -1,5 +1,38 @@
+use director_core::scene_import::ImportRegistry;
 use director_core::Director;
 use director_render::{FrameState, GpuContext};
+use std::path::Path;
+
+/// Core kinds plus the `director-html` kinds.
+pub fn import_registry() -> ImportRegistry {
+    let mut registry = ImportRegistry::core();
+    director_html::register_import(&mut registry);
+    registry
+}
+
+/// Export `director` to `output`. A Vulkan `context` renders serially on the GPU;
+/// CPU exports run the pipelined document export across a worker pool.
+pub fn export_video(
+    director: &mut Director,
+    output: &Path,
+    context: Option<&mut GpuContext>,
+    alpha: bool,
+    scale: f32,
+    draft: bool,
+) -> anyhow::Result<()> {
+    match context {
+        Some(context) => director_render::render_export_at_scale(
+            director,
+            output.to_path_buf(),
+            Some(context),
+            None,
+            alpha,
+            scale,
+            draft,
+        ),
+        None => director_render::export_director(director, import_registry(), output, alpha, scale, draft),
+    }
+}
 
 /// Render targets and the Vulkan context stay on their creating thread.
 pub struct Renderer {

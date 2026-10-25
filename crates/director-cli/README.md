@@ -67,7 +67,7 @@ director-engine html benchmark examples/html/native-motion.html --gpu --encoder 
 
 Install the optional Node dependencies in `../director-html/tools` for capture. `--modules` selects another dependency directory. Native commands need neither Node nor Chrome. See [compiler compatibility and parity](../director-html/README.md).
 
-`--gpu` selects Vulkan painting. `--encoder nvenc` selects NVIDIA H.264 encoding and also works with CPU painting. Defaults are CPU rendering and software H.264. Explicit requests fail when unavailable. Benchmarks report backend, codec, setup time and synchronized RGBA readback; frame FPS excludes PNG encoding. The upstream Skia resolver patch is selected from `vendor/skia-safe` by Cargo.
+CPU exports paint frames in parallel on a worker pool and encode them in one FFmpeg pass. `--gpu` selects serial Vulkan painting. `--encoder nvenc` selects NVIDIA H.264 encoding and also works with CPU painting. Defaults are CPU rendering and software H.264. Explicit requests fail when unavailable. Benchmarks report backend, codec, setup time and synchronized RGBA readback; frame FPS excludes PNG encoding. The upstream Skia resolver patch is selected from `vendor/skia-safe` by Cargo.
 
 ## Exit codes
 

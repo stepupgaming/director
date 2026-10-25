@@ -5,7 +5,7 @@ use director_core::scene_export::export_scene;
 use director_core::scene_import::ImportRegistry;
 use director_core::video_wrapper::EncoderMode;
 use director_html::{compile, compile_file, register_import, CompileOptions, CompiledHtml};
-use director_render::{render_export, Renderer};
+use director_render::{export_director, render_export, render_export_at_scale, Renderer};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -154,6 +154,20 @@ fn document_export_decodes_like_the_live_export() {
         .with_render_mode(compiled.director.render_mode);
     render_export(&mut compiled.director, live_path.clone(), None, None, false).unwrap();
     renderer.export(&document_path, EncoderMode::Software).unwrap();
+    assert_eq!(framemd5(&document_path), framemd5(&live_path));
+}
+
+#[test]
+fn director_export_at_half_scale_with_alpha_decodes_like_the_live_export() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/html/native-motion.html");
+    let temp = tempfile::tempdir().unwrap();
+    let (live_path, document_path) = (temp.path().join("live.webm"), temp.path().join("document.webm"));
+    let mut compiled = compile_file(&path, CompileOptions::default()).unwrap();
+    compiled.director.encoder_mode = EncoderMode::Software;
+    export_director(&mut compiled.director, registry(), &document_path, true, 0.5, false).unwrap();
+    let director = &compiled.director;
+    assert_eq!((director.output_scale_x, director.output_scale_y, director.transparent_background), (1.0, 1.0, false));
+    render_export_at_scale(&mut compiled.director, live_path.clone(), None, None, true, 0.5, false).unwrap();
     assert_eq!(framemd5(&document_path), framemd5(&live_path));
 }
 

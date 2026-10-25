@@ -9,7 +9,7 @@
 - `src/batch.rs` owns batch output names and the status report. It stays free of other crate dependencies so `tests/repair_batch.rs` can include it.
 - `src/input.rs` owns common loading for Rhai, HTML, captured DOM, portable native projects and versioned core projects, plus encoder selection.
 - `src/project.rs` owns portable project packing, element-ID keyed JSON edits, and `project repair`.
-- `src/renderer.rs` owns persistent native frame targets, a `director_render::FrameState` per renderer and synchronized PNG readback.
+- `src/renderer.rs` owns persistent native frame targets, a `director_render::FrameState` per renderer, synchronized PNG readback, the import registry (core plus `director-html` kinds) and `export_video`, the one video export entry for `render`, `batch`, `html render` and `html benchmark --export`.
 - `src/html.rs` owns `html check|still|render|capture|benchmark`. HTML and capture JSON compile through `director-html`; browser extraction is explicit and is never invoked by native render/still.
 - `src/preview/` owns the preview API server (Axum endpoints and the native worker) for editors and agents; its child DOX owns thread lifetime, accepted revisions, reload and audio caching. The repo ships no browser client.
 - `src/run.rs` owns shared script eval + composition/movie resolution (`eval_script`, `resolve_movie`).
@@ -30,6 +30,7 @@
 - `render --scale` accepts a finite value in `(0, 1]`. Layout width and height stay put, and the raster rounds each side down to an even size. Scale 1 is unchanged, including odd sizes. `--draft-encode` sets software x264 to ultrafast and CRF 30 without changing the raster size. Hardware qp and the alpha VP9 path stay put. The default stays slow and CRF 18.
 - Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect` and `preview` share input loading. `--props` belongs to Rhai composition builders; native project edits use `project edit --patch`. Rhai packing is outside the native authoring format.
 - `project repair` uses the `project edit` patch, saves only after validation, then prints inspect JSON at t=0. A rejected repair leaves the saved file unchanged.
+- Video export runs the pipelined `director_render::export_director` on CPU, which paints on a worker pool and encodes in one FFmpeg pass. `--gpu` keeps the serial Vulkan `render_export_at_scale`. Alpha, `--scale` and `--draft-encode` behave the same on both.
 - `batch --input <path> --output <dir>` renders each input with the software encoder. One failure still reports the other items and exits with the highest item code. `batch --json` prints `{"exit_code","items"}` in place of the `ok`/`fail` lines and keeps that exit code.
 - `inspect --sample <seconds>` may be repeated. With no sample, inspect prints one object at `--time`. With samples, it loads once and prints `{"samples":[{"time","inspection"}]}` in order. A non-finite or negative sample exits 1.
 - Explicit `--gpu` requires Vulkan across top-level render/still/preview as well as HTML commands. Render accepts independent `--encoder software|nvenc`.

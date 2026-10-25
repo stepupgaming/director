@@ -14,7 +14,6 @@ mod sheet;
 mod snapshot;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use director_render::render_export;
 use director_core::scripting::MovieHandle;
 use director_core::video_wrapper::RenderMode;
 use input::{Encoder, Input};
@@ -309,11 +308,10 @@ fn cmd_render(args: RenderArgs) {
         std::process::exit(2);
     });
     director.encoder_mode = args.encoder.mode();
-    if let Err(e) = director_render::render_export_at_scale(
+    if let Err(e) = renderer::export_video(
         &mut director,
-        output.clone(),
+        &output,
         context.as_mut(),
-        None,
         args.alpha,
         args.scale,
         args.draft_encode,
@@ -382,13 +380,7 @@ fn render_software_item(input_path: &Path, output: &Path) -> Result<(), ItemFail
         message: "Director lock poisoned".into(),
     })?;
     director.encoder_mode = Encoder::Software.mode();
-    render_export(
-        &mut director,
-        output.to_path_buf(),
-        context.as_mut(),
-        None,
-        false,
-    )
+    renderer::export_video(&mut director, output, context.as_mut(), false, 1.0, false)
     .map_err(|error| ItemFailure {
         exit_code: 2,
         message: error.to_string(),
