@@ -5,11 +5,12 @@
 ## Ownership
 
 - `src/lib.rs` owns `Renderer`, `FramePool`, `FrameSession`, `Frame` and `RenderError`.
+- `src/export.rs` owns `Renderer::export`, `Renderer::export_with` and `frame_times`.
 - `src/frame.rs` owns the frame driver: `evaluate` advances the `Director` (dirty set, update, layout, post-layout) and resolves a `FramePlan` of scene layers and transition pairs; `paint` draws a plan; `render_sampled` averages shutter samples for motion blur.
 - `tests/common/mod.rs` holds the parity reference: `CoreSession` paints a `Director` through core `render_sampled_at_time`, and every parity test compares this crate against it.
 - `tests/rhai_examples.rs` paints every `examples/**/*.rhai` movie (each registered composition with default props) on the core path, on a live `FrameSession` and from its exported document, and requires all three to match.
-- `tests/html_examples.rs` owns parity between the document render and the compiled `Director` on the core path for HTML: every example, a paint fixture, SMIL, looped video, a sampled capture with path and embedded video, text, SVG and nested boxes, and a Paper shader, plus byte equality of `render_frames` and a warm `FramePool` with fresh sessions. Video fixtures need FFmpeg on the path.
-- `examples/export_bench.rs` times a 1080p HTML export on the core path against the document painted through a warm `FramePool`, with render-only, one-call `render_frames`, single-session and live-session splits, and writes `core.mp4` and `director-render.mp4` to its output folder. `DIRECTOR_BENCH_RUN` sets frames per worker per pool call (1 by default).
+- `tests/html_examples.rs` owns parity between the document render and the compiled `Director` on the core path for HTML: every example, a paint fixture, SMIL, looped video, a sampled capture with path and embedded video, text, SVG and nested boxes, and a Paper shader, plus byte equality of `render_frames` and a warm `FramePool` with fresh sessions, and per-frame MD5 equality of a document export with the core export. Video fixtures need FFmpeg on the path.
+- `examples/export_bench.rs` times a 1080p HTML export on the core path against `Renderer::export_with`, plus an encode-only floor (prepainted frames piped through the same encoder settings), render-only, one-call `render_frames`, single-session and live-session splits. It writes `core.mp4`, `director-render.mp4` and `encode-only.mp4` to its output folder. `DIRECTOR_BENCH_WORKERS` overrides the pool size.
 - `tests/core_nodes.rs` owns the same parity for core Lottie (with an override image) and audio scenes: the document re-exports unchanged, the mix is sample-equal and frames match, including a spectrum visualizer and an audio binding.
 
 ## Local Contracts
@@ -20,12 +21,14 @@
 - `render_into` reuses the frame's pixel buffer. Use it on every repeated paint: a fresh 8 MB buffer per 1080p frame costs more than painting a static scene.
 - `FramePool` holds one lazily imported `FrameSession` per rayon worker and keeps them warm across calls, so each keeps its static layer cache and incremental frame state. `render_into(times, &mut Vec<Frame>)` resizes the frames to `times`, gives each worker one contiguous run, reuses every pixel buffer and returns the first error.
 - `FrameSession` is `Send` because it exclusively owns its `Director`, layout engine and CPU raster surfaces; a pool drives each session from one worker at a time.
+- `Renderer::pool_with(workers)` sizes a pool explicitly. `Renderer::pool_for(frames)` gives one session per `FRAMES_PER_SESSION` (15) frames, capped at half the rayon workers so x264 keeps cores.
+- `Renderer::export(path, mode)` writes H.264 with AAC (VP9 with Opus for a transparent document) through `director_core::video_wrapper::Encoder`, with export frame times from `frame_times` and audio mixed from a separately imported `Director`. A `pool_for` pool paints one frame per worker per call while a scoped writer thread encodes the previous batch; two frame batches circulate. A failed paint drops the encoder unfinished, so nothing reaches `path`. `export_with` takes an explicit worker count.
 - `Renderer::render_frames(times)` paints through a fresh `FramePool` and returns frames in the order of `times`. Warm pool frames equal fresh-session frames byte for byte.
 - The renderer paints on the CPU raster backend.
 
 ## Work Guidance
 
-- Export through a warm `FramePool` with one frame per worker per call. Encoding still runs serially after each call; overlap it with painting next.
+- Export is bound by FFmpeg: `Encoder::finish` drains x264 and runs a second FFmpeg pass that muxes the raw audio file, about 170 ms of a 3 s 1080p export. Cut that pass before tuning paint further.
 - The frame driver lives here; per-node paint still calls core `render_recursive`. Move the node traversal, the static layer cache and per-kind paint into this crate next while the parity tests and the visual suite stay green, then switch export to this crate and delete the core frame path.
 
 ## Verification

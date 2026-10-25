@@ -11,6 +11,7 @@ director-scene = { workspace = true }
 skia-safe = { workspace = true }
 thiserror = { workspace = true }
 rayon = "1.10"
+anyhow = { workspace = true }
 
 [dev-dependencies]
 taffy = "0.9.2"
@@ -18,5 +19,4 @@ director-html = { path = "../director-html" }
 base64 = "0.22"
 tempfile = "3.23"
 rhai = { version = "1.23.6", features = ["metadata"] }
-anyhow = { workspace = true }
 serde_json = { workspace = true }

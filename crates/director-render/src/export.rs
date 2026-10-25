@@ -1,0 +1,90 @@
+//! Document export: a [`FramePool`] paints the next batch of frames while a
+//! writer thread pipes the previous batch to FFmpeg and mixes its audio.
+
+use crate::{Frame, RenderError, Renderer};
+use director_core::scene_import::import_scene;
+use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_count, frame_to_time};
+use director_core::video_wrapper::{Encoder, EncoderMode, EncoderSettings};
+use director_core::Director;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+
+/// Frame batches in flight: one painting while one encodes.
+const BATCHES: usize = 2;
+
+/// Export frame times of `director`: its timeline, or five seconds when it is empty.
+pub fn frame_times(director: &Director) -> Vec<f64> {
+    let fps = director.fps.max(1e-6);
+    let mut duration = director.timeline_duration();
+    if duration == 0.0 {
+        duration = 5.0;
+    }
+    (0..duration_to_frame_count(duration, fps)).map(|i| frame_to_time(i, fps)).collect()
+}
+
+impl Renderer {
+    /// Export the document to `path` as H.264 (VP9 with alpha for a transparent
+    /// background) with mixed audio, through a pool sized by [`Renderer::pool_for`].
+    pub fn export(&self, path: &Path, mode: EncoderMode) -> Result<(), RenderError> {
+        self.export_with(path, mode, None)
+    }
+
+    /// Export through `workers` sessions, or a pool sized to the frame count
+    /// when `None`. Each pool call paints one frame per worker.
+    pub fn export_with(&self, path: &Path, mode: EncoderMode, workers: Option<usize>) -> Result<(), RenderError> {
+        let mut audio = import_scene(&self.document, self.loader.clone(), &self.registry, self.render_mode)?;
+        let fps = audio.fps.max(1e-6);
+        let times = frame_times(&audio);
+        let mut pool = workers.map_or_else(|| self.pool_for(times.len()), |workers| self.pool_with(workers));
+        let (width, height) = self.output_size();
+        let settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
+            .with_fps(fps)
+            .with_encoder_mode(mode)
+            .with_alpha(audio.transparent_background);
+        let mut encoder = Encoder::new(path, settings).map_err(RenderError::Encode)?;
+        let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, fps, 1);
+        let batch = pool.workers();
+        let (full_tx, full_rx) = mpsc::sync_channel::<(usize, Vec<Frame>)>(BATCHES);
+        let (empty_tx, empty_rx) = mpsc::channel::<Vec<Frame>>();
+        for _ in 0..BATCHES {
+            let _ = empty_tx.send(Vec::new());
+        }
+        let failed = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let (times, failed) = (&times, &failed);
+            let writer = scope.spawn(move || -> anyhow::Result<()> {
+                for (start, frames) in full_rx {
+                    for (frame, &time) in frames.iter().zip(&times[start..]) {
+                        encoder.encode(&frame.rgba, time)?;
+                        encoder.encode_audio(&audio.mix_audio(block, time), time)?;
+                    }
+                    let _ = empty_tx.send(frames);
+                }
+                // A failed paint drops the encoder unfinished so no partial file reaches `path`.
+                if failed.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                encoder.finish()
+            });
+            let painted: Result<(), RenderError> = (|| {
+                for (index, chunk) in times.chunks(batch).enumerate() {
+                    // The writer hung up, so it failed; its join reports why.
+                    let Ok(mut frames) = empty_rx.recv() else { break };
+                    pool.render_into(chunk, &mut frames)?;
+                    if full_tx.send((index * batch, frames)).is_err() {
+                        break;
+                    }
+                }
+                Ok(())
+            })();
+            if painted.is_err() {
+                failed.store(true, Ordering::Release);
+            }
+            drop(full_tx);
+            let written = writer.join().unwrap_or_else(|_| Err(anyhow::anyhow!("the encoder thread panicked")));
+            painted?;
+            written.map_err(RenderError::Encode)
+        })
+    }
+}

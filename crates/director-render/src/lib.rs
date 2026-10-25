@@ -2,10 +2,15 @@
 //!
 //! A [`Renderer`] holds a shared document and imports it into one live
 //! `Director` per [`FrameSession`]. Each session owns its surfaces and layout
-//! engine. A [`FramePool`] keeps one warm session per rayon worker and paints
+//! engine. A [`FramePool`] keeps warm sessions on the rayon pool and paints
 //! each worker's contiguous run of frames into reused buffers.
+//! [`Renderer::export`] pipes pool batches to FFmpeg on a writer thread while
+//! the next batch paints.
 
+mod export;
 mod frame;
+
+pub use export::frame_times;
 
 use director_core::scene_import::{import_scene, ImportError, ImportRegistry};
 use director_core::systems::layout::LayoutEngine;
@@ -28,7 +33,13 @@ pub enum RenderError {
     Surface(i32, i32),
     #[error("failed to read frame pixels")]
     Readback,
+    #[error("encoding failed: {0}")]
+    Encode(anyhow::Error),
 }
+
+/// Frames a session paints before another session pays its import and cold
+/// first frame. `Renderer::pool_for` sizes pools by it.
+pub const FRAMES_PER_SESSION: usize = 15;
 
 /// One painted frame in RGBA, row-major, `width * 4` bytes per row. Alpha is
 /// straight; opaque frames carry the same bytes premultiplied.
@@ -96,10 +107,22 @@ impl Renderer {
 
     /// A pool of warm sessions, one per rayon worker.
     pub fn pool(&self) -> FramePool {
+        self.pool_with(rayon::current_num_threads())
+    }
+
+    /// A pool of `workers` warm sessions, at least one.
+    pub fn pool_with(&self, workers: usize) -> FramePool {
         FramePool {
             renderer: self.clone(),
-            sessions: (0..rayon::current_num_threads()).map(|_| None).collect(),
+            sessions: (0..workers.max(1)).map(|_| None).collect(),
         }
+    }
+
+    /// A pool for `frames` frames: one session per [`FRAMES_PER_SESSION`]
+    /// frames, up to half the rayon workers so the encoder keeps cores.
+    pub fn pool_for(&self, frames: usize) -> FramePool {
+        let cap = (rayon::current_num_threads() / 2).max(1);
+        self.pool_with(frames.div_ceil(FRAMES_PER_SESSION).min(cap))
     }
 
     /// Paint frames at `times` in parallel through a fresh [`FramePool`].
@@ -121,6 +144,10 @@ pub struct FramePool {
 impl FramePool {
     pub fn renderer(&self) -> &Renderer {
         &self.renderer
+    }
+
+    pub fn workers(&self) -> usize {
+        self.sessions.len()
     }
 
     /// Paint `times` into `frames`, resized to match and in the same order.

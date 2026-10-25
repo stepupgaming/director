@@ -1,18 +1,20 @@
 //! Times an HTML export on the core `Director` path against its scene document
-//! painted through a warm `FramePool`, and writes both MP4s.
+//! exported through `Renderer::export`, and writes both MP4s.
 //!
 //! `cargo run -p director-render --release --example export_bench -- [html] [out_dir] [runs] [auto|software|nvenc]`
+//!
+//! `DIRECTOR_BENCH_WORKERS` overrides the pool size that `Renderer::pool_for` picks.
 
 use director_core::export::render_export;
 use director_core::scene_export::export_scene;
-use director_core::scene_import::{import_scene, ImportRegistry};
+use director_core::scene_import::ImportRegistry;
 use director_core::systems::layout::LayoutEngine;
 use director_core::systems::renderer::render_sampled_at_time;
-use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_count, frame_to_time};
+use director_core::timeline::audio_samples_per_video_frame;
 use director_core::video_wrapper::{Encoder, EncoderMode, EncoderSettings};
 use director_core::Director;
 use director_html::{compile_file, register_import, CompileOptions};
-use director_render::{Frame, Renderer};
+use director_render::{frame_times, Frame, FramePool, Renderer};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,54 +37,36 @@ fn renderer(director: &Director) -> anyhow::Result<Renderer> {
         .with_render_mode(director.render_mode))
 }
 
-fn frame_times(director: &Director) -> Vec<f64> {
-    let fps = director.fps.max(1e-6);
-    let mut duration = director.timeline_duration();
-    if duration == 0.0 {
-        duration = 5.0;
-    }
-    (0..duration_to_frame_count(duration, fps)).map(|i| frame_to_time(i, fps)).collect()
+/// Pool size from `DIRECTOR_BENCH_WORKERS`, or `Renderer::pool_for` when unset.
+fn workers() -> Option<usize> {
+    std::env::var("DIRECTOR_BENCH_WORKERS").ok().and_then(|workers| workers.parse().ok())
 }
 
-/// Frames per `FramePool` call, `DIRECTOR_BENCH_RUN` contiguous frames per worker (1 by default).
-fn chunk_len() -> usize {
-    let run = std::env::var("DIRECTOR_BENCH_RUN").ok().and_then(|run| run.parse().ok()).unwrap_or(1);
-    rayon::current_num_threads() * run
+fn pool(renderer: &Renderer, frames: usize) -> FramePool {
+    workers().map_or_else(|| renderer.pool_for(frames), |workers| renderer.pool_with(workers))
 }
 
-/// Paint `times` chunk by chunk through one warm pool, handing each chunk to `sink` in order.
-fn pool_frames(
-    renderer: &Renderer,
-    times: &[f64],
-    mut sink: impl FnMut(&[Frame], &[f64]) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    let mut pool = renderer.pool();
+/// Paint `times` one frame per worker per call through one warm pool, as the export does.
+fn pool_frames(renderer: &Renderer, times: &[f64]) -> anyhow::Result<()> {
+    let mut pool = pool(renderer, times.len());
     let mut frames = Vec::new();
-    for chunk in times.chunks(chunk_len()) {
+    for chunk in times.chunks(pool.workers()) {
         pool.render_into(chunk, &mut frames)?;
-        sink(&frames, chunk)?;
     }
     Ok(())
 }
 
-/// Paint `times` through a warm `FramePool` and stream them to the encoder in order.
-fn document_export(director: &Director, path: &Path, mode: EncoderMode) -> anyhow::Result<()> {
-    let renderer = renderer(director)?;
-    let times = frame_times(director);
-    let (width, height) = renderer.output_size();
-    let settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
+/// Encoder floor: pipe prepainted `frames` with silent audio through the export encoder settings.
+fn encode(frames: &[Frame], director: &Director, path: &Path, mode: EncoderMode) -> anyhow::Result<()> {
+    let settings = EncoderSettings::preset_h264_yuv420p(frames[0].width as usize, frames[0].height as usize)
         .with_fps(director.fps)
         .with_encoder_mode(mode);
     let mut encoder = Encoder::new(path, settings)?;
-    let mut audio = import_scene(renderer.document(), director.assets.loader.clone(), &registry(), director.render_mode)?;
-    let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, director.fps.max(1e-6), 1);
-    pool_frames(&renderer, &times, |frames, chunk| {
-        for (frame, &time) in frames.iter().zip(chunk) {
-            encoder.encode(&frame.rgba, time)?;
-            encoder.encode_audio(&audio.mix_audio(block, time), time)?;
-        }
-        Ok(())
-    })?;
+    let silence = vec![0.0; 2 * audio_samples_per_video_frame(director.audio_mixer.sample_rate, director.fps.max(1e-6), 1)];
+    for (frame, time) in frames.iter().zip(frame_times(director)) {
+        encoder.encode(&frame.rgba, time)?;
+        encoder.encode_audio(&silence, time)?;
+    }
     encoder.finish()
 }
 
@@ -139,7 +123,11 @@ fn main() -> anyhow::Result<()> {
 
     let (mut core_export, mut render_export_ms, mut core_render, mut render_render, mut one_session) =
         (vec![], vec![], vec![], vec![], vec![]);
-    let (mut live_session, mut one_call, mut first_frame) = (vec![], vec![], vec![]);
+    let (mut live_session, mut one_call, mut first_frame, mut encode_only) = (vec![], vec![], vec![], vec![]);
+    let encode_frames = {
+        let mut session = renderer(&probe)?.session()?;
+        frame_times(&probe).into_iter().map(|time| session.render(time)).collect::<Result<Vec<_>, _>>()?
+    };
     for _ in 0..runs {
         let mut director = compiled(&input, mode)?;
         let started = Instant::now();
@@ -147,9 +135,14 @@ fn main() -> anyhow::Result<()> {
         core_export.push(ms(started));
 
         let director = compiled(&input, mode)?;
+        let document = renderer(&director)?;
         let started = Instant::now();
-        document_export(&director, &render_path, mode)?;
+        document.export_with(&render_path, mode, workers())?;
         render_export_ms.push(ms(started));
+
+        let started = Instant::now();
+        encode(&encode_frames, &probe, &out_dir.join("encode-only.mp4"), mode)?;
+        encode_only.push(ms(started));
 
         let mut director = compiled(&input, mode)?;
         let started = Instant::now();
@@ -158,7 +151,7 @@ fn main() -> anyhow::Result<()> {
 
         let director = compiled(&input, mode)?;
         let started = Instant::now();
-        pool_frames(&renderer(&director)?, &frame_times(&director), |_, _| Ok(()))?;
+        pool_frames(&renderer(&director)?, &frame_times(&director))?;
         render_render.push(ms(started));
 
         let director = compiled(&input, mode)?;
@@ -194,6 +187,7 @@ fn main() -> anyhow::Result<()> {
     let (one_session, live_session, one_call) =
         (median(&mut one_session), median(&mut live_session), median(&mut one_call));
     let first_frame = median(&mut first_frame);
+    let encode_only = median(&mut encode_only);
     println!(
         "{}",
         serde_json::json!({
@@ -202,11 +196,11 @@ fn main() -> anyhow::Result<()> {
             "fps": probe.fps,
             "frames": frames,
             "threads": rayon::current_num_threads(),
-            "chunk": chunk_len(),
+            "workers": pool(&renderer(&probe)?, frames).workers(),
             "encoder": format!("{mode:?}"),
             "runs": runs,
             "session_import_ms": session_ms,
-            "export_ms": {"core": core_export, "director_render": render_export_ms, "speedup": core_export / render_export_ms},
+            "export_ms": {"encode_only": encode_only, "core": core_export, "director_render": render_export_ms, "speedup": core_export / render_export_ms},
             "render_only_ms": {"core": core_render, "director_render": render_render, "speedup": core_render / render_render, "one_session": one_session, "live_session": live_session, "one_call": one_call, "one_session_first_frame": first_frame},
             "render_only_fps": {"core": frames as f64 * 1000.0 / core_render, "director_render": frames as f64 * 1000.0 / render_render},
             "outputs": [std::fs::canonicalize(&core_path)?, std::fs::canonicalize(&render_path)?],
