@@ -11,15 +11,15 @@ use director_core::scene_import::{import_scene, ImportRegistry};
 use director_core::types::Color;
 use director_core::video_wrapper::RenderMode;
 use director_core::{AssetLoader, DefaultAssetLoader, Director};
-use director_render::{Frame, FrameSession, Renderer};
+use director_render::Renderer;
 use director_scene::{NodeBody, SceneDocument};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+mod common;
+
 const TIMES: [f64; 4] = [0.0, 0.5, 1.25, 1.9];
-const CHANNEL_DELTA: u8 = 16;
-const MAX_FRACTION: f64 = 0.001;
 
 fn repo(path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join(path)
@@ -49,35 +49,10 @@ fn document(director: &Director) -> SceneDocument {
     SceneDocument::from_json(&json).unwrap()
 }
 
-fn differing_fraction(a: &Frame, b: &Frame) -> f64 {
-    assert_eq!((a.width, a.height), (b.width, b.height));
-    let different = a
-        .rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(b.rgba.as_chunks::<4>().0)
-        .filter(|(x, y)| x.iter().zip(y.iter()).any(|(p, q)| p.abs_diff(*q) > CHANNEL_DELTA))
-        .count();
-    different as f64 / (a.width as f64 * a.height as f64)
-}
-
-/// Frames at [`TIMES`] whose document render differs from the live render.
+/// Frames at [`TIMES`] where the document render differs from the live `Director` on the core path.
 fn mismatches(name: &str, original: Director) -> Vec<String> {
     let renderer = Renderer::new(Arc::new(document(&original)), loader()).with_render_mode(original.render_mode);
-    let size = renderer.output_size();
-    let mut imported = renderer.session().unwrap_or_else(|e| panic!("{name}: {e}"));
-    let mut original = FrameSession::new(original, size).unwrap();
-    let mut failures = Vec::new();
-    for time in TIMES {
-        let expected = original.render(time).unwrap();
-        let actual = imported.render(time).unwrap_or_else(|e| panic!("{name} at {time}s: {e}"));
-        let fraction = differing_fraction(&expected, &actual);
-        if fraction > MAX_FRACTION {
-            failures.push(format!("{name} at {time}s: {fraction:.6} of pixels differ"));
-        }
-    }
-    failures
+    common::mismatches(name, original, &renderer, &TIMES)
 }
 
 fn lottie_scene() -> Director {

@@ -43,6 +43,7 @@ director-scene = { path = "../director-scene" }
 tracing = "0.1.43"
 
 [dev-dependencies]
+director-render = { path = "../director-render" }
 hound = "3.5"
 tracing-subscriber = "0.3.22"
 criterion = "0.5"

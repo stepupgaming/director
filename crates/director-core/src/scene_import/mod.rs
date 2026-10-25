@@ -273,6 +273,15 @@ pub fn import_graph(
             }
         }
     }
+    // A mask keeps its owner as parent without being one of its children.
+    for record in records {
+        if let Some(parent) = record.parent {
+            let parent = resolve(&ids, parent)?;
+            if let Some(node) = scene.get_node_mut(ids[&key(record.id)]) {
+                node.parent.get_or_insert(parent);
+            }
+        }
+    }
     Ok(ids)
 }
 

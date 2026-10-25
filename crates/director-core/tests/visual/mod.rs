@@ -361,30 +361,39 @@ pub fn assert_visual_match_with(
     }
 
     compare_to_golden(&rendered_bytes, module, name, name, config)?;
-    assert_document_renders(&document, director.render_mode, time, module, name, config)
+    assert_document_renders(document, director.render_mode, time, module, name, config)
 }
 
-/// Import the exported document into a fresh `Director` and compare its frame
+/// Paint the exported document through `director_render` and compare its frame
 /// with the same golden. Kinds the importer does not cover yet are skipped.
 fn assert_document_renders(
-    document: &director_scene::SceneDocument,
+    document: director_scene::SceneDocument,
     render_mode: RenderMode,
     time: f64,
     module: &str,
     name: &str,
     config: &VisualConfig,
 ) -> Result<(), String> {
-    use director_core::scene_import::{import_scene, ImportRegistry};
+    use director_render::{RenderError, Renderer};
     let loader: Arc<dyn AssetLoader> = Arc::new(ManifestAssetLoader);
-    let mut imported = match import_scene(document, loader, &ImportRegistry::core(), render_mode) {
-        Ok(imported) => imported,
-        Err(err) if err.is_unsupported() => {
+    let renderer = Renderer::new(Arc::new(document), loader).with_render_mode(render_mode);
+    let mut session = match renderer.session() {
+        Ok(session) => session,
+        Err(RenderError::Import(err)) if err.is_unsupported() => {
             eprintln!("document render skipped {module}/{name}: {err}");
             return Ok(());
         }
         Err(err) => return Err(format!("scene import failed for {module}/{name}: {err}")),
     };
-    let rendered_bytes = render_png(&mut imported, time)?;
+    let frame = session
+        .render(time)
+        .map_err(|err| format!("document render failed for {module}/{name}: {err}"))?;
+    let image = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
+        .ok_or_else(|| "document frame has the wrong length".to_string())?;
+    let mut rendered_bytes = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut rendered_bytes), image::ImageFormat::Png)
+        .map_err(|err| format!("failed to encode the document frame: {err}"))?;
     compare_to_golden(&rendered_bytes, module, name, &format!("{name}.document"), config)?;
     eprintln!("document render matched {module}/{name}");
     Ok(())

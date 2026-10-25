@@ -986,6 +986,7 @@ dependencies = [
  "base64",
  "criterion",
  "crossbeam-channel",
+ "director-render",
  "director-scene",
  "ebur128",
  "hound",
@@ -1044,11 +1045,13 @@ dependencies = [
 name = "director-render"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "base64",
  "director-core",
  "director-html",
  "director-scene",
  "rayon",
+ "rhai",
  "skia-safe",
  "taffy",
  "tempfile",

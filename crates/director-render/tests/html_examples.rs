@@ -4,13 +4,13 @@
 use director_core::scene_export::export_scene;
 use director_core::scene_import::ImportRegistry;
 use director_html::{compile, compile_file, register_import, CompileOptions, CompiledHtml};
-use director_render::{Frame, FrameSession, Renderer};
+use director_render::Renderer;
 use std::path::Path;
 use std::sync::Arc;
 
+mod common;
+
 const TIMES: [f64; 4] = [0.0, 0.5, 1.25, 2.5];
-const CHANNEL_DELTA: u8 = 16;
-const MAX_FRACTION: f64 = 0.001;
 
 fn registry() -> ImportRegistry {
     let mut registry = ImportRegistry::core();
@@ -18,38 +18,13 @@ fn registry() -> ImportRegistry {
     registry
 }
 
-fn differing_fraction(a: &Frame, b: &Frame) -> f64 {
-    assert_eq!((a.width, a.height), (b.width, b.height));
-    let different = a
-        .rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(b.rgba.as_chunks::<4>().0)
-        .filter(|(x, y)| x.iter().zip(y.iter()).any(|(p, q)| p.abs_diff(*q) > CHANNEL_DELTA))
-        .count();
-    different as f64 / (a.width as f64 * a.height as f64)
-}
-
-/// Frames at [`TIMES`] whose document render differs from the compiled render.
+/// Frames at [`TIMES`] where the document render differs from the compiled `Director` on the core path.
 fn mismatches(name: &str, compiled: CompiledHtml) -> Vec<String> {
     let document = Arc::new(export_scene(&compiled.director).unwrap());
     let renderer = Renderer::new(document, compiled.director.assets.loader.clone())
         .with_registry(registry())
         .with_render_mode(compiled.director.render_mode);
-    let size = renderer.output_size();
-    let mut imported = renderer.session().unwrap_or_else(|e| panic!("{name}: {e}"));
-    let mut original = FrameSession::new(compiled.director, size).unwrap();
-    let mut failures = Vec::new();
-    for time in TIMES {
-        let expected = original.render(time).unwrap();
-        let actual = imported.render(time).unwrap_or_else(|e| panic!("{name} at {time}s: {e}"));
-        let fraction = differing_fraction(&expected, &actual);
-        if fraction > MAX_FRACTION {
-            failures.push(format!("{name} at {time}s: {fraction:.6} of pixels differ"));
-        }
-    }
-    failures
+    common::mismatches(name, compiled.director, &renderer, &TIMES)
 }
 
 #[test]

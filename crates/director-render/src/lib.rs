@@ -5,9 +5,10 @@
 //! engine, so [`Renderer::render_frames`] paints frames on a rayon pool with
 //! one session per worker.
 
+mod frame;
+
 use director_core::scene_import::{import_scene, ImportError, ImportRegistry};
 use director_core::systems::layout::LayoutEngine;
-use director_core::systems::renderer::render_sampled_at_time;
 use director_core::video_wrapper::RenderMode;
 use director_core::{AssetLoader, Director};
 use director_scene::SceneDocument;
@@ -116,8 +117,7 @@ pub struct FrameSession {
     layout: LayoutEngine,
     info: ImageInfo,
     surface: Surface,
-    accumulation: Option<Surface>,
-    transitions: Option<(Surface, Surface)>,
+    scratch: frame::Scratch,
 }
 
 impl FrameSession {
@@ -132,20 +132,13 @@ impl FrameSession {
             AlphaType::Premul,
             Some(ColorSpace::new_srgb()),
         );
-        let raster = || skia_safe::surfaces::raster(&info, None, None).ok_or(RenderError::Surface(width, height));
-        let surface = raster()?;
-        let transitions = if director.transitions.is_empty() {
-            None
-        } else {
-            Some((raster()?, raster()?))
-        };
+        let surface = skia_safe::surfaces::raster(&info, None, None).ok_or(RenderError::Surface(width, height))?;
         Ok(Self {
             director,
             layout: LayoutEngine::new(),
             info,
             surface,
-            accumulation: None,
-            transitions,
+            scratch: frame::Scratch::default(),
         })
     }
 
@@ -155,14 +148,7 @@ impl FrameSession {
 
     /// Paint the frame at `time` seconds.
     pub fn render(&mut self, time: f64) -> Result<Frame, RenderError> {
-        render_sampled_at_time(
-            &mut self.director,
-            &mut self.layout,
-            time,
-            &mut self.surface,
-            &mut self.accumulation,
-            &mut self.transitions,
-        )?;
+        frame::render_sampled(&mut self.director, &mut self.layout, time, &mut self.surface, &mut self.scratch)?;
         let width = self.info.width() as usize;
         let height = self.info.height() as usize;
         let mut rgba = vec![0u8; width * height * 4];
