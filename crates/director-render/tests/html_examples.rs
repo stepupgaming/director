@@ -155,6 +155,10 @@ fn document_export_decodes_like_the_live_export() {
     render_export(&mut compiled.director, live_path.clone(), None, None, false).unwrap();
     renderer.export(&document_path, EncoderMode::Software).unwrap();
     assert_eq!(framemd5(&document_path), framemd5(&live_path));
+    // One session painting on the calling thread, the GPU export path on a CPU raster.
+    let session_path = temp.path().join("session.mp4");
+    renderer.export_on(&session_path, EncoderMode::Software, None).unwrap();
+    assert_eq!(framemd5(&session_path), framemd5(&live_path));
 }
 
 #[test]
@@ -164,7 +168,7 @@ fn director_export_at_half_scale_with_alpha_decodes_like_the_live_export() {
     let (live_path, document_path) = (temp.path().join("live.webm"), temp.path().join("document.webm"));
     let mut compiled = compile_file(&path, CompileOptions::default()).unwrap();
     compiled.director.encoder_mode = EncoderMode::Software;
-    export_director(&mut compiled.director, registry(), &document_path, true, 0.5, false).unwrap();
+    export_director(&mut compiled.director, registry(), &document_path, true, 0.5, false, None).unwrap();
     let director = &compiled.director;
     assert_eq!((director.output_scale_x, director.output_scale_y, director.transparent_background), (1.0, 1.0, false));
     render_export_at_scale(&mut compiled.director, live_path.clone(), None, None, true, 0.5, false).unwrap();

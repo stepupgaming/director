@@ -120,7 +120,7 @@ See plan **05** (implemented). Acceptance: `tests/project_roundtrip.rs` Plan 05 
 | Video seek | **Floor** onto the probed source frame grid (`video_seek_time` / `video_source_frame_index`); 30 FPS fallback when frame-rate probing fails; freeze pins local time. Exact VFR presentation timestamps are not supported. | **Locked for CFR** |
 | Video decode | Reuse a persistent FFmpeg pipe for sequential reads; cache up to 8 frames; restart on uncached backward or >60-frame seeks. Sessions kill/reap their child on drop; threaded decoders disconnect both channels and join on drop. | **Implemented**; real decode/lifecycle coverage in `video_wrapper::tests` |
 | A/V duration | `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`; the mixer takes per-channel sample frames and emits interleaved stereo | **Locked**; MP4 duration acceptance in CLI `tests/html_export.rs` |
-| GPU export | Supplied Vulkan context requires a GPU target; synchronized direct RGBA readback reuses the export buffer | **Implemented**; live GPU readback test and HTML CPU/GPU parity harness |
+| GPU export | Supplied Vulkan context requires a GPU target; the pipelined document export paints one session on it with synchronized direct RGBA readback into recycled frame buffers | **Implemented**; live GPU readback test and HTML CPU/GPU parity harness |
 | Native frame sampling | Export and CLI still/preview share `director_render::FrameState`, including shutter accumulation and transition targets | **Implemented**; CLI renderer sampling parity test |
 | CI | One Linux job on push to `main` and pull requests: release clippy and release workspace tests, including the visual suite; fonts are committed | **Implemented** |
 

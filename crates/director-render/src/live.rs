@@ -18,7 +18,7 @@ pub type GpuContext = ();
 
 /// Create the requested backend. A supplied GPU context requires a GPU target.
 #[cfg_attr(not(feature = "vulkan"), allow(unused_variables))]
-fn render_surface(gpu_context: &mut Option<&mut GpuContext>, info: &ImageInfo) -> Option<Surface> {
+pub(crate) fn render_surface(gpu_context: &mut Option<&mut GpuContext>, info: &ImageInfo) -> Option<Surface> {
     #[cfg(feature = "vulkan")]
     if let Some(ctx) = gpu_context.as_deref_mut() {
         return skia_safe::gpu::surfaces::render_target(

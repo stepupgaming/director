@@ -1,20 +1,92 @@
-//! Document export: a [`FramePool`] paints the next batch of frames while a
-//! writer thread pipes the previous batch to one FFmpeg process that also
-//! encodes the premixed audio track. FFmpeg starts from the document alone, so
-//! it launches while the writer imports and mixes the audio.
+//! Document export: a [`FramePool`], or one session on a GPU context, paints
+//! the next batch of frames while a writer thread pipes the previous batch to
+//! one FFmpeg process that also encodes the premixed audio track. FFmpeg starts
+//! from the document alone, so it launches while the writer imports and mixes
+//! the audio.
 
-use crate::{set_output_scale, Frame, RenderError, Renderer};
+use crate::live::render_surface;
+use crate::{frame_info, read_frame, set_output_scale, Frame, FramePool, FrameState, GpuContext, RenderError, Renderer};
 use director_core::scene_export::export_scene;
 use director_core::scene_import::{import_scene, ImportRegistry};
 use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_count, frame_to_time};
 use director_core::video_wrapper::{Encoder, EncoderMode, EncoderSettings};
 use director_core::Director;
+use skia_safe::{ImageInfo, Surface};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
-/// Frame batches in flight: one painting while one encodes.
+/// Pool frame batches in flight: one painting while one encodes.
 const BATCHES: usize = 2;
+/// Single-frame batches in flight for one session, so a brief FFmpeg stall
+/// leaves the painter room to run ahead.
+const SESSION_FRAMES: usize = 4;
+
+/// Where an export paints.
+enum Target<'a> {
+    /// A pool of `Some(workers)` CPU sessions, or one sized by [`Renderer::pool_for`].
+    Pool(Option<usize>),
+    /// One session on a GPU context, or on a CPU raster when `None`.
+    Session(Option<&'a mut GpuContext>),
+}
+
+/// One imported `Director` painting serially into a render target of the
+/// export's GPU context, or into a CPU raster. A GPU session stays on the thread
+/// that owns its context.
+struct SerialSession<'a> {
+    director: Director,
+    state: FrameState,
+    info: ImageInfo,
+    surface: Surface,
+    #[cfg_attr(not(feature = "vulkan"), allow(dead_code))]
+    context: Option<&'a mut GpuContext>,
+}
+
+impl<'a> SerialSession<'a> {
+    fn new(renderer: &Renderer, mut context: Option<&'a mut GpuContext>) -> Result<Self, RenderError> {
+        let info = frame_info(renderer.output_size())?;
+        let surface = render_surface(&mut context, &info).ok_or(RenderError::Surface(info.width(), info.height()))?;
+        let director = import_scene(&renderer.document, renderer.loader.clone(), &renderer.registry, renderer.render_mode)?;
+        Ok(Self {
+            director,
+            state: FrameState::default(),
+            info,
+            surface,
+            context,
+        })
+    }
+
+    fn render_into(&mut self, time: f64, frame: &mut Frame) -> Result<(), RenderError> {
+        self.state.render(&mut self.director, time, &mut self.surface)?;
+        #[cfg(feature = "vulkan")]
+        if let Some(context) = self.context.as_deref_mut() {
+            context.flush_and_submit();
+        }
+        read_frame(&mut self.surface, &self.info, self.director.transparent_background, frame)
+    }
+}
+
+/// The painter of one export, created on the calling thread once FFmpeg is starting.
+enum Painter<'a> {
+    Pool(FramePool),
+    Session(Box<SerialSession<'a>>),
+}
+
+impl Painter<'_> {
+    fn render_into(&mut self, times: &[f64], frames: &mut Vec<Frame>) -> Result<(), RenderError> {
+        match self {
+            Painter::Pool(pool) => pool.render_into(times, frames),
+            Painter::Session(session) => {
+                frames.resize_with(times.len(), || Frame {
+                    width: 0,
+                    height: 0,
+                    rgba: Vec::new(),
+                });
+                times.iter().zip(frames).try_for_each(|(&time, frame)| session.render_into(time, frame))
+            }
+        }
+    }
+}
 
 /// Export frame times of `director`: its timeline, or five seconds when it is empty.
 pub fn frame_times(director: &Director) -> Vec<f64> {
@@ -48,20 +120,25 @@ impl Renderer {
     /// Export through `workers` sessions, or a pool sized to the frame count
     /// when `None`. Each pool call paints one frame per worker.
     pub fn export_with(&self, path: &Path, mode: EncoderMode, workers: Option<usize>) -> Result<(), RenderError> {
-        self.export_encoded(path, mode, workers, false)
+        self.export_encoded(path, mode, Target::Pool(workers), false)
+    }
+
+    /// Export through one session that paints on `context`, a Vulkan context
+    /// in a `vulkan` build, or on a CPU raster when `None`. The session paints
+    /// on the calling thread while the writer thread encodes.
+    pub fn export_on(&self, path: &Path, mode: EncoderMode, context: Option<&mut GpuContext>) -> Result<(), RenderError> {
+        self.export_encoded(path, mode, Target::Session(context), false)
     }
 
     /// `draft` selects software x264 ultrafast at CRF 30.
-    fn export_encoded(
-        &self,
-        path: &Path,
-        mode: EncoderMode,
-        workers: Option<usize>,
-        draft: bool,
-    ) -> Result<(), RenderError> {
+    fn export_encoded(&self, path: &Path, mode: EncoderMode, target: Target, draft: bool) -> Result<(), RenderError> {
         let fps = self.document.fps.max(1e-6);
         let times = self.frame_times();
-        let mut pool = workers.map_or_else(|| self.pool_for(times.len()), |workers| self.pool_with(workers));
+        let (batch, in_flight) = match &target {
+            Target::Pool(Some(workers)) => ((*workers).max(1), BATCHES),
+            Target::Pool(None) => (self.pool_for(times.len()).workers(), BATCHES),
+            Target::Session(_) => (1, SESSION_FRAMES),
+        };
         let (width, height) = self.output_size();
         let mut settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
             .with_fps(fps)
@@ -69,10 +146,9 @@ impl Renderer {
             .with_alpha(self.document.transparent_background)
             .with_draft(draft);
         settings.sample_rate = self.document.audio.sample_rate as i32;
-        let batch = pool.workers();
-        let (full_tx, full_rx) = mpsc::sync_channel::<(usize, Vec<Frame>)>(BATCHES);
+        let (full_tx, full_rx) = mpsc::sync_channel::<(usize, Vec<Frame>)>(in_flight);
         let (empty_tx, empty_rx) = mpsc::channel::<Vec<Frame>>();
-        for _ in 0..BATCHES {
+        for _ in 0..in_flight {
             let _ = empty_tx.send(Vec::new());
         }
         let failed = AtomicBool::new(false);
@@ -102,10 +178,14 @@ impl Renderer {
                 encoder.finish()
             });
             let painted: Result<(), RenderError> = (|| {
+                let mut painter = match target {
+                    Target::Pool(_) => Painter::Pool(self.pool_with(batch)),
+                    Target::Session(context) => Painter::Session(Box::new(SerialSession::new(self, context)?)),
+                };
                 for (index, chunk) in times.chunks(batch).enumerate() {
                     // The writer hung up, so it failed; its join reports why.
                     let Ok(mut frames) = empty_rx.recv() else { break };
-                    pool.render_into(chunk, &mut frames)?;
+                    painter.render_into(chunk, &mut frames)?;
                     if full_tx.send((index * batch, frames)).is_err() {
                         break;
                     }
@@ -126,8 +206,10 @@ impl Renderer {
 /// Export the timeline of a live `director` to `path` through its scene document
 /// and the pipelined [`Renderer::export`]: H.264, or VP9 with alpha when `alpha`
 /// is set, at raster `scale` in `(0, 1]`, with `draft` selecting software x264
-/// ultrafast at CRF 30. `registry` decodes the document's frontend kinds. The
-/// output scale and background return to their previous values afterwards.
+/// ultrafast at CRF 30. `registry` decodes the document's frontend kinds. A
+/// `gpu` context paints through [`Renderer::export_on`], and `None` through a
+/// CPU pool. The output scale and background return to their previous values
+/// afterwards.
 pub fn export_director(
     director: &mut Director,
     registry: ImportRegistry,
@@ -135,6 +217,7 @@ pub fn export_director(
     alpha: bool,
     scale: f32,
     draft: bool,
+    gpu: Option<&mut GpuContext>,
 ) -> anyhow::Result<()> {
     let previous = (director.output_scale_x, director.output_scale_y, director.transparent_background);
     let document = set_output_scale(director, scale).map_err(anyhow::Error::msg).and_then(|_| {
@@ -147,6 +230,6 @@ pub fn export_director(
     Renderer::new(Arc::new(document?), director.assets.loader.clone())
         .with_registry(registry)
         .with_render_mode(director.render_mode)
-        .export_encoded(path, director.encoder_mode, None, draft)?;
+        .export_encoded(path, director.encoder_mode, gpu.map_or(Target::Pool(None), |gpu| Target::Session(Some(gpu))), draft)?;
     Ok(())
 }

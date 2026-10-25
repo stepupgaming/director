@@ -201,15 +201,7 @@ unsafe impl Send for FrameSession {}
 impl FrameSession {
     /// Wrap a live `Director` that paints into a `width` x `height` raster.
     pub fn new(director: Director, (width, height): (i32, i32)) -> Result<Self, RenderError> {
-        if width <= 0 || height <= 0 {
-            return Err(RenderError::EmptyOutput);
-        }
-        let info = ImageInfo::new(
-            (width, height),
-            ColorType::RGBA8888,
-            AlphaType::Premul,
-            Some(ColorSpace::new_srgb()),
-        );
+        let info = frame_info((width, height))?;
         let surface = skia_safe::surfaces::raster(&info, None, None).ok_or(RenderError::Surface(width, height))?;
         Ok(Self {
             director,
@@ -237,20 +229,39 @@ impl FrameSession {
     /// Paint the frame at `time` seconds into `frame`, reusing its pixel buffer.
     pub fn render_into(&mut self, time: f64, frame: &mut Frame) -> Result<(), RenderError> {
         self.state.render(&mut self.director, time, &mut self.surface)?;
-        let width = self.info.width() as usize;
-        let height = self.info.height() as usize;
-        frame.width = width as u32;
-        frame.height = height as u32;
-        frame.rgba.resize(width * height * 4, 0);
-        // Opaque frames hold the same bytes either way; skip the unpremultiply pass.
-        let read_info = if self.director.transparent_background {
-            self.info.clone().with_alpha_type(AlphaType::Unpremul)
-        } else {
-            self.info.clone()
-        };
-        if !self.surface.read_pixels(&read_info, &mut frame.rgba, width * 4, (0, 0)) {
-            return Err(RenderError::Readback);
-        }
-        Ok(())
+        read_frame(&mut self.surface, &self.info, self.director.transparent_background, frame)
     }
+}
+
+/// An RGBA8 sRGB premultiplied surface description of `width` x `height`.
+fn frame_info((width, height): (i32, i32)) -> Result<ImageInfo, RenderError> {
+    if width <= 0 || height <= 0 {
+        return Err(RenderError::EmptyOutput);
+    }
+    Ok(ImageInfo::new(
+        (width, height),
+        ColorType::RGBA8888,
+        AlphaType::Premul,
+        Some(ColorSpace::new_srgb()),
+    ))
+}
+
+/// Read `surface` into `frame`: straight alpha when `transparent`, else the
+/// premultiplied bytes, which match for opaque pixels.
+fn read_frame(surface: &mut Surface, info: &ImageInfo, transparent: bool, frame: &mut Frame) -> Result<(), RenderError> {
+    let width = info.width() as usize;
+    let height = info.height() as usize;
+    frame.width = width as u32;
+    frame.height = height as u32;
+    frame.rgba.resize(width * height * 4, 0);
+    // Opaque frames hold the same bytes either way; skip the unpremultiply pass.
+    let read_info = if transparent {
+        info.clone().with_alpha_type(AlphaType::Unpremul)
+    } else {
+        info.clone()
+    };
+    if !surface.read_pixels(&read_info, &mut frame.rgba, width * 4, (0, 0)) {
+        return Err(RenderError::Readback);
+    }
+    Ok(())
 }

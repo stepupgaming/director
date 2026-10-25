@@ -10,8 +10,8 @@ pub fn import_registry() -> ImportRegistry {
     registry
 }
 
-/// Export `director` to `output`. A Vulkan `context` renders serially on the GPU;
-/// CPU exports run the pipelined document export across a worker pool.
+/// Export `director` to `output` through the pipelined document export: one
+/// session on a Vulkan `context`, or a CPU worker pool.
 pub fn export_video(
     director: &mut Director,
     output: &Path,
@@ -20,18 +20,7 @@ pub fn export_video(
     scale: f32,
     draft: bool,
 ) -> anyhow::Result<()> {
-    match context {
-        Some(context) => director_render::render_export_at_scale(
-            director,
-            output.to_path_buf(),
-            Some(context),
-            None,
-            alpha,
-            scale,
-            draft,
-        ),
-        None => director_render::export_director(director, import_registry(), output, alpha, scale, draft),
-    }
+    director_render::export_director(director, import_registry(), output, alpha, scale, draft, context)
 }
 
 /// Render targets and the Vulkan context stay on their creating thread.
