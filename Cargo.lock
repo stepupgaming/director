@@ -1025,6 +1025,7 @@ dependencies = [
  "criterion",
  "cssparser 0.37.0",
  "director-core",
+ "director-scene",
  "html5ever",
  "lightningcss",
  "scraper",

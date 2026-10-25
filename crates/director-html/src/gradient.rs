@@ -11,6 +11,8 @@ use lightningcss::{
     },
     vendor_prefix::VendorPrefix,
 };
+use director_core::scene_export::{export_length, ExportError};
+use director_scene::html as doc;
 use skia_safe::{Matrix, Rect, Shader, TileMode};
 use taffy::LengthPercentage;
 
@@ -586,5 +588,76 @@ impl NativeGradient {
                 )
             }
         }
+    }
+}
+
+impl NativeGradient {
+    /// The scene document form of this gradient.
+    pub(crate) fn to_doc(&self) -> Result<doc::CssGradient, ExportError> {
+        let center = |c: &(LengthPercentage, LengthPercentage)| -> Result<[director_scene::layout::Length; 2], ExportError> {
+            Ok([export_length(c.0)?, export_length(c.1)?])
+        };
+        let extent = |e: &ShapeExtent| match e {
+            ShapeExtent::ClosestSide => doc::ShapeExtent::ClosestSide,
+            ShapeExtent::FarthestSide => doc::ShapeExtent::FarthestSide,
+            ShapeExtent::ClosestCorner => doc::ShapeExtent::ClosestCorner,
+            ShapeExtent::FarthestCorner => doc::ShapeExtent::FarthestCorner,
+        };
+        let shape = match &self.kind {
+            Kind::Linear(to) => doc::GradientShape::Linear {
+                direction: match *to {
+                    LinearTo::Angle(angle) => doc::LinearDirection::Angle(angle),
+                    LinearTo::Corner { right, bottom } => doc::LinearDirection::Corner { right, bottom },
+                },
+            },
+            Kind::Radial { center: c, radius } => doc::GradientShape::Radial {
+                center: center(c)?,
+                radius: match radius {
+                    Radius::CircleExtent(e) => doc::RadialSize::CircleExtent(extent(e)),
+                    Radius::EllipseExtent(e) => doc::RadialSize::EllipseExtent(extent(e)),
+                    Radius::Circle(r) => doc::RadialSize::Circle(*r),
+                    Radius::Ellipse(x, y) => doc::RadialSize::Ellipse {
+                        x: export_length(*x)?,
+                        y: export_length(*y)?,
+                    },
+                },
+            },
+            Kind::Conic { center: c, angle } => doc::GradientShape::Conic {
+                center: center(c)?,
+                angle: *angle,
+            },
+        };
+        let stops = self
+            .stops
+            .iter()
+            .map(|stop| {
+                stop.as_ref()
+                    .map(|stop| match stop {
+                        StopPos::Fixed(length) => Ok(doc::GradientStop::Fixed(export_length(*length)?)),
+                        StopPos::Mixed(calc) => calc
+                            .to_css_string(Default::default())
+                            .map(doc::GradientStop::Calc)
+                            .map_err(|e| ExportError::Unrepresentable(format!("gradient stop: {e}"))),
+                    })
+                    .transpose()
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(doc::CssGradient {
+            shape,
+            repeating: self.repeating,
+            colors: self
+                .colors
+                .iter()
+                .map(|color| {
+                    color.map(|c| director_scene::Rgba {
+                        r: f32::from(c.r()) / 255.0,
+                        g: f32::from(c.g()) / 255.0,
+                        b: f32::from(c.b()) / 255.0,
+                        a: f32::from(c.a()) / 255.0,
+                    })
+                })
+                .collect(),
+            stops,
+        })
     }
 }

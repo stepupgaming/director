@@ -444,8 +444,9 @@ five 640x360 premultiplied RGBA frames per workload via
 ## Scene document
 
 - `src/scene_export/` copies a live `Director` into `director_scene::SceneDocument`. `export_scene` returns `Result<SceneDocument, ExportError>`.
-- Each element writes its own body through `Element::export_body`. The default returns `ExportError::Unsupported`, so a new element kind fails export until it gains a body.
-- `mod.rs` owns node records, channels, easing, gradients, blend modes and entities. `nodes.rs`, `caption.rs` and `effect.rs` own element bodies. `layout.rs`, `timeline.rs` and `audio.rs` own layout, timeline and mixer export.
+- Each element writes its own body through `Element::export_body`. The default returns `ExportError::Unsupported`, so a new element kind fails export until it gains a body. `Element::export_layout_style` supplies the recorded layout and defaults to `layout_style`; an element that animates its layout returns its unanimated style.
+- `mod.rs` owns node records, channels, easing, gradients, blend modes, entities and `export_graph`, which exports one `SceneGraph`. `nodes.rs`, `caption.rs` and `effect.rs` own element bodies. `layout.rs`, `timeline.rs` and `audio.rs` own layout, timeline and mixer export.
+- Downstream crates build their bodies from the public helpers: `channel`, `color_channel`, `rgba`, `export_easing`, `node_ref`, `blend_mode_name`, `export_layout`, `export_length`, `export_graph`, and `nodes::{box_body, text_export, image_asset, video_media, object_fit, object_position, text_align, text_shadow}`. `text_export` leaves out a prebuilt stroke paragraph for callers that rebuild it.
 - `ExportContext` builds the asset table. Media with a source path become path assets; decoded pixels, raw samples and in-memory SVG are embedded as base64.
 - Values the document cannot hold fail with `ExportError::Unrepresentable`, such as unresolved `calc()` lengths and text with a prebuilt stroke paragraph.
 - Effects and transitions export under their primary `api_catalog` names.

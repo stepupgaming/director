@@ -2,7 +2,7 @@
 //! spectrum elements.
 
 use super::{channel, color_channel, export_scene, gradient, rgba, ElementExport, ExportContext, ExportError};
-use crate::element::TextFit;
+use crate::element::{TextFit, TextShadow};
 use crate::node::{
     BoxNode, CompositionNode, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType,
     SpectrumVisualizerNode, TextAnimProperty, TextNode, VectorNode, VideoNode,
@@ -13,7 +13,7 @@ use director_scene as doc;
 use director_scene::{Channel, NodeBody};
 use skia_safe::textlayout::TextAlign;
 
-pub(crate) fn box_body(node: &BoxNode, _cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
+pub fn box_body(node: &BoxNode, _cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
     Ok(ElementExport {
         opacity: channel(&node.opacity),
         body: NodeBody::Box(doc::BoxBody {
@@ -53,7 +53,13 @@ pub(crate) fn text_body(node: &TextNode, _cx: &mut ExportContext) -> Result<Elem
             "text with a prebuilt stroke paragraph".to_string(),
         ));
     }
-    Ok(ElementExport {
+    Ok(text_export(node))
+}
+
+/// The spans and channels of a text node. The caller owns any prebuilt stroke
+/// paragraph, which this leaves out.
+pub fn text_export(node: &TextNode) -> ElementExport {
+    ElementExport {
         opacity: channel(&node.opacity),
         body: NodeBody::Text(doc::TextBody {
             spans: node
@@ -83,23 +89,8 @@ pub(crate) fn text_body(node: &TextNode, _cx: &mut ExportContext) -> Result<Elem
             },
             min_size: node.min_size,
             max_size: node.max_size,
-            shadows: node
-                .shadows
-                .iter()
-                .map(|shadow| doc::TextShadow {
-                    color: rgba(shadow.color),
-                    blur: shadow.blur,
-                    offset: [shadow.offset.0, shadow.offset.1],
-                })
-                .collect(),
-            align: match node.text_align {
-                TextAlign::Left => doc::TextAlign::Left,
-                TextAlign::Right => doc::TextAlign::Right,
-                TextAlign::Center => doc::TextAlign::Center,
-                TextAlign::Justify => doc::TextAlign::Justify,
-                TextAlign::Start => doc::TextAlign::Start,
-                TextAlign::End => doc::TextAlign::End,
-            },
+            shadows: node.shadows.iter().map(text_shadow).collect(),
+            align: text_align(node.text_align),
             direction: match node.text_direction {
                 TextDirectionMode::Auto => doc::TextDirection::Auto,
                 TextDirectionMode::Ltr => doc::TextDirection::Ltr,
@@ -132,21 +123,13 @@ pub(crate) fn text_body(node: &TextNode, _cx: &mut ExportContext) -> Result<Elem
             }),
             counter_value: channel(&node.counter_value),
         }),
-    })
+    }
 }
 
 pub(crate) fn image_body(node: &ImageNode, cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
     let asset = match (&node.source_path, &node.image) {
         (Some(path), _) => cx.path_asset("image", "image/*", path),
-        (None, Some(image)) => match image.encoded_data() {
-            Some(data) => cx.embedded_asset("image", "image/*", data.as_bytes()),
-            None => {
-                let data = image
-                    .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
-                    .ok_or_else(|| ExportError::Unrepresentable("image that Skia cannot encode as PNG".to_string()))?;
-                cx.embedded_asset("image", "image/png", data.as_bytes())
-            }
-        },
+        (None, Some(image)) => image_asset(image, cx)?,
         (None, None) => {
             return Err(ExportError::Unrepresentable(
                 "image node with neither pixels nor a source path".to_string(),
@@ -159,6 +142,17 @@ pub(crate) fn image_body(node: &ImageNode, cx: &mut ExportContext) -> Result<Ele
     })
 }
 
+/// Embed an image as its encoded bytes, or as PNG when it has none.
+pub fn image_asset(image: &skia_safe::Image, cx: &mut ExportContext) -> Result<doc::AssetId, ExportError> {
+    if let Some(data) = image.encoded_data() {
+        return Ok(cx.embedded_asset("image", "image/*", data.as_bytes()));
+    }
+    let data = image
+        .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
+        .ok_or_else(|| ExportError::Unrepresentable("image that Skia cannot encode as PNG".to_string()))?;
+    Ok(cx.embedded_asset("image", "image/png", data.as_bytes()))
+}
+
 pub(crate) fn video_body(node: &VideoNode, cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
     Ok(ElementExport {
         opacity: channel(&node.opacity),
@@ -167,7 +161,7 @@ pub(crate) fn video_body(node: &VideoNode, cx: &mut ExportContext) -> Result<Ele
 }
 
 /// The media fields of a video, registering its file in the asset table.
-pub(crate) fn video_media(node: &VideoNode, cx: &mut ExportContext) -> Result<doc::MediaBody, ExportError> {
+pub fn video_media(node: &VideoNode, cx: &mut ExportContext) -> Result<doc::MediaBody, ExportError> {
     let asset = match &node.source_path {
         Some(path) => cx.path_asset("video", "video/*", path),
         None => {
@@ -182,6 +176,48 @@ pub(crate) fn video_media(node: &VideoNode, cx: &mut ExportContext) -> Result<do
     Ok(media(asset, node.object_fit, node.object_position, &node.border_radius))
 }
 
+/// A text shadow.
+pub fn text_shadow(shadow: &TextShadow) -> doc::TextShadow {
+    doc::TextShadow {
+        color: rgba(shadow.color),
+        blur: shadow.blur,
+        offset: [shadow.offset.0, shadow.offset.1],
+    }
+}
+
+/// A paragraph alignment.
+pub fn text_align(align: TextAlign) -> doc::TextAlign {
+    match align {
+        TextAlign::Left => doc::TextAlign::Left,
+        TextAlign::Right => doc::TextAlign::Right,
+        TextAlign::Center => doc::TextAlign::Center,
+        TextAlign::Justify => doc::TextAlign::Justify,
+        TextAlign::Start => doc::TextAlign::Start,
+        TextAlign::End => doc::TextAlign::End,
+    }
+}
+
+/// An `object-position`.
+pub fn object_position(position: ObjectPosition) -> doc::ObjectPosition {
+    doc::ObjectPosition {
+        x_percent: position.x_percent,
+        x_offset: position.x_offset,
+        y_percent: position.y_percent,
+        y_offset: position.y_offset,
+    }
+}
+
+/// An `object-fit`.
+pub fn object_fit(fit: ObjectFit) -> doc::ObjectFit {
+    match fit {
+        ObjectFit::Cover => doc::ObjectFit::Cover,
+        ObjectFit::Contain => doc::ObjectFit::Contain,
+        ObjectFit::Fill => doc::ObjectFit::Fill,
+        ObjectFit::None => doc::ObjectFit::None,
+        ObjectFit::ScaleDown => doc::ObjectFit::ScaleDown,
+    }
+}
+
 fn media(
     asset: doc::AssetId,
     fit: ObjectFit,
@@ -190,19 +226,8 @@ fn media(
 ) -> doc::MediaBody {
     doc::MediaBody {
         asset,
-        fit: match fit {
-            ObjectFit::Cover => doc::ObjectFit::Cover,
-            ObjectFit::Contain => doc::ObjectFit::Contain,
-            ObjectFit::Fill => doc::ObjectFit::Fill,
-            ObjectFit::None => doc::ObjectFit::None,
-            ObjectFit::ScaleDown => doc::ObjectFit::ScaleDown,
-        },
-        position: doc::ObjectPosition {
-            x_percent: position.x_percent,
-            x_offset: position.x_offset,
-            y_percent: position.y_percent,
-            y_offset: position.y_offset,
-        },
+        fit: object_fit(fit),
+        position: object_position(position),
         border_radius: channel(border_radius),
     }
 }

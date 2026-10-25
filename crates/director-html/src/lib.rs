@@ -13,6 +13,7 @@ mod css;
 mod decoration_marks;
 mod decoration_value;
 mod element;
+mod export;
 mod gradient;
 mod grid_template;
 mod object_pos;

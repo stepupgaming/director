@@ -9,13 +9,15 @@ mod audio;
 pub(crate) mod caption;
 pub(crate) mod effect;
 mod layout;
-pub(crate) mod nodes;
+pub mod nodes;
+
+pub use layout::{export_layout, export_length};
 mod timeline;
 
 use crate::animation::{Animated, EasingType, TweenableVector};
 use crate::director::Director;
 use crate::entity::EntityRegistry;
-use crate::scene::SceneNode;
+use crate::scene::{SceneGraph, SceneNode};
 use crate::types::{Color, GradientConfig, GradientType, NodeId};
 use base64::Engine as _;
 use director_scene::{
@@ -97,20 +99,7 @@ impl ExportContext {
 /// Copy the scene graph, timeline, audio, entities and assets into a document.
 pub fn export_scene(director: &Director) -> Result<SceneDocument, ExportError> {
     let mut cx = ExportContext::default();
-    let mut nodes = Vec::new();
-    for index in 0..director.scene.nodes.len() {
-        let Some(node) = director.scene.nodes[index].as_ref() else {
-            continue;
-        };
-        let id = NodeId::new(index as u32, director.scene.generation_at(index));
-        let record = export_node(id, node, &mut cx).map_err(|source| ExportError::Node {
-            index: id.index,
-            generation: id.generation,
-            kind: node.element.kind(),
-            source: Box::new(source),
-        })?;
-        nodes.push(record);
-    }
+    let nodes = export_graph(&director.scene, &mut cx)?;
     let audio = audio::export_audio(&director.audio_mixer, &mut cx)?;
     Ok(SceneDocument {
         version: VERSION,
@@ -132,6 +121,25 @@ pub fn export_scene(director: &Director) -> Result<SceneDocument, ExportError> {
     })
 }
 
+/// Copy every live node of `graph`, registering its media in `cx`.
+pub fn export_graph(graph: &SceneGraph, cx: &mut ExportContext) -> Result<Vec<NodeRecord>, ExportError> {
+    let mut nodes = Vec::new();
+    for index in 0..graph.nodes.len() {
+        let Some(node) = graph.nodes[index].as_ref() else {
+            continue;
+        };
+        let id = NodeId::new(index as u32, graph.generation_at(index));
+        let record = export_node(id, node, cx).map_err(|source| ExportError::Node {
+            index: id.index,
+            generation: id.generation,
+            kind: node.element.kind(),
+            source: Box::new(source),
+        })?;
+        nodes.push(record);
+    }
+    Ok(nodes)
+}
+
 fn export_node(id: NodeId, node: &SceneNode, cx: &mut ExportContext) -> Result<NodeRecord, ExportError> {
     let ElementExport { opacity, body } = node.element.export_body(cx)?;
     Ok(NodeRecord {
@@ -142,7 +150,7 @@ fn export_node(id: NodeId, node: &SceneNode, cx: &mut ExportContext) -> Result<N
         z_index: node.z_index,
         blend_mode: blend_mode_name(node.blend_mode).to_string(),
         is_static: node.is_static,
-        layout: layout::export_layout(&node.element.layout_style())?,
+        layout: export_layout(&node.element.export_layout_style())?,
         transform: TransformChannels {
             translate_x: channel(&node.transform.translate_x),
             translate_y: channel(&node.transform.translate_y),
@@ -233,7 +241,8 @@ fn export_entities(registry: &EntityRegistry) -> Vec<Entity> {
     entities
 }
 
-fn blend_mode_name(mode: skia_safe::BlendMode) -> &'static str {
+/// The node record name of a blend mode.
+pub fn blend_mode_name(mode: skia_safe::BlendMode) -> &'static str {
     use skia_safe::BlendMode as B;
     match mode {
         B::SrcOver => "src_over",
@@ -269,12 +278,12 @@ fn blend_mode_name(mode: skia_safe::BlendMode) -> &'static str {
 }
 
 /// An `f32` channel from its keyframes.
-pub(crate) fn channel(animated: &Animated<f32>) -> Channel {
+pub fn channel(animated: &Animated<f32>) -> Channel {
     channel_with(animated, |value| *value)
 }
 
 /// A color channel from its keyframes.
-pub(crate) fn color_channel(animated: &Animated<Color>) -> Channel<Rgba> {
+pub fn color_channel(animated: &Animated<Color>) -> Channel<Rgba> {
     channel_with(animated, |value| rgba(*value))
 }
 
@@ -284,7 +293,7 @@ pub(crate) fn vector_channel(animated: &Animated<TweenableVector>) -> Channel<Ve
 }
 
 /// A channel of any tweenable value through `convert`.
-pub(crate) fn channel_with<T, U>(animated: &Animated<T>, convert: impl Fn(&T) -> U) -> Channel<U>
+pub fn channel_with<T, U>(animated: &Animated<T>, convert: impl Fn(&T) -> U) -> Channel<U>
 where
     T: Clone + keyframe::CanTween + Default,
 {
@@ -304,7 +313,7 @@ where
     }
 }
 
-pub(crate) fn export_easing(easing: &EasingType) -> Easing {
+pub fn export_easing(easing: &EasingType) -> Easing {
     match easing {
         EasingType::Linear => Easing::Linear,
         EasingType::EaseIn => Easing::EaseIn,
@@ -330,7 +339,7 @@ pub(crate) fn export_easing(easing: &EasingType) -> Easing {
     }
 }
 
-pub(crate) fn rgba(color: Color) -> Rgba {
+pub fn rgba(color: Color) -> Rgba {
     Rgba {
         r: color.r,
         g: color.g,
@@ -339,7 +348,7 @@ pub(crate) fn rgba(color: Color) -> Rgba {
     }
 }
 
-pub(crate) fn gradient(config: &GradientConfig) -> Gradient {
+pub fn gradient(config: &GradientConfig) -> Gradient {
     Gradient {
         kind: match config.gradient_type {
             GradientType::Linear => GradientKind::Linear,
@@ -356,7 +365,7 @@ pub(crate) fn gradient(config: &GradientConfig) -> Gradient {
     }
 }
 
-pub(crate) fn node_ref(id: NodeId) -> NodeRef {
+pub fn node_ref(id: NodeId) -> NodeRef {
     NodeRef {
         index: id.index,
         generation: id.generation,

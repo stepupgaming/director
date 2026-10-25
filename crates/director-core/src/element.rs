@@ -96,6 +96,12 @@ pub trait Element: std::fmt::Debug + ElementClone {
         Err(crate::scene_export::ExportError::Unsupported { kind: self.kind() })
     }
 
+    /// The layout style a scene document records. An element that animates its
+    /// layout returns the style before animation.
+    fn export_layout_style(&self) -> taffy::Style {
+        self.layout_style()
+    }
+
     /// Returns self as `Any` for downcasting.
     fn as_any(&self) -> &dyn Any;
     /// Returns mutable self as `Any` for downcasting.

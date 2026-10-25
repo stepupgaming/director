@@ -13,10 +13,12 @@ use crate::{
 use director_core::{
     node::{ImageNode, VectorNode, VideoNode, VideoSource},
     scene::SceneGraph,
+    scene_export::{channel, export_graph, node_ref, nodes, ElementExport, ExportContext, ExportError},
     types::{NodeId, ObjectFit, ObjectPosition},
     video_wrapper::RenderMode,
     Director, Element, RenderError,
 };
+use director_scene::NodeBody;
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
@@ -658,7 +660,24 @@ impl Clone for SharedVideo {
 
 impl Element for SharedVideo {
     fn kind(&self) -> &'static str {
-        "video"
+        "html_video"
+    }
+    fn export_body(&self, cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
+        let node = self
+            .node
+            .lock()
+            .map_err(|_| ExportError::Unrepresentable("poisoned shared video".to_string()))?;
+        let mut video = nodes::video_media(&node, cx)?;
+        video.fit = nodes::object_fit(self.object_fit);
+        video.position = nodes::object_position(self.object_position);
+        Ok(ElementExport {
+            opacity: channel(&node.opacity),
+            body: NodeBody::HtmlVideo(director_scene::HtmlVideoBody {
+                video,
+                looped: self.looped,
+                duration: self.duration,
+            }),
+        })
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -728,6 +747,39 @@ impl Clone for CapturedElement {
 impl Element for CapturedElement {
     fn kind(&self) -> &'static str {
         "html_capture"
+    }
+    fn export_body(&self, cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
+        // Equal samples share one graph, so the document stores each graph once.
+        let mut graphs: Vec<(&Arc<Mutex<SceneGraph>>, NodeId)> = Vec::new();
+        let mut body = director_scene::HtmlCaptureBody {
+            sample_rate: self.sample_rate,
+            graphs: Vec::new(),
+            frames: Vec::with_capacity(self.frames.len()),
+        };
+        for (graph, root) in self.frames.iter() {
+            let index = match graphs
+                .iter()
+                .position(|(seen, seen_root)| Arc::ptr_eq(seen, graph) && seen_root == root)
+            {
+                Some(index) => index,
+                None => {
+                    let scene = graph
+                        .lock()
+                        .map_err(|_| ExportError::Unrepresentable("poisoned capture graph".to_string()))?;
+                    body.graphs.push(director_scene::html::CaptureGraph {
+                        nodes: export_graph(&scene, cx)?,
+                        root: node_ref(*root),
+                    });
+                    graphs.push((graph, *root));
+                    graphs.len() - 1
+                }
+            };
+            body.frames.push(index);
+        }
+        Ok(ElementExport {
+            opacity: director_scene::Channel::still(1.0),
+            body: NodeBody::HtmlCapture(body),
+        })
     }
     fn as_any(&self) -> &dyn Any {
         self

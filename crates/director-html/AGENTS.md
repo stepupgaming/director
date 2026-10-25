@@ -121,6 +121,15 @@
 - Authored SMIL: `animate`, `animateTransform`, `animateMotion`, and `set` are sampled at the element's local time, patched into the markup, stripped, and reparsed. One animation per attribute. `animate` and `animateTransform` interpolate numbers or colors linearly. `animateMotion` follows a paced polyline and appends a translate. `set` holds `to`. `fill` is `freeze` or `remove`. The layout box stays the time-0 SVG size. Spline timing, `keySplines`, `keyPoints`, `mpath`, begin or end lists, `additive` other than replace, `accumulate` other than none, `min`, `max`, motion `rotate` auto, path curves, and unknown SMIL attributes require extraction. The animated SVG marks the element as time-varying for the static cache.
 - Scripts and nested images fail with `SVG scripts and nested images require native translation`.
 
+### Scene document
+
+- Every native adapter has a document body. `src/export.rs` writes `HtmlElement` as `NodeBody::Html` from `base_style` and `base_paint`, so an export after rendering records the unanimated box. Its opacity channel is the base paint opacity. Text content uses `nodes::text_export`, because the stroke paragraph rebuilds from the paint.
+- Gradients, CSS animations, Paper shaders and SMIL animations convert in their own modules through `to_doc`. `PaintStyle::filters` keeps the typed filter list beside the compiled `filter` chain, and both change together.
+- Background images and inline SVG markup embed as assets. Paper shader images embed as raw RGBA8 (`application/x-rgba8`).
+- Native and captured videos have kind `html_video` and export `HtmlVideoBody` with their loop flag and duration. A capture exports each distinct sampled graph once through `export_graph`, with a per-sample index list.
+- Fonts registered from HTML stay outside the document, matching core text.
+- `tests/scene_document.rs` round-trips every `examples/html` file, a paint fixture, SMIL, a looped video, a two-graph capture and a Paper shader through JSON.
+
 ### CSS animation
 
 - Authored `@keyframes` become native animation tracks whose duration, easing, and values stay editable on HTML recompile. Scroll-driven keyframes fail. GSAP and JS timelines never become tracks.

@@ -6,7 +6,9 @@
 
 use crate::compiler::{escape_xml, parse_svg};
 use crate::CompileError;
+use director_core::scene_export::{channel, ElementExport, ExportContext, ExportError};
 use director_core::{node::VectorNode, Element, RenderError};
+use director_scene::{html as doc, NodeBody};
 use scraper::ElementRef;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -1536,6 +1538,15 @@ impl Element for AnimatedSvg {
     fn varies_with_time(&self) -> bool {
         true
     }
+    fn export_body(&self, cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
+        Ok(ElementExport {
+            opacity: channel(&self.node.opacity),
+            body: NodeBody::SvgSmil(doc::SvgSmilBody {
+                markup: cx.embedded_asset("svg", "image/svg+xml", self.base.as_bytes()),
+                animations: self.anims.iter().map(SmilAnim::to_doc).collect(),
+            }),
+        })
+    }
     fn layout_style(&self) -> taffy::Style {
         self.node.layout_style()
     }
@@ -1578,3 +1589,71 @@ impl Element for AnimatedSvg {
     }
 }
 
+
+impl SmilAnim {
+    fn to_doc(&self) -> doc::SmilAnimation {
+        let mode = |mode: &CalcMode| match mode {
+            CalcMode::Linear => doc::SmilCalcMode::Linear,
+            CalcMode::Discrete => doc::SmilCalcMode::Discrete,
+            CalcMode::Paced => doc::SmilCalcMode::Paced,
+        };
+        doc::SmilAnimation {
+            target: self.target,
+            begin: self.timing.begin,
+            dur: self.timing.dur,
+            end: self.timing.end,
+            repeat: match self.timing.repeat {
+                Repeat::Once => doc::SmilRepeat::Once,
+                Repeat::Count(count) => doc::SmilRepeat::Count(count),
+                Repeat::Forever => doc::SmilRepeat::Forever,
+            },
+            repeat_dur: self.timing.repeat_dur,
+            freeze: self.timing.fill_freeze,
+            effect: match &self.effect {
+                Effect::Attr {
+                    name,
+                    mode: calc,
+                    values,
+                    key_times,
+                    hold,
+                } => doc::SmilEffect::Attribute {
+                    name: name.clone(),
+                    mode: mode(calc),
+                    values: values
+                        .iter()
+                        .map(|value| match value {
+                            SmilValue::Number { value, unit } => doc::SmilValue::Number {
+                                value: *value,
+                                unit: unit.clone(),
+                            },
+                            SmilValue::Color { r, g, b, a } => doc::SmilValue::Color(director_scene::Rgba {
+                                r: *r,
+                                g: *g,
+                                b: *b,
+                                a: *a,
+                            }),
+                            SmilValue::Raw(raw) => doc::SmilValue::Raw(raw.clone()),
+                        })
+                        .collect(),
+                    key_times: key_times.clone(),
+                    hold: *hold,
+                },
+                Effect::Transform {
+                    kind,
+                    mode: calc,
+                    frames,
+                    key_times,
+                } => doc::SmilEffect::Transform {
+                    kind: kind.to_string(),
+                    mode: mode(calc),
+                    frames: frames.clone(),
+                    key_times: key_times.clone(),
+                },
+                Effect::Motion { points, rotate } => doc::SmilEffect::Motion {
+                    points: points.iter().map(|(x, y)| [*x, *y]).collect(),
+                    rotate: *rotate,
+                },
+            },
+        }
+    }
+}

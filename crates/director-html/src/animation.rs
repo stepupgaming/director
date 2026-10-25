@@ -2,7 +2,10 @@ use crate::{
     css::{split, Css, Values},
     style::{color, number, px, Metrics, PaintStyle},
 };
+use director_core::scene_export::{export_easing, rgba, ExportError};
 use director_core::{animation::EasingType, types::Color};
+use director_scene::html as doc;
+use lightningcss::traits::ToCss;
 use lightningcss::{
     properties::transform::{Transform, TransformList},
     traits::Parse,
@@ -507,5 +510,53 @@ impl Animation {
             }
         }
         layout
+    }
+}
+
+impl Animation {
+    /// The scene document form of this animation.
+    pub(crate) fn to_doc(&self) -> Result<doc::CssAnimation, ExportError> {
+        let channels = self
+            .channels
+            .iter()
+            .map(|channel| {
+                let keyframes = channel
+                    .points
+                    .iter()
+                    .map(|point| {
+                        Ok(doc::CssKeyframe {
+                            offset: point.offset,
+                            value: match &point.value {
+                                Value::Scalar(v) => doc::CssValue::Scalar(*v),
+                                Value::Color(c) => doc::CssValue::Color(rgba(*c)),
+                                Value::Transform(list) => doc::CssValue::Transform(
+                                    list.to_css_string(Default::default())
+                                        .map_err(|e| ExportError::Unrepresentable(format!("animation transform: {e}")))?,
+                                ),
+                            },
+                            timing: match &point.ease {
+                                Ease::Curve(easing) => doc::CssTiming::Curve(export_easing(easing)),
+                                Ease::Steps(count, start) => doc::CssTiming::Steps {
+                                    count: *count,
+                                    start: *start,
+                                },
+                            },
+                        })
+                    })
+                    .collect::<Result<_, ExportError>>()?;
+                Ok(doc::CssChannel {
+                    property: channel.name.clone(),
+                    keyframes,
+                })
+            })
+            .collect::<Result<_, ExportError>>()?;
+        Ok(doc::CssAnimation {
+            delay: self.delay,
+            duration: self.duration,
+            iteration_count: self.count.is_finite().then_some(self.count),
+            direction: self.direction.clone(),
+            fill_mode: self.fill.clone(),
+            channels,
+        })
     }
 }

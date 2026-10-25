@@ -2005,3 +2005,28 @@ fn is_ident_start(ch: char) -> bool {
 fn is_ident(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
 }
+
+impl PaperPaint {
+    /// The scene document form of this shader, with each image embedded as raw RGBA8.
+    pub(crate) fn to_doc(&self, cx: &mut director_core::scene_export::ExportContext) -> director_scene::html::PaperShader {
+        director_scene::html::PaperShader {
+            sksl: self.sksl.clone(),
+            uniforms: self.uniforms.clone(),
+            images: self
+                .images
+                .iter()
+                .map(|(name, image)| {
+                    (
+                        name.clone(),
+                        director_scene::html::PaperImage {
+                            width: image.width,
+                            height: image.height,
+                            asset: cx.embedded_asset("paper", "application/x-rgba8", &image.rgba),
+                            flip_y: image.flip_y,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+}

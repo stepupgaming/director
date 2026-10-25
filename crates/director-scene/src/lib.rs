@@ -10,6 +10,7 @@ pub mod caption;
 pub mod channel;
 pub mod effect;
 pub mod entity;
+pub mod html;
 pub mod layout;
 pub mod timeline;
 
@@ -19,6 +20,7 @@ pub use caption::{ActiveSpeakerCameraBody, CaptionBody, SmartCaptionBody};
 pub use channel::{Channel, Easing, Keyframe, Rgba};
 pub use effect::{Effect, EffectParam, Uniform};
 pub use entity::{BoundingBox, Entity, EntityId, EntityKind, EntitySample};
+pub use html::{HtmlBody, HtmlCaptureBody, HtmlVideoBody, SvgSmilBody};
 pub use layout::LayoutStyle;
 pub use timeline::{Clip, Timeline, Track, Transition};
 

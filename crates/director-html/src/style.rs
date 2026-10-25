@@ -151,6 +151,8 @@ pub struct PaintStyle {
     pub perspective_origin: (LengthPercentage, LengthPercentage),
     pub backface_hidden: bool,
     pub preserve_3d: bool,
+    /// `filter` functions in source order. `filter` is their compiled chain.
+    pub filters: Vec<FilterFn>,
     pub filter: Option<skia_safe::ImageFilter>,
     pub blend_mode: skia_safe::BlendMode,
     pub shadows: Vec<Shadow>,
@@ -978,6 +980,7 @@ pub fn translate(
         perspective_origin: (percent(0.5_f32), percent(0.5_f32)),
         backface_hidden: false,
         preserve_3d: false,
+        filters: Vec::new(),
         filter: Default::default(),
         blend_mode: skia_safe::BlendMode::SrcOver,
         shadows: Vec::new(),
@@ -1277,7 +1280,8 @@ pub fn translate(
                 }
                 "filter" => {
                     if s != "none" {
-                        paint.filter = filter(s, m)?;
+                        paint.filters = filters(s, m)?;
+                        paint.filter = compile_filters(&paint.filters);
                     }
                 }
                 "mix-blend-mode" => {
@@ -1775,10 +1779,25 @@ fn shadows(s: &str, m: Metrics, current: Color) -> Result<Vec<Shadow>, String> {
         .collect()
 }
 
-fn filter(s: &str, m: Metrics) -> Result<Option<skia_safe::ImageFilter>, String> {
-    let mut chain = None;
+/// One CSS filter function with its amount resolved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FilterFn {
+    Blur(f32),
+    Brightness(f32),
+    Contrast(f32),
+    Saturate(f32),
+    /// Clamped to `0.0..=1.0`.
+    Grayscale(f32),
+    HueRotate(f32),
+    DropShadow { x: f32, y: f32, blur: f32, color: Color },
+    Invert(f32),
+    Sepia(f32),
+    Opacity(f32),
+}
+
+fn filters(s: &str, m: Metrics) -> Result<Vec<FilterFn>, String> {
+    let mut out = Vec::new();
     for call in split(s, false) {
-        let mut f = director_core::types::FilterConfig::default();
         let (name, args) = call.split_once('(').ok_or("invalid filter function")?;
         let args = args.strip_suffix(')').ok_or("invalid filter function")?;
         // Lightning CSS writes a default amount as an empty call, such as `grayscale()` or `blur()`.
@@ -1804,20 +1823,19 @@ fn filter(s: &str, m: Metrics) -> Result<Option<skia_safe::ImageFilter>, String>
             };
             Ok(amount.clamp(0.0, 1.0))
         };
-        let mut shadow = None;
-        match name {
-            "blur" if args.trim().is_empty() => {}
-            "blur" => f.blur = px(args, m)?,
-            "brightness" => f.brightness = scalar()?,
-            "contrast" => f.contrast = scalar()?,
-            "saturate" => f.saturation = scalar()?,
-            "grayscale" => f.saturation = 1.0 - unit(1.0)?,
-            "hue-rotate" if args.trim().is_empty() => {}
-            "hue-rotate" => {
-                f.hue_rotate = lightningcss::values::angle::Angle::parse_string(args)
+        out.push(match name {
+            "blur" if args.trim().is_empty() => continue,
+            "blur" => FilterFn::Blur(px(args, m)?),
+            "brightness" => FilterFn::Brightness(scalar()?),
+            "contrast" => FilterFn::Contrast(scalar()?),
+            "saturate" => FilterFn::Saturate(scalar()?),
+            "grayscale" => FilterFn::Grayscale(unit(1.0)?),
+            "hue-rotate" if args.trim().is_empty() => continue,
+            "hue-rotate" => FilterFn::HueRotate(
+                lightningcss::values::angle::Angle::parse_string(args)
                     .map_err(|e| format!("hue angle: {e:?}"))?
-                    .to_degrees()
-            }
+                    .to_degrees(),
+            ),
             "drop-shadow" => {
                 let parsed = lightningcss::properties::box_shadow::BoxShadow::parse_string(args)
                     .map_err(|e| format!("drop-shadow: {e:?}"))?;
@@ -1828,21 +1846,73 @@ fn filter(s: &str, m: Metrics) -> Result<Option<skia_safe::ImageFilter>, String>
                         m,
                     )
                 };
-                shadow = skia_safe::image_filters::drop_shadow(
-                    (conv(&parsed.x_offset)?, conv(&parsed.y_offset)?),
-                    (conv(&parsed.blur)?, conv(&parsed.blur)?),
-                    css_color(&parsed.color, Color::BLACK)?.to_color4f(),
-                    None,
-                    None,
-                    None,
-                );
+                FilterFn::DropShadow {
+                    x: conv(&parsed.x_offset)?,
+                    y: conv(&parsed.y_offset)?,
+                    blur: conv(&parsed.blur)?,
+                    color: css_color(&parsed.color, Color::BLACK)?,
+                }
             }
-            "invert" => f.invert = unit(1.0)?,
-            "sepia" => f.sepia = unit(1.0)?,
-            "opacity" => f.opacity = unit(1.0)?,
+            "invert" => FilterFn::Invert(unit(1.0)?),
+            "sepia" => FilterFn::Sepia(unit(1.0)?),
+            "opacity" => FilterFn::Opacity(unit(1.0)?),
             _ => return Err(format!("unsupported filter '{name}'")),
-        }
-        let filter = shadow.or_else(|| f.to_image_filter());
+        });
+    }
+    Ok(out)
+}
+
+/// Compose a filter list into one image filter, the first function innermost.
+pub(crate) fn compile_filters(list: &[FilterFn]) -> Option<skia_safe::ImageFilter> {
+    let mut chain = None;
+    for function in list {
+        let mut f = director_core::types::FilterConfig::default();
+        let filter = match *function {
+            FilterFn::Blur(radius) => {
+                f.blur = radius;
+                f.to_image_filter()
+            }
+            FilterFn::Brightness(amount) => {
+                f.brightness = amount;
+                f.to_image_filter()
+            }
+            FilterFn::Contrast(amount) => {
+                f.contrast = amount;
+                f.to_image_filter()
+            }
+            FilterFn::Saturate(amount) => {
+                f.saturation = amount;
+                f.to_image_filter()
+            }
+            FilterFn::Grayscale(amount) => {
+                f.saturation = 1.0 - amount;
+                f.to_image_filter()
+            }
+            FilterFn::HueRotate(degrees) => {
+                f.hue_rotate = degrees;
+                f.to_image_filter()
+            }
+            FilterFn::DropShadow { x, y, blur, color } => skia_safe::image_filters::drop_shadow(
+                (x, y),
+                (blur, blur),
+                color.to_color4f(),
+                None,
+                None,
+                None,
+            ),
+            FilterFn::Invert(amount) => {
+                f.invert = amount;
+                f.to_image_filter()
+            }
+            FilterFn::Sepia(amount) => {
+                f.sepia = amount;
+                f.to_image_filter()
+            }
+            FilterFn::Opacity(amount) => {
+                f.opacity = amount;
+                f.to_image_filter()
+            }
+        };
         if let Some(filter) = filter {
             chain = if let Some(inner) = chain {
                 skia_safe::image_filters::compose(filter, inner)
@@ -1851,7 +1921,7 @@ fn filter(s: &str, m: Metrics) -> Result<Option<skia_safe::ImageFilter>, String>
             };
         }
     }
-    Ok(chain)
+    chain
 }
 
 fn absolute_px(l: &Length, m: Metrics) -> Result<f32, String> {

@@ -3,6 +3,7 @@
 use crate::caption::{ActiveSpeakerCameraBody, CaptionBody, SmartCaptionBody};
 use crate::channel::{Channel, Rgba};
 use crate::effect::Effect;
+use crate::html::{HtmlBody, HtmlCaptureBody, HtmlVideoBody, SvgSmilBody};
 use crate::{AssetId, SceneDocument};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,10 @@ pub enum NodeBody {
     SmartCaption(SmartCaptionBody),
     ActiveSpeakerCamera(ActiveSpeakerCameraBody),
     SpectrumVisualizer(SpectrumBody),
+    Html(Box<HtmlBody>),
+    HtmlVideo(HtmlVideoBody),
+    HtmlCapture(HtmlCaptureBody),
+    SvgSmil(SvgSmilBody),
 }
 
 /// A painted rectangle.

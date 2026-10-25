@@ -4,7 +4,8 @@ use super::ExportError;
 use director_scene::layout as doc;
 use taffy::style::{self as tf, CompactLength};
 
-pub(super) fn export_layout(style: &tf::Style) -> Result<doc::LayoutStyle, ExportError> {
+/// The document mirror of a Taffy style.
+pub fn export_layout(style: &tf::Style) -> Result<doc::LayoutStyle, ExportError> {
     Ok(doc::LayoutStyle {
         display: match style.display {
             tf::Display::Block => doc::Display::Block,
@@ -150,6 +151,11 @@ fn dimension(raw: CompactLength) -> Result<doc::Dimension, ExportError> {
         CompactLength::PERCENT_TAG => Ok(doc::Dimension::Percent(raw.value())),
         _ => Err(unrepresentable(raw)),
     }
+}
+
+/// The document mirror of a px or percent length.
+pub fn export_length(value: tf::LengthPercentage) -> Result<doc::Length, ExportError> {
+    length(value.into_raw())
 }
 
 fn length(raw: CompactLength) -> Result<doc::Length, ExportError> {

@@ -159,6 +159,15 @@ impl Element for HtmlElement {
     fn layout_style(&self) -> Style {
         self.style.clone()
     }
+    fn export_layout_style(&self) -> Style {
+        self.base_style.clone()
+    }
+    fn export_body(
+        &self,
+        cx: &mut director_core::scene_export::ExportContext,
+    ) -> Result<director_core::scene_export::ElementExport, director_core::scene_export::ExportError> {
+        crate::export::html_body(self, cx)
+    }
     fn set_layout_style(&mut self, style: Style) {
         self.base_style = style.clone();
         self.style = style;

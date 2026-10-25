@@ -10,6 +10,7 @@
 - `src/channel.rs` owns `Channel`, `Keyframe`, `Easing` and `Rgba`.
 - `src/effect.rs` owns `Effect`, `EffectParam` and `Uniform`.
 - `src/layout.rs` owns `LayoutStyle`, the Taffy-free mirror of a node's layout style.
+- `src/html.rs` owns the `director-html` bodies: `HtmlBody` with its computed CSS paint, content, CSS animations and Paper shader; `HtmlVideoBody`; `HtmlCaptureBody` with deduplicated sampled graphs; and `SvgSmilBody` with SMIL animations.
 - `src/timeline.rs` owns tracks, clips and transitions. `src/audio.rs` owns the mixer tracks and effect chains. `src/entity.rs` owns semantic entities and their samples.
 
 ## Local Contracts
@@ -22,6 +23,7 @@
 - Effects and transitions use their primary `api_catalog` names. Parameters are keyed by name.
 - Media live in the `assets` table and nodes refer to them by `AssetId`. An asset is a source path or base64-embedded bytes with a media type.
 - Entities are sorted by id so equal scenes write equal documents.
+- Values JSON cannot hold have a finite form: an unbounded end time or `infinite` iteration count is `None`. CSS transforms and mixed `calc()` gradient stops are CSS text.
 - `director-core::scene_export` writes this document. It does not read one back into a `Director`.
 
 ## Work Guidance

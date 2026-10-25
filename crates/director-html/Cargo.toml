@@ -7,6 +7,7 @@ description = "HTML, CSS and HyperFrames compiler for Director's native renderer
 
 [dependencies]
 director-core.workspace = true
+director-scene = { path = "../director-scene" }
 anyhow.workspace = true
 serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true

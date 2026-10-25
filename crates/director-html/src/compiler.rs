@@ -1345,6 +1345,7 @@ impl Builder {
             anonymous.opacity = 1.0;
             anonymous.transform = Default::default();
             anonymous.corners = [(taffy::prelude::zero(), taffy::prelude::zero()); 4];
+            anonymous.filters = Vec::new();
             anonymous.filter = Default::default();
             anonymous.shadows.clear();
             anonymous.layers.clear();
@@ -1777,7 +1778,20 @@ struct LoopedVideo {
 
 impl Element for LoopedVideo {
     fn kind(&self) -> &'static str {
-        "video"
+        "html_video"
+    }
+    fn export_body(
+        &self,
+        cx: &mut director_core::scene_export::ExportContext,
+    ) -> Result<director_core::scene_export::ElementExport, director_core::scene_export::ExportError> {
+        Ok(director_core::scene_export::ElementExport {
+            opacity: director_core::scene_export::channel(&self.node.opacity),
+            body: director_scene::NodeBody::HtmlVideo(director_scene::HtmlVideoBody {
+                video: director_core::scene_export::nodes::video_media(&self.node, cx)?,
+                looped: true,
+                duration: self.duration,
+            }),
+        })
     }
     fn as_any(&self) -> &dyn Any {
         self

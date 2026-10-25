@@ -1,6 +1,6 @@
 # Plan 10: Native platform overhaul
 
-> **Status:** In progress. The phase 1 gate is green locally. The phase 2 gate is green for the director-core golden corpus. HTML scenes do not export yet.
+> **Status:** In progress. The phase 1 gate is green locally. The phase 2 gate is green: the director-core golden corpus and the HTML examples and fixtures round-trip through the scene document. Phase 3 is next.
 > **Product direction:** Exceed HyperFrames, FFrames and Remotion with a library-first native video platform: HTML/CSS authoring that compiles to a typed scene document, a parallel deterministic renderer, one host session API shared by the CLI, agents and a future editor, and measured proof of speed and quality.
 
 This file is the current-state and handoff document for the active phase. It replaces [plan 09](09-native-fidelity.md) as the active plan. Feature contracts for HTML live in [`crates/director-html/AGENTS.md`](../../crates/director-html/AGENTS.md).
@@ -94,9 +94,10 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 433 | 2026-10-25 | `cargo test -p director-core --release` |
 | visual_suite (render and scene round trip) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 949 | 2026-10-25 | `cargo test --workspace --release` |
+| workspace release tests | 955 | 2026-10-25 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
+| HTML scene_document | 6 | 2026-10-25 | `cargo test -p director-html --release --test scene_document` |
 | Vulkan engine clippy | pass | 2026-10-22 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
@@ -129,8 +130,8 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Give the `director-html` elements a document form: `HtmlElement` (its `PaintStyle`, CSS keyframe animations and content), `SharedVideo`, `LoopedVideo`, `CapturedElement` and `AnimatedSvg`. Every compiled HTML scene fails export today at its root `html` node. Then round-trip the HTML examples and test fixtures through the document.
-2. Read a document back into a `Director` only when phase 3 needs it.
+1. Start phase 3: a `director-render` crate that reads a `SceneDocument` and its asset table and paints one frame, beginning with box, text, image and `html` bodies, compared against the golden corpus and the HTML examples.
+2. HTML audio embeds decoded samples in the asset table. Record its source path through the compile `AssetStore` so the document references the file.
 3. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification
