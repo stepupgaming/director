@@ -2,8 +2,8 @@
 //!
 //! A [`Renderer`] holds a shared document and imports it into one live
 //! `Director` per [`FrameSession`]. Each session owns its surfaces and layout
-//! engine, so [`Renderer::render_frames`] paints frames on a rayon pool with
-//! one session per worker.
+//! engine. A [`FramePool`] keeps one warm session per rayon worker and paints
+//! each worker's contiguous run of frames into reused buffers.
 
 mod frame;
 
@@ -28,11 +28,10 @@ pub enum RenderError {
     Surface(i32, i32),
     #[error("failed to read frame pixels")]
     Readback,
-    #[error("the worker session failed to start: {0}")]
-    Session(String),
 }
 
-/// One painted frame in straight-alpha RGBA, row-major, `width * 4` bytes per row.
+/// One painted frame in RGBA, row-major, `width * 4` bytes per row. Alpha is
+/// straight; opaque frames carry the same bytes premultiplied.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
     pub width: u32,
@@ -95,19 +94,60 @@ impl Renderer {
         self.session()?.render(time)
     }
 
-    /// Paint frames at `times` in parallel, one session per worker thread.
-    /// Results keep the order of `times`.
-    pub fn render_frames(&self, times: &[f64]) -> Vec<Result<Frame, RenderError>> {
-        times
-            .par_iter()
-            .map_init(
-                || self.session(),
-                |session, &time| match session {
-                    Ok(session) => session.render(time),
-                    Err(err) => Err(RenderError::Session(err.to_string())),
-                },
-            )
-            .collect()
+    /// A pool of warm sessions, one per rayon worker.
+    pub fn pool(&self) -> FramePool {
+        FramePool {
+            renderer: self.clone(),
+            sessions: (0..rayon::current_num_threads()).map(|_| None).collect(),
+        }
+    }
+
+    /// Paint frames at `times` in parallel through a fresh [`FramePool`].
+    /// Frames keep the order of `times`.
+    pub fn render_frames(&self, times: &[f64]) -> Result<Vec<Frame>, RenderError> {
+        let mut frames = Vec::new();
+        self.pool().render_into(times, &mut frames)?;
+        Ok(frames)
+    }
+}
+
+/// One warm [`FrameSession`] per rayon worker, kept across calls so each
+/// session holds its static layer cache and incremental frame state.
+pub struct FramePool {
+    renderer: Renderer,
+    sessions: Vec<Option<FrameSession>>,
+}
+
+impl FramePool {
+    pub fn renderer(&self) -> &Renderer {
+        &self.renderer
+    }
+
+    /// Paint `times` into `frames`, resized to match and in the same order.
+    /// Each worker paints one contiguous run of `times` into the existing
+    /// pixel buffers. Sessions import on first use.
+    pub fn render_into(&mut self, times: &[f64], frames: &mut Vec<Frame>) -> Result<(), RenderError> {
+        let (width, height) = self.renderer.output_size();
+        frames.resize_with(times.len(), || Frame {
+            width: width as u32,
+            height: height as u32,
+            rgba: Vec::new(),
+        });
+        if times.is_empty() {
+            return Ok(());
+        }
+        let run = times.len().div_ceil(self.sessions.len());
+        let renderer = &self.renderer;
+        self.sessions
+            .par_iter_mut()
+            .zip(times.par_chunks(run).zip(frames.par_chunks_mut(run)))
+            .try_for_each(|(slot, (times, frames))| {
+                let session = match slot {
+                    Some(session) => session,
+                    None => slot.insert(renderer.session()?),
+                };
+                times.iter().zip(frames).try_for_each(|(&time, frame)| session.render_into(time, frame))
+            })
     }
 }
 
@@ -119,6 +159,11 @@ pub struct FrameSession {
     surface: Surface,
     scratch: frame::Scratch,
 }
+
+// SAFETY: a session exclusively owns its `Director` (itself `Send`), layout
+// engine and CPU raster surfaces, none of which hold a thread-bound context. A
+// `FramePool` hands each session to one worker at a time between calls.
+unsafe impl Send for FrameSession {}
 
 impl FrameSession {
     /// Wrap a live `Director` that paints into a `width` x `height` raster.
@@ -148,23 +193,32 @@ impl FrameSession {
 
     /// Paint the frame at `time` seconds.
     pub fn render(&mut self, time: f64) -> Result<Frame, RenderError> {
+        let mut frame = Frame {
+            width: 0,
+            height: 0,
+            rgba: Vec::new(),
+        };
+        self.render_into(time, &mut frame)?;
+        Ok(frame)
+    }
+
+    /// Paint the frame at `time` seconds into `frame`, reusing its pixel buffer.
+    pub fn render_into(&mut self, time: f64, frame: &mut Frame) -> Result<(), RenderError> {
         frame::render_sampled(&mut self.director, &mut self.layout, time, &mut self.surface, &mut self.scratch)?;
         let width = self.info.width() as usize;
         let height = self.info.height() as usize;
-        let mut rgba = vec![0u8; width * height * 4];
+        frame.width = width as u32;
+        frame.height = height as u32;
+        frame.rgba.resize(width * height * 4, 0);
         // Opaque frames hold the same bytes either way; skip the unpremultiply pass.
         let read_info = if self.director.transparent_background {
             self.info.clone().with_alpha_type(AlphaType::Unpremul)
         } else {
             self.info.clone()
         };
-        if !self.surface.read_pixels(&read_info, &mut rgba, width * 4, (0, 0)) {
+        if !self.surface.read_pixels(&read_info, &mut frame.rgba, width * 4, (0, 0)) {
             return Err(RenderError::Readback);
         }
-        Ok(Frame {
-            width: width as u32,
-            height: height as u32,
-            rgba,
-        })
+        Ok(())
     }
 }

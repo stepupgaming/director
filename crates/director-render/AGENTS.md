@@ -4,25 +4,28 @@
 
 ## Ownership
 
-- `src/lib.rs` owns `Renderer`, `FrameSession`, `Frame` and `RenderError`.
+- `src/lib.rs` owns `Renderer`, `FramePool`, `FrameSession`, `Frame` and `RenderError`.
 - `src/frame.rs` owns the frame driver: `evaluate` advances the `Director` (dirty set, update, layout, post-layout) and resolves a `FramePlan` of scene layers and transition pairs; `paint` draws a plan; `render_sampled` averages shutter samples for motion blur.
 - `tests/common/mod.rs` holds the parity reference: `CoreSession` paints a `Director` through core `render_sampled_at_time`, and every parity test compares this crate against it.
 - `tests/rhai_examples.rs` paints every `examples/**/*.rhai` movie (each registered composition with default props) on the core path, on a live `FrameSession` and from its exported document, and requires all three to match.
-- `tests/html_examples.rs` owns parity between the document render and the compiled `Director` on the core path for HTML: every example, a paint fixture, SMIL, looped video, a sampled capture with path and embedded video, text, SVG and nested boxes, and a Paper shader. Video fixtures need FFmpeg on the path.
-- `examples/export_bench.rs` times a 1080p HTML export on the core path against the document painted through `render_frames`, with render-only, single-session and live-session splits, and writes `core.mp4` and `director-render.mp4` to its output folder.
+- `tests/html_examples.rs` owns parity between the document render and the compiled `Director` on the core path for HTML: every example, a paint fixture, SMIL, looped video, a sampled capture with path and embedded video, text, SVG and nested boxes, and a Paper shader, plus byte equality of `render_frames` and a warm `FramePool` with fresh sessions. Video fixtures need FFmpeg on the path.
+- `examples/export_bench.rs` times a 1080p HTML export on the core path against the document painted through a warm `FramePool`, with render-only, one-call `render_frames`, single-session and live-session splits, and writes `core.mp4` and `director-render.mp4` to its output folder. `DIRECTOR_BENCH_RUN` sets frames per worker per pool call (1 by default).
 - `tests/core_nodes.rs` owns the same parity for core Lottie (with an override image) and audio scenes: the document re-exports unchanged, the mix is sample-equal and frames match, including a spectrum visualizer and an audio binding.
 
 ## Local Contracts
 
 - `Renderer` holds an `Arc<SceneDocument>`, the asset loader, an `ImportRegistry` (core kinds by default, `with_registry` for frontend kinds such as `director_html::register_import`) and a render mode (export by default).
 - `Renderer::session` imports the document into a fresh `Director` through `director_core::scene_import`. A `FrameSession` owns that `Director`, its layout engine and raster surfaces, and reuses them across frames.
-- `FrameSession::render(time)` paints through `frame::render_sampled`, matching core export for motion blur, transitions, track opacity and clip fades, output scale and incremental dirty frames. Transition and accumulation rasters match the target surface and allocate on first use. It returns RGBA8 at the document output size (`width * output_scale_x`, rounded): straight alpha for a transparent background, and a direct premultiplied read for opaque frames, whose bytes are identical.
-- `Renderer::render_frames(times)` paints on the rayon pool with one session per worker and returns results in the order of `times`. A session that fails to import fails each of its frames with `RenderError::Session`.
+- `FrameSession::render(time)` and `render_into(time, &mut Frame)` paint through `frame::render_sampled`, matching core export for motion blur, transitions, track opacity and clip fades, output scale and incremental dirty frames. Transition and accumulation rasters match the target surface and allocate on first use. It returns RGBA8 at the document output size (`width * output_scale_x`, rounded): straight alpha for a transparent background, and a direct premultiplied read for opaque frames, whose bytes are identical.
+- `render_into` reuses the frame's pixel buffer. Use it on every repeated paint: a fresh 8 MB buffer per 1080p frame costs more than painting a static scene.
+- `FramePool` holds one lazily imported `FrameSession` per rayon worker and keeps them warm across calls, so each keeps its static layer cache and incremental frame state. `render_into(times, &mut Vec<Frame>)` resizes the frames to `times`, gives each worker one contiguous run, reuses every pixel buffer and returns the first error.
+- `FrameSession` is `Send` because it exclusively owns its `Director`, layout engine and CPU raster surfaces; a pool drives each session from one worker at a time.
+- `Renderer::render_frames(times)` paints through a fresh `FramePool` and returns frames in the order of `times`. Warm pool frames equal fresh-session frames byte for byte.
 - The renderer paints on the CPU raster backend.
 
 ## Work Guidance
 
-- `render_frames` builds a cold session per rayon split, which loses the static layer cache on still scenes; keep sessions warm per worker before switching export.
+- Export through a warm `FramePool` with one frame per worker per call. Encoding still runs serially after each call; overlap it with painting next.
 - The frame driver lives here; per-node paint still calls core `render_recursive`. Move the node traversal, the static layer cache and per-kind paint into this crate next while the parity tests and the visual suite stay green, then switch export to this crate and delete the core frame path.
 
 ## Verification

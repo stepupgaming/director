@@ -1,5 +1,5 @@
 //! Times an HTML export on the core `Director` path against its scene document
-//! painted through `Renderer::render_frames`, and writes both MP4s.
+//! painted through a warm `FramePool`, and writes both MP4s.
 //!
 //! `cargo run -p director-render --release --example export_bench -- [html] [out_dir] [runs] [auto|software|nvenc]`
 
@@ -12,7 +12,7 @@ use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_c
 use director_core::video_wrapper::{Encoder, EncoderMode, EncoderSettings};
 use director_core::Director;
 use director_html::{compile_file, register_import, CompileOptions};
-use director_render::Renderer;
+use director_render::{Frame, Renderer};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -44,7 +44,28 @@ fn frame_times(director: &Director) -> Vec<f64> {
     (0..duration_to_frame_count(duration, fps)).map(|i| frame_to_time(i, fps)).collect()
 }
 
-/// Paint `times` in chunks through `render_frames` and stream them to the encoder in order.
+/// Frames per `FramePool` call, `DIRECTOR_BENCH_RUN` contiguous frames per worker (1 by default).
+fn chunk_len() -> usize {
+    let run = std::env::var("DIRECTOR_BENCH_RUN").ok().and_then(|run| run.parse().ok()).unwrap_or(1);
+    rayon::current_num_threads() * run
+}
+
+/// Paint `times` chunk by chunk through one warm pool, handing each chunk to `sink` in order.
+fn pool_frames(
+    renderer: &Renderer,
+    times: &[f64],
+    mut sink: impl FnMut(&[Frame], &[f64]) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let mut pool = renderer.pool();
+    let mut frames = Vec::new();
+    for chunk in times.chunks(chunk_len()) {
+        pool.render_into(chunk, &mut frames)?;
+        sink(&frames, chunk)?;
+    }
+    Ok(())
+}
+
+/// Paint `times` through a warm `FramePool` and stream them to the encoder in order.
 fn document_export(director: &Director, path: &Path, mode: EncoderMode) -> anyhow::Result<()> {
     let renderer = renderer(director)?;
     let times = frame_times(director);
@@ -55,12 +76,13 @@ fn document_export(director: &Director, path: &Path, mode: EncoderMode) -> anyho
     let mut encoder = Encoder::new(path, settings)?;
     let mut audio = import_scene(renderer.document(), director.assets.loader.clone(), &registry(), director.render_mode)?;
     let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, director.fps.max(1e-6), 1);
-    for chunk in times.chunks(rayon::current_num_threads() * 4) {
-        for (frame, &time) in renderer.render_frames(chunk).into_iter().zip(chunk) {
-            encoder.encode(&frame?.rgba, time)?;
+    pool_frames(&renderer, &times, |frames, chunk| {
+        for (frame, &time) in frames.iter().zip(chunk) {
+            encoder.encode(&frame.rgba, time)?;
             encoder.encode_audio(&audio.mix_audio(block, time), time)?;
         }
-    }
+        Ok(())
+    })?;
     encoder.finish()
 }
 
@@ -117,7 +139,7 @@ fn main() -> anyhow::Result<()> {
 
     let (mut core_export, mut render_export_ms, mut core_render, mut render_render, mut one_session) =
         (vec![], vec![], vec![], vec![], vec![]);
-    let mut live_session = vec![];
+    let (mut live_session, mut one_call, mut first_frame) = (vec![], vec![], vec![]);
     for _ in 0..runs {
         let mut director = compiled(&input, mode)?;
         let started = Instant::now();
@@ -136,16 +158,23 @@ fn main() -> anyhow::Result<()> {
 
         let director = compiled(&input, mode)?;
         let started = Instant::now();
-        for frame in renderer(&director)?.render_frames(&frame_times(&director)) {
-            frame?;
-        }
+        pool_frames(&renderer(&director)?, &frame_times(&director), |_, _| Ok(()))?;
         render_render.push(ms(started));
 
         let director = compiled(&input, mode)?;
         let started = Instant::now();
+        renderer(&director)?.render_frames(&frame_times(&director))?;
+        one_call.push(ms(started));
+
+        let director = compiled(&input, mode)?;
+        let started = Instant::now();
         let mut session = renderer(&director)?.session()?;
-        for time in frame_times(&director) {
-            session.render(time)?;
+        let mut frame = session.render(0.0)?;
+        for (i, time) in frame_times(&director).into_iter().enumerate() {
+            session.render_into(time, &mut frame)?;
+            if i == 0 {
+                first_frame.push(ms(started));
+            }
         }
         one_session.push(ms(started));
 
@@ -162,7 +191,9 @@ fn main() -> anyhow::Result<()> {
 
     let (core_export, render_export_ms) = (median(&mut core_export), median(&mut render_export_ms));
     let (core_render, render_render) = (median(&mut core_render), median(&mut render_render));
-    let (one_session, live_session) = (median(&mut one_session), median(&mut live_session));
+    let (one_session, live_session, one_call) =
+        (median(&mut one_session), median(&mut live_session), median(&mut one_call));
+    let first_frame = median(&mut first_frame);
     println!(
         "{}",
         serde_json::json!({
@@ -171,11 +202,12 @@ fn main() -> anyhow::Result<()> {
             "fps": probe.fps,
             "frames": frames,
             "threads": rayon::current_num_threads(),
+            "chunk": chunk_len(),
             "encoder": format!("{mode:?}"),
             "runs": runs,
             "session_import_ms": session_ms,
             "export_ms": {"core": core_export, "director_render": render_export_ms, "speedup": core_export / render_export_ms},
-            "render_only_ms": {"core": core_render, "director_render": render_render, "speedup": core_render / render_render, "one_session": one_session, "live_session": live_session},
+            "render_only_ms": {"core": core_render, "director_render": render_render, "speedup": core_render / render_render, "one_session": one_session, "live_session": live_session, "one_call": one_call, "one_session_first_frame": first_frame},
             "render_only_fps": {"core": frames as f64 * 1000.0 / core_render, "director_render": frames as f64 * 1000.0 / render_render},
             "outputs": [std::fs::canonicalize(&core_path)?, std::fs::canonicalize(&render_path)?],
         })

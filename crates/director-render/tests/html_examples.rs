@@ -104,9 +104,27 @@ fn render_frames_matches_render_frame_in_order() {
         .with_registry(registry())
         .with_render_mode(compiled.director.render_mode);
     let times = [1.25, 0.0, 0.5, 2.5, 0.75, 1.0];
-    let frames = renderer.render_frames(&times);
+    let frames = renderer.render_frames(&times).unwrap();
     for (time, frame) in times.iter().zip(frames) {
-        assert_eq!(frame.unwrap(), renderer.render_frame(*time).unwrap(), "frame at {time}s");
+        assert_eq!(frame, renderer.render_frame(*time).unwrap(), "frame at {time}s");
+    }
+}
+
+#[test]
+fn warm_pool_matches_fresh_sessions_across_calls() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/html/text-decoration.html");
+    let compiled = compile_file(&path, CompileOptions::default()).unwrap();
+    let document = Arc::new(export_scene(&compiled.director).unwrap());
+    let renderer = Renderer::new(document, compiled.director.assets.loader.clone())
+        .with_registry(registry())
+        .with_render_mode(compiled.director.render_mode);
+    let mut pool = renderer.pool();
+    let mut frames = Vec::new();
+    for chunk in [[0.0, 0.1, 0.2, 0.3], [1.0, 1.1, 1.2, 1.3], [0.5, 0.6, 0.7, 0.8]] {
+        pool.render_into(&chunk, &mut frames).unwrap();
+        for (time, frame) in chunk.iter().zip(&frames) {
+            assert_eq!(*frame, renderer.render_frame(*time).unwrap(), "frame at {time}s");
+        }
     }
 }
 
