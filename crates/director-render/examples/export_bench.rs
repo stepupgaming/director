@@ -56,16 +56,15 @@ fn pool_frames(renderer: &Renderer, times: &[f64]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Encoder floor: pipe prepainted `frames` with silent audio through the export encoder settings.
+/// Encoder floor: pipe prepainted `frames` with premixed silence through the single-pass encoder.
 fn encode(frames: &[Frame], director: &Director, path: &Path, mode: EncoderMode) -> anyhow::Result<()> {
     let settings = EncoderSettings::preset_h264_yuv420p(frames[0].width as usize, frames[0].height as usize)
         .with_fps(director.fps)
         .with_encoder_mode(mode);
-    let mut encoder = Encoder::new(path, settings)?;
-    let silence = vec![0.0; 2 * audio_samples_per_video_frame(director.audio_mixer.sample_rate, director.fps.max(1e-6), 1)];
+    let block = audio_samples_per_video_frame(director.audio_mixer.sample_rate, director.fps.max(1e-6), 2);
+    let mut encoder = Encoder::with_audio(path, settings, &vec![0.0; block * frames.len()])?;
     for (frame, time) in frames.iter().zip(frame_times(director)) {
         encoder.encode(&frame.rgba, time)?;
-        encoder.encode_audio(&silence, time)?;
     }
     encoder.finish()
 }

@@ -350,11 +350,21 @@ pub fn get_encoder_info(mode: EncoderMode) -> EncoderInfo {
     }
 }
 
-/// Encodes video via pipe, writes audio to temp file, then muxes.
+/// Where an [`Encoder`] takes its audio from.
+enum AudioSink {
+    /// Streamed per frame into a raw file that `finish` muxes in a second FFmpeg pass.
+    Streamed(BufWriter<File>),
+    /// Mixed up front and read by the encoding FFmpeg process as a second input.
+    Premixed,
+}
+
+/// Encodes video via pipe. Audio is either streamed to a temp file and muxed
+/// after encoding ([`Encoder::new`]) or premixed and encoded in the same
+/// FFmpeg process ([`Encoder::with_audio`]).
 #[allow(dead_code)]
 pub struct Encoder {
     video_process: std::process::Child,
-    audio_file: BufWriter<File>,
+    audio: AudioSink,
     audio_path: PathBuf,
     video_temp_path: PathBuf,
     dest_path: PathBuf,
@@ -365,7 +375,18 @@ pub struct Encoder {
 }
 
 impl Encoder {
+    /// Stream audio per frame with [`Encoder::encode_audio`]; `finish` muxes it in a second pass.
     pub fn new(dest: &Path, settings: EncoderSettings) -> Result<Self> {
+        Self::spawn(dest, settings, None)
+    }
+
+    /// Encode `samples` (interleaved stereo f32 at `settings.sample_rate`) in the
+    /// same FFmpeg process as the video, so `finish` only waits for it.
+    pub fn with_audio(dest: &Path, settings: EncoderSettings, samples: &[f32]) -> Result<Self> {
+        Self::spawn(dest, settings, Some(samples))
+    }
+
+    fn spawn(dest: &Path, settings: EncoderSettings, premixed: Option<&[f32]>) -> Result<Self> {
         let temp_dir = std::env::temp_dir();
         let uuid = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
@@ -377,6 +398,13 @@ impl Encoder {
             (temp_dir.join(format!("director_vid_{}.mp4", uuid)), "aac")
         };
         let audio_path = temp_dir.join(format!("director_aud_{}.raw", uuid));
+        let mut audio_file = BufWriter::new(File::create(&audio_path)?);
+        if let Some(samples) = premixed {
+            for sample in samples {
+                audio_file.write_all(&sample.to_le_bytes())?;
+            }
+            audio_file.flush()?;
+        }
 
         let mut cmd = Command::new(FFmpegDriver::binary());
         cmd.arg("-y")
@@ -390,6 +418,16 @@ impl Encoder {
             .arg(settings.fps.to_string())
             .arg("-i")
             .arg("pipe:0");
+        if premixed.is_some() {
+            cmd.arg("-f")
+                .arg("f32le")
+                .arg("-ar")
+                .arg(settings.sample_rate.to_string())
+                .arg("-ac")
+                .arg("2")
+                .arg("-i")
+                .arg(&audio_path);
+        }
 
         if settings.alpha {
             let codec = "libvpx-vp9";
@@ -472,19 +510,30 @@ impl Encoder {
             }
         }
 
+        let audio = if premixed.is_some() {
+            drop(audio_file);
+            cmd.arg("-map")
+                .arg("0:v")
+                .arg("-map")
+                .arg("1:a")
+                .arg("-c:a")
+                .arg(audio_codec)
+                .arg(dest);
+            AudioSink::Premixed
+        } else {
+            cmd.arg(&video_temp_path);
+            AudioSink::Streamed(audio_file)
+        };
         let video_process = cmd
-            .arg(&video_temp_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
             .context("Failed to spawn ffmpeg video encoder")?;
 
-        let audio_file = File::create(&audio_path)?;
-
         Ok(Self {
             video_process,
-            audio_file: BufWriter::new(audio_file),
+            audio,
             audio_path,
             video_temp_path,
             dest_path: dest.to_path_buf(),
@@ -507,24 +556,43 @@ impl Encoder {
 
     /// Takes Audio samples (Interleaved Stereo F32).
     pub fn encode_audio(&mut self, samples: &[f32], _time: f64) -> Result<()> {
+        let AudioSink::Streamed(audio_file) = &mut self.audio else {
+            anyhow::bail!("this encoder took its audio premixed");
+        };
         // Write as raw f32le
         for sample in samples {
-            self.audio_file.write_all(&sample.to_le_bytes())?;
+            audio_file.write_all(&sample.to_le_bytes())?;
         }
         Ok(())
+    }
+
+    /// Stop FFmpeg and delete every file this encoder wrote, including a partial `dest`.
+    pub fn abort(mut self) {
+        let _ = self.video_process.kill();
+        let _ = self.video_process.wait();
+        let _ = std::fs::remove_file(&self.audio_path);
+        let _ = std::fs::remove_file(&self.video_temp_path);
+        if matches!(self.audio, AudioSink::Premixed) {
+            let _ = std::fs::remove_file(&self.dest_path);
+        }
     }
 
     pub fn finish(mut self) -> Result<()> {
         // 1. Finish Video
         self.video_process.stdin = None; // EOF
         let status = self.video_process.wait()?;
+        let AudioSink::Streamed(mut audio_file) = self.audio else {
+            let _ = std::fs::remove_file(&self.audio_path);
+            anyhow::ensure!(status.success(), "Video encoding failed");
+            return Ok(());
+        };
         if !status.success() {
             return Err(anyhow::anyhow!("Video encoding failed"));
         }
 
         // 2. Finish Audio
-        self.audio_file.flush()?;
-        drop(self.audio_file); // Close file
+        audio_file.flush()?;
+        drop(audio_file); // Close file
 
         // 3. Mux
         // ffmpeg -y -i video.mp4 -f f32le -ar 48000 -ac 2 -i audio.raw -c:v copy -c:a aac output.mp4

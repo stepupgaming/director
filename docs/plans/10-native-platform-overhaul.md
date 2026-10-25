@@ -97,7 +97,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | workspace release tests | 968 | 2026-10-25 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 12 | 2026-10-25 | `cargo test -p director-render --release` |
-| 1080p HTML export, core vs `Renderer::export` (pipelined, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1169 vs 633 ms (1.85x), image-background 608 vs 455 ms (1.34x), nested-rule 378 vs 427 ms (0.89x), text-decoration 385 vs 417 ms (0.92x); encode-only floor 439, 358, 354, 355 ms; render only native-motion 103 vs 312 fps, image-background 248 vs 724 fps, text-decoration 1908 vs 1332 fps; outputs pixel-identical (PSNR inf) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
+| 1080p HTML export, core vs `Renderer::export` (pipelined, single FFmpeg pass with premixed audio, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1185 vs 569 ms (2.08x), image-background 607 vs 401 ms (1.51x), nested-rule 371 vs 383 ms (0.97x), text-decoration 386 vs 398 ms (0.97x); single-pass encode-only floor 405, 329, 336, 335 ms; outputs pixel-identical (PSNR inf) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
 | HTML scene_document | 7 | 2026-10-25 | `cargo test -p director-html --release --test scene_document` |
@@ -133,7 +133,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Continue phase 3: static scenes now sit within 32 to 49 ms of the encode floor, and core matches that floor. Remove the second FFmpeg mux pass in `Encoder::finish` by mixing document audio before encoding and feeding it to the same FFmpeg process, then re-measure with `export_bench`. Then move the node traversal, the static layer cache and per-kind paint from core `render_recursive` into `director-render` behind the same parity tests and switch export to `director-render`.
+1. Continue phase 3: document export runs in one FFmpeg pass and leads core 2.08x and 1.51x on animated scenes; static scenes sit within 12 ms of core and about 50 ms above the x264 floor, mostly from FFmpeg starting after the audio import and mix. Move the node traversal, the static layer cache and per-kind paint from core `render_recursive` into `director-render` behind the same parity tests, then switch export to `director-render`.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification

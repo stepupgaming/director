@@ -1,5 +1,6 @@
 //! Document export: a [`FramePool`] paints the next batch of frames while a
-//! writer thread pipes the previous batch to FFmpeg and mixes its audio.
+//! writer thread pipes the previous batch to one FFmpeg process that also
+//! encodes the premixed audio track.
 
 use crate::{Frame, RenderError, Renderer};
 use director_core::scene_import::import_scene;
@@ -42,7 +43,6 @@ impl Renderer {
             .with_fps(fps)
             .with_encoder_mode(mode)
             .with_alpha(audio.transparent_background);
-        let mut encoder = Encoder::new(path, settings).map_err(RenderError::Encode)?;
         let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, fps, 1);
         let batch = pool.workers();
         let (full_tx, full_rx) = mpsc::sync_channel::<(usize, Vec<Frame>)>(BATCHES);
@@ -53,17 +53,21 @@ impl Renderer {
         let failed = AtomicBool::new(false);
         std::thread::scope(|scope| {
             let (times, failed) = (&times, &failed);
+            // The writer mixes the whole track and starts FFmpeg while the first batch paints.
             let writer = scope.spawn(move || -> anyhow::Result<()> {
-                for (start, frames) in full_rx {
+                let samples: Vec<f32> = times.iter().flat_map(|&time| audio.mix_audio(block, time)).collect();
+                let mut encoder = Encoder::with_audio(path, settings, &samples)?;
+                let written = full_rx.iter().try_for_each(|(start, frames)| {
                     for (frame, &time) in frames.iter().zip(&times[start..]) {
                         encoder.encode(&frame.rgba, time)?;
-                        encoder.encode_audio(&audio.mix_audio(block, time), time)?;
                     }
                     let _ = empty_tx.send(frames);
-                }
-                // A failed paint drops the encoder unfinished so no partial file reaches `path`.
-                if failed.load(Ordering::Acquire) {
-                    return Ok(());
+                    anyhow::Ok(())
+                });
+                // A failed paint or write leaves nothing at `path`.
+                if written.is_err() || failed.load(Ordering::Acquire) {
+                    encoder.abort();
+                    return written;
                 }
                 encoder.finish()
             });
