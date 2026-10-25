@@ -152,7 +152,12 @@ impl FrameSession {
         let width = self.info.width() as usize;
         let height = self.info.height() as usize;
         let mut rgba = vec![0u8; width * height * 4];
-        let read_info = self.info.clone().with_alpha_type(AlphaType::Unpremul);
+        // Opaque frames hold the same bytes either way; skip the unpremultiply pass.
+        let read_info = if self.director.transparent_background {
+            self.info.clone().with_alpha_type(AlphaType::Unpremul)
+        } else {
+            self.info.clone()
+        };
         if !self.surface.read_pixels(&read_info, &mut rgba, width * 4, (0, 0)) {
             return Err(RenderError::Readback);
         }

@@ -1052,6 +1052,7 @@ dependencies = [
  "director-scene",
  "rayon",
  "rhai",
+ "serde_json",
  "skia-safe",
  "taffy",
  "tempfile",

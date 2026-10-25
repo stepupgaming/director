@@ -9,18 +9,20 @@
 - `tests/common/mod.rs` holds the parity reference: `CoreSession` paints a `Director` through core `render_sampled_at_time`, and every parity test compares this crate against it.
 - `tests/rhai_examples.rs` paints every `examples/**/*.rhai` movie (each registered composition with default props) on the core path, on a live `FrameSession` and from its exported document, and requires all three to match.
 - `tests/html_examples.rs` owns parity between the document render and the compiled `Director` on the core path for HTML: every example, a paint fixture, SMIL, looped video, a sampled capture with path and embedded video, text, SVG and nested boxes, and a Paper shader. Video fixtures need FFmpeg on the path.
+- `examples/export_bench.rs` times a 1080p HTML export on the core path against the document painted through `render_frames`, with render-only, single-session and live-session splits, and writes `core.mp4` and `director-render.mp4` to its output folder.
 - `tests/core_nodes.rs` owns the same parity for core Lottie (with an override image) and audio scenes: the document re-exports unchanged, the mix is sample-equal and frames match, including a spectrum visualizer and an audio binding.
 
 ## Local Contracts
 
 - `Renderer` holds an `Arc<SceneDocument>`, the asset loader, an `ImportRegistry` (core kinds by default, `with_registry` for frontend kinds such as `director_html::register_import`) and a render mode (export by default).
 - `Renderer::session` imports the document into a fresh `Director` through `director_core::scene_import`. A `FrameSession` owns that `Director`, its layout engine and raster surfaces, and reuses them across frames.
-- `FrameSession::render(time)` paints through `frame::render_sampled`, matching core export for motion blur, transitions, track opacity and clip fades, output scale and incremental dirty frames. Transition and accumulation rasters match the target surface and allocate on first use. It returns straight-alpha RGBA8 at the document output size (`width * output_scale_x`, rounded).
+- `FrameSession::render(time)` paints through `frame::render_sampled`, matching core export for motion blur, transitions, track opacity and clip fades, output scale and incremental dirty frames. Transition and accumulation rasters match the target surface and allocate on first use. It returns RGBA8 at the document output size (`width * output_scale_x`, rounded): straight alpha for a transparent background, and a direct premultiplied read for opaque frames, whose bytes are identical.
 - `Renderer::render_frames(times)` paints on the rayon pool with one session per worker and returns results in the order of `times`. A session that fails to import fails each of its frames with `RenderError::Session`.
 - The renderer paints on the CPU raster backend.
 
 ## Work Guidance
 
+- `render_frames` builds a cold session per rayon split, which loses the static layer cache on still scenes; keep sessions warm per worker before switching export.
 - The frame driver lives here; per-node paint still calls core `render_recursive`. Move the node traversal, the static layer cache and per-kind paint into this crate next while the parity tests and the visual suite stay green, then switch export to this crate and delete the core frame path.
 
 ## Verification

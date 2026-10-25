@@ -19,3 +19,4 @@ base64 = "0.22"
 tempfile = "3.23"
 rhai = { version = "1.23.6", features = ["metadata"] }
 anyhow = { workspace = true }
+serde_json = { workspace = true }

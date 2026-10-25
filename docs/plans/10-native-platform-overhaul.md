@@ -97,6 +97,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | workspace release tests | 968 | 2026-10-25 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 10 | 2026-10-25 | `cargo test -p director-render --release` |
+| 1080p HTML export, core vs document `render_frames` (90 frames, x264, 24 threads, median of 3) | native-motion 1171 vs 790 ms (1.48x), image-background 594 vs 622 ms (0.96x), nested-rule 376 vs 574 ms (0.66x), text-decoration 375 vs 589 ms (0.64x); render only native-motion 101 vs 240 fps, text-decoration 1799 vs 400 fps; outputs pixel-identical (PSNR inf) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
 | HTML scene_document | 7 | 2026-10-25 | `cargo test -p director-html --release --test scene_document` |
@@ -132,7 +133,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Continue phase 3: move the node traversal, the static layer cache and per-kind paint from core `render_recursive` into `director-render` behind the same parity tests, switch export to `director-render`, and measure a 1080p HTML export through `render_frames` against the current export.
+1. Continue phase 3: close the static-scene export gap measured by `export_bench`. `render_frames` builds a cold session per rayon split, so static scenes lose the layer cache and repaint every frame. Keep one warm session per worker across chunks (contiguous ranges), read frames into a reused buffer, and pipeline encode with render. Then move the node traversal, the static layer cache and per-kind paint from core `render_recursive` into `director-render` behind the same parity tests and switch export to `director-render`.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification
