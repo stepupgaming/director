@@ -1177,6 +1177,10 @@ impl Builder {
                 let looped = el.value().attr("loop").is_some();
                 let duration = if looped { media_duration(&path)? } else { 0.0 };
                 let mut video = VideoNode::new(VideoSource::Path(path), RenderMode::Export);
+                // The document references the file through the compile asset loader.
+                if !src.starts_with("data:") {
+                    video = video.with_source_path(src);
+                }
                 video.object_fit = fit(&values);
                 video.object_position = paint.object_position;
                 let video: Box<dyn Element> = if looped {

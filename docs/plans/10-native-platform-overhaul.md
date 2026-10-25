@@ -131,8 +131,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 ## Next action
 
 1. Start phase 3: a `director-render` crate that reads a `SceneDocument` and its asset table and paints one frame, beginning with box, text, image and `html` bodies, compared against the golden corpus and the HTML examples.
-2. HTML video embeds the whole file in the asset table. Record its `src` through the compile `AssetStore` as audio does.
-3. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
+2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification
 

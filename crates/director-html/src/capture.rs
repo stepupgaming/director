@@ -467,14 +467,15 @@ fn build(
                 CompileError::Input(format!("captured media asset missing: {src}"))
             })?;
             let path = store.media_path(packed)?;
+            let mut video = VideoNode::new(VideoSource::Path(path), RenderMode::Export);
+            if !packed.starts_with("data:") {
+                video = video.with_source_path(packed);
+            }
             // Cloning VideoNode opens a second decoder. Samples share this one.
             // Style's raw pointer keeps VideoNode `!Send`; it is a niche discriminant,
             // the same claim SceneNode already makes.
             #[allow(clippy::arc_with_non_send_sync)]
-            let shared = Arc::new(Mutex::new(VideoNode::new(
-                VideoSource::Path(path),
-                RenderMode::Export,
-            )));
+            let shared = Arc::new(Mutex::new(video));
             videos.insert(n.id.clone(), Arc::clone(&shared));
             shared
         };

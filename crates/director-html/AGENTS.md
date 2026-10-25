@@ -126,10 +126,10 @@
 - Every native adapter has a document body. `src/export.rs` writes `HtmlElement` as `NodeBody::Html` from `base_style` and `base_paint`, so an export after rendering records the unanimated box. Its opacity channel is the base paint opacity. Text content uses `nodes::text_export`, because the stroke paragraph rebuilds from the paint.
 - Gradients, CSS animations, Paper shaders and SMIL animations convert in their own modules through `to_doc`. `PaintStyle::filters` keeps the typed filter list beside the compiled `filter` chain, and both change together.
 - Background images and inline SVG markup embed as assets. Paper shader images embed as raw RGBA8 (`application/x-rgba8`).
-- Native and captured videos have kind `html_video` and export `HtmlVideoBody` with their loop flag and duration. A capture exports each distinct sampled graph once through `export_graph`, with a per-sample index list.
+- Native and captured videos have kind `html_video` and export `HtmlVideoBody` with their loop flag and duration. A non-looped native video exports the core video body. A capture exports each distinct sampled graph once through `export_graph`, with a per-sample index list.
 - Fonts registered from HTML stay outside the document, matching core text.
-- Audio with a file `src` exports as a path asset holding that `src`, which the compile `AssetStore` resolves against `base_dir` or frozen blobs, and `data-media-start` becomes `source_start`. A captured track records its packed asset reference the same way. A data URI `src` embeds the decoded samples.
-- `tests/scene_document.rs` round-trips every `examples/html` file, a paint fixture, SMIL, a looped video, file and data URI audio, a two-graph capture and a Paper shader through JSON.
+- Audio and video with a file `src` export as a path asset holding that `src`, which the compile `AssetStore` resolves against `base_dir` or frozen blobs. Captured media record their packed asset reference the same way. Audio `data-media-start` becomes the track `source_start`; video keeps it on the HTML body. A data URI `src` embeds the decoded audio samples or the video file bytes.
+- `tests/scene_document.rs` round-trips every `examples/html` file, a paint fixture, SMIL, a looped video with a path asset, file and data URI audio, a two-graph capture and a Paper shader through JSON.
 
 ### CSS animation
 

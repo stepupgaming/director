@@ -199,6 +199,13 @@ fn looped_video_round_trips() {
         .expect("the video exports an HTML video body");
     assert!(video.looped);
     assert!(video.duration > 0.0);
+    let asset = document.assets.iter().find(|asset| asset.id == video.video.asset).unwrap();
+    assert_eq!(
+        asset.source,
+        AssetSource::Path {
+            path: "clip.mkv".into()
+        }
+    );
 }
 
 #[test]
