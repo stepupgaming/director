@@ -7,8 +7,9 @@
 use crate::compiler::{escape_xml, parse_svg};
 use crate::CompileError;
 use director_core::scene_export::{channel, ElementExport, ExportContext, ExportError};
+use director_core::scene_import::{animated, ImportContext, ImportError};
 use director_core::{node::VectorNode, Element, RenderError};
-use director_scene::{html as doc, NodeBody};
+use director_scene::{html as doc, NodeBody, NodeRecord};
 use scraper::ElementRef;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -1656,4 +1657,104 @@ impl SmilAnim {
             },
         }
     }
+}
+
+impl SmilAnim {
+    fn from_doc(anim: &doc::SmilAnimation) -> Result<Self, ImportError> {
+        let mode = |mode: &doc::SmilCalcMode| match mode {
+            doc::SmilCalcMode::Linear => CalcMode::Linear,
+            doc::SmilCalcMode::Discrete => CalcMode::Discrete,
+            doc::SmilCalcMode::Paced => CalcMode::Paced,
+        };
+        Ok(Self {
+            target: anim.target,
+            timing: Timing {
+                begin: anim.begin,
+                dur: anim.dur,
+                end: anim.end,
+                repeat: match anim.repeat {
+                    doc::SmilRepeat::Once => Repeat::Once,
+                    doc::SmilRepeat::Count(count) => Repeat::Count(count),
+                    doc::SmilRepeat::Forever => Repeat::Forever,
+                },
+                repeat_dur: anim.repeat_dur,
+                fill_freeze: anim.freeze,
+            },
+            effect: match &anim.effect {
+                doc::SmilEffect::Attribute {
+                    name,
+                    mode: calc,
+                    values,
+                    key_times,
+                    hold,
+                } => Effect::Attr {
+                    name: name.clone(),
+                    mode: mode(calc),
+                    values: values
+                        .iter()
+                        .map(|value| match value {
+                            doc::SmilValue::Number { value, unit } => SmilValue::Number {
+                                value: *value,
+                                unit: unit.clone(),
+                            },
+                            doc::SmilValue::Color(c) => SmilValue::Color {
+                                r: c.r,
+                                g: c.g,
+                                b: c.b,
+                                a: c.a,
+                            },
+                            doc::SmilValue::Raw(raw) => SmilValue::Raw(raw.clone()),
+                        })
+                        .collect(),
+                    key_times: key_times.clone(),
+                    hold: *hold,
+                },
+                doc::SmilEffect::Transform {
+                    kind,
+                    mode: calc,
+                    frames,
+                    key_times,
+                } => Effect::Transform {
+                    kind: match kind.as_str() {
+                        "translate" => "translate",
+                        "scale" => "scale",
+                        "rotate" => "rotate",
+                        "skewX" => "skewX",
+                        "skewY" => "skewY",
+                        other => return Err(ImportError::Invalid(format!("unknown SMIL transform `{other}`"))),
+                    },
+                    mode: mode(calc),
+                    frames: frames.clone(),
+                    key_times: key_times.clone(),
+                },
+                doc::SmilEffect::Motion { points, rotate } => Effect::Motion {
+                    points: points.iter().map(|[x, y]| (*x, *y)).collect(),
+                    rotate: *rotate,
+                },
+            },
+        })
+    }
+}
+
+/// Rebuild an `svg_smil` element from its document body. Text resolves
+/// against the bundled SVG faces.
+pub(crate) fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
+    let NodeBody::SvgSmil(body) = &record.body else {
+        return Err(crate::import::mismatch(record));
+    };
+    let base = String::from_utf8(cx.asset_bytes(&body.markup)?).map_err(|error| ImportError::Asset {
+        id: body.markup.clone(),
+        reason: format!("SVG markup: {error}"),
+    })?;
+    let fonts = crate::compiler::bundled_svg_fonts(cx.assets.loader.as_ref())
+        .map_err(|error| ImportError::Invalid(error.to_string()))?;
+    let plan = SmilPlan {
+        anims: body.animations.iter().map(SmilAnim::from_doc).collect::<Result<_, _>>()?,
+        targets: HashMap::new(),
+        next_target: 0,
+    };
+    let mut svg = AnimatedSvg::new(base, Arc::new(fonts), &plan, "svg_smil")
+        .map_err(|error| ImportError::Invalid(error.to_string()))?;
+    svg.node.opacity = animated(&record.opacity)?;
+    Ok(Box::new(svg))
 }

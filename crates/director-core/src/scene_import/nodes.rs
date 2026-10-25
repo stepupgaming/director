@@ -7,7 +7,7 @@ use super::{animated, color, color_animated, gradient, ImportContext, ImportErro
 use crate::element::{Element, TextFit, TextShadow, TextSpan};
 use crate::node::{
     text::CounterConfig, BoxNode, BoxShadow, CompositionNode, ImageNode, PathCommand, ShapeNode, ShapeType, TextAnimProperty,
-    TextAnimator, TextNode, VectorNode,
+    TextAnimator, TextNode, VectorNode, VideoNode, VideoSource,
 };
 use crate::text_direction::TextDirectionMode;
 use crate::types::{ObjectFit, ObjectPosition};
@@ -294,4 +294,30 @@ fn path_command(command: &doc::PathCommand) -> PathCommand {
         },
         doc::PathCommand::Close => PathCommand::Close,
     }
+}
+
+pub(crate) fn decode_video(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
+    let NodeBody::Video(body) = &record.body else {
+        return Err(mismatch(record));
+    };
+    Ok(Box::new(video_node(body, &record.opacity, cx)?))
+}
+
+/// A video node from its media body. File assets decode in place through
+/// `AssetLoader::media_path`; embedded bytes go through a temporary file.
+pub fn video_node(body: &doc::MediaBody, opacity: &Channel, cx: &ImportContext) -> Result<VideoNode, ImportError> {
+    let path = cx.asset_path(&body.asset);
+    let source = match path.and_then(|path| cx.assets.loader.media_path(path)) {
+        Some(file) => VideoSource::Path(file),
+        None => VideoSource::Bytes(cx.asset_bytes(&body.asset)?),
+    };
+    let mut node = VideoNode::new(source, cx.render_mode);
+    if let Some(path) = path {
+        node = node.with_source_path(path);
+    }
+    node.opacity = animated(opacity)?;
+    node.object_fit = object_fit(body.fit);
+    node.object_position = object_position(body.position);
+    node.border_radius = animated(&body.border_radius)?;
+    Ok(node)
 }

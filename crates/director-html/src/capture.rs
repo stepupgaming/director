@@ -18,7 +18,8 @@ use director_core::{
     video_wrapper::RenderMode,
     Director, Element, RenderError,
 };
-use director_scene::NodeBody;
+use director_core::scene_import::{import_graph, nodes as import_nodes, resolve, ImportContext, ImportError};
+use director_scene::{NodeBody, NodeRecord};
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
@@ -774,6 +775,14 @@ impl Element for CapturedElement {
                     body.graphs.push(director_scene::html::CaptureGraph {
                         nodes: export_graph(&scene, cx)?,
                         root: node_ref(*root),
+                        // Sampled rects stand in for layout, so they travel with the graph.
+                        rects: scene
+                            .iter_alive()
+                            .map(|(_, node)| {
+                                let r = node.layout_rect;
+                                [r.left, r.top, r.width(), r.height()]
+                            })
+                            .collect(),
                     });
                     graphs.push((graph, *root));
                     graphs.len() - 1
@@ -794,6 +803,9 @@ impl Element for CapturedElement {
     }
     fn layout_style(&self) -> taffy::Style {
         self.style.clone()
+    }
+    fn set_layout_style(&mut self, style: taffy::Style) {
+        self.style = style;
     }
     fn update(&mut self, time: f64) -> bool {
         let index =
@@ -830,4 +842,100 @@ impl Element for CapturedElement {
     fn animate_property(&mut self, _: &str, _: f32, _: f32, _: f64, _: &str) -> Result<(), String> {
         Err("captured timelines are immutable".into())
     }
+}
+
+/// Rebuild an `html_video` element with a decoder of its own.
+pub(crate) fn decode_video(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
+    let NodeBody::HtmlVideo(body) = &record.body else {
+        return Err(crate::import::mismatch(record));
+    };
+    let node = import_nodes::video_node(&body.video, &record.opacity, cx)?;
+    // Style's raw pointer keeps VideoNode `!Send`, as in `build`.
+    #[allow(clippy::arc_with_non_send_sync)]
+    let node = Arc::new(Mutex::new(node));
+    Ok(shared_video(body, node))
+}
+
+/// Rebuild the `html_video` content of a box. Boxes that play the same video
+/// with the same `timing` seek it identically, so they share one decoder, as
+/// equal capture samples do after compile.
+pub(crate) fn decode_box_video(
+    body: &director_scene::HtmlVideoBody,
+    opacity: &director_scene::Channel,
+    timing: String,
+    cx: &mut ImportContext,
+) -> Result<Box<dyn Element>, ImportError> {
+    let key = serde_json::to_string(&(&body.video.asset, &body.video.border_radius, body.looped, body.duration, opacity))
+        .map_err(|error| ImportError::Invalid(error.to_string()))?;
+    let node = cx.shared(format!("html_video:{timing}:{key}"), |cx| {
+        let node = import_nodes::video_node(&body.video, opacity, cx)?;
+        #[allow(clippy::arc_with_non_send_sync)]
+        let node = Arc::new(Mutex::new(node));
+        Ok(node)
+    })?;
+    Ok(shared_video(body, node))
+}
+
+fn shared_video(body: &director_scene::HtmlVideoBody, node: Arc<Mutex<VideoNode>>) -> Box<dyn Element> {
+    Box::new(SharedVideo {
+        node,
+        object_fit: import_nodes::object_fit(body.video.fit),
+        object_position: import_nodes::object_position(body.video.position),
+        looped: body.looped,
+        duration: body.duration,
+    })
+}
+
+/// Rebuild an `html_capture` element. Equal sampled graphs stay shared and
+/// each node gets its sampled rectangle back.
+pub(crate) fn decode_capture(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
+    let NodeBody::HtmlCapture(body) = &record.body else {
+        return Err(crate::import::mismatch(record));
+    };
+    if !body.sample_rate.is_finite() || body.sample_rate <= 0.0 || body.frames.is_empty() {
+        return Err(ImportError::Invalid(
+            "capture needs frames and a positive sample rate".to_string(),
+        ));
+    }
+    let mut graphs = Vec::with_capacity(body.graphs.len());
+    for graph in &body.graphs {
+        if graph.rects.len() != graph.nodes.len() {
+            return Err(ImportError::Invalid(format!(
+                "capture graph has {} nodes and {} rects",
+                graph.nodes.len(),
+                graph.rects.len()
+            )));
+        }
+        let mut scene = SceneGraph::new();
+        let ids = import_graph(&graph.nodes, &mut scene, cx)?;
+        for (record, rect) in graph.nodes.iter().zip(&graph.rects) {
+            let node = scene
+                .get_node_mut(resolve(&ids, record.id)?)
+                .ok_or_else(|| ImportError::Invalid("imported capture node vanished".to_string()))?;
+            node.layout_rect = skia_safe::Rect::from_xywh(rect[0], rect[1], rect[2], rect[3]);
+            node.element.post_layout(skia_safe::Rect::from_wh(rect[2], rect[3]));
+        }
+        let root = resolve(&ids, graph.root)?;
+        graphs.push((Arc::new(Mutex::new(scene)), root));
+    }
+    let frames = body
+        .frames
+        .iter()
+        .map(|&index| {
+            graphs
+                .get(index)
+                .cloned()
+                .ok_or_else(|| ImportError::Invalid(format!("capture frame names missing graph {index}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut element = CapturedElement {
+        frames: Arc::new(frames),
+        sample_rate: body.sample_rate,
+        index: 0,
+        style: taffy::Style::default(),
+        assets: cx.assets.clone(),
+        cache: Mutex::new(HashMap::new()),
+    };
+    element.update(0.0);
+    Ok(Box::new(element))
 }

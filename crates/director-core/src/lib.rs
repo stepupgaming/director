@@ -136,6 +136,13 @@ pub trait AssetLoader: Send + Sync {
     /// * `Result<Vec<u8>>` - The bytes of the file or an error.
     fn load_bytes(&self, path: &str) -> Result<Vec<u8>>;
 
+    /// A local file holding asset `path`, for decoders that read from disk such
+    /// as video. The default returns `path` itself when it names a file.
+    fn media_path(&self, path: &str) -> Option<std::path::PathBuf> {
+        let file = std::path::Path::new(path);
+        file.is_file().then(|| file.to_path_buf())
+    }
+
     /// Optionally loads a fallback font (e.g., Emoji) to be used when glyphs are missing.
     ///
     /// The default implementation returns `None`.

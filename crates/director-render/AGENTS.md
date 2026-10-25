@@ -5,7 +5,7 @@
 ## Ownership
 
 - `src/lib.rs` owns `Renderer`, `FrameSession`, `Frame` and `RenderError`.
-- `tests/html_examples.rs` owns parity between the document render and the compiled `Director` render for HTML.
+- `tests/html_examples.rs` owns parity between the document render and the compiled `Director` render for HTML: every example, a paint fixture, SMIL, looped video, a sampled capture with path and embedded video, text, SVG and nested boxes, and a Paper shader. Video fixtures need FFmpeg on the path.
 
 ## Local Contracts
 

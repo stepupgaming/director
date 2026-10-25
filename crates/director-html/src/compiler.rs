@@ -352,19 +352,28 @@ pub(crate) fn svg_fontdb(
     assets: &AssetStore,
     faces: &[(String, String)],
 ) -> Result<Arc<usvg::fontdb::Database>, CompileError> {
-    let mut db = usvg::fontdb::Database::new();
-    for path in SVG_FONT_FILES {
-        let bytes = director_core::AssetLoader::load_bytes(assets, path)
-            .map_err(|e| CompileError::Input(format!("SVG font '{path}': {e}")))?;
-        db.load_font_data(bytes);
-    }
+    let mut db = bundled_svg_fonts(assets)?;
     for (family, src) in faces {
         let bytes = decoded_font(family, assets.read(&url(src)?)?)?;
         db.load_font_data(bytes);
     }
+    Ok(Arc::new(db))
+}
+
+/// The bundled faces every inline SVG resolves text against.
+pub(crate) fn bundled_svg_fonts(
+    loader: &dyn director_core::AssetLoader,
+) -> Result<usvg::fontdb::Database, CompileError> {
+    let mut db = usvg::fontdb::Database::new();
+    for path in SVG_FONT_FILES {
+        let bytes = loader
+            .load_bytes(path)
+            .map_err(|e| CompileError::Input(format!("SVG font '{path}': {e}")))?;
+        db.load_font_data(bytes);
+    }
     db.set_serif_family("Roboto");
     db.set_sans_serif_family("Roboto");
-    Ok(Arc::new(db))
+    Ok(db)
 }
 
 pub(crate) fn cached_svg_fonts(

@@ -14,3 +14,5 @@ rayon = "1.10"
 
 [dev-dependencies]
 director-html = { path = "../director-html" }
+base64 = "0.22"
+tempfile = "3.23"

@@ -190,6 +190,10 @@ impl director_core::AssetLoader for AssetStore {
         }
         Ok(self.read(path)?)
     }
+
+    fn media_path(&self, path: &str) -> Option<PathBuf> {
+        AssetStore::media_path(self, path).ok()
+    }
 }
 
 fn lock_error<T>(_: std::sync::PoisonError<T>) -> CompileError {

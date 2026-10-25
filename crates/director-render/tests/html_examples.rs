@@ -134,3 +134,198 @@ fn render_frames_matches_render_frame_in_order() {
         assert_eq!(frame.unwrap(), renderer.render_frame(*time).unwrap(), "frame at {time}s");
     }
 }
+
+fn options(width: i32, height: i32) -> CompileOptions {
+    CompileOptions {
+        width,
+        height,
+        duration: 3.0,
+        ..Default::default()
+    }
+}
+
+/// A one-second FFV1 test pattern whose frames change every frame.
+fn ffmpeg_clip(dir: &Path) -> std::path::PathBuf {
+    let path = dir.join("clip.mkv");
+    let result = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
+        .args(["testsrc=s=64x64:r=30:d=1", "-c:v", "ffv1"])
+        .arg(&path)
+        .output()
+        .expect("FFmpeg must be installed for native media tests");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    path
+}
+
+#[test]
+fn smil_svg_renders_from_the_document() {
+    let html = "<style>body{margin:0;background:#fff}</style>
+        <svg width='64' height='32' viewBox='0 0 64 32'>
+          <rect x='0' y='0' width='12' height='32' fill='#0000ff'>
+            <animate attributeName='x' from='0' to='40' dur='2s' fill='freeze'/>
+            <animateTransform attributeName='transform' type='rotate' from='0 6 16' to='90 6 16' dur='1s' repeatCount='indefinite'/>
+          </rect>
+          <text x='32' y='24' font-size='12' fill='#f00'>Hi
+            <set attributeName='fill' to='#0f0' begin='1s' dur='1s'/>
+          </text>
+        </svg>";
+    let failures = mismatches("smil", compile(html, options(64, 32)).unwrap());
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn looped_video_renders_from_the_document() {
+    let temp = tempfile::tempdir().unwrap();
+    ffmpeg_clip(temp.path());
+    let html = "<style>body{margin:0}video{width:64px;height:48px;object-fit:cover}</style>
+        <video muted loop src='clip.mkv'></video><video muted loop src='clip.mkv'></video>";
+    let compiled = compile(
+        html,
+        CompileOptions {
+            base_dir: temp.path().into(),
+            ..options(64, 96)
+        },
+    )
+    .unwrap();
+    let failures = mismatches("looped video", compiled);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn captures_render_from_the_document() {
+    use base64::Engine as _;
+    use director_html::{compile_capture, Capture, CapturedFrame, CapturedMedia, CapturedNode, CAPTURE_FORMAT};
+    use std::collections::BTreeMap;
+
+    let temp = tempfile::tempdir().unwrap();
+    let clip = std::fs::read(ffmpeg_clip(temp.path())).unwrap();
+    let assets = BTreeMap::from([
+        ("clip.mkv".to_string(), "clip.mkv".to_string()),
+        (
+            "inline.mkv".to_string(),
+            format!(
+                "data:application/octet-stream;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&clip)
+            ),
+        ),
+    ]);
+    let node = |tag: &str, id: &str, rect: [f32; 4], styles: &[(&str, &str)]| CapturedNode {
+        tag: tag.into(),
+        id: id.into(),
+        rect,
+        styles: styles.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        text: None,
+        svg: None,
+        src: None,
+        shader: None,
+        media: None,
+        children: Vec::new(),
+    };
+    let video = |id: &str, src: &str, rect: [f32; 4], media_start: f64| CapturedNode {
+        src: Some(src.into()),
+        media: Some(CapturedMedia {
+            muted: true,
+            looped: true,
+            hidden: false,
+            volume: 1.0,
+            media_start,
+            playback_rate: 1.0,
+            start: 0.0,
+            end: 3.0,
+        }),
+        ..node("video", id, rect, &[("object-fit", "contain")])
+    };
+    let sample = |x: f32| {
+        let mut title = node(
+            "p",
+            "title",
+            [x, 70.0, 100.0, 20.0],
+            &[("color", "rgb(20, 40, 200)"), ("font-size", "16px")],
+        );
+        title.text = Some("Captured".into());
+        let mut icon = node("svg", "icon", [x + 100.0, 70.0, 20.0, 20.0], &[]);
+        icon.svg = Some(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><circle cx='10' cy='10' r='8' fill='orange'/></svg>"
+                .into(),
+        );
+        let mut card = node(
+            "div",
+            "card",
+            [x, 64.0, 128.0, 32.0],
+            &[("background-color", "rgb(230, 230, 230)"), ("border-top-left-radius", "6px")],
+        );
+        card.children = vec![title, icon];
+        let mut root = node("body", "root", [0.0, 0.0, 160.0, 120.0], &[("background-color", "white")]);
+        root.children = vec![
+            video("a", "clip.mkv", [0.0, 0.0, 64.0, 64.0], 0.0),
+            video("b", "inline.mkv", [80.0, 0.0, 64.0, 64.0], 0.25),
+            card,
+        ];
+        root
+    };
+    let frames = vec![
+        CapturedFrame { time: 0.0, root: sample(0.0) },
+        CapturedFrame { time: 0.5, root: sample(0.0) },
+        CapturedFrame { time: 1.0, root: sample(12.0) },
+        CapturedFrame { time: 1.5, root: sample(24.0) },
+        CapturedFrame { time: 2.0, root: sample(24.0) },
+        CapturedFrame { time: 2.5, root: sample(32.0) },
+    ];
+    let capture = Capture {
+        format: CAPTURE_FORMAT.into(),
+        width: 160,
+        height: 120,
+        fps: 30.0,
+        duration: 3.0,
+        sample_rate: 2.0,
+        fonts: Vec::new(),
+        assets,
+        frames,
+    };
+    let compiled = compile_capture(capture, temp.path()).unwrap();
+    let failures = mismatches("capture", compiled);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn paper_shaders_render_from_the_document() {
+    use director_html::{compile_capture, Capture, CapturedFrame, CapturedNode, CapturedShader, CAPTURE_FORMAT};
+    use std::collections::BTreeMap;
+
+    let root = CapturedNode {
+        tag: "canvas".into(),
+        id: "shader".into(),
+        rect: [0.0, 0.0, 64.0, 64.0],
+        styles: BTreeMap::new(),
+        text: None,
+        svg: None,
+        src: None,
+        shader: Some(CapturedShader {
+            fragment: "#version 300 es
+                 precision mediump float;
+                 uniform vec4 u_color;
+                 in vec2 v_objectUV;
+                 out vec4 fragColor;
+                 void main() { fragColor = vec4(u_color.rgb * v_objectUV.x, 1.0); }"
+                .into(),
+            uniforms: BTreeMap::from([("u_color".into(), vec![1.0, 0.0, 0.5, 1.0])]),
+            images: BTreeMap::new(),
+        }),
+        media: None,
+        children: Vec::new(),
+    };
+    let capture = Capture {
+        format: CAPTURE_FORMAT.into(),
+        width: 64,
+        height: 64,
+        fps: 30.0,
+        duration: 3.0,
+        sample_rate: 1.0,
+        fonts: Vec::new(),
+        assets: BTreeMap::new(),
+        frames: (0..3).map(|i| CapturedFrame { time: i as f64, root: root.clone() }).collect(),
+    };
+    let compiled = compile_capture(capture, Path::new(".")).unwrap();
+    let failures = mismatches("paper", compiled);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

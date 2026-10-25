@@ -1044,11 +1044,13 @@ dependencies = [
 name = "director-render"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "director-core",
  "director-html",
  "director-scene",
  "rayon",
  "skia-safe",
+ "tempfile",
  "thiserror 2.0.17",
 ]
 

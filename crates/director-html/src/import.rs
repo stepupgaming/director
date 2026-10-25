@@ -1,8 +1,10 @@
 //! Compiled HTML boxes from their scene document form.
 //!
-//! [`register_import`] adds the `html` kind to an [`ImportRegistry`]. The
+//! [`register_import`] adds the HTML kinds to an [`ImportRegistry`]. The `html`
 //! decoder inverts `export::html_body`: it rebuilds the [`PaintStyle`], the
 //! content element, the CSS animations and the Paper shader.
+//! The `html_video` and `html_capture` decoders live in `capture.rs` and the
+//! `svg_smil` decoder in `smil.rs`, beside their elements.
 
 use crate::animation::Animation;
 use crate::background_box::AxisRepeat;
@@ -27,11 +29,18 @@ use taffy::LengthPercentage;
 /// Register the HTML kinds with `registry`.
 pub fn register_import(registry: &mut ImportRegistry) {
     registry.register("html", decode_html);
+    registry.register("html_video", crate::capture::decode_video);
+    registry.register("html_capture", crate::capture::decode_capture);
+    registry.register("svg_smil", crate::smil::decode);
+}
+
+pub(crate) fn mismatch(record: &NodeRecord) -> ImportError {
+    ImportError::Invalid(format!("a `{}` record holds a different body", record.kind))
 }
 
 fn decode_html(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
     let NodeBody::Html(body) = &record.body else {
-        return Err(ImportError::Invalid(format!("a `{}` record holds a different body", record.kind)));
+        return Err(mismatch(record));
     };
     let mut paint = paint(&body.paint, cx)?;
     paint.opacity = match record.opacity.keyframes.as_slice() {
@@ -45,6 +54,13 @@ fn decode_html(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn El
                 let mut node: TextNode = nodes::text_node(text, &content.opacity, cx)?;
                 crate::compiler::prepare_paragraph(&mut node, &paint);
                 Box::new(node) as Box<dyn Element>
+            }
+            NodeBody::HtmlVideo(video) => {
+                let timing = format!(
+                    "{}|{:?}|{}|{}|{}",
+                    body.start, body.end, body.media_start, body.playback_rate, body.hidden
+                );
+                crate::capture::decode_box_video(video, &content.opacity, timing, cx)?
             }
             other => cx.element(other, &content.opacity)?,
         }),

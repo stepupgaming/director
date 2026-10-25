@@ -79,6 +79,7 @@ impl ImportRegistry {
         registry.register("box", nodes::decode_box);
         registry.register("text", nodes::decode_text);
         registry.register("image", nodes::decode_image);
+        registry.register("video", nodes::decode_video);
         registry.register("vector", nodes::decode_vector);
         registry.register("shape", nodes::decode_shape);
         registry.register("composition", nodes::decode_composition);
@@ -106,9 +107,26 @@ pub struct ImportContext<'a> {
     pub registry: &'a ImportRegistry,
     pub assets: AssetManager,
     pub render_mode: RenderMode,
+    shared: HashMap<String, Box<dyn std::any::Any>>,
 }
 
 impl ImportContext<'_> {
+    /// The value stored under `key` during this import, made by `make` on
+    /// first use. Decoders use it to share one resource, such as a video
+    /// decoder, between equal elements.
+    pub fn shared<T: Clone + 'static>(
+        &mut self,
+        key: String,
+        make: impl FnOnce(&mut Self) -> Result<T, ImportError>,
+    ) -> Result<T, ImportError> {
+        if let Some(value) = self.shared.get(&key).and_then(|value| value.downcast_ref::<T>()) {
+            return Ok(value.clone());
+        }
+        let value = make(self)?;
+        self.shared.insert(key, Box::new(value.clone()));
+        Ok(value)
+    }
+
     /// The bytes of asset `id`: decoded base64, or the file through the loader.
     pub fn asset_bytes(&self, id: &str) -> Result<Vec<u8>, ImportError> {
         let record = self.document.asset(id).ok_or_else(|| ImportError::Asset {
@@ -214,26 +232,41 @@ fn import_into(
         registry,
         assets: director.assets.clone(),
         render_mode,
+        shared: HashMap::new(),
     };
+    let ids = import_graph(&document.nodes, &mut director.scene, &mut cx)?;
+    timeline::import_timeline(&mut director, &document.timeline, &ids)?;
+    Ok(director)
+}
+
+/// Document node ids mapped to the scene ids they imported as.
+pub type NodeIds = HashMap<(u32, u32), NodeId>;
+
+/// Add `records` to `scene` with their node state and parent links. Frontends
+/// use this for graphs nested inside an element, such as sampled captures.
+pub fn import_graph(
+    records: &[NodeRecord],
+    scene: &mut crate::scene::SceneGraph,
+    cx: &mut ImportContext,
+) -> Result<NodeIds, ImportError> {
     let mut ids = HashMap::new();
-    for record in &document.nodes {
-        let element = import_element(record, &mut cx).map_err(|source| node_error(record, source))?;
-        ids.insert(key(record.id), director.scene.add_node(element));
+    for record in records {
+        let element = import_element(record, cx).map_err(|source| node_error(record, source))?;
+        ids.insert(key(record.id), scene.add_node(element));
     }
-    for record in &document.nodes {
+    for record in records {
         let id = ids[&key(record.id)];
         let state = node_state(record, &ids).map_err(|source| node_error(record, source))?;
-        let node = director
-            .scene
+        let node = scene
             .get_node_mut(id)
             .ok_or_else(|| ImportError::Invalid("imported node vanished".to_string()))?;
         state.apply(node);
     }
-    for record in &document.nodes {
+    for record in records {
         let parent = ids[&key(record.id)];
         for child in &record.children {
             let child = resolve(&ids, *child)?;
-            if !director.scene.try_add_child(parent, child) {
+            if !scene.try_add_child(parent, child) {
                 return Err(node_error(
                     record,
                     ImportError::Invalid(format!("child {}:{} is not attachable", child.index, child.generation)),
@@ -241,8 +274,7 @@ fn import_into(
             }
         }
     }
-    timeline::import_timeline(&mut director, &document.timeline, &ids)?;
-    Ok(director)
+    Ok(ids)
 }
 
 fn import_element(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
@@ -366,7 +398,7 @@ fn key(id: NodeRef) -> (u32, u32) {
 }
 
 /// The imported id of a document node.
-pub(crate) fn resolve(ids: &HashMap<(u32, u32), NodeId>, id: NodeRef) -> Result<NodeId, ImportError> {
+pub fn resolve(ids: &NodeIds, id: NodeRef) -> Result<NodeId, ImportError> {
     ids.get(&key(id))
         .copied()
         .ok_or_else(|| ImportError::Invalid(format!("node {}:{} is not in the document", id.index, id.generation)))

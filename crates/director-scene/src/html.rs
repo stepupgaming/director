@@ -415,6 +415,8 @@ pub struct HtmlCaptureBody {
 pub struct CaptureGraph {
     pub nodes: Vec<NodeRecord>,
     pub root: NodeRef,
+    /// Layout rectangle `[x, y, width, height]` of each node, in `nodes` order.
+    pub rects: Vec<[f32; 4]>,
 }
 
 /// An inline SVG with SMIL animations.
