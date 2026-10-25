@@ -131,7 +131,7 @@ fn smart_caption_avoids_bottom_face() {
     );
     let mut surface =
         skia_safe::surfaces::raster(&info, None, None).expect("Failed to create Skia surface");
-    director_core::systems::renderer::render_frame(&mut d, 0.5, surface.canvas())
+    director_render::render_frame(&mut d, 0.5, &mut surface)
         .expect("render_frame failed");
 
     let image = surface.image_snapshot();

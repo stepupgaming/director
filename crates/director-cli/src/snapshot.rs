@@ -339,20 +339,11 @@ mod tests {
         )
         .unwrap();
         let (width, height) =
-            director_core::export::set_output_scale(&mut compiled.director, 0.5).unwrap();
+            director_render::set_output_scale(&mut compiled.director, 0.5).unwrap();
         assert_eq!((width, height), (32, 32));
         assert_eq!(compiled.director.width, 64);
         let mut surface = skia_safe::surfaces::raster_n32_premul((width, height)).unwrap();
-        let mut layout = director_core::systems::layout::LayoutEngine::new();
-        director_core::systems::renderer::render_sampled_at_time(
-            &mut compiled.director,
-            &mut layout,
-            0.0,
-            &mut surface,
-            &mut None,
-            &mut None,
-        )
-        .unwrap();
+        director_render::render_frame(&mut compiled.director, 0.0, &mut surface).unwrap();
         let info = skia_safe::ImageInfo::new(
             (width, height),
             skia_safe::ColorType::RGBA8888,

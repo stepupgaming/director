@@ -5,7 +5,7 @@ use director_core::compiler::DependencyInput;
 use director_core::director::Director;
 use director_core::node::BoxNode;
 use director_core::systems::layout::LayoutEngine;
-use director_core::systems::renderer::render_at_time;
+use director_render::{render_frame, FrameState};
 use director_core::types::{Color, NodeId};
 use director_core::video_wrapper::RenderMode;
 use director_core::DefaultAssetLoader;
@@ -34,9 +34,7 @@ fn read_pixels(director: &mut Director, time: f64) -> Vec<u8> {
     );
     let mut surface =
         skia_safe::surfaces::raster(&info, None, None).expect("surface");
-    let mut layout = LayoutEngine::new();
-    render_at_time(director, &mut layout, time, surface.canvas(), &mut None)
-        .expect("render");
+    render_frame(director, time, &mut surface).expect("render");
     let mut pixels = vec![0u8; (director.width * director.height * 4) as usize];
     assert!(surface.read_pixels(&info, &mut pixels, (director.width * 4) as usize, (0, 0)));
     pixels
@@ -308,7 +306,7 @@ fn note_mutation_dirties_without_structural_hash_change() {
 #[test]
 fn persistent_layout_matches_fresh_layout_after_edits() {
     let (mut d, root, a, b) = setup_two_child_scene();
-    let mut persistent = LayoutEngine::new();
+    let mut persistent = FrameState::default();
     for step in 0..9 {
         match step {
             1 => d.scene.get_node_mut(root).unwrap().children.reverse(),
@@ -353,7 +351,7 @@ fn persistent_layout_matches_fresh_layout_after_edits() {
             Some(ColorSpace::new_srgb()),
         );
         let mut surface = skia_safe::surfaces::raster(&info, None, None).unwrap();
-        render_at_time(&mut d, &mut persistent, time, surface.canvas(), &mut None).unwrap();
+        persistent.render(&mut d, time, &mut surface).unwrap();
         let mut actual = vec![0; (d.width * d.height * 4) as usize];
         assert!(surface.read_pixels(&info, &mut actual, (d.width * 4) as usize, (0, 0)));
         let mut fresh = d.clone();

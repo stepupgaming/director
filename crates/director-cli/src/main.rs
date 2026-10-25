@@ -14,7 +14,7 @@ mod sheet;
 mod snapshot;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use director_core::export::render_export;
+use director_render::render_export;
 use director_core::scripting::MovieHandle;
 use director_core::video_wrapper::RenderMode;
 use input::{Encoder, Input};
@@ -275,7 +275,7 @@ fn write_manifest(movie: &MovieHandle, path: &PathBuf, time: f64) -> Result<(), 
 }
 
 fn cmd_render(args: RenderArgs) {
-    if let Err(error) = director_core::export::validate_scale(args.scale) {
+    if let Err(error) = director_render::validate_scale(args.scale) {
         eprintln!("{error}");
         std::process::exit(1);
     }
@@ -309,7 +309,7 @@ fn cmd_render(args: RenderArgs) {
         std::process::exit(2);
     });
     director.encoder_mode = args.encoder.mode();
-    if let Err(e) = director_core::export::render_export_at_scale(
+    if let Err(e) = director_render::render_export_at_scale(
         &mut director,
         output.clone(),
         context.as_mut(),

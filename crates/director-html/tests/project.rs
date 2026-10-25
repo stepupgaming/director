@@ -1,10 +1,10 @@
-use director_core::systems::renderer::render_frame;
+use director_render::render_frame;
 use director_html::{CompileOptions, ElementEdit, NativeProject};
 use std::{collections::BTreeMap, path::Path, process::Command};
 
 fn pixels(compiled: &mut director_html::CompiledHtml, time: f64) -> Vec<u8> {
     let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
-    render_frame(&mut compiled.director, time, surface.canvas()).unwrap();
+    render_frame(&mut compiled.director, time, &mut surface).unwrap();
     let info = skia_safe::ImageInfo::new(
         (64, 64),
         skia_safe::ColorType::RGBA8888,
@@ -319,5 +319,5 @@ fn bundled_video_and_audio_outlive_the_original_files_and_project_value() {
     assert!(samples.iter().any(|s| s.abs() > 0.01));
     let mut director = compiled.director;
     let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
-    render_frame(&mut director, 0.1, surface.canvas()).unwrap();
+    render_frame(&mut director, 0.1, &mut surface).unwrap();
 }

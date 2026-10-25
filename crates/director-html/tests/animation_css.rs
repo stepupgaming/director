@@ -1,4 +1,4 @@
-use director_core::systems::renderer::render_frame;
+use director_render::render_frame;
 use director_html::{compile, CompileOptions};
 
 fn options() -> CompileOptions {
@@ -23,7 +23,7 @@ fn fade(extra: &str) -> String {
 fn frame(source: &str, time: f64) -> Vec<u8> {
     let mut c = compile(source, options()).unwrap();
     let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
-    render_frame(&mut c.director, time, surface.canvas()).unwrap();
+    render_frame(&mut c.director, time, &mut surface).unwrap();
     let info = skia_safe::ImageInfo::new(
         (64, 64),
         skia_safe::ColorType::RGBA8888,

@@ -73,7 +73,7 @@ update(time, dirty?) → layout → post_layout → render → (mix_audio / enco
 | Uncompiled graph | Incremental falls back to full (`!is_compiled()` ⇒ dirty `None`) | **Done** |
 | Mutation hook | Public pixel/layout mutations call `Director::note_mutation` | **Done** (color, mask, set_static, invalidate) |
 
-Entry points: `render_at_time` (export / incremental-aware), `render_frame` (preview; full update).
+Entry points live in `director-render`: `FrameState::render` (export and preview; incremental-aware across frames), `render_frame` (one frame with a fresh state), `render_export` (serial live export) and `Renderer` (scene document sessions, pools and export).
 
 See plan **03** (implemented).
 
@@ -121,7 +121,7 @@ See plan **05** (implemented). Acceptance: `tests/project_roundtrip.rs` Plan 05 
 | Video decode | Reuse a persistent FFmpeg pipe for sequential reads; cache up to 8 frames; restart on uncached backward or >60-frame seeks. Sessions kill/reap their child on drop; threaded decoders disconnect both channels and join on drop. | **Implemented**; real decode/lifecycle coverage in `video_wrapper::tests` |
 | A/V duration | `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`; the mixer takes per-channel sample frames and emits interleaved stereo | **Locked**; MP4 duration acceptance in CLI `tests/html_export.rs` |
 | GPU export | Supplied Vulkan context requires a GPU target; synchronized direct RGBA readback reuses the export buffer | **Implemented**; live GPU readback test and HTML CPU/GPU parity harness |
-| Native frame sampling | Export and CLI still/preview share `render_sampled_at_time`, including shutter accumulation and transition targets | **Implemented**; CLI renderer sampling parity test |
+| Native frame sampling | Export and CLI still/preview share `director_render::FrameState`, including shutter accumulation and transition targets | **Implemented**; CLI renderer sampling parity test |
 | CI | One Linux job on push to `main` and pull requests: release clippy and release workspace tests, including the visual suite; fonts are committed | **Implemented** |
 
 See plan **06** (implemented). Acceptance: `tests/determinism_media.rs`.

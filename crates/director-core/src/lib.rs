@@ -14,7 +14,7 @@
 //! *   **Scene Graph**: Hierarchical node structure with parent-child relationships.
 //! *   **Layout**: Full implementation of Flexbox and CSS Grid layout via Taffy.
 //! *   **Scripting**: Built-in bindings for Rhai to drive the engine from scripts.
-//! *   **Video Encoding**: Integrated FFmpeg support for exporting to MP4.
+//! *   **Video I/O**: FFmpeg encoder and decoder wrappers. `director-render` paints and exports frames.
 //! *   **Rich Text**: Advanced typography support using `skia_safe::textlayout`.
 //! *   **Animation**: Physics-based springs and keyframe animations.
 //!
@@ -81,9 +81,6 @@ pub mod text_direction;
 pub mod errors;
 /// Core systems (Asset Management, etc.).
 pub mod systems;
-
-/// Video export pipeline (encoding to MP4).
-pub mod export;
 
 /// Canonical API catalog (effects, transitions, nodes) shared with schema generation.
 pub mod api_catalog;

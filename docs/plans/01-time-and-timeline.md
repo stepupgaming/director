@@ -152,7 +152,7 @@ Deprecate any public exposure of `TimelineItem` after migration. Internal test h
 - `crates/director-core/src/timeline.rs`
 - `crates/director-core/src/director.rs`
 - `crates/director-core/src/scripting/api/lifecycle.rs`
-- `crates/director-core/src/export/video.rs`, `video_wrapper.rs`
+- `crates/director-render/src/live.rs` (export loop), `crates/director-core/src/video_wrapper.rs`
 - `crates/director-core/src/render_manifest.rs`, `project.rs`
 - `crates/director-schema/**`
 - `crates/director-core/tests/visual/**` (helper migration)

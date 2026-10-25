@@ -1,5 +1,5 @@
-//! Every Rhai example paints the same frames through `director-render` as
-//! through the core `Director` path, both live and from its scene document.
+//! Every Rhai example paints the same frames from its scene document as from
+//! its live `Director`.
 
 use director_core::scene_export::export_scene;
 use director_core::scene_import::ImportRegistry;
@@ -110,17 +110,14 @@ fn compare(name: &str, path: &str, expected: &[Frame], actual: impl Iterator<Ite
         .collect()
 }
 
-/// Paint one movie on the core path, on a live `FrameSession` and from its
-/// document. Returns failures and whether the document import was skipped.
-fn check(name: &str, reference: Director, live: Director) -> (Vec<String>, bool) {
-    let size = output_size(&reference);
+/// Paint one movie on a live `FrameSession` and from its document. Returns
+/// failures and whether the document import was skipped.
+fn check(name: &str, live: Director) -> (Vec<String>, bool) {
+    let size = output_size(&live);
     let document = export_scene(&live).unwrap_or_else(|e| panic!("{name}: export failed: {e}"));
-    let mut core = common::CoreSession::new(reference, size);
-    let expected: Vec<Frame> = TIMES.iter().map(|&time| core.render(time)).collect();
-
     let mut session = FrameSession::new(live, size).unwrap();
-    let live_frames = TIMES.iter().map(|&time| session.render(time).unwrap_or_else(|e| panic!("{name}: {e}")));
-    let mut failures = compare(name, "live", &expected, live_frames);
+    let expected: Vec<Frame> =
+        TIMES.iter().map(|&time| session.render(time).unwrap_or_else(|e| panic!("{name}: {e}"))).collect();
 
     let renderer = Renderer::new(Arc::new(document), Arc::new(RepoLoader))
         .with_registry(ImportRegistry::core())
@@ -128,19 +125,18 @@ fn check(name: &str, reference: Director, live: Director) -> (Vec<String>, bool)
     match renderer.session() {
         Ok(mut imported) => {
             let frames = TIMES.iter().map(|&time| imported.render(time).unwrap_or_else(|e| panic!("{name}: {e}")));
-            failures.extend(compare(name, "document", &expected, frames));
-            (failures, false)
+            (compare(name, "document", &expected, frames), false)
         }
         Err(director_render::RenderError::Import(error)) if error.is_unsupported() => {
             eprintln!("{name}: document skipped: {error}");
-            (failures, true)
+            (Vec::new(), true)
         }
         Err(error) => panic!("{name}: document import failed: {error}"),
     }
 }
 
 #[test]
-fn every_rhai_example_paints_like_the_core_path() {
+fn every_rhai_example_paints_like_its_document() {
     let root = repo();
     let mut found = Vec::new();
     scripts(&root.join("examples"), &mut found);
@@ -150,12 +146,10 @@ fn every_rhai_example_paints_like_the_core_path() {
         .map(|path| {
             let label = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
             let script = std::fs::read_to_string(path).unwrap();
-            let references = movies(&script, &label);
-            let lives = movies(&script, &label);
             let mut failures = Vec::new();
             let mut skipped = 0;
-            for ((name, reference), (_, live)) in references.into_iter().zip(lives) {
-                let (found, document_skipped) = check(&name, reference, live);
+            for (name, live) in movies(&script, &label) {
+                let (found, document_skipped) = check(&name, live);
                 failures.extend(found);
                 skipped += document_skipped as usize;
             }

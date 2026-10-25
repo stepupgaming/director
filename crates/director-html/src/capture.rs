@@ -281,8 +281,6 @@ pub(crate) fn compile_capture_with_assets(
             },
             ..Default::default()
         },
-        assets: director.assets.clone(),
-        cache: Mutex::new(HashMap::new()),
     };
     element.update(0.0);
     let root = director.scene.add_node(Box::new(element));
@@ -727,8 +725,6 @@ struct CapturedElement {
     sample_rate: f64,
     index: usize,
     style: taffy::Style,
-    assets: director_core::systems::assets::AssetManager,
-    cache: Mutex<HashMap<NodeId, skia_safe::Image>>,
 }
 impl std::fmt::Debug for CapturedElement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -745,8 +741,6 @@ impl Clone for CapturedElement {
             sample_rate: self.sample_rate,
             index: self.index,
             style: self.style.clone(),
-            assets: self.assets.clone(),
-            cache: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -819,25 +813,19 @@ impl Element for CapturedElement {
         }
         changed
     }
+    /// `director-render` paints the current sample through `sampled_graph`.
     fn render(
         &self,
-        canvas: &skia_safe::Canvas,
+        _: &skia_safe::Canvas,
         _: skia_safe::Rect,
-        opacity: f32,
+        _: f32,
         _: &mut dyn FnMut(&skia_safe::Canvas),
     ) -> Result<(), RenderError> {
+        Ok(())
+    }
+    fn sampled_graph(&self) -> Option<(std::sync::MutexGuard<'_, SceneGraph>, NodeId)> {
         let (scene, root) = &self.frames[self.index];
-        let scene = scene.lock().unwrap();
-        director_core::systems::renderer::render_recursive(
-            &scene,
-            &self.assets,
-            &mut self.cache.lock().unwrap(),
-            *root,
-            canvas,
-            opacity,
-            0,
-            None,
-        )
+        Some((scene.lock().unwrap_or_else(|poisoned| poisoned.into_inner()), *root))
     }
     fn animate_property(&mut self, _: &str, _: f32, _: f32, _: f64, _: &str) -> Result<(), String> {
         Err("captured timelines are immutable".into())
@@ -933,8 +921,6 @@ pub(crate) fn decode_capture(record: &NodeRecord, cx: &mut ImportContext) -> Res
         sample_rate: body.sample_rate,
         index: 0,
         style: taffy::Style::default(),
-        assets: cx.assets.clone(),
-        cache: Mutex::new(HashMap::new()),
     };
     element.update(0.0);
     Ok(Box::new(element))

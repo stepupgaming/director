@@ -62,7 +62,7 @@ fn render_and_sample() -> (Vec<u8>, usize, usize) {
         Some(ColorSpace::new_srgb()),
     );
     let mut surface = skia_safe::surfaces::raster(&info, None, None).expect("create surface");
-    director_core::systems::renderer::render_frame(&mut director, 0.0, surface.canvas())
+    director_render::render_frame(&mut director, 0.0, &mut surface)
         .expect("render_frame failed");
 
     let row_bytes = width as usize * 4;

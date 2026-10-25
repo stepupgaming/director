@@ -108,7 +108,7 @@ Do not add new features only to `MovieRequest` without project parity.
 4. Align `TrackClip` / fps / freeze fields with plan 01 in JSON.
 5. Generational or stable ids in JSON (plan 02).
 6. Schema: fps float; transition/effect enums from catalog.
-7. Pixel round-trip test: build runtime → save → load → `render_at_time` compare (plan 03 helper).
+7. Pixel round-trip test: build runtime → save → load → `director_render::render_frame` compare (plan 03 helper).
 8. Deprecation note on pipeline-only paths in crate READMEs.
 
 ## Tests (acceptance)

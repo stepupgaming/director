@@ -1,4 +1,4 @@
-use director_core::systems::renderer::render_frame;
+use director_render::render_frame;
 use director_html::{compile, CompileOptions};
 
 fn frame(source: &str, time: f64) -> Vec<u8> {
@@ -13,7 +13,7 @@ fn frame(source: &str, time: f64) -> Vec<u8> {
     )
     .unwrap();
     let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
-    render_frame(&mut c.director, time, surface.canvas()).unwrap();
+    render_frame(&mut c.director, time, &mut surface).unwrap();
     let info = skia_safe::ImageInfo::new(
         (64, 64),
         skia_safe::ColorType::RGBA8888,
@@ -83,7 +83,7 @@ fn animation_seek_order_is_deterministic() {
     let mut s = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
     let mut encodings = Vec::new();
     for time in [1.0, 0.0, 2.0, 1.0] {
-        render_frame(&mut c.director, time, s.canvas()).unwrap();
+        render_frame(&mut c.director, time, &mut s).unwrap();
         encodings.push(
             s.image_snapshot()
                 .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
@@ -322,7 +322,7 @@ fn captured_data_round_trips_and_rejects_gaps() {
     let mut s = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
     let mut encoded = Vec::new();
     for t in [0.6, 0.0, 0.6] {
-        render_frame(&mut compiled.director, t, s.canvas()).unwrap();
+        render_frame(&mut compiled.director, t, &mut s).unwrap();
         encoded.push(
             s.image_snapshot()
                 .encode(None, skia_safe::EncodedImageFormat::PNG, 100)

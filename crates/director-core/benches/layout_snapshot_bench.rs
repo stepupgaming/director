@@ -3,7 +3,7 @@ use director_core::animation::{Animated, EasingType};
 use director_core::node::BoxNode;
 use director_core::render_manifest::{build_render_manifest, layout_snapshot};
 use director_core::systems::layout::LayoutEngine;
-use director_core::systems::renderer::{render_at_time, render_recursive};
+use director_render::{paint_root, FrameState};
 use director_core::types::{Color, NodeId};
 use director_core::video_wrapper::RenderMode;
 use director_core::{DefaultAssetLoader, Director};
@@ -142,18 +142,11 @@ fn record_profile_pixels(name: &str, side: usize, animated: bool, cached: bool) 
     let dir = std::path::PathBuf::from(output_dir);
     std::fs::create_dir_all(&dir).unwrap();
     let (mut director, _) = build_frame_scene(side, animated, cached);
-    let mut layout = LayoutEngine::new();
+    let mut state = FrameState::default();
     let mut surface = frame_surface();
     let info = surface.image_info();
     for (index, time) in [0.0, 0.5, 1.0, 2.0, 3.0].into_iter().enumerate() {
-        render_at_time(
-            &mut director,
-            &mut layout,
-            time,
-            surface.canvas(),
-            &mut None,
-        )
-        .unwrap();
+        state.render(&mut director, time, &mut surface).unwrap();
         let mut pixels = vec![0; 640 * 360 * 4];
         assert!(surface.read_pixels(&info, &mut pixels, 640 * 4, (0, 0)));
         std::fs::write(dir.join(format!("{name}_{index}.rgba")), pixels).unwrap();
@@ -199,8 +192,10 @@ fn bench_frame_pipeline(c: &mut Criterion) {
         for phase in ["update", "layout", "paint", "whole_frame"] {
             let (mut director, root) = build_frame_scene(side, animated, cached);
             let mut layout = LayoutEngine::new();
+            let mut state = FrameState::default();
             let mut surface = frame_surface();
-            render_at_time(&mut director, &mut layout, 0.5, surface.canvas(), &mut None).unwrap();
+            state.render(&mut director, 0.5, &mut surface).unwrap();
+            layout.compute_layout(&mut director.scene, 640, 360, 0.5);
             group.bench_function(phase, |b| {
                 b.iter_custom(|iterations| {
                     let mut total = Duration::ZERO;
@@ -220,25 +215,8 @@ fn bench_frame_pipeline(c: &mut Criterion) {
                         match phase {
                             "update" => director.update(time, None),
                             "layout" => layout.compute_layout(&mut director.scene, 640, 360, time),
-                            "paint" => render_recursive(
-                                &director.scene,
-                                &director.assets,
-                                &mut director.static_cache,
-                                root,
-                                surface.canvas(),
-                                1.0,
-                                0,
-                                None,
-                            )
-                            .unwrap(),
-                            "whole_frame" => render_at_time(
-                                &mut director,
-                                &mut layout,
-                                time,
-                                surface.canvas(),
-                                &mut None,
-                            )
-                            .unwrap(),
+                            "paint" => paint_root(&mut director, root, surface.canvas(), 1.0).unwrap(),
+                            "whole_frame" => state.render(&mut director, time, &mut surface).unwrap(),
                             _ => unreachable!(),
                         }
                         total += start.elapsed();

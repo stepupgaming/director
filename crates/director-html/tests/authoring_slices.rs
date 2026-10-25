@@ -1,4 +1,4 @@
-use director_core::systems::renderer::render_frame;
+use director_render::render_frame;
 use director_html::{compile, CompileOptions};
 use std::path::PathBuf;
 
@@ -43,7 +43,7 @@ fn image_background_paints_png_and_uncovered_color() {
     let mut compiled = compile(&example("image-background.html"), options())
         .unwrap_or_else(|err| panic!("image-background.html: {err}"));
     let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
-    render_frame(&mut compiled.director, 0.0, surface.canvas()).unwrap();
+    render_frame(&mut compiled.director, 0.0, &mut surface).unwrap();
     let info = skia_safe::ImageInfo::new(
         (64, 64),
         skia_safe::ColorType::RGBA8888,

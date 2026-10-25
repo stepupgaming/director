@@ -18,6 +18,7 @@
 - Depend on `director-core`; do not introduce HTML behavior into Rhai or the core dependency-graph compiler.
 - Use upstream HTML, CSS, selector, layout, typography and SVG libraries. Unsupported syntax or rendering behavior must produce diagnostics; compilation fails when errors remain.
 - Native adapters must remain semantically Send under the core scene-node contract. Share captured graphs behind `Arc<Mutex<SceneGraph>>`, never `Rc` or an unprotected shared graph.
+- A capture's `Element::sampled_graph` returns the locked graph and root of the active sample, and `director-render` paints it with a fresh static cache. `CapturedElement::render` paints nothing itself.
 - Generated captures, videos, reference checkouts and benchmark reports live under ignored `target/` or user-selected outputs.
 
 ### Native projects

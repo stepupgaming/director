@@ -2,7 +2,8 @@
 //!
 //! Tests for CompositionNode (pre-comps / nested timelines).
 
-use director_core::{scripting, systems::renderer::render_frame, AssetLoader};
+use director_core::{scripting, AssetLoader};
+use director_render::render_frame;
 use rhai::Engine;
 use std::sync::Arc;
 
@@ -54,7 +55,7 @@ main
 
     // Render frame 0
     let mut surface = skia_safe::surfaces::raster_n32_premul((200, 200)).unwrap();
-    render_frame(&mut director, 0.0, surface.canvas()).unwrap();
+    render_frame(&mut director, 0.0, &mut surface).unwrap();
 
     // Read pixels
     let mut pixels = vec![0u8; 200 * 200 * 4];

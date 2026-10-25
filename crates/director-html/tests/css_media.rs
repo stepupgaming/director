@@ -1,10 +1,10 @@
-use director_core::systems::renderer::render_frame;
+use director_render::render_frame;
 use director_html::{compile, CompileOptions};
 
 fn frame(source: &str, width: i32, height: i32) -> Vec<u8> {
     let mut c = compile(source, options(width, height)).unwrap();
     let mut surface = skia_safe::surfaces::raster_n32_premul((width, height)).unwrap();
-    render_frame(&mut c.director, 0.0, surface.canvas()).unwrap();
+    render_frame(&mut c.director, 0.0, &mut surface).unwrap();
     let info = skia_safe::ImageInfo::new(
         (width, height),
         skia_safe::ColorType::RGBA8888,

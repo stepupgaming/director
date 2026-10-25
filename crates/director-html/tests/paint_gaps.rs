@@ -1,4 +1,4 @@
-use director_core::systems::renderer::render_frame;
+use director_render::render_frame;
 use director_html::{compile, CompileOptions};
 
 const RED_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGP4z8DwHx9mGBkKAMLXf4EvceABAAAAAElFTkSuQmCC";
@@ -15,7 +15,7 @@ fn frame(source: &str) -> Vec<u8> {
     )
     .unwrap();
     let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
-    render_frame(&mut c.director, 0.0, surface.canvas()).unwrap();
+    render_frame(&mut c.director, 0.0, &mut surface).unwrap();
     let info = skia_safe::ImageInfo::new(
         (64, 64),
         skia_safe::ColorType::RGBA8888,
@@ -48,7 +48,7 @@ fn file_background_uses_compile_base_dir() {
     };
     let mut compiled = compile(source, options.clone()).unwrap();
     let mut surface = skia_safe::surfaces::raster_n32_premul((64, 64)).unwrap();
-    render_frame(&mut compiled.director, 0.0, surface.canvas()).unwrap();
+    render_frame(&mut compiled.director, 0.0, &mut surface).unwrap();
     let info = skia_safe::ImageInfo::new(
         (64, 64),
         skia_safe::ColorType::RGBA8888,

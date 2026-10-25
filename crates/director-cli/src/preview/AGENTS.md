@@ -10,7 +10,7 @@
 ## Local Contracts
 
 - Create, use and drop the Director, render targets and Vulkan context on one native worker thread. Async handlers exchange owned results through the bounded queue; never move the GPU context into a Tokio task.
-- Load inputs through `input.rs` with export media semantics. Render PNGs through `renderer.rs` and shared core shutter sampling.
+- Load inputs through `input.rs` with export media semantics. Render PNGs through `renderer.rs`, which paints with `director-render` and the export sampling clock.
 - Before requests, compare input/native dependency modification time and length. A successful reload replaces the complete scene, resets render targets/audio and advances its revision. A failed reload retains the accepted scene and exposes `reload_error`; forced `/api/reload` returns the error.
 - `/api/meta` reports the actual backend and accepted revision. `/api/inspect` reports layout/timeline, authored IDs, sampled capture elements and audio metadata; these are layout bounds rather than final pixel extents.
 - `/api/audio` builds one full float-stereo WAV in export-sized sample chunks and caches it per accepted revision. A request with no Range header returns that body. A single `bytes` range returns 206 and a slice of the same cache. An unsatisfiable range returns 416. Malformed ranges return the full body.

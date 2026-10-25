@@ -1,20 +1,26 @@
-//! Paints frames of a [`SceneDocument`].
+//! Paints frames of a live `Director` or a [`SceneDocument`].
+//!
+//! [`FrameState::render`] paints one frame of a live `Director` into any
+//! surface, and [`render_export`] exports a live `Director` serially, on a
+//! Vulkan target when given a [`GpuContext`].
 //!
 //! A [`Renderer`] holds a shared document and imports it into one live
-//! `Director` per [`FrameSession`]. Each session owns its surfaces and layout
-//! engine. A [`FramePool`] keeps warm sessions on the rayon pool and paints
+//! `Director` per [`FrameSession`]. Each session owns its surface and frame
+//! state. A [`FramePool`] keeps warm sessions on the rayon pool and paints
 //! each worker's contiguous run of frames into reused buffers.
 //! [`Renderer::export`] pipes pool batches to FFmpeg on a writer thread while
 //! the next batch paints.
 
 mod export;
 mod frame;
+mod live;
 mod paint;
 
 pub use export::frame_times;
+pub use frame::{paint_root, render_frame, FrameState};
+pub use live::{output_dimensions, render_export, render_export_at_scale, set_output_scale, validate_scale, GpuContext};
 
 use director_core::scene_import::{import_scene, ImportError, ImportRegistry};
-use director_core::systems::layout::LayoutEngine;
 use director_core::video_wrapper::RenderMode;
 use director_core::{AssetLoader, Director};
 use director_scene::SceneDocument;
@@ -182,14 +188,13 @@ impl FramePool {
 /// An imported `Director` with its own surfaces, reused across frames.
 pub struct FrameSession {
     director: Director,
-    layout: LayoutEngine,
     info: ImageInfo,
     surface: Surface,
-    scratch: frame::Scratch,
+    state: FrameState,
 }
 
-// SAFETY: a session exclusively owns its `Director` (itself `Send`), layout
-// engine and CPU raster surfaces, none of which hold a thread-bound context. A
+// SAFETY: a session exclusively owns its `Director` (itself `Send`), frame
+// state and CPU raster surfaces, none of which hold a thread-bound context. A
 // `FramePool` hands each session to one worker at a time between calls.
 unsafe impl Send for FrameSession {}
 
@@ -208,10 +213,9 @@ impl FrameSession {
         let surface = skia_safe::surfaces::raster(&info, None, None).ok_or(RenderError::Surface(width, height))?;
         Ok(Self {
             director,
-            layout: LayoutEngine::new(),
             info,
             surface,
-            scratch: frame::Scratch::default(),
+            state: FrameState::default(),
         })
     }
 
@@ -232,7 +236,7 @@ impl FrameSession {
 
     /// Paint the frame at `time` seconds into `frame`, reusing its pixel buffer.
     pub fn render_into(&mut self, time: f64, frame: &mut Frame) -> Result<(), RenderError> {
-        frame::render_sampled(&mut self.director, &mut self.layout, time, &mut self.surface, &mut self.scratch)?;
+        self.state.render(&mut self.director, time, &mut self.surface)?;
         let width = self.info.width() as usize;
         let height = self.info.height() as usize;
         frame.width = width as u32;

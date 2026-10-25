@@ -2,7 +2,7 @@
 name = "director-render"
 version = "0.1.0"
 edition = "2021"
-description = "Paints frames of a Director scene document."
+description = "Paints and exports frames of a live Director or a scene document."
 license = "MIT"
 
 [dependencies]
@@ -21,3 +21,7 @@ base64 = "0.22"
 tempfile = "3.23"
 rhai = { version = "1.23.6", features = ["metadata"] }
 serde_json = { workspace = true }
+
+[features]
+default = []
+vulkan = ["director-core/vulkan", "skia-safe/ganesh", "skia-safe/vulkan"]

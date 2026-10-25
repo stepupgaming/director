@@ -7,7 +7,6 @@ use director_core::{
     animation::Animated,
     node::{auto_time_words, BoxNode, CaptionLine, CaptionNode, CaptionPosition},
     scripting::{register_rhai_api, MovieHandle},
-    systems::renderer::render_frame,
     types::Color,
     video_wrapper::RenderMode,
     Director, DefaultAssetLoader,
@@ -258,7 +257,7 @@ movie
 #[test]
 #[ignore = "Slow: Generates video file. Run with --ignored flag."]
 fn api_showcase_video_export() {
-    use director_core::export::render_export;
+    use director_render::render_export;
     use std::fs;
     use std::path::PathBuf;
 
@@ -413,7 +412,7 @@ fn caption_renders_visible_pixels() {
 
     // Render at time 1.0s (caption is active)
     let mut surface = skia_safe::surfaces::raster_n32_premul((800, 600)).unwrap();
-    render_frame(&mut director, 1.0, surface.canvas()).unwrap();
+    director_render::render_frame(&mut director, 1.0, &mut surface).unwrap();
 
     // Save frame for visual inspection
     let image = surface.image_snapshot();

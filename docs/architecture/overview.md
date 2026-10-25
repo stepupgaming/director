@@ -33,11 +33,11 @@ sequenceDiagram
     participant Scene as SceneGraph
     participant Anim as Animation
     participant Layout as LayoutEngine
-    participant Render as Skia
+    participant Render as director-render
     participant Encoder as FFmpeg
 
     User->>Director: build graph / add scenes
-    User->>Director: render_export / render_at_time
+    User->>Render: render_export / FrameState::render
 
     loop Each frame time t
         Director->>Tracks: active clips at t
@@ -49,10 +49,10 @@ sequenceDiagram
         Director->>Layout: compute_layout
         Layout-->>Scene: layout_rect
         Director->>Scene: post_layout (e.g. text fit)
-        Director->>Render: render_recursive
+        Render->>Scene: Painter traversal
         Render->>Scene: Element::render
         Director->>Director: mix_audio(t)
-        Director->>Encoder: video frame + audio
+        Render->>Encoder: video frame + audio
     end
     Encoder-->>User: output media
 ```
@@ -67,7 +67,7 @@ sequenceDiagram
 
 ## Incremental path
 
-`compile()` builds a dependency graph; `invalidate` fills `dirty_nodes`; `render_at_time` may update/render a subset and consult `static_cache`. Full render ≡ incremental is enforced by `tests/pipeline_equivalence.rs` (plan 03), and full passes reuse matching static subtrees (`tests/static_reuse.rs`).
+`compile()` builds a dependency graph; `invalidate` fills `dirty_nodes`; `director_render::FrameState::render` may update/render a subset and consult `Director::static_cache`. Full render ≡ incremental is enforced by `tests/pipeline_equivalence.rs` (plan 03), and full passes reuse matching static subtrees (`tests/static_reuse.rs`).
 
 ## HTML and native projects
 

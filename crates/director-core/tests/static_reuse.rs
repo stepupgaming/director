@@ -3,8 +3,6 @@
 use director_core::animation::{Animated, EasingType};
 use director_core::director::Director;
 use director_core::node::BoxNode;
-use director_core::systems::layout::LayoutEngine;
-use director_core::systems::renderer::render_at_time;
 use director_core::types::{Color, NodeId};
 use director_core::video_wrapper::RenderMode;
 use director_core::DefaultAssetLoader;
@@ -31,8 +29,7 @@ fn read_pixels(director: &mut Director, time: f64) -> Vec<u8> {
         Some(ColorSpace::new_srgb()),
     );
     let mut surface = skia_safe::surfaces::raster(&info, None, None).expect("surface");
-    let mut layout = LayoutEngine::new();
-    render_at_time(director, &mut layout, time, surface.canvas(), &mut None).expect("render");
+    director_render::render_frame(director, time, &mut surface).expect("render");
     let mut pixels = vec![0u8; (director.width * director.height * 4) as usize];
     assert!(surface.read_pixels(
         &info,

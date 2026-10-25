@@ -1,18 +1,11 @@
-use director_core::{
-    systems::{
-        layout::LayoutEngine,
-        renderer::{render_sampled_at_time, GpuContext},
-    },
-    Director,
-};
+use director_core::Director;
+use director_render::{FrameState, GpuContext};
 
 /// Render targets and the Vulkan context stay on their creating thread.
 pub struct Renderer {
     surface: Option<skia_safe::Surface>,
-    accumulation: Option<skia_safe::Surface>,
-    transitions: Option<(skia_safe::Surface, skia_safe::Surface)>,
+    state: FrameState,
     context: Option<GpuContext>,
-    layout: LayoutEngine,
     pixels: Vec<u8>,
 }
 
@@ -20,10 +13,8 @@ impl Renderer {
     pub fn new(gpu: bool) -> Result<Self, String> {
         Ok(Self {
             surface: None,
-            accumulation: None,
-            transitions: None,
+            state: FrameState::default(),
             context: crate::gpu::required_context(gpu)?,
-            layout: LayoutEngine::new(),
             pixels: Vec::new(),
         })
     }
@@ -36,9 +27,7 @@ impl Renderer {
     }
     pub fn reset(&mut self) {
         self.surface = None;
-        self.accumulation = None;
-        self.transitions = None;
-        self.layout = LayoutEngine::new();
+        self.state = FrameState::default();
         self.pixels.clear();
     }
 
@@ -62,21 +51,9 @@ impl Renderer {
                 .resize(director.width as usize * director.height as usize * 4, 0);
         }
         let surface = self.surface.as_mut().unwrap();
-        if self.transitions.is_none() && !director.transitions.is_empty() {
-            self.transitions = Some((
-                crate::gpu::render_surface(director.width, director.height, &mut self.context)?,
-                crate::gpu::render_surface(director.width, director.height, &mut self.context)?,
-            ));
-        }
-        render_sampled_at_time(
-            director,
-            &mut self.layout,
-            time,
-            surface,
-            &mut self.accumulation,
-            &mut self.transitions,
-        )
-        .map_err(|e| e.to_string())?;
+        self.state
+            .render(director, time, surface)
+            .map_err(|e| e.to_string())?;
         crate::gpu::read_pixels(surface, &mut self.context, &mut self.pixels)?;
         encode_png(surface.image_info(), &self.pixels)
     }
@@ -130,18 +107,13 @@ pub fn encode_png(info: skia_safe::ImageInfo, pixels: &[u8]) -> Result<Vec<u8>, 
 mod tests {
     use super::*;
     #[test]
-    fn sampled_frame_matches_core_motion_blur_and_repeated_seeks() {
+    fn sampled_frame_matches_a_fresh_frame_after_repeated_seeks() {
         let mut compiled = director_html::compile("<style>body{margin:0}#box{width:16px;height:64px;background:red;animation:move 1s linear both}@keyframes move{from{transform:translateX(0px)}to{transform:translateX(48px)}}</style><div id='box'></div>", director_html::CompileOptions { width:64,height:64,duration:1.0,..Default::default() }).unwrap();
         compiled.director.samples_per_frame = 4;
         compiled.director.shutter_angle = 360.0;
         let mut context = None;
         let mut reference = crate::gpu::render_surface(64, 64, &mut context).unwrap();
-        director_core::systems::renderer::render_frame(
-            &mut compiled.director,
-            0.5,
-            reference.canvas(),
-        )
-        .unwrap();
+        director_render::render_frame(&mut compiled.director, 0.5, &mut reference).unwrap();
         let mut pixels = vec![0; 64 * 64 * 4];
         crate::gpu::read_pixels(&mut reference, &mut context, &mut pixels).unwrap();
         let expected = encode_png(reference.image_info(), &pixels).unwrap();

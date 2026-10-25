@@ -9,11 +9,11 @@
 - `src/batch.rs` owns batch output names and the status report. It stays free of other crate dependencies so `tests/repair_batch.rs` can include it.
 - `src/input.rs` owns common loading for Rhai, HTML, captured DOM, portable native projects and versioned core projects, plus encoder selection.
 - `src/project.rs` owns portable project packing, element-ID keyed JSON edits, and `project repair`.
-- `src/renderer.rs` owns persistent native frame targets, shared core shutter sampling and synchronized PNG readback.
+- `src/renderer.rs` owns persistent native frame targets, a `director_render::FrameState` per renderer and synchronized PNG readback.
 - `src/html.rs` owns `html check|still|render|capture|benchmark`. HTML and capture JSON compile through `director-html`; browser extraction is explicit and is never invoked by native render/still.
 - `src/preview/` owns the preview API server (Axum endpoints and the native worker) for editors and agents; its child DOX owns thread lifetime, accepted revisions, reload and audio caching. The repo ships no browser client.
 - `src/run.rs` owns shared script eval + composition/movie resolution (`eval_script`, `resolve_movie`).
-- `src/gpu.rs` owns Vulkan context creation, explicit HTML GPU requests, native render-surface creation and synchronous RGBA readback.
+- `src/gpu.rs` owns Vulkan context creation (`director_render::GpuContext`), explicit HTML GPU requests, native render-surface creation and synchronous RGBA readback.
 - `src/bin/director_manifest.rs` owns agent-facing JSON manifest export (`api`, `schema`, `from-json`, `from-script`).
 - `README.md` owns CLI usage and exit-code documentation.
 

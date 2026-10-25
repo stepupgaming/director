@@ -44,7 +44,7 @@ fn text_fit_shrink() {
 
     // Trigger layout
     let mut surface = skia_safe::surfaces::raster_n32_premul((1920, 1080)).unwrap();
-    director_core::systems::renderer::render_frame(&mut director, 0.0, surface.canvas()).unwrap();
+    director_render::render_frame(&mut director, 0.0, &mut surface).unwrap();
 
     // Verify shrinkage
     let node = director.scene.get_node(id).unwrap();
@@ -91,7 +91,7 @@ fn text_span_rich_styling() {
 
     // Should not panic during render
     let mut surface = skia_safe::surfaces::raster_n32_premul((800, 600)).unwrap();
-    director_core::systems::renderer::render_frame(&mut director, 0.0, surface.canvas()).unwrap();
+    director_render::render_frame(&mut director, 0.0, &mut surface).unwrap();
 }
 
 /// Explicit LTR keeps English glyphs in left-to-right visual order.
@@ -169,5 +169,5 @@ fn text_shadow() {
 
     // Should not panic during render
     let mut surface = skia_safe::surfaces::raster_n32_premul((800, 600)).unwrap();
-    director_core::systems::renderer::render_frame(&mut director, 0.0, surface.canvas()).unwrap();
+    director_render::render_frame(&mut director, 0.0, &mut surface).unwrap();
 }

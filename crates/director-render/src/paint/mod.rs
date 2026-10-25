@@ -4,56 +4,42 @@
 //! layers, masks, z-index order and preserve-3d depth sorting. Static nodes
 //! rasterize once into a [`LayerCache`] and reuse that layer while its key
 //! holds. `kinds` owns per-kind knowledge, and `depth` owns the 3D sort.
+//!
+//! The cache is `Director::static_cache`, so `Director::note_mutation`
+//! evicts layers that a live edit invalidates.
 
 mod depth;
 mod kinds;
 
-use director_core::director::StaticCacheKey;
+use director_core::director::{StaticCacheEntry, StaticCacheKey};
 use director_core::scene::SceneGraph;
 use director_core::types::NodeId;
 use director_core::RenderError;
-use kinds::Nested;
-use skia_safe::{AlphaType, BlendMode, Canvas, ColorSpace, ColorType, Image, ImageInfo, Paint, Rect};
+use skia_safe::{AlphaType, BlendMode, Canvas, Color, ColorSpace, ColorType, Font, Image, ImageInfo, Paint, Rect, TextBlob};
 use std::collections::{HashMap, HashSet};
 
 /// Deepest node nesting a traversal accepts.
 const MAX_DEPTH: usize = 100;
 
-/// A rasterized static subtree and the key baked into it.
-struct Layer {
-    image: Image,
-    key: StaticCacheKey,
-}
-
-/// Static layers of one scene graph, plus the nested state of its compositions.
+/// Static layers of one scene graph.
 ///
 /// A full pass reuses a layer only when its key matches layout size, the baked
 /// local transform, inherited opacity and time. Time is part of the key only
 /// when the subtree has time-varying paint. An incremental pass reuses layers
 /// outside the dirty set and never serves a dirty node.
-#[derive(Default)]
-pub(crate) struct LayerCache {
-    layers: HashMap<NodeId, Layer>,
-    nested: HashMap<NodeId, Nested>,
-}
+pub(crate) type LayerCache = HashMap<NodeId, StaticCacheEntry>;
 
-impl LayerCache {
-    fn lookup(&mut self, node_id: NodeId, key: &StaticCacheKey, full_pass: bool, is_dirty: bool) -> Option<Image> {
-        if is_dirty {
-            self.layers.remove(&node_id);
-            return None;
-        }
-        let layer = self.layers.get(&node_id)?;
-        if !full_pass || &layer.key == key {
-            return Some(layer.image.clone());
-        }
-        self.layers.remove(&node_id);
-        None
+fn lookup(cache: &mut LayerCache, node_id: NodeId, key: &StaticCacheKey, full_pass: bool, is_dirty: bool) -> Option<Image> {
+    if is_dirty {
+        cache.remove(&node_id);
+        return None;
     }
-
-    fn store(&mut self, node_id: NodeId, image: Image, key: StaticCacheKey) {
-        self.layers.insert(node_id, Layer { image, key });
+    let entry = cache.get(&node_id)?;
+    if !full_pass || &entry.key == key {
+        return Some(entry.image.clone());
     }
+    cache.remove(&node_id);
+    None
 }
 
 /// Paint descendants, or only this element's own plane.
@@ -156,7 +142,7 @@ impl Painter<'_> {
             parent_opacity: opacity,
             time: subtree_varies(self.scene, node_id).then_some(node.local_time),
         };
-        let image = match cache.lookup(node_id, &key, full_pass, is_dirty) {
+        let image = match lookup(cache, node_id, &key, full_pass, is_dirty) {
             Some(image) => image,
             None => {
                 // The layer bakes the local transform; position applies when it is drawn.
@@ -173,7 +159,7 @@ impl Painter<'_> {
                 self.subtree(cache, node_id, offscreen, opacity, depth, child_draw)?;
                 offscreen.restore();
                 let image = surface.image_snapshot();
-                cache.store(node_id, image.clone(), key);
+                cache.insert(node_id, StaticCacheEntry { image: image.clone(), key });
                 image
             }
         };
@@ -200,8 +186,6 @@ impl Painter<'_> {
         };
         let local_rect = Rect::from_wh(node.layout_rect.width(), node.layout_rect.height());
         let shares_3d = node.element.shares_3d();
-        // Nested state leaves the cache while the children closure borrows it.
-        let mut nested = kinds::has_nested(node).then(|| cache.nested.remove(&node_id).unwrap_or_default());
 
         let mut last_error = Ok(());
         let mut draw_children = |canvas: &Canvas| {
@@ -244,7 +228,7 @@ impl Painter<'_> {
                 paint.set_image_filter(filter);
             }
             canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&paint));
-            let painted = kinds::paint_element(node, nested.as_mut(), canvas, local_rect, opacity, &mut draw_children);
+            let painted = kinds::paint_element(node, canvas, local_rect, opacity, &mut draw_children);
             let mask = node.mask_node.filter(|_| painted.is_ok() && last_error.is_ok());
             if let Some(mask_id) = mask {
                 let mut mask_paint = Paint::default();
@@ -258,13 +242,31 @@ impl Painter<'_> {
             canvas.restore();
             painted
         } else {
-            kinds::paint_element(node, nested.as_mut(), canvas, local_rect, opacity, &mut draw_children)
+            kinds::paint_element(node, canvas, local_rect, opacity, &mut draw_children)
         };
-        if let Some(nested) = nested {
-            cache.nested.insert(node_id, nested);
-        }
         result?;
         last_error
+    }
+}
+
+/// Outline every laid-out node with its id and z-index, in layout space.
+pub(crate) fn debug_overlays(scene: &SceneGraph, canvas: &Canvas) {
+    let mut outline = Paint::default();
+    outline.set_color(Color::GREEN);
+    outline.set_style(skia_safe::paint::Style::Stroke);
+    outline.set_stroke_width(2.0);
+    let mut label_paint = Paint::default();
+    label_paint.set_color(Color::RED);
+    let font = Font::default();
+    for (id, node) in scene.iter_alive() {
+        let rect = node.layout_rect;
+        if rect.width() <= 0.0 || rect.height() <= 0.0 {
+            continue;
+        }
+        canvas.draw_rect(rect, &outline);
+        if let Some(blob) = TextBlob::new(format!("{} z:{}", id, node.z_index), &font) {
+            canvas.draw_text_blob(&blob, (rect.left + 2.0, rect.top + 12.0), &label_paint);
+        }
     }
 }
 
@@ -327,7 +329,7 @@ mod tests {
     #[test]
     fn a_static_layer_paints_once_until_its_key_changes() {
         let (scene, id, paints) = static_scene(false);
-        let mut cache = LayerCache::default();
+        let mut cache = LayerCache::new();
         paint(&scene, &mut cache, id, 1.0, None);
         paint(&scene, &mut cache, id, 1.0, None);
         assert_eq!(paints.load(Ordering::SeqCst), 1);
@@ -338,7 +340,7 @@ mod tests {
     #[test]
     fn a_clocked_static_layer_repaints_when_local_time_moves() {
         let (mut scene, id, paints) = static_scene(true);
-        let mut cache = LayerCache::default();
+        let mut cache = LayerCache::new();
         paint(&scene, &mut cache, id, 1.0, None);
         paint(&scene, &mut cache, id, 1.0, None);
         assert_eq!(paints.load(Ordering::SeqCst), 1);
@@ -350,7 +352,7 @@ mod tests {
     #[test]
     fn an_incremental_pass_reuses_clean_layers_and_repaints_dirty_ones() {
         let (scene, id, paints) = static_scene(false);
-        let mut cache = LayerCache::default();
+        let mut cache = LayerCache::new();
         paint(&scene, &mut cache, id, 1.0, None);
         // Clean nodes hit without comparing the key.
         paint(&scene, &mut cache, id, 0.5, Some(&HashSet::new()));

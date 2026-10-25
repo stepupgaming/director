@@ -1,20 +1,18 @@
-//! Times an HTML export on the core `Director` path against its scene document
-//! exported through `Renderer::export`, and writes both MP4s.
+//! Times the serial export of a compiled HTML `Director` through
+//! `render_export` against its scene document exported through
+//! `Renderer::export`, and writes both MP4s.
 //!
 //! `cargo run -p director-render --release --example export_bench -- [html] [out_dir] [runs] [auto|software|nvenc]`
 //!
 //! `DIRECTOR_BENCH_WORKERS` overrides the pool size that `Renderer::pool_for` picks.
 
-use director_core::export::render_export;
 use director_core::scene_export::export_scene;
 use director_core::scene_import::ImportRegistry;
-use director_core::systems::layout::LayoutEngine;
-use director_core::systems::renderer::render_sampled_at_time;
 use director_core::timeline::audio_samples_per_video_frame;
 use director_core::video_wrapper::{Encoder, EncoderMode, EncoderSettings};
 use director_core::Director;
 use director_html::{compile_file, register_import, CompileOptions};
-use director_render::{frame_times, Frame, FramePool, Renderer};
+use director_render::{frame_times, render_export, Frame, FramePool, FrameState, Renderer};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -69,22 +67,19 @@ fn encode(frames: &[Frame], director: &Director, path: &Path, mode: EncoderMode)
     encoder.finish()
 }
 
-/// Core frame loop without encoding: layout, paint and readback.
-fn core_render_only(director: &mut Director) -> anyhow::Result<()> {
+/// Serial frame loop without encoding: layout, paint and readback.
+fn serial_render_only(director: &mut Director) -> anyhow::Result<()> {
     let info = skia_safe::ImageInfo::new(
         (director.width, director.height),
         skia_safe::ColorType::RGBA8888,
         skia_safe::AlphaType::Premul,
         Some(skia_safe::ColorSpace::new_srgb()),
     );
-    let raster = || skia_safe::surfaces::raster(&info, None, None).ok_or_else(|| anyhow::anyhow!("surface"));
-    let mut surface = raster()?;
-    let mut transitions = if director.transitions.is_empty() { None } else { Some((raster()?, raster()?)) };
-    let mut accumulation = None;
-    let mut layout = LayoutEngine::new();
+    let mut surface = skia_safe::surfaces::raster(&info, None, None).ok_or_else(|| anyhow::anyhow!("surface"))?;
+    let mut state = FrameState::default();
     let mut pixels = vec![0u8; info.compute_min_byte_size()];
     for time in frame_times(director) {
-        render_sampled_at_time(director, &mut layout, time, &mut surface, &mut accumulation, &mut transitions)?;
+        state.render(director, time, &mut surface)?;
         anyhow::ensure!(surface.read_pixels(&info, &mut pixels, info.min_row_bytes(), (0, 0)));
     }
     Ok(())
@@ -110,7 +105,7 @@ fn main() -> anyhow::Result<()> {
         _ => EncoderMode::Software,
     };
     std::fs::create_dir_all(&out_dir)?;
-    let core_path = out_dir.join("core.mp4");
+    let serial_path = out_dir.join("serial.mp4");
     let render_path = out_dir.join("director-render.mp4");
 
     let probe = compiled(&input, mode)?;
@@ -120,7 +115,7 @@ fn main() -> anyhow::Result<()> {
     let session_ms = ms(started);
     drop(session);
 
-    let (mut core_export, mut render_export_ms, mut core_render, mut render_render, mut one_session) =
+    let (mut serial_export, mut render_export_ms, mut serial_render, mut render_render, mut one_session) =
         (vec![], vec![], vec![], vec![], vec![]);
     let (mut live_session, mut one_call, mut first_frame, mut encode_only) = (vec![], vec![], vec![], vec![]);
     let encode_frames = {
@@ -130,8 +125,8 @@ fn main() -> anyhow::Result<()> {
     for _ in 0..runs {
         let mut director = compiled(&input, mode)?;
         let started = Instant::now();
-        render_export(&mut director, core_path.clone(), None, None, false)?;
-        core_export.push(ms(started));
+        render_export(&mut director, serial_path.clone(), None, None, false)?;
+        serial_export.push(ms(started));
 
         let director = compiled(&input, mode)?;
         let document = renderer(&director)?;
@@ -145,8 +140,8 @@ fn main() -> anyhow::Result<()> {
 
         let mut director = compiled(&input, mode)?;
         let started = Instant::now();
-        core_render_only(&mut director)?;
-        core_render.push(ms(started));
+        serial_render_only(&mut director)?;
+        serial_render.push(ms(started));
 
         let director = compiled(&input, mode)?;
         let started = Instant::now();
@@ -181,8 +176,8 @@ fn main() -> anyhow::Result<()> {
         live_session.push(ms(started));
     }
 
-    let (core_export, render_export_ms) = (median(&mut core_export), median(&mut render_export_ms));
-    let (core_render, render_render) = (median(&mut core_render), median(&mut render_render));
+    let (serial_export, render_export_ms) = (median(&mut serial_export), median(&mut render_export_ms));
+    let (serial_render, render_render) = (median(&mut serial_render), median(&mut render_render));
     let (one_session, live_session, one_call) =
         (median(&mut one_session), median(&mut live_session), median(&mut one_call));
     let first_frame = median(&mut first_frame);
@@ -199,10 +194,10 @@ fn main() -> anyhow::Result<()> {
             "encoder": format!("{mode:?}"),
             "runs": runs,
             "session_import_ms": session_ms,
-            "export_ms": {"encode_only": encode_only, "core": core_export, "director_render": render_export_ms, "speedup": core_export / render_export_ms},
-            "render_only_ms": {"core": core_render, "director_render": render_render, "speedup": core_render / render_render, "one_session": one_session, "live_session": live_session, "one_call": one_call, "one_session_first_frame": first_frame},
-            "render_only_fps": {"core": frames as f64 * 1000.0 / core_render, "director_render": frames as f64 * 1000.0 / render_render},
-            "outputs": [std::fs::canonicalize(&core_path)?, std::fs::canonicalize(&render_path)?],
+            "export_ms": {"encode_only": encode_only, "serial": serial_export, "director_render": render_export_ms, "speedup": serial_export / render_export_ms},
+            "render_only_ms": {"serial": serial_render, "director_render": render_render, "speedup": serial_render / render_render, "one_session": one_session, "live_session": live_session, "one_call": one_call, "one_session_first_frame": first_frame},
+            "render_only_fps": {"serial": frames as f64 * 1000.0 / serial_render, "director_render": frames as f64 * 1000.0 / render_render},
+            "outputs": [std::fs::canonicalize(&serial_path)?, std::fs::canonicalize(&render_path)?],
         })
     );
     Ok(())

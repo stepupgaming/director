@@ -9,7 +9,7 @@ use director_core::node::{BoxNode, CompositionNode, ImageNode, ShapeNode, Spectr
 use director_core::scene::SceneNode;
 use director_core::types::Transform;
 use director_core::RenderError;
-use skia_safe::{AlphaType, Canvas, Color, ColorSpace, ColorType, ImageInfo, Paint, Rect, Surface};
+use skia_safe::{AlphaType, Canvas, Color, ColorSpace, ColorType, ImageInfo, Paint, Rect};
 use std::sync::MutexGuard;
 
 /// Kinds whose paint follows the clock whatever their channels say.
@@ -108,64 +108,49 @@ pub(super) fn node_varies(node: &SceneNode) -> bool {
         || element_varies(node.element.as_ref())
 }
 
-/// State a composition keeps across frames: the layer cache of its nested
-/// scene and the surface that scene paints into.
-#[derive(Default)]
-pub(crate) struct Nested {
-    cache: LayerCache,
-    surface: Option<Surface>,
-}
-
 fn lock<T>(mutex: &std::sync::Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Paint `node`'s element. Compositions paint their nested timeline through
-/// this crate's traversal; `nested` holds their state.
+/// Paint `node`'s element. Compositions paint their nested timeline and
+/// sampled captures paint their sampled graph through this crate's traversal.
 pub(super) fn paint_element(
     node: &SceneNode,
-    nested: Option<&mut Nested>,
     canvas: &Canvas,
     rect: Rect,
     opacity: f32,
     draw_children: &mut dyn FnMut(&Canvas),
 ) -> Result<(), RenderError> {
-    match (node.element.as_any().downcast_ref::<CompositionNode>(), nested) {
-        (Some(composition), Some(nested)) => {
-            paint_composition(composition, nested, canvas, rect, opacity)?;
-            draw_children(canvas);
-            Ok(())
-        }
-        _ => node.element.render(canvas, rect, opacity, draw_children),
+    if let Some(composition) = node.element.as_any().downcast_ref::<CompositionNode>() {
+        paint_composition(composition, canvas, rect, opacity)?;
+        draw_children(canvas);
+        return Ok(());
     }
-}
-
-/// True when [`paint_element`] needs [`Nested`] state for this node.
-pub(super) fn has_nested(node: &SceneNode) -> bool {
-    node.element.as_any().is::<CompositionNode>()
+    if let Some((scene, root)) = node.element.sampled_graph() {
+        // A sampled graph changes every sample, so its layers never outlive the frame.
+        return Painter { scene: &scene, dirty: None }.root(&mut LayerCache::new(), root, canvas, opacity);
+    }
+    node.element.render(canvas, rect, opacity, draw_children)
 }
 
 /// Paint the active clips of a composition's timeline at its own size, then
-/// stretch that frame over `rect`.
-fn paint_composition(
-    composition: &CompositionNode,
-    nested: &mut Nested,
-    canvas: &Canvas,
-    rect: Rect,
-    opacity: f32,
-) -> Result<(), RenderError> {
-    let director = lock(&composition.internal_director);
+/// stretch that frame over `rect`. The nested `Director` keeps the static
+/// layers and the composition keeps the surface across frames.
+fn paint_composition(composition: &CompositionNode, canvas: &Canvas, rect: Rect, opacity: f32) -> Result<(), RenderError> {
+    let mut guard = lock(&composition.internal_director);
+    let director = &mut *guard;
     let (width, height) = (director.width, director.height);
-    if nested.surface.as_ref().is_none_or(|surface| surface.width() != width || surface.height() != height) {
+    let mut surface = lock(&composition.surface_cache);
+    if surface.as_ref().is_none_or(|surface| surface.width() != width || surface.height() != height) {
         let info = ImageInfo::new(
             (width, height),
             ColorType::RGBA8888,
             AlphaType::Premul,
             Some(ColorSpace::new_srgb()),
         );
-        nested.surface = canvas.new_surface(&info, None).or_else(|| skia_safe::surfaces::raster(&info, None, None));
+        *surface = canvas.new_surface(&info, None).or_else(|| skia_safe::surfaces::raster(&info, None, None));
     }
-    let Some(surface) = nested.surface.as_mut() else {
+    let Some(surface) = surface.as_mut() else {
         return Ok(());
     };
     let inner = surface.canvas();
@@ -187,7 +172,7 @@ fn paint_composition(
     clips.sort_by_key(|(_, clip)| clip.z_index);
     let painter = Painter { scene: &director.scene, dirty: None };
     for (track_opacity, clip) in clips {
-        painter.root(&mut nested.cache, clip.scene_root, inner, track_opacity * clip.fade_opacity(time))?;
+        painter.root(&mut director.static_cache, clip.scene_root, inner, track_opacity * clip.fade_opacity(time))?;
     }
     let image = surface.image_snapshot();
     let mut paint = Paint::default();

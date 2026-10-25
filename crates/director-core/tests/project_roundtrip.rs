@@ -1256,8 +1256,7 @@ fn schema_fps_f64_project_json() {
 /// Plan 05: save → load → pixels match for a simple Box scene.
 #[test]
 fn project_roundtrip_pixels_smoke() {
-    use director_core::systems::layout::LayoutEngine;
-    use director_core::systems::renderer::render_at_time;
+    use director_render::render_frame;
     use skia_safe::{AlphaType, ColorSpace, ColorType, ImageInfo};
 
     let mut engine = Engine::new();
@@ -1282,8 +1281,7 @@ fn project_roundtrip_pixels_smoke() {
             Some(ColorSpace::new_srgb()),
         );
         let mut surface = skia_safe::surfaces::raster(&info, None, None).unwrap();
-        let mut layout = LayoutEngine::new();
-        render_at_time(d, &mut layout, 0.0, surface.canvas(), &mut None).unwrap();
+        render_frame(d, 0.0, &mut surface).unwrap();
         let mut px = vec![0u8; (d.width * d.height * 4) as usize];
         assert!(surface.read_pixels(&info, &mut px, (d.width * 4) as usize, (0, 0)));
         px

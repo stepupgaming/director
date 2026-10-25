@@ -1,4 +1,4 @@
-use director_core::systems::renderer::render_frame;
+use director_render::render_frame;
 use director_html::{
     compile, compile_capture, Capture, CapturedFrame, CapturedMedia, CapturedNode, CompileOptions,
     CAPTURE_FORMAT,
@@ -56,7 +56,7 @@ fn native_video_source_start_and_reverse_seeks() {
     );
     let mut frames = Vec::new();
     for time in [0.0, 0.6, 0.0] {
-        render_frame(&mut compiled.director, time, surface.canvas()).unwrap();
+        render_frame(&mut compiled.director, time, &mut surface).unwrap();
         let mut pixels = vec![0; 64 * 64 * 4];
         assert!(surface.read_pixels(&info, &mut pixels, 64 * 4, (0, 0)));
         frames.push(pixels);
@@ -138,7 +138,7 @@ fn captured_video_seeks_across_different_samples() {
     );
     let mut frames = Vec::new();
     for time in [0.0, 0.6, 0.0] {
-        render_frame(&mut compiled.director, time, surface.canvas()).unwrap();
+        render_frame(&mut compiled.director, time, &mut surface).unwrap();
         let mut pixels = vec![0; 64 * 64 * 4];
         assert!(surface.read_pixels(&info, &mut pixels, 64 * 4, (0, 0)));
         frames.push(pixels);

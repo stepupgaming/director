@@ -172,19 +172,15 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
                 &mut context,
             )
             .map_err(|e| (2, e))?;
-            director_core::systems::renderer::render_frame(
-                &mut compiled.director,
-                time,
-                surface.canvas(),
-            )
-            .map_err(|e| (2, e.to_string()))?;
+            director_render::render_frame(&mut compiled.director, time, &mut surface)
+                .map_err(|e| (2, e.to_string()))?;
             let mut pixels =
                 vec![0; compiled.director.width as usize * compiled.director.height as usize * 4];
             crate::gpu::read_pixels(&mut surface, &mut context, &mut pixels).map_err(|e| (2, e))?;
             write_png(surface.image_info(), &pixels, &output)?;
         } else {
             let started = Instant::now();
-            director_core::export::render_export(
+            director_render::render_export(
                 &mut compiled.director,
                 output.clone(),
                 context.as_mut(),
@@ -252,8 +248,7 @@ fn benchmark(
         std::fs::create_dir(dir)
             .map_err(|e| (2, format!("create frame directory {}: {e}", dir.display())))?;
     }
-    let mut layout = director_core::systems::layout::LayoutEngine::new();
-    let mut surfaces = None;
+    let mut state = director_render::FrameState::default();
     let mut measurements = Vec::new();
     for run in 0..runs {
         let mut render_seconds = 0.0;
@@ -262,14 +257,9 @@ fn benchmark(
         for frame in 0..count {
             let started = Instant::now();
             let time = frame as f64 / compiled.director.fps;
-            director_core::systems::renderer::render_at_time(
-                &mut compiled.director,
-                &mut layout,
-                time,
-                surface.canvas(),
-                &mut surfaces,
-            )
-            .map_err(|e| (2, e.to_string()))?;
+            state
+                .render(&mut compiled.director, time, &mut surface)
+                .map_err(|e| (2, e.to_string()))?;
             let readback = Instant::now();
             crate::gpu::read_pixels(&mut surface, &mut context, &mut pixels).map_err(|e| (2, e))?;
             readback_seconds += readback.elapsed().as_secs_f64();
@@ -292,7 +282,7 @@ fn benchmark(
     drop(warm);
     let export_ms = if let Some(path) = export {
         let started = Instant::now();
-        director_core::export::render_export(
+        director_render::render_export(
             &mut compiled.director,
             path,
             context.as_mut(),
@@ -309,7 +299,7 @@ fn benchmark(
         serde_json::json!({"width":compiled.director.width,"height":compiled.director.height,"fps":compiled.director.fps,"duration":duration,"source_kind":compiled.source_kind,"sample_rate":compiled.sample_rate,"nodes":compiled.node_count,"compile_ms":compile_ms,"warm_compile_ms":warm_compile_ms,"render_setup_ms":render_setup_ms,"renderer":renderer,"encoder":rendering.encoder.codec(),"timing_scope":"layout, paint, submission and RGBA readback; excludes PNG encoding","runs":measurements,"export_ms":export_ms,"peak_renderer_rss_bytes":peak_memory(),"browser_required_for_render":false})
     );
     drop(compiled);
-    drop(surfaces);
+    drop(state);
     drop(surface);
     Ok(())
 }

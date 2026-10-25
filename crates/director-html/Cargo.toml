@@ -26,6 +26,7 @@ tempfile = "3.23"
 
 [dev-dependencies]
 criterion = "0.5"
+director-render = { path = "../director-render" }
 
 [[bench]]
 name = "html"

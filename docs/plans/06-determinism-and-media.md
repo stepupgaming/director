@@ -117,7 +117,7 @@ decode(frame_policy(video_source_time))
 ## Implementation notes (landed)
 
 - All six `BUNDLED_FONTS` marked required; `Director.missing_required_fonts` +
-  `ensure_required_fonts` called from `render_export`.
+  `ensure_required_fonts` called from `director_render::render_export`.
 - `timeline::{video_seek_time, video_source_frame_index, audio_samples_per_video_frame,
   export_audio_sample_count}` document floor seek + A/V sample math.
 - `VideoNode::update` quantizes decode requests with `video_seek_time`.

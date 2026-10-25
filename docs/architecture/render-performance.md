@@ -6,7 +6,7 @@ Measured on Windows, AMD Ryzen 9 9900X, 12 cores / 24 logical processors, Rust 1
 
 The baseline is the local working tree immediately before the layout synchronization fix, including the earlier decoder and caption changes. This is not a comparison against an older Git commit.
 
-Three 640x360 scenes exercise the export-facing `render_at_time` interface with a persistent `LayoutEngine`:
+Three 640x360 scenes exercise the export-facing frame loop with a persistent `LayoutEngine` (today `director_render::FrameState`):
 
 - `cards_144`: a 12x12 grid of colored boxes, 157 total nodes.
 - `animated_1024`: a 32x32 grid, 1057 total nodes, each card translating linearly by 3 pixels over 3 seconds.

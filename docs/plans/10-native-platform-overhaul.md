@@ -1,6 +1,6 @@
 # Plan 10: Native platform overhaul
 
-> **Status:** In progress. The phase 1 gate is green locally. The phase 2 gate is green: the director-core golden corpus and the HTML examples and fixtures round-trip through the scene document. Phase 3 has started: `director-core::scene_import` loads a document back into a `Director`, every golden scene renders from its document identically, and `director-render` paints document frames, matching the compiled HTML examples, SMIL, looped video, sampled captures, Paper shaders, Lottie and spectrum scenes within the parity tolerance. Document audio mixes sample-equal to the live mixer. `director-render` owns the frame driver (evaluation into a frame plan, paint, shutter sampling and transitions), the node traversal, preserve-3d sorting, a session-owned static layer cache and composition paint, and matches the core path live and from the document across all 59 Rhai examples, the HTML examples and every golden scene.
+> **Status:** In progress. The phase 1 gate is green locally. The phase 2 gate is green: the director-core golden corpus and the HTML examples and fixtures round-trip through the scene document. Phase 3 has started: `director-core::scene_import` loads a document back into a `Director`, every golden scene renders from its document identically, and `director-render` paints document frames, matching the compiled HTML examples, SMIL, looped video, sampled captures, Paper shaders, Lottie and spectrum scenes within the parity tolerance. Document audio mixes sample-equal to the live mixer. `director-render` is the only frame path: it owns the frame driver (`FrameState`: evaluation, paint, shutter sampling and transitions), the node traversal, preserve-3d sorting, static layer reuse on `Director::static_cache`, composition and capture paint, and the serial live `render_export` with Vulkan targets. Core export, preview, stills, tests and the CLI paint through it, and the core frame path is deleted. Live and document frames match across all 59 Rhai examples, the HTML examples and every golden scene.
 > **Product direction:** Exceed HyperFrames, FFrames and Remotion with a library-first native video platform: HTML/CSS authoring that compiles to a typed scene document, a parallel deterministic renderer, one host session API shared by the CLI, agents and a future editor, and measured proof of speed and quality.
 
 This file is the current-state and handoff document for the active phase. It replaces [plan 09](09-native-fidelity.md) as the active plan. Feature contracts for HTML live in [`crates/director-html/AGENTS.md`](../../crates/director-html/AGENTS.md).
@@ -91,17 +91,17 @@ One row per check, holding the most recent passing count. Replace the row when a
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
 | workspace clippy | pass | 2026-10-25 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
-| director-core release tests | 435 | 2026-10-25 | `cargo test -p director-core --release` |
+| director-core release tests | 430 | 2026-10-25 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 968 | 2026-10-25 | `cargo test --workspace --release` |
+| workspace release tests | 973 | 2026-10-25 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
-| director-render | 15 | 2026-10-25 | `cargo test -p director-render --release` |
-| 1080p HTML export, core vs `Renderer::export` (pipelined, single FFmpeg pass with premixed audio, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1181 vs 580 ms (2.04x), image-background 607 vs 401 ms (1.51x), nested-rule 371 vs 383 ms (0.97x), text-decoration 372 vs 396 ms (0.94x); single-pass encode-only floor 408, 329, 336, 328 ms; native-motion and text-decoration re-run after the paint move; outputs pixel-identical (PSNR inf) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
+| director-render | 20 | 2026-10-25 | `cargo test -p director-render --release` |
+| 1080p HTML export, serial live export (core before the switch) vs `Renderer::export` (pipelined, single FFmpeg pass with premixed audio, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1181 vs 580 ms (2.04x), image-background 607 vs 401 ms (1.51x), nested-rule 371 vs 383 ms (0.97x), text-decoration 372 vs 396 ms (0.94x); single-pass encode-only floor 408, 329, 336, 328 ms; native-motion and text-decoration re-run after the paint move; outputs pixel-identical (PSNR inf) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
 | HTML scene_document | 7 | 2026-10-25 | `cargo test -p director-html --release --test scene_document` |
-| Vulkan engine clippy | pass | 2026-10-22 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
+| Vulkan engine clippy | pass | 2026-10-25 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
 | padded_text | 1 | 2026-10-20 | `cargo test -p director-html --release --test padded_text` |
@@ -133,7 +133,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Continue phase 3: document export runs in one FFmpeg pass and leads core 2.08x and 1.51x on animated scenes; static scenes sit within 12 ms of core and about 50 ms above the x264 floor, mostly from FFmpeg starting after the audio import and mix. The node traversal, static layer cache, depth sort and composition paint now run in `director-render::paint`. Next, switch core export, preview and the CLI to `director-render`, route HTML captures through its traversal, then delete the core frame path.
+1. Close phase 3: document export runs in one FFmpeg pass and leads the serial export 2.04x and 1.51x on animated scenes; static scenes sit within 12 ms of it and about 50 ms above the x264 floor, mostly from FFmpeg starting after the audio import and mix. Every frame path now runs through `director-render`. Next, route CLI `render` and `html render` through the pipelined `Renderer::export` (keeping the Vulkan live path for GPU requests), then re-measure export_bench and record the phase 3 gate.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification

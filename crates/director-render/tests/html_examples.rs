@@ -1,12 +1,11 @@
 //! Compiled HTML paints the same frames from its scene document as from the
 //! compiled `Director`.
 
-use director_core::export::render_export;
 use director_core::scene_export::export_scene;
 use director_core::scene_import::ImportRegistry;
 use director_core::video_wrapper::EncoderMode;
 use director_html::{compile, compile_file, register_import, CompileOptions, CompiledHtml};
-use director_render::Renderer;
+use director_render::{render_export, Renderer};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -20,7 +19,7 @@ fn registry() -> ImportRegistry {
     registry
 }
 
-/// Frames at [`TIMES`] where the document render differs from the compiled `Director` on the core path.
+/// Frames at [`TIMES`] where the document render differs from the compiled `Director`.
 fn mismatches(name: &str, compiled: CompiledHtml) -> Vec<String> {
     let document = Arc::new(export_scene(&compiled.director).unwrap());
     let renderer = Renderer::new(document, compiled.director.assets.loader.clone())
@@ -143,19 +142,19 @@ fn framemd5(path: &Path) -> String {
 }
 
 #[test]
-fn document_export_decodes_like_the_core_export() {
+fn document_export_decodes_like_the_live_export() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/html/native-motion.html");
     let temp = tempfile::tempdir().unwrap();
-    let (core_path, document_path) = (temp.path().join("core.mp4"), temp.path().join("document.mp4"));
+    let (live_path, document_path) = (temp.path().join("live.mp4"), temp.path().join("document.mp4"));
     let mut compiled = compile_file(&path, CompileOptions::default()).unwrap();
     compiled.director.encoder_mode = EncoderMode::Software;
     let document = Arc::new(export_scene(&compiled.director).unwrap());
     let renderer = Renderer::new(document, compiled.director.assets.loader.clone())
         .with_registry(registry())
         .with_render_mode(compiled.director.render_mode);
-    render_export(&mut compiled.director, core_path.clone(), None, None, false).unwrap();
+    render_export(&mut compiled.director, live_path.clone(), None, None, false).unwrap();
     renderer.export(&document_path, EncoderMode::Software).unwrap();
-    assert_eq!(framemd5(&document_path), framemd5(&core_path));
+    assert_eq!(framemd5(&document_path), framemd5(&live_path));
 }
 
 fn options(width: i32, height: i32) -> CompileOptions {

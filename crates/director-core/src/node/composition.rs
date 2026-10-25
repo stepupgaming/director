@@ -2,10 +2,7 @@ use crate::director::Director;
 use crate::element::Element;
 use crate::errors::RenderError;
 use crate::systems::layout::LayoutEngine;
-use crate::systems::renderer::render_recursive;
-use crate::types::NodeId;
-use skia_safe::{AlphaType, Canvas, ColorType, Paint, Rect, Surface};
-use std::collections::HashMap;
+use skia_safe::{Canvas, Rect, Surface};
 use std::any::Any;
 use std::fmt;
 use std::sync::Mutex;
@@ -109,102 +106,15 @@ impl Element for CompositionNode {
         true
     }
 
+    /// `director-render` paints the nested timeline into `surface_cache`; this
+    /// only paints children.
     fn render(
         &self,
         canvas: &Canvas,
-        rect: Rect,
-        opacity: f32,
+        _rect: Rect,
+        _opacity: f32,
         draw_children: &mut dyn FnMut(&Canvas),
     ) -> Result<(), RenderError> {
-        let d = match self.internal_director.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-
-        let width = d.width;
-        let height = d.height;
-
-        let mut surface_opt = match self.surface_cache.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-
-        // Recreate surface if needed
-        let need_new = if let Some(s) = surface_opt.as_ref() {
-            s.width() != width || s.height() != height
-        } else {
-            true
-        };
-
-        if need_new {
-            let info = skia_safe::ImageInfo::new(
-                (width, height),
-                ColorType::RGBA8888,
-                AlphaType::Premul,
-                Some(skia_safe::ColorSpace::new_srgb()),
-            );
-            *surface_opt = canvas
-                .new_surface(&info, None)
-                .or_else(|| skia_safe::surfaces::raster(&info, None, None));
-        }
-
-        if let Some(surface) = surface_opt.as_mut() {
-            // Render internal director to surface
-            let c = surface.canvas();
-            c.clear(skia_safe::Color::TRANSPARENT);
-
-            // Reuse render logic
-            let current_time = d
-                .scene
-                .nodes
-                .iter()
-                .flatten()
-                .next()
-                .map(|n| n.last_visit_time)
-                .unwrap_or(0.0);
-
-            let mut local_cache: HashMap<NodeId, skia_safe::Image> = HashMap::new();
-            let has_tracks = d.tracks.iter().any(|t| !t.clips.is_empty());
-            if has_tracks {
-                let mut clips: Vec<(usize, usize, &crate::timeline::TrackClip)> = Vec::new();
-                for (ti, track) in d.tracks.iter().enumerate() {
-                    for (ci, clip) in track.clips.iter().enumerate() {
-                        if track.enabled
-                            && current_time >= clip.start_time
-                            && current_time < clip.start_time + clip.duration
-                        {
-                            clips.push((ti, ci, clip));
-                        }
-                    }
-                }
-                clips.sort_by_key(|(_, _, c)| c.z_index);
-                for (ti, _, clip) in clips {
-                    let track_opacity = d.tracks[ti].opacity;
-                    let fade_opacity = clip.fade_opacity(current_time);
-                    render_recursive(
-                        &d.scene,
-                        &d.assets,
-                        &mut local_cache,
-                        clip.scene_root,
-                        c,
-                        track_opacity * fade_opacity,
-                        0,
-                        None,
-                    )?;
-                }
-            } else {
-                // No clips — nothing to draw from the inner director timeline.
-            }
-
-            // Now draw surface to main canvas
-            let image = surface.image_snapshot();
-            let mut paint = Paint::default();
-            paint.set_alpha_f(opacity);
-
-            // Draw image filling the layout rect
-            canvas.draw_image_rect(&image, None, rect, &paint);
-        }
-
         draw_children(canvas);
         Ok(())
     }

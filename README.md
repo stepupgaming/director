@@ -145,7 +145,7 @@ fn main() -> anyhow::Result<()> {
     let movie = engine.eval::<scripting::MovieHandle>(script)?;
     let mut director = movie.director.lock().unwrap();
 
-    director_core::export::render_export(
+    director_render::render_export(
         &mut director,
         "output.mp4".into(),
         None,
@@ -157,7 +157,7 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-Depend on `director-core` by path or git; the crates are not published.
+Depend on `director-core` and `director-render` by path or git; the crates are not published. `director-render` paints and exports every frame.
 
 ---
 

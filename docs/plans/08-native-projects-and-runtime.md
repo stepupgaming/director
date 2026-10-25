@@ -19,7 +19,7 @@
 - Immutable source and encoded blobs are shared across edit candidates. Captured anonymous/duplicate element IDs receive noncolliding structural paths; unique authored IDs remain intact.
 - `project edit` validates a complete candidate before accepting it and atomically saving. HTML edits support literal text, CSS and supported timing/media attributes; captured text/paint edits retain fixed geometry and sampled motion.
 - CLI `render`, `still`, `inspect` and the backend share `input.rs`. JSON format identifiers select capture/native inputs; a versioned core project uses core loading.
-- Still/backend and export share `render_sampled_at_time` for shutter accumulation and transitions. Explicit GPU selection requires native GPU targets.
+- Still/backend and export share `director_render::FrameState` for shutter accumulation and transitions. Explicit GPU selection requires native GPU targets.
 - The backend uses a bounded queue and a single native worker owning the Director, targets and Vulkan context. Source/dependency reload accepts a complete new scene or retains the accepted scene with diagnostics.
 - Backend inspection exposes layout/timeline, authored IDs, sampled element information and audio metadata. Full stereo float WAV mixes use the export sample clock and cache by accepted revision.
 

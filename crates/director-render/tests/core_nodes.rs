@@ -49,7 +49,7 @@ fn document(director: &Director) -> SceneDocument {
     SceneDocument::from_json(&json).unwrap()
 }
 
-/// Frames at [`TIMES`] where the document render differs from the live `Director` on the core path.
+/// Frames at [`TIMES`] where the document render differs from the live `Director`.
 fn mismatches(name: &str, original: Director) -> Vec<String> {
     let renderer = Renderer::new(Arc::new(document(&original)), loader()).with_render_mode(original.render_mode);
     common::mismatches(name, original, &renderer, &TIMES)

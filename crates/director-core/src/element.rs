@@ -160,6 +160,12 @@ pub trait Element: std::fmt::Debug + ElementClone {
         draw_children: &mut dyn FnMut(&Canvas),
     ) -> Result<(), crate::RenderError>;
 
+    /// A scene graph and root this element paints in place of [`Element::render`].
+    /// The renderer traverses it at the element's origin with no static layer reuse.
+    fn sampled_graph(&self) -> Option<(std::sync::MutexGuard<'_, crate::scene::SceneGraph>, crate::types::NodeId)> {
+        None
+    }
+
     /// Direct children share a 3D context and are depth-sorted.
     fn shares_3d(&self) -> bool {
         false

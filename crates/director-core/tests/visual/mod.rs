@@ -237,24 +237,8 @@ fn render_png(director: &mut Director, time: f64) -> Result<Vec<u8>, String> {
     );
     let mut surface = skia_safe::surfaces::raster(&info, None, None)
         .ok_or_else(|| "failed to create Skia surface".to_string())?;
-    let mut transition_surfaces = if director.transitions.is_empty() {
-        None
-    } else {
-        let first = skia_safe::surfaces::raster(&info, None, None)
-            .ok_or_else(|| "failed to create transition surface".to_string())?;
-        let second = skia_safe::surfaces::raster(&info, None, None)
-            .ok_or_else(|| "failed to create transition surface".to_string())?;
-        Some((first, second))
-    };
-    let mut layout = director_core::systems::layout::LayoutEngine::new();
-    director_core::systems::renderer::render_at_time(
-        director,
-        &mut layout,
-        time,
-        surface.canvas(),
-        &mut transition_surfaces,
-    )
-    .map_err(|err| format!("render_at_time failed: {err}"))?;
+    director_render::render_frame(director, time, &mut surface)
+        .map_err(|err| format!("render_frame failed: {err}"))?;
     let image = surface.image_snapshot();
     let data = image
         .encode(None, EncodedImageFormat::PNG, 100)

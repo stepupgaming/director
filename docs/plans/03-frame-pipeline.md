@@ -10,7 +10,7 @@
 The frame path is:
 
 ```text
-update(time, dirty?) → layout → post_layout → render_recursive → (encode)
+update(time, dirty?) → layout → post_layout → director-render Painter → (encode)
 ```
 
 Incremental machinery exists (`compile`, `invalidate`, `dirty_nodes`, `expand_dirty_set`, `is_static` / `static_cache`), but:
@@ -28,7 +28,7 @@ Incremental machinery exists (`compile`, `invalidate`, `dirty_nodes`, `expand_di
   `render_full(t) == render_incremental(t)` after any sequence of invalidations that the public API allows (bit-exact or documented tolerance).
 - Static/comp caches **cannot** serve stale content after a mutating API call.
 - Dirty expansion includes all nodes required for correct transform/layout/mask context.
-- Documented single entry points: `render_at_time`, `render_frame`, export loop.
+- Documented single entry points: `director_render::FrameState::render`, `render_frame`, export loop.
 
 ## Non-goals
 
@@ -45,7 +45,7 @@ Incremental machinery exists (`compile`, `invalidate`, `dirty_nodes`, `expand_di
 | Full | `None` (all active nodes update + draw) | Reuse `static_cache` when `StaticCacheKey` matches. Time-varying subtrees store `Some(local_time)` and miss on a later frame |
 | Incremental | `Some(expand(dirty))` | Static hit only if the node is not dirty |
 
-After each `render_at_time`, consuming dirty set is OK if the next mutation re-invalidates. Prefer: **mutations always mark dirty**; render clears after successful frame.
+After each frame, consuming dirty set is OK if the next mutation re-invalidates. Prefer: **mutations always mark dirty**; render clears after successful frame.
 
 ### Automatic invalidation
 
@@ -105,7 +105,7 @@ Property: skipping any of the above can change pixels ⇒ expansion incomplete.
 
 ## Files likely touched
 
-- `crates/director-core/src/systems/renderer.rs`
+- `crates/director-render/src/frame.rs`, `crates/director-render/src/paint/` (the frame path moved here from core `systems/renderer.rs`)
 - `crates/director-core/src/systems/layout.rs`
 - `crates/director-core/src/director.rs` (`update`, `expand_dirty_set`, `invalidate`)
 - `crates/director-core/src/compiler.rs`
@@ -130,7 +130,7 @@ Property: skipping any of the above can change pixels ⇒ expansion incomplete.
 ### Implementation notes
 
 - `Director::note_mutation` / `note_node_mutation` / `evict_caches_for` / `is_compiled`.
-- `render_at_time`: uncompiled or empty dirty ⇒ full frame.
+- `director_render::FrameState::render`: uncompiled or empty dirty ⇒ full frame.
 - Static cache: skip hit when node is dirty; evict on mutation.
 - `invalidate(Node(_))` always dirties that node (property mutations).
 - `expand_dirty_set`: reverse mask users + retain live ids only.

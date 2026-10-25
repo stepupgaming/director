@@ -186,7 +186,7 @@ pub fn create_vulkan_context() -> Option<()> {
 /// Explicit GPU requests fail if the requested backend cannot be initialized.
 pub fn required_context(
     enable: bool,
-) -> Result<Option<director_core::systems::renderer::GpuContext>, String> {
+) -> Result<Option<director_render::GpuContext>, String> {
     if !enable {
         return Ok(None);
     }
@@ -205,7 +205,7 @@ pub fn required_context(
 pub fn render_surface(
     width: i32,
     height: i32,
-    context: &mut Option<director_core::systems::renderer::GpuContext>,
+    context: &mut Option<director_render::GpuContext>,
 ) -> Result<skia_safe::Surface, String> {
     let info = skia_safe::ImageInfo::new(
         (width, height),
@@ -236,7 +236,7 @@ pub fn render_surface(
 /// Read directly from the render target. GPU images cannot be drawn onto a raster canvas.
 pub fn read_pixels(
     surface: &mut skia_safe::Surface,
-    context: &mut Option<director_core::systems::renderer::GpuContext>,
+    context: &mut Option<director_render::GpuContext>,
     pixels: &mut [u8],
 ) -> Result<(), String> {
     #[cfg(feature = "vulkan")]

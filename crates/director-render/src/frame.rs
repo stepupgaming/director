@@ -1,10 +1,10 @@
 //! Per-frame evaluation and paint.
 //!
 //! [`evaluate`] advances the `Director` to a time and resolves what the frame
-//! draws into a [`FramePlan`]. [`paint`] draws a plan, and [`render_sampled`]
+//! draws into a [`FramePlan`]. [`paint`] draws a plan, and [`FrameState::render`]
 //! averages evaluated sub-frames across the shutter for motion blur.
 
-use crate::paint::{LayerCache, Painter};
+use crate::paint::{debug_overlays, Painter};
 use crate::RenderError;
 use director_core::systems::layout::LayoutEngine;
 use director_core::systems::transitions::{draw_transition, Transition, TransitionType};
@@ -14,7 +14,7 @@ use skia_safe::{BlendMode, Canvas, Color, Paint, Surface};
 use std::collections::HashSet;
 
 /// What one evaluated frame draws, bottom layer first.
-pub(crate) struct FramePlan {
+struct FramePlan {
     layers: Vec<Layer>,
     /// Nodes repainted by an incremental frame; `None` repaints everything.
     dirty: Option<HashSet<NodeId>>,
@@ -25,16 +25,31 @@ enum Layer {
     Transition { from: NodeId, to: NodeId, progress: f32, kind: TransitionType },
 }
 
-/// Rasters and static layers a session reuses across frames.
+/// Layout and scratch rasters reused across frames of one live `Director`.
+/// Static layers live on the `Director` in `static_cache`.
 #[derive(Default)]
-pub(crate) struct Scratch {
+pub struct FrameState {
+    layout: LayoutEngine,
     accumulation: Option<Surface>,
     transitions: Option<(Surface, Surface)>,
-    layers: LayerCache,
+}
+
+/// Paint the frame of `director` at `time` seconds into `target` with fresh
+/// frame state. Hold a [`FrameState`] to paint a sequence.
+pub fn render_frame(director: &mut Director, time: f64, target: &mut Surface) -> Result<(), RenderError> {
+    FrameState::default().render(director, time, target)
+}
+
+/// Paint the subtree at `root` of `director`'s scene onto `canvas` under its
+/// current matrix, reusing and filling `director.static_cache`. The scene must
+/// already be updated and laid out.
+pub fn paint_root(director: &mut Director, root: NodeId, canvas: &Canvas, opacity: f32) -> Result<(), RenderError> {
+    let painter = Painter { scene: &director.scene, dirty: None };
+    Ok(painter.root(&mut director.static_cache, root, canvas, opacity)?)
 }
 
 /// Advance `director` to `time`, lay it out and resolve the layers it draws.
-pub(crate) fn evaluate(director: &mut Director, layout: &mut LayoutEngine, time: f64) -> FramePlan {
+fn evaluate(director: &mut Director, layout: &mut LayoutEngine, time: f64) -> FramePlan {
     // Without a compiled dependency graph every frame repaints in full.
     let dirty = if director.dirty_nodes.is_empty() || !director.is_compiled() {
         None
@@ -124,31 +139,31 @@ fn clear_color(director: &Director) -> Color {
 }
 
 /// Map layout pixels onto the output surface. Scale 1 leaves the matrix alone.
-fn begin_scene_canvas(canvas: &Canvas, director: &Director) {
-    let (sx, sy) = (director.output_scale_x, director.output_scale_y);
+fn begin_scene_canvas(canvas: &Canvas, (sx, sy): (f32, f32)) {
     if sx != 1.0 || sy != 1.0 {
         canvas.reset_matrix();
         canvas.scale((sx, sy));
     }
 }
 
-/// Draw `plan` onto `target`, reusing static layers from `cache`. Transition
-/// rasters match `target` and are allocated on first use.
-pub(crate) fn paint(
-    director: &Director,
+/// Draw `plan` onto `target`, reusing static layers from `director.static_cache`.
+/// Transition rasters match `target` and are allocated on first use.
+fn paint(
+    director: &mut Director,
     plan: &FramePlan,
     target: &mut Surface,
     transitions: &mut Option<(Surface, Surface)>,
-    cache: &mut LayerCache,
 ) -> Result<(), RenderError> {
     if transitions.is_none() && plan.layers.iter().any(|layer| matches!(layer, Layer::Transition { .. })) {
         let info = target.image_info();
         let mut raster = || target.new_surface(&info).ok_or(RenderError::Surface(info.width(), info.height()));
         *transitions = Some((raster()?, raster()?));
     }
+    let scale = (director.output_scale_x, director.output_scale_y);
     target.canvas().clear(clear_color(director));
-    begin_scene_canvas(target.canvas(), director);
+    begin_scene_canvas(target.canvas(), scale);
     let painter = Painter { scene: &director.scene, dirty: plan.dirty.as_ref() };
+    let cache = &mut director.static_cache;
     for layer in &plan.layers {
         match layer {
             Layer::Scene { root, opacity } => painter.root(cache, *root, target.canvas(), *opacity)?,
@@ -156,18 +171,18 @@ pub(crate) fn paint(
                 let (a, b) = transitions.as_mut().unwrap();
                 for (surface, root) in [(&mut *a, *from), (&mut *b, *to)] {
                     surface.canvas().clear(Color::TRANSPARENT);
-                    begin_scene_canvas(surface.canvas(), director);
+                    begin_scene_canvas(surface.canvas(), scale);
                     painter.root(cache, root, surface.canvas(), 1.0)?;
                 }
                 let (from_image, to_image) = (a.image_snapshot(), b.image_snapshot());
                 let canvas = target.canvas();
-                let scaled = director.output_scale_x != 1.0 || director.output_scale_y != 1.0;
+                let scaled = scale != (1.0, 1.0);
                 let (width, height) = if scaled {
                     canvas.save();
                     canvas.reset_matrix();
                     (
-                        (director.width as f32 * director.output_scale_x).round() as i32,
-                        (director.height as f32 * director.output_scale_y).round() as i32,
+                        (director.width as f32 * scale.0).round() as i32,
+                        (director.height as f32 * scale.1).round() as i32,
                     )
                 } else {
                     (director.width, director.height)
@@ -179,40 +194,40 @@ pub(crate) fn paint(
             }
         }
     }
+    if director.debug_overlays {
+        debug_overlays(&director.scene, target.canvas());
+    }
     Ok(())
 }
 
-/// Evaluate and paint the frame at `time` into `target`. With more than one
-/// sample per frame, sub-frames spread across the shutter add up at equal weight.
-pub(crate) fn render_sampled(
-    director: &mut Director,
-    layout: &mut LayoutEngine,
-    time: f64,
-    target: &mut Surface,
-    scratch: &mut Scratch,
-) -> Result<(), RenderError> {
-    let samples = director.samples_per_frame.max(1);
-    if samples == 1 {
-        let plan = evaluate(director, layout, time);
-        return paint(director, &plan, target, &mut scratch.transitions, &mut scratch.layers);
+impl FrameState {
+    /// Evaluate and paint the frame at `time` into `target`. With more than one
+    /// sample per frame, sub-frames spread across the shutter add up at equal
+    /// weight. Scratch rasters come from `target`, so they share its backend.
+    pub fn render(&mut self, director: &mut Director, time: f64, target: &mut Surface) -> Result<(), RenderError> {
+        let samples = director.samples_per_frame.max(1);
+        if samples == 1 {
+            let plan = evaluate(director, &mut self.layout, time);
+            return paint(director, &plan, target, &mut self.transitions);
+        }
+        if self.accumulation.is_none() {
+            let info = target.image_info();
+            self.accumulation =
+                Some(target.new_surface(&info).ok_or(RenderError::Surface(info.width(), info.height()))?);
+        }
+        let sample_target = self.accumulation.as_mut().unwrap();
+        let shutter = (1.0 / director.fps) * (director.shutter_angle.clamp(0.0, 360.0) as f64 / 360.0);
+        let shutter_start = time - shutter / 2.0;
+        let mut weight = Paint::default();
+        weight.set_alpha_f(1.0 / samples as f32);
+        weight.set_blend_mode(BlendMode::Plus);
+        target.canvas().clear(clear_color(director));
+        for sample in 0..samples {
+            let sample_time = shutter_start + (sample as f64 / (samples - 1) as f64) * shutter;
+            let plan = evaluate(director, &mut self.layout, sample_time);
+            paint(director, &plan, sample_target, &mut self.transitions)?;
+            target.canvas().draw_image(sample_target.image_snapshot(), (0, 0), Some(&weight));
+        }
+        Ok(())
     }
-    if scratch.accumulation.is_none() {
-        let info = target.image_info();
-        scratch.accumulation =
-            Some(target.new_surface(&info).ok_or(RenderError::Surface(info.width(), info.height()))?);
-    }
-    let sample_target = scratch.accumulation.as_mut().unwrap();
-    let shutter = (1.0 / director.fps) * (director.shutter_angle.clamp(0.0, 360.0) as f64 / 360.0);
-    let shutter_start = time - shutter / 2.0;
-    let mut weight = Paint::default();
-    weight.set_alpha_f(1.0 / samples as f32);
-    weight.set_blend_mode(BlendMode::Plus);
-    target.canvas().clear(clear_color(director));
-    for sample in 0..samples {
-        let sample_time = shutter_start + (sample as f64 / (samples - 1) as f64) * shutter;
-        let plan = evaluate(director, layout, sample_time);
-        paint(director, &plan, sample_target, &mut scratch.transitions, &mut scratch.layers)?;
-        target.canvas().draw_image(sample_target.image_snapshot(), (0, 0), Some(&weight));
-    }
-    Ok(())
 }

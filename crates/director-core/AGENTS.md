@@ -1,6 +1,6 @@
 # Purpose
 
-- Own the Director engine: scene graph, timeline, layout, animation, Rhai API, captions, media, project I/O, export, and visual regression tests.
+- Own the Director engine: scene graph, timeline, layout, animation, Rhai API, captions, media, encoder and decoder wrappers, project I/O, and visual regression tests. `director-render` paints and exports frames of a `Director`; core integration tests paint through it as a dev-dependency.
 
 ## Ownership
 
@@ -245,7 +245,7 @@ rather than relying on host system fonts.
 Engine solidity work is specified under `docs/plans/` (index `00`). Local
 spines that this crate owns: time/timeline (`director`/`timeline`/`lifecycle`),
 identity (`scene`/`types` — generational `NodeId`), frame pipeline
-(`systems/renderer`, compile), animation (`animation.rs`), project model
+(compile, dirty sets, `static_cache`), animation (`animation.rs`), project model
 (`project.rs`), determinism (fonts, video/audio clocks). Update
 `docs/architecture/core-contracts.md` when those contracts change.
 
@@ -256,7 +256,7 @@ rewrite returns wrapper id (attach-in-place when target is already
 composition ids are arena-local to the inner director.
 
 Frame pipeline (plan 03): `note_mutation` auto-evicts static/comp caches;
-`render_at_time` falls back to full when uncompiled; dirty static nodes
+`director-render` paints a full frame when uncompiled; dirty static nodes
 never serve cache hits; `expand_dirty_set` includes reverse mask users.
 A full pass reuses `static_cache` when `StaticCacheKey` matches: layout
 width and height, the local transform baked into the snapshot, pivot,
@@ -269,10 +269,10 @@ incremental pass still hits a clean static node without comparing the
 key. Image-only caches (composition surfaces, captured HTML frames)
 still miss on every full pass. Acceptance: `tests/pipeline_equivalence.rs`
 and `tests/static_reuse.rs`.
-`director-render::paint` mirrors this traversal and key with a session-owned
-layer cache; change both together until the core frame path is deleted.
+`director-render::paint` owns the traversal and key; core owns
+`StaticCacheKey`, `StaticCacheEntry` and the `static_cache` map.
 `Element::shares_3d` defaults false and `view_depth` defaults to 0.
-When `shares_3d` is true, `render_node_subtree` collects one depth list.
+When `shares_3d` is true, `director-render` collects one depth list.
 A direct child that also shares 3d contributes its descendants. Depth
 sums `view_depth` along that chain. A non-sharing child stays one plane.
 The list sorts by ascending depth, then z-index, then source order.
@@ -312,11 +312,10 @@ five 640x360 premultiplied RGBA frames per workload via
 
 ## Native video export
 
-- `systems::renderer::render_sampled_at_time` owns shutter sampling and accumulation for export and the CLI frame worker. Scratch and transition surfaces retain the requested backend; preview/still use the same sampling clock as export.
-- `src/export/video.rs`: a supplied Vulkan context requires GPU surface allocation. Flush/submit and read RGBA pixels directly from that surface into one reusable frame buffer; do not draw GPU snapshots onto CPU canvases.
+- `director-render` owns shutter sampling, the export frame loop and Vulkan readback (`director-render/AGENTS.md`). This crate owns the encoder, decoder and audio mix that export feeds.
 - Export passes per-channel sample-frame counts to `mix_audio`, which returns interleaved stereo. The total output remains `duration_to_frame_count` × `audio_samples_per_video_frame(sr, fps, 2)`.
-- Software x264 defaults to preset `slow` and CRF 18. `software_x264_quality(true)` is `ultrafast` and CRF 30. Hardware qp and the alpha VP9 settings stay put under the draft switch. `render_export` keeps draft off. Unit test: `draft_software_x264`.
-- `video_wrapper::Encoder::new` streams audio per frame through `encode_audio` into a raw temp file, and `finish` muxes it in a second FFmpeg pass. `Encoder::with_audio` takes the whole premixed track, writes it before spawning, and feeds it to the encoding FFmpeg process as a second input mapped `0:v` and `1:a`, so `finish` only waits; `encode_audio` errors there. `Encoder::abort` kills FFmpeg and deletes its temp files and a partial single-pass destination. `director-render` exports through `with_audio`; acceptance is its `document_export_decodes_like_the_core_export`.
+- Software x264 defaults to preset `slow` and CRF 18. `software_x264_quality(true)` is `ultrafast` and CRF 30. Hardware qp and the alpha VP9 settings stay put under the draft switch. `director_render::render_export` keeps draft off. Unit test: `draft_software_x264`.
+- `video_wrapper::Encoder::new` streams audio per frame through `encode_audio` into a raw temp file, and `finish` muxes it in a second FFmpeg pass. `Encoder::with_audio` takes the whole premixed track, writes it before spawning, and feeds it to the encoding FFmpeg process as a second input mapped `0:v` and `1:a`, so `finish` only waits; `encode_audio` errors there. `Encoder::abort` kills FFmpeg and deletes its temp files and a partial single-pass destination. `director-render` exports through `with_audio`; acceptance is its `document_export_decodes_like_the_live_export`.
 - End-to-end A/V acceptance is `cargo test -p director-cli --test html_export`, with FFmpeg and ffprobe in PATH.
 - Opaque export is full-range `yuv420p` tagged BT.709. FFmpeg 7.1+ takes primaries and transfer from the frames and ignores `-color_primaries` and `-color_trc`, so the encoder runs `setparams=color_primaries=bt709:color_trc=bt709` first. FFmpeg before 7.1 (Ubuntu 24.04 ships 6.1) converts RGB to limited-range BT.601 whatever `-color_range` and `-colorspace` say, so `scale=out_color_matrix=bt709:out_range=full` follows the setparams, and alpha export runs `scale=out_range=full`. Acceptance: `export_tags_bt709_primaries_and_transfer` for the tags and `export_samples_are_full_range_bt709_like_their_tags` for the samples, which decodes as full-range BT.709 and checks a red and a black patch.
 - `FFmpegDriver::ensure_available` reads `libavcodec_version` and warns below 61.19 (FFmpeg 7.1). Git builds print `N-...` in place of a release number, so the libavcodec line is the only reliable version. Unit test: `reads_libavcodec_version_from_release_and_git_builds`.
@@ -402,12 +401,12 @@ five 640x360 premultiplied RGBA frames per workload via
 - `Director.compile()` builds the graph from entity refs, audio bindings,
   parent-child hierarchy, and mask references. `Director.invalidate(inputs)` returns
   the transitive set of affected node IDs and stores it in `Director.dirty_nodes`.
-- `render_at_time` uses `Director.dirty_nodes` to drive incremental work:
+- `director-render` frames use `Director.dirty_nodes` to drive incremental work:
   `Director.update()` skips `Element::update` for nodes that are not dirty or
-  ancestors of dirty nodes, and `render_recursive` skips re-rasterizing static
+  ancestors of dirty nodes, and the painter skips re-rasterizing static
   subtrees that are not in the dirty set. Ancestors are included so that transform
   and layout context is still set up correctly for the dirty subtree.
-- `render_export` calls `compile()` before the frame loop so the graph is available
+- `director_render::render_export` calls `compile()` before the frame loop so the graph is available
   during export.
 - `compile()` also scores `style_policy`. Motion sampling reads `node.transform`
   composed with `Element::local_transform`, which elements that animate their own

@@ -13,20 +13,12 @@ fn html(c: &mut Criterion) {
     });
     let mut compiled = compile(SOURCE, options()).unwrap();
     let mut surface = skia_safe::surfaces::raster_n32_premul((1920, 1080)).unwrap();
-    let mut layout = director_core::systems::layout::LayoutEngine::new();
-    let mut surfaces = None;
+    let mut state = director_render::FrameState::default();
     let mut frame = 0;
     c.bench_function("html/native_frame_1080p", |b| {
         b.iter(|| {
             let time = (frame % 90) as f64 / 30.0;
-            director_core::systems::renderer::render_at_time(
-                &mut compiled.director,
-                &mut layout,
-                time,
-                surface.canvas(),
-                &mut surfaces,
-            )
-            .unwrap();
+            state.render(&mut compiled.director, time, &mut surface).unwrap();
             frame += 1;
             black_box(surface.canvas());
         })
