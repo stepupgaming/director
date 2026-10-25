@@ -1781,8 +1781,12 @@ fn filter(s: &str, m: Metrics) -> Result<Option<skia_safe::ImageFilter>, String>
         let mut f = director_core::types::FilterConfig::default();
         let (name, args) = call.split_once('(').ok_or("invalid filter function")?;
         let args = args.strip_suffix(')').ok_or("invalid filter function")?;
+        // Lightning CSS writes a default amount as an empty call, such as `grayscale()` or `blur()`.
         let scalar = || -> Result<f32, String> {
-            if let Some(n) = args.strip_suffix('%') {
+            let args = args.trim();
+            if args.is_empty() {
+                Ok(1.0)
+            } else if let Some(n) = args.strip_suffix('%') {
                 Ok(number(n)? / 100.0)
             } else {
                 number(args)
@@ -1802,11 +1806,13 @@ fn filter(s: &str, m: Metrics) -> Result<Option<skia_safe::ImageFilter>, String>
         };
         let mut shadow = None;
         match name {
+            "blur" if args.trim().is_empty() => {}
             "blur" => f.blur = px(args, m)?,
             "brightness" => f.brightness = scalar()?,
             "contrast" => f.contrast = scalar()?,
             "saturate" => f.saturation = scalar()?,
-            "grayscale" => f.saturation = 1.0 - scalar()?.clamp(0.0, 1.0),
+            "grayscale" => f.saturation = 1.0 - unit(1.0)?,
+            "hue-rotate" if args.trim().is_empty() => {}
             "hue-rotate" => {
                 f.hue_rotate = lightningcss::values::angle::Angle::parse_string(args)
                     .map_err(|e| format!("hue angle: {e:?}"))?

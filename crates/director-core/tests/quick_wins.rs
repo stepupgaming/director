@@ -139,6 +139,7 @@ fn track(samples: Vec<f32>, loop_audio: bool, duration: Option<f64>) -> AudioTra
         start_time: 0.0,
         duration,
         loop_audio,
+        source_path: None,
     }
 }
 

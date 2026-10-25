@@ -140,6 +140,13 @@ impl VideoNode {
 }
 
 impl Element for VideoNode {
+    fn export_body(
+        &self,
+        cx: &mut crate::scene_export::ExportContext,
+    ) -> Result<crate::scene_export::ElementExport, crate::scene_export::ExportError> {
+        crate::scene_export::nodes::video_body(self, cx)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

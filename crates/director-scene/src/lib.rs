@@ -4,11 +4,29 @@
 //! `director-core` exports a live `Director` into [`SceneDocument`]. A later
 //! renderer reads the document back.
 
+pub mod audio;
+pub mod body;
+pub mod caption;
+pub mod channel;
+pub mod effect;
+pub mod entity;
+pub mod layout;
+pub mod timeline;
+
+pub use audio::{AudioEffect, AudioMix, AudioParamAnimation, AudioTrack};
+pub use body::*;
+pub use caption::{ActiveSpeakerCameraBody, CaptionBody, SmartCaptionBody};
+pub use channel::{Channel, Easing, Keyframe, Rgba};
+pub use effect::{Effect, EffectParam, Uniform};
+pub use entity::{BoundingBox, Entity, EntityId, EntityKind, EntitySample};
+pub use layout::LayoutStyle;
+pub use timeline::{Clip, Timeline, Track, Transition};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Document version this crate reads and writes.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// Failure while reading a scene document.
 #[derive(Debug, thiserror::Error)]
@@ -16,8 +34,8 @@ pub enum SceneError {
     /// The bytes are not a scene document.
     #[error("scene json: {0}")]
     Json(#[from] serde_json::Error),
-    /// `version` is newer than [`VERSION`].
-    #[error("unsupported scene version {found}; this crate reads version 1")]
+    /// `version` differs from [`VERSION`].
+    #[error("unsupported scene version {found}; this crate reads version {VERSION}")]
     Version { found: u32 },
 }
 
@@ -32,8 +50,51 @@ pub struct SceneDocument {
     pub height: i32,
     /// Frames per second. Must be finite and positive to render.
     pub fps: f64,
+    /// Horizontal device scale applied at render time.
+    pub output_scale_x: f32,
+    /// Vertical device scale applied at render time.
+    pub output_scale_y: f32,
+    /// Leave uncovered pixels clear.
+    pub transparent_background: bool,
+    pub motion_blur: MotionBlur,
     /// Occupied scene-graph nodes, in arena order.
     pub nodes: Vec<NodeRecord>,
+    pub timeline: Timeline,
+    pub audio: AudioMix,
+    pub entities: Vec<Entity>,
+    /// Media the nodes and audio tracks refer to, by id.
+    pub assets: Vec<AssetRecord>,
+}
+
+/// Temporal supersampling.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MotionBlur {
+    /// Samples blended per frame. `1` disables motion blur.
+    pub samples_per_frame: u32,
+    /// Shutter angle in degrees. `360` opens for the whole frame.
+    pub shutter_angle: f32,
+}
+
+/// Asset table key, such as `image-0`.
+pub type AssetId = String;
+
+/// One piece of media.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AssetRecord {
+    pub id: AssetId,
+    /// MIME type, such as `image/png` or `audio/x-f32le`.
+    pub media_type: String,
+    pub source: AssetSource,
+}
+
+/// Where an asset's bytes live.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AssetSource {
+    /// A file the renderer opens.
+    Path { path: String },
+    /// The bytes in standard base64.
+    Embedded { base64: String },
 }
 
 /// Stable identity. Matches `director-core`'s generational `NodeId`.
@@ -58,15 +119,26 @@ pub struct NodeRecord {
     pub kind: String,
     /// Local stacking order. Higher paints later.
     pub z_index: i32,
-    /// Skia blend-mode debug name, such as `SrcOver`.
+    /// Blend mode in snake case, such as `src_over` or `multiply`.
     pub blend_mode: String,
     /// The subtree may be painted once and reused.
     pub is_static: bool,
+    /// Taffy style for this node.
+    pub layout: LayoutStyle,
     /// Affine channels and the pivot.
     pub transform: TransformChannels,
     /// Opacity channel. `1.0` is opaque.
     pub opacity: Channel,
-    /// Kind-specific fields. Unknown kinds use [`NodeBody::Unspecified`].
+    /// Node whose alpha masks this node.
+    pub mask: Option<NodeRef>,
+    /// CSS filter functions for the subtree.
+    pub filter: Filter,
+    pub path_animation: Option<PathAnimation>,
+    pub path_morph: Option<PathMorph>,
+    pub audio_bindings: Vec<AudioBinding>,
+    /// Entities this node follows or avoids.
+    pub entity_refs: Vec<EntityId>,
+    /// Kind-specific fields.
     pub body: NodeBody,
 }
 
@@ -93,61 +165,77 @@ pub struct TransformChannels {
     pub pivot_y: f32,
 }
 
-/// One animated scalar.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct Channel {
-    /// Samples in time order. A still value is one keyframe at `t = 0`.
-    pub keyframes: Vec<Keyframe>,
-}
-
-/// A sample on a [`Channel`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct Keyframe {
-    /// Time in seconds from the start of the channel.
-    pub time: f64,
-    /// Value at `time`.
-    pub value: f32,
-    /// Easing into this sample. `linear` for the first sample.
-    pub easing: String,
-}
-
-/// sRGB color with straight alpha, each component in `0.0..=1.0`.
+/// CSS filter values. Defaults leave the subtree unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct Rgba {
-    /// Red.
-    pub r: f32,
-    /// Green.
-    pub g: f32,
-    /// Blue.
-    pub b: f32,
-    /// Alpha. `0.0` is clear.
-    pub a: f32,
+pub struct Filter {
+    pub blur: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    /// Degrees.
+    pub hue_rotate: f32,
+    pub invert: f32,
+    pub sepia: f32,
+    pub opacity: f32,
 }
 
-/// Fields that depend on the node kind.
+impl Default for Filter {
+    fn default() -> Self {
+        Self {
+            blur: 0.0,
+            brightness: 1.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            hue_rotate: 0.0,
+            invert: 0.0,
+            sepia: 0.0,
+            opacity: 1.0,
+        }
+    }
+}
+
+/// Motion along a path.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum NodeBody {
-    /// A colored rectangle. Width and height are set only for length sizes.
-    Box {
-        /// Current background. Absent when the box has no fill.
-        background: Option<Rgba>,
-        /// Explicit width in pixels.
-        width: Option<f32>,
-        /// Explicit height in pixels.
-        height: Option<f32>,
-    },
-    /// A text run. Channels for size and color are the current values.
-    Text {
-        /// Concatenated span text.
-        content: String,
-        /// Font size in pixels.
-        font_size: f32,
-        /// Fill color.
-        color: Rgba,
-    },
-    /// The exporter does not yet copy this kind's fields.
-    Unspecified,
+pub struct PathAnimation {
+    /// SVG path data in node pixels.
+    pub path: String,
+    /// Distance along the path in `0.0..=1.0`.
+    pub progress: Channel,
+    /// Rotate the node to the path tangent.
+    pub follow_tangent: bool,
+    pub speed: f32,
+    /// Repeat count. `-1` repeats forever.
+    pub loop_count: i32,
+    /// Seconds for one pass.
+    pub duration: f64,
+}
+
+/// Motion along a path that morphs between two shapes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PathMorph {
+    /// SVG path data at progress 0.
+    pub from_path: String,
+    /// SVG path data at progress 1.
+    pub to_path: String,
+    pub progress: Channel,
+    pub follow_tangent: bool,
+    pub speed: f32,
+    pub loop_count: i32,
+    pub duration: f64,
+}
+
+/// Maps audio band energy to a node property.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AudioBinding {
+    /// Audio track slot.
+    pub track: usize,
+    /// `bass`, `mids` or `highs`.
+    pub band: String,
+    /// `scale`, `opacity`, `x`, `y` or `rotation`.
+    pub property: String,
+    pub min_value: f32,
+    pub max_value: f32,
+    pub smoothing: f32,
 }
 
 impl SceneDocument {
@@ -158,31 +246,22 @@ impl SceneDocument {
 
     /// Parse a document and reject a version this crate does not read.
     pub fn from_json(text: &str) -> Result<Self, SceneError> {
-        let document: Self = serde_json::from_str(text)?;
-        if document.version != VERSION {
-            return Err(SceneError::Version {
-                found: document.version,
-            });
+        let value: serde_json::Value = serde_json::from_str(text)?;
+        let found = value.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        if found != VERSION {
+            return Err(SceneError::Version { found });
         }
-        Ok(document)
+        Ok(serde_json::from_value(value)?)
     }
 
     /// JSON Schema for agents and editors.
     pub fn json_schema() -> schemars::schema::RootSchema {
         schemars::schema_for!(SceneDocument)
     }
-}
 
-impl Channel {
-    /// A channel that holds `value` at time 0 with linear easing.
-    pub fn still(value: f32) -> Self {
-        Self {
-            keyframes: vec![Keyframe {
-                time: 0.0,
-                value,
-                easing: "linear".to_string(),
-            }],
-        }
+    /// The asset with this id.
+    pub fn asset(&self, id: &str) -> Option<&AssetRecord> {
+        self.assets.iter().find(|asset| asset.id == id)
     }
 }
 
@@ -196,6 +275,13 @@ mod tests {
             width: 64,
             height: 32,
             fps: 30.0,
+            output_scale_x: 1.0,
+            output_scale_y: 1.0,
+            transparent_background: false,
+            motion_blur: MotionBlur {
+                samples_per_frame: 1,
+                shutter_angle: 180.0,
+            },
             nodes: vec![NodeRecord {
                 id: NodeRef {
                     index: 0,
@@ -205,8 +291,9 @@ mod tests {
                 children: vec![],
                 kind: "box".to_string(),
                 z_index: 0,
-                blend_mode: "SrcOver".to_string(),
+                blend_mode: "src_over".to_string(),
                 is_static: true,
+                layout: LayoutStyle::default(),
                 transform: TransformChannels {
                     translate_x: Channel::still(0.0),
                     translate_y: Channel::still(0.0),
@@ -223,24 +310,56 @@ mod tests {
                         Keyframe {
                             time: 0.0,
                             value: 0.0,
-                            easing: "linear".to_string(),
+                            easing: Easing::Linear,
                         },
                         Keyframe {
                             time: 1.0,
                             value: 1.0,
-                            easing: "ease_out".to_string(),
+                            easing: Easing::CubicBezier {
+                                x1: 0.2,
+                                y1: 0.0,
+                                x2: 0.0,
+                                y2: 1.0,
+                            },
                         },
                     ],
                 },
-                body: NodeBody::Box {
-                    background: Some(Rgba {
+                mask: None,
+                filter: Filter::default(),
+                path_animation: None,
+                path_morph: None,
+                audio_bindings: vec![],
+                entity_refs: vec![],
+                body: NodeBody::Box(BoxBody {
+                    background: Some(Channel::still(Rgba {
                         r: 1.0,
                         g: 0.0,
                         b: 0.0,
                         a: 1.0,
-                    }),
-                    width: Some(32.0),
-                    height: Some(16.0),
+                    })),
+                    background_gradient: None,
+                    blur: Channel::still(0.0),
+                    shadow_color: None,
+                    shadow_blur: Channel::still(0.0),
+                    shadow_offset_x: Channel::still(0.0),
+                    shadow_offset_y: Channel::still(0.0),
+                    border_radius: Channel::still(4.0),
+                    border_width: Channel::still(0.0),
+                    border_color: None,
+                    overflow: "visible".to_string(),
+                    backdrop_blur: Channel::still(0.0),
+                    extra_shadows: vec![],
+                    clip_path: None,
+                }),
+            }],
+            timeline: Timeline::default(),
+            audio: AudioMix::default(),
+            entities: vec![],
+            assets: vec![AssetRecord {
+                id: "image-0".to_string(),
+                media_type: "image/png".to_string(),
+                source: AssetSource::Path {
+                    path: "logo.png".to_string(),
                 },
             }],
         }
@@ -254,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn a_newer_version_is_rejected() {
+    fn a_different_version_is_rejected() {
         let mut document = sample();
         document.version = VERSION + 1;
         let text = document.to_json().unwrap();
@@ -267,5 +386,11 @@ mod tests {
         let schema = SceneDocument::json_schema();
         let json = serde_json::to_value(schema).unwrap();
         assert!(json["title"].as_str().unwrap().contains("SceneDocument"));
+    }
+
+    #[test]
+    fn default_layout_writes_no_fields() {
+        let json = serde_json::to_string(&LayoutStyle::default()).unwrap();
+        assert_eq!(json, "{}");
     }
 }

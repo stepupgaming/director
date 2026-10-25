@@ -196,7 +196,7 @@ impl Default for ActiveSpeakerCameraConfig {
 /// A video node that digitally reframes footage to follow a tracked speaker.
 #[derive(Clone)]
 pub struct ActiveSpeakerCamera {
-    inner: VideoNode,
+    pub(crate) inner: VideoNode,
     trajectory: CameraTrajectory,
     /// Last known video dimensions, used for clamping the crop rectangle.
     video_size: (f32, f32),
@@ -204,7 +204,7 @@ pub struct ActiveSpeakerCamera {
     /// because decoder timestamps may not match the Director timeline.
     last_time: f64,
     /// Continuity groups that define which entity to follow and when.
-    groups: Vec<ContinuityGroup>,
+    pub(crate) groups: Vec<ContinuityGroup>,
 }
 
 impl ActiveSpeakerCamera {
@@ -394,6 +394,13 @@ impl std::fmt::Debug for ActiveSpeakerCamera {
 }
 
 impl Element for ActiveSpeakerCamera {
+    fn export_body(
+        &self,
+        cx: &mut crate::scene_export::ExportContext,
+    ) -> Result<crate::scene_export::ElementExport, crate::scene_export::ExportError> {
+        crate::scene_export::caption::active_speaker_camera_body(self, cx)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

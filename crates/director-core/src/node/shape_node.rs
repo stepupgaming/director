@@ -197,6 +197,17 @@ impl ShapeNode {
 }
 
 impl Element for ShapeNode {
+    fn kind(&self) -> &'static str {
+        "shape"
+    }
+
+    fn export_body(
+        &self,
+        cx: &mut crate::scene_export::ExportContext,
+    ) -> Result<crate::scene_export::ElementExport, crate::scene_export::ExportError> {
+        crate::scene_export::nodes::shape_body(self, cx)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

@@ -95,3 +95,12 @@ fn unknown_filter_is_rejected() {
     let waffle = compile_error("waffle(1)");
     assert!(waffle.contains("unsupported filter"), "{waffle}");
 }
+
+#[test]
+fn default_amounts_survive_a_chain() {
+    let p = frame(&html("blur(0px) grayscale(1)"), 0.0);
+    let px = pixel(&p, 32, 32);
+    assert!(px[0].abs_diff(px[1]) <= 2 && px[1].abs_diff(px[2]) <= 2, "{px:?}");
+    let p = frame(&html("brightness(1) contrast(1) saturate(1)"), 0.0);
+    assert_eq!(pixel(&p, 32, 32), [255, 0, 0, 255]);
+}

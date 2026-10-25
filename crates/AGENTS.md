@@ -8,7 +8,7 @@
 - `director-html/` owns HTML/CSS/HyperFrames compilation, native CSS adapters, portable authoring projects and bundled assets, optional browser extraction, and Hyper CN compatibility/parity tooling.
 - `director-cli/` owns command-line rendering tools and helper binaries.
 - `director-schema/` owns schema-facing types and JSON schema reflection.
-- `director-scene/` owns the serializable scene document. It has no renderer types. `director-core` exports into it.
+- `director-scene/` owns the serializable scene document. It has no renderer types. `director-core` exports every golden scene into it.
 - `lottie-core/`, `lottie-data/`, and `lottie-skia/` own Lottie parsing, data models, animation logic, and Skia rendering.
 
 ## Local Contracts

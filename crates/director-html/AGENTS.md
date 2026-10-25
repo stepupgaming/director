@@ -87,6 +87,7 @@
 - `mask-mode: luminance` writes Rec.709 luma into alpha and blends with `DstIn`. A non-gradient mask image fails.
 - `clip-path` accepts `polygon()`, `circle()`, `ellipse()`, and `inset()` without `round`. `url()` fails.
 - `filter` accepts `invert`, `sepia`, and `opacity` after the existing color matrix, clamped to `0..=1`.
+- An empty filter call takes the CSS default amount: `blur()` and `hue-rotate()` are no-ops, and `brightness()`, `contrast()`, `saturate()` and `grayscale()` take 1. Lightning CSS prints a default amount this way, so `grayscale(1)` arrives as `grayscale()`. `tests/filter_fns.rs` covers a chain of default amounts.
 - `object-fit` accepts `fill`, `cover`, `contain`, `none`, and `scale-down`; the core `ObjectFit` default stays `Cover`. `object-position` positions image and video content, including a captured video's shared decoder. The default is 50% 50%. Keyword order can swap axes. One keyword plus a length sets the other axis.
 
 ### Text

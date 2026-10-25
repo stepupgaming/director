@@ -72,6 +72,17 @@ impl SpectrumVisualizerNode {
 }
 
 impl Element for SpectrumVisualizerNode {
+    fn kind(&self) -> &'static str {
+        "spectrum_visualizer"
+    }
+
+    fn export_body(
+        &self,
+        cx: &mut crate::scene_export::ExportContext,
+    ) -> Result<crate::scene_export::ElementExport, crate::scene_export::ExportError> {
+        crate::scene_export::nodes::spectrum_body(self, cx)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

@@ -1,23 +1,32 @@
 # Purpose
 
-- Own the serializable scene document: nodes, channels, keyframes, and kind-specific fields, with no renderer types.
+- Own the serializable scene document: nodes, channels, keyframes, kind-specific bodies, timeline, audio mix, semantic entities and the asset table, with no renderer types.
 
 ## Ownership
 
-- `src/lib.rs` owns `SceneDocument`, `NodeRecord`, `Channel`, `NodeBody`, JSON read/write, and the JSON Schema.
+- `src/lib.rs` owns `SceneDocument`, `NodeRecord`, `Filter`, `PathAnimation`, `PathMorph`, `AudioBinding`, `AssetRecord`, `VERSION`, JSON read/write and the JSON Schema.
+- `src/body.rs` owns `NodeBody` and the box, text, media, shape, vector, Lottie, composition, effect and spectrum bodies.
+- `src/caption.rs` owns the caption, smart caption and active speaker camera bodies.
+- `src/channel.rs` owns `Channel`, `Keyframe`, `Easing` and `Rgba`.
+- `src/effect.rs` owns `Effect`, `EffectParam` and `Uniform`.
+- `src/layout.rs` owns `LayoutStyle`, the Taffy-free mirror of a node's layout style.
+- `src/timeline.rs` owns tracks, clips and transitions. `src/audio.rs` owns the mixer tracks and effect chains. `src/entity.rs` owns semantic entities and their samples.
 
 ## Local Contracts
 
-- This crate does not depend on `director-core`, Skia, Taffy, or FFmpeg.
+- This crate does not depend on `director-core`, Skia, Taffy, FFmpeg or uuid.
 - [`VERSION`](src/lib.rs) is the only document version this crate reads. A different version is `SceneError::Version`.
-- `NodeRef` is the generational id (`index`, `generation`).
-- `kind` is the `Element::kind` tag. `NodeBody::Unspecified` means the exporter has not copied that kind's fields yet.
-- `Channel` keyframes are in time order. A still value is one keyframe at time 0.
+- `NodeRef` is the generational id (`index`, `generation`). `kind` is the `Element::kind` tag.
+- Every kind has a `NodeBody` variant tagged by `type` in snake_case. The document has no placeholder body: an element without a document form fails export.
+- `Channel` keyframes are in time order and carry their easing. A still value is one keyframe at time 0.
+- Effects and transitions use their primary `api_catalog` names. Parameters are keyed by name.
+- Media live in the `assets` table and nodes refer to them by `AssetId`. An asset is a source path or base64-embedded bytes with a media type.
+- Entities are sorted by id so equal scenes write equal documents.
 - `director-core::scene_export` writes this document. It does not read one back into a `Director`.
 
 ## Work Guidance
 
-- Add a `NodeBody` variant when an exporter starts copying that kind. Keep the tag snake_case.
+- Add a body field when an element gains state that changes its pixels. Leave caches and derived state out.
 - Do not put Skia, Taffy, or image buffers in this crate.
 
 ## Verification

@@ -374,6 +374,13 @@ impl fmt::Debug for SmartCaptionNode {
 }
 
 impl Element for SmartCaptionNode {
+    fn export_body(
+        &self,
+        cx: &mut crate::scene_export::ExportContext,
+    ) -> Result<crate::scene_export::ElementExport, crate::scene_export::ExportError> {
+        crate::scene_export::caption::smart_caption_body(self, cx)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

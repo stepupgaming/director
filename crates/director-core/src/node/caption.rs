@@ -1230,6 +1230,13 @@ fn lerp_color(a: Color, b: Color, t: f32) -> Color {
 // ── Element trait ─────────────────────────────────────────────────
 
 impl Element for CaptionNode {
+    fn export_body(
+        &self,
+        cx: &mut crate::scene_export::ExportContext,
+    ) -> Result<crate::scene_export::ElementExport, crate::scene_export::ExportError> {
+        crate::scene_export::caption::caption_body(self, cx)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

@@ -655,6 +655,13 @@ impl TextNode {
 }
 
 impl Element for TextNode {
+    fn export_body(
+        &self,
+        cx: &mut crate::scene_export::ExportContext,
+    ) -> Result<crate::scene_export::ElementExport, crate::scene_export::ExportError> {
+        crate::scene_export::nodes::text_body(self, cx)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

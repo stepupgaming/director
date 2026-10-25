@@ -43,6 +43,9 @@ pub fn register(engine: &mut Engine) {
             let mut d = movie.lock_director()?;
             let samples = load_audio_samples(&d, path)?;
             let id = d.add_global_audio(samples);
+            if let Some(track) = d.audio_mixer.get_track_mut(id) {
+                track.source_path = Some(path.to_string());
+            }
             Ok(AudioTrackHandle {
                 director: movie.director.clone(),
                 id,
@@ -75,6 +78,9 @@ pub fn register(engine: &mut Engine) {
                 let samples = load_audio_samples(&d, path)?;
 
                 let id = d.add_scene_audio(samples, scene.start_time, scene.duration);
+                if let Some(track) = d.audio_mixer.get_track_mut(id) {
+                    track.source_path = Some(path.to_string());
+                }
                 if let Some(clip) = d
                     .tracks
                     .iter_mut()

@@ -230,6 +230,8 @@ rather than relying on host system fonts.
 * `tests/visual_suite.rs` renders 40 frames across layout, text, images,
   masks, effects, shapes, animation, compositions, transitions, captions,
   templates and temporal sampling, plus a one-pixel harness self-test.
+* Each frame first exports its scene and round-trips it through
+  `director-scene` JSON. An export failure fails the frame.
 * Goldens live in `tests/visual/golden/<module>/<name>.png`. A missing
   golden fails. `DIRECTOR_UPDATE_GOLDENS=1` rewrites goldens; review the PNG
   diff before committing.
@@ -441,10 +443,15 @@ five 640x360 premultiplied RGBA frames per workload via
 
 ## Scene document
 
-- `src/scene_export.rs` copies a live `Director` into `director_scene::SceneDocument`.
-- `box` and `text` copy their body fields. Other kinds keep hierarchy and transform channels and use `NodeBody::Unspecified`.
+- `src/scene_export/` copies a live `Director` into `director_scene::SceneDocument`. `export_scene` returns `Result<SceneDocument, ExportError>`.
+- Each element writes its own body through `Element::export_body`. The default returns `ExportError::Unsupported`, so a new element kind fails export until it gains a body.
+- `mod.rs` owns node records, channels, easing, gradients, blend modes and entities. `nodes.rs`, `caption.rs` and `effect.rs` own element bodies. `layout.rs`, `timeline.rs` and `audio.rs` own layout, timeline and mixer export.
+- `ExportContext` builds the asset table. Media with a source path become path assets; decoded pixels, raw samples and in-memory SVG are embedded as base64.
+- Values the document cannot hold fail with `ExportError::Unrepresentable`, such as unresolved `calc()` lengths and text with a prebuilt stroke paragraph.
+- Effects and transitions export under their primary `api_catalog` names.
 - The document does not load back into a `Director`.
-- Test: `cargo test -p director-core --release --test scene_document`.
+- The visual suite exports every golden scene, checks the JSON round trip and checks catalog names before it renders.
+- Tests: `tests/scene_document.rs` and `cargo test -p director-core --release --test visual_suite`.
 
 ## Named compositions (Rhai)
 

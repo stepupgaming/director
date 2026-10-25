@@ -47,6 +47,8 @@ pub struct AudioTrack {
     pub duration: Option<f64>,
     /// Whether to loop the audio.
     pub loop_audio: bool,
+    /// Asset path the samples were decoded from. `None` for generated samples.
+    pub source_path: Option<String>,
 }
 
 /// Manages mixing of multiple audio tracks.
@@ -528,6 +530,7 @@ mod tests {
             start_time: 0.0,
             duration: None,
             loop_audio: false,
+            source_path: None,
         };
         let tid = mixer.add_track(track);
 

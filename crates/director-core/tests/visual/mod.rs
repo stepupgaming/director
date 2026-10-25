@@ -302,6 +302,45 @@ pub fn assert_visual_match(
 }
 
 /// Compare `module`/`name` with a per-test tolerance override.
+/// Every golden scene exports to a scene document that survives JSON and
+/// names its effects and transitions by their catalog names.
+fn assert_scene_round_trips(director: &Director) -> Result<(), String> {
+    let document = director_core::scene_export::export_scene(director)
+        .map_err(|err| format!("scene export failed: {err}"))?;
+    let json = document
+        .to_json()
+        .map_err(|err| format!("scene document did not serialize: {err}"))?;
+    let parsed = director_scene::SceneDocument::from_json(&json)
+        .map_err(|err| format!("scene document did not parse back: {err}"))?;
+    if parsed != document {
+        return Err("scene document changed across a JSON round trip".to_string());
+    }
+    check_catalog_names(&document)
+}
+
+fn check_catalog_names(document: &director_scene::SceneDocument) -> Result<(), String> {
+    use director_core::api_catalog::{find_effect, find_transition};
+    for transition in &document.timeline.transitions {
+        if find_transition(&transition.kind).map(|entry| entry.name) != Some(transition.kind.as_str()) {
+            return Err(format!("transition '{}' is not a catalog name", transition.kind));
+        }
+    }
+    for node in &document.nodes {
+        match &node.body {
+            director_scene::NodeBody::Effect(body) => {
+                for effect in &body.effects {
+                    if find_effect(&effect.kind).map(|entry| entry.name) != Some(effect.kind.as_str()) {
+                        return Err(format!("effect '{}' is not a catalog name", effect.kind));
+                    }
+                }
+            }
+            director_scene::NodeBody::Composition(body) => check_catalog_names(&body.document)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn assert_visual_match_with(
     director: &mut Director,
     time: f64,
@@ -310,6 +349,7 @@ pub fn assert_visual_match_with(
     config: &VisualConfig,
 ) -> Result<(), String> {
     require_bundled_fonts(director)?;
+    assert_scene_round_trips(director)?;
     let rendered_bytes = render_png(director, time)?;
     let golden = golden_path(module, name);
 

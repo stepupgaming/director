@@ -90,6 +90,11 @@ impl VectorNode {
         }
     }
 
+    /// The resolved SVG tree.
+    pub fn tree(&self) -> &Tree {
+        &self.tree
+    }
+
     /// Replace the resolved tree and drop the size-keyed pixmap.
     pub fn set_tree(&mut self, tree: Tree) {
         self.tree = Arc::new(tree);
@@ -98,6 +103,13 @@ impl VectorNode {
 }
 
 impl Element for VectorNode {
+    fn export_body(
+        &self,
+        cx: &mut crate::scene_export::ExportContext,
+    ) -> Result<crate::scene_export::ElementExport, crate::scene_export::ExportError> {
+        crate::scene_export::nodes::vector_body(self, cx)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

@@ -69,7 +69,17 @@ pub trait AudioEffect: Send + fmt::Debug {
     fn process(&mut self, samples: &mut [f32], sample_rate: u32, channels: u16);
     fn reset(&mut self);
     fn set_parameter(&mut self, name: &str, value: f32);
+    /// The `add_effect` name and the parameters `set_parameter` accepts.
+    fn describe(&self) -> AudioEffectDescription;
     fn clone_box(&self) -> Box<dyn AudioEffect>;
+}
+
+/// An effect's name and settings, for the scene document.
+pub struct AudioEffectDescription {
+    pub kind: &'static str,
+    /// EQ filter shape, such as `low_pass`.
+    pub filter: Option<&'static str>,
+    pub params: Vec<(&'static str, f32)>,
 }
 
 impl Clone for Box<dyn AudioEffect> {
@@ -232,6 +242,14 @@ impl AudioEffect for Reverb {
         }
     }
 
+    fn describe(&self) -> AudioEffectDescription {
+        AudioEffectDescription {
+            kind: "reverb",
+            filter: None,
+            params: vec![("decay", self.decay), ("wet", self.wet), ("dry", self.dry)],
+        }
+    }
+
     fn clone_box(&self) -> Box<dyn AudioEffect> {
         Box::new(self.clone())
     }
@@ -309,6 +327,19 @@ impl AudioEffect for Delay {
             "wet" => self.wet = value.clamp(0.0, 1.0),
             "dry" => self.dry = value.clamp(0.0, 1.0),
             _ => {}
+        }
+    }
+
+    fn describe(&self) -> AudioEffectDescription {
+        AudioEffectDescription {
+            kind: "delay",
+            filter: None,
+            params: vec![
+                ("delay_time", self.delay_time),
+                ("feedback", self.feedback),
+                ("wet", self.wet),
+                ("dry", self.dry),
+            ],
         }
     }
 
@@ -535,6 +566,22 @@ impl AudioEffect for BiquadEQ {
         }
     }
 
+    fn describe(&self) -> AudioEffectDescription {
+        AudioEffectDescription {
+            kind: "eq",
+            filter: Some(match self.filter_type {
+                BiquadType::LowPass => "low_pass",
+                BiquadType::HighPass => "high_pass",
+                BiquadType::BandPass => "band_pass",
+                BiquadType::Peak => "peak",
+                BiquadType::Notch => "notch",
+                BiquadType::LowShelf => "low_shelf",
+                BiquadType::HighShelf => "high_shelf",
+            }),
+            params: vec![("frequency", self.frequency), ("q", self.q), ("gain_db", self.gain_db)],
+        }
+    }
+
     fn clone_box(&self) -> Box<dyn AudioEffect> {
         Box::new(self.clone())
     }
@@ -630,6 +677,21 @@ impl AudioEffect for Compressor {
             "release" => self.release = value.max(0.001),
             "makeup_gain" | "makeup" => self.makeup_gain = value,
             _ => {}
+        }
+    }
+
+    fn describe(&self) -> AudioEffectDescription {
+        AudioEffectDescription {
+            kind: "compressor",
+            filter: None,
+            params: vec![
+                ("threshold", self.threshold),
+                ("ratio", self.ratio),
+                ("knee", self.knee),
+                ("attack", self.attack),
+                ("release", self.release),
+                ("makeup_gain", self.makeup_gain),
+            ],
         }
     }
 

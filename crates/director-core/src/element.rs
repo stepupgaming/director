@@ -85,6 +85,17 @@ pub trait Element: std::fmt::Debug + ElementClone {
         "unknown"
     }
 
+    /// Copies this element into a scene-document body and opacity channel.
+    ///
+    /// The default reports the kind as unsupported, so an export fails loudly
+    /// for an element without a document form.
+    fn export_body(
+        &self,
+        _cx: &mut crate::scene_export::ExportContext,
+    ) -> Result<crate::scene_export::ElementExport, crate::scene_export::ExportError> {
+        Err(crate::scene_export::ExportError::Unsupported { kind: self.kind() })
+    }
+
     /// Returns self as `Any` for downcasting.
     fn as_any(&self) -> &dyn Any;
     /// Returns mutable self as `Any` for downcasting.
