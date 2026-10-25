@@ -16,7 +16,7 @@ mod frame;
 mod live;
 mod paint;
 
-pub use export::{export_director, frame_times};
+pub use export::{export_director, frame_times, ExportOptions};
 pub use frame::{paint_root, render_frame, FrameState};
 pub use live::{output_dimensions, render_export, render_export_at_scale, set_output_scale, validate_scale, GpuContext};
 
@@ -42,6 +42,8 @@ pub enum RenderError {
     Readback,
     #[error("encoding failed: {0}")]
     Encode(anyhow::Error),
+    #[error("the export was cancelled")]
+    Cancelled,
 }
 
 /// Frames a session paints before another session pays its import and cold

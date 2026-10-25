@@ -7,12 +7,12 @@
 - `src/main.rs` owns the `director-engine` CLI: `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect`, `project`, `compositions`, `preview`, `html`, plus legacy bare `SCRIPT [OUTPUT]`.
 - `src/sheet.rs` owns the contact-sheet plan and PNG. `src/audio_report.rs` owns the mixer loudness report. `src/check.rs` owns canvas-edge findings. `src/snapshot.rs` owns golden PNG comparison. `src/onion.rs` owns the weighted frame blend.
 - `src/batch.rs` owns batch output names and the status report. It stays free of other crate dependencies so `tests/repair_batch.rs` can include it.
-- `src/input.rs` owns common loading for Rhai, HTML, captured DOM, portable native projects and versioned core projects, plus encoder selection.
+- `src/input.rs` owns the shared input flags (`Input`, converted to `director_host::Source`, which loads every input kind) and encoder selection.
 - `src/project.rs` owns portable project packing, element-ID keyed JSON edits, and `project repair`.
-- `src/renderer.rs` owns persistent native frame targets, a `director_render::FrameState` per renderer, synchronized PNG readback, the import registry (core plus `director-html` kinds) and `export_video`, the one video export entry for `render`, `batch`, `html render` and `html benchmark --export`.
+- `src/renderer.rs` owns persistent native frame targets, a `director_render::FrameState` per renderer, synchronized PNG readback and `export_video` (with `director_host::import_registry`), the one video export entry for `render`, `batch`, `html render` and `html benchmark --export`.
 - `src/html.rs` owns `html check|still|render|capture|benchmark`. HTML and capture JSON compile through `director-html`; browser extraction is explicit and is never invoked by native render/still.
 - `src/preview/` owns the preview API server (Axum endpoints and the native worker) for editors and agents; its child DOX owns thread lifetime, accepted revisions, reload and audio caching. The repo ships no browser client.
-- `src/run.rs` owns shared script eval + composition/movie resolution (`eval_script`, `resolve_movie`).
+- `src/run.rs` owns default output naming (`default_video_output`). Script evaluation and movie resolution live in `director_host::script`.
 - `src/gpu.rs` owns Vulkan context creation (`director_render::GpuContext`), explicit HTML GPU requests, native render-surface creation and synchronous RGBA readback.
 - `src/bin/director_manifest.rs` owns agent-facing JSON manifest export (`api`, `schema`, `from-json`, `from-script`).
 - `README.md` owns CLI usage and exit-code documentation.

@@ -1,14 +1,7 @@
-use director_core::scene_import::ImportRegistry;
 use director_core::Director;
+use director_host::import_registry;
 use director_render::{FrameState, GpuContext};
 use std::path::Path;
-
-/// Core kinds plus the `director-html` kinds.
-pub fn import_registry() -> ImportRegistry {
-    let mut registry = ImportRegistry::core();
-    director_html::register_import(&mut registry);
-    registry
-}
 
 /// Export `director` to `output` through the pipelined document export: one
 /// session on a Vulkan `context`, or a CPU worker pool.

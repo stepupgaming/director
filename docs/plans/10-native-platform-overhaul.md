@@ -1,6 +1,6 @@
 # Plan 10: Native platform overhaul
 
-> **Status:** In progress. The phase 1 gate is green locally. The phase 2 gate is green: the director-core golden corpus and the HTML examples and fixtures round-trip through the scene document. Phase 3 has started: `director-core::scene_import` loads a document back into a `Director`, every golden scene renders from its document identically, and `director-render` paints document frames, matching the compiled HTML examples, SMIL, looped video, sampled captures, Paper shaders, Lottie and spectrum scenes within the parity tolerance. Document audio mixes sample-equal to the live mixer. `director-render` is the only frame path: it owns the frame driver (`FrameState`: evaluation, paint, shutter sampling and transitions), the node traversal, preserve-3d sorting, static layer reuse on `Director::static_cache`, composition and capture paint, and the serial live `render_export` with Vulkan targets. Core export, preview, stills, tests and the CLI paint through it, and the core frame path is deleted. CLI exports run the pipelined document export through `export_director`, on a CPU pool or with `--gpu` on one Vulkan session. Live and document frames match across all 59 Rhai examples, the HTML examples and every golden scene.
+> **Status:** In progress. The phase 1 gate is green locally. The phase 2 gate is green: the director-core golden corpus and the HTML examples and fixtures round-trip through the scene document. The phase 3 gate is met (2026-10-25): `director-core::scene_import` loads a document back into a `Director`, every golden scene renders from its document identically, and `director-render` paints document frames, matching the compiled HTML examples, SMIL, looped video, sampled captures, Paper shaders, Lottie and spectrum scenes within the parity tolerance. Document audio mixes sample-equal to the live mixer. `director-render` is the only frame path: it owns the frame driver (`FrameState`: evaluation, paint, shutter sampling and transitions), the node traversal, preserve-3d sorting, static layer reuse on `Director::static_cache`, composition and capture paint, and the serial live `render_export` with Vulkan targets. Core export, preview, stills, tests and the CLI paint through it, and the core frame path is deleted. CLI exports run the pipelined document export through `export_director`, on a CPU pool or with `--gpu` on one Vulkan session. Live and document frames match across all 59 Rhai examples, the HTML examples and every golden scene, and the pipelined export leads the serial export 2.13x and 1.48x on animated 1080p HTML scenes. Phase 4 has started: `director-host` owns input loading and a `Session` over a revisioned scene document with atomic patches by authored name or node id, outline, inspect, warm frame render and export with cancellation and progress, and one JSON error envelope.
 > **Product direction:** Exceed HyperFrames, FFrames and Remotion with a library-first native video platform: HTML/CSS authoring that compiles to a typed scene document, a parallel deterministic renderer, one host session API shared by the CLI, agents and a future editor, and measured proof of speed and quality.
 
 This file is the current-state and handoff document for the active phase. It replaces [plan 09](09-native-fidelity.md) as the active plan. Feature contracts for HTML live in [`crates/director-html/AGENTS.md`](../../crates/director-html/AGENTS.md).
@@ -59,11 +59,11 @@ Gate: every golden scene round-trips through `director-scene` JSON without loss.
 - `director-render` evaluating the document per frame, painting on a worker pool, with the layer cache, media frame server and new encoder path.
 - Delete the old `Director` render path once parity holds.
 
-Gate: golden corpus parity with the old core, and a measured end-to-end 1080p HTML export speedup recorded in the table below.
+Gate: golden corpus parity with the old core, and a measured end-to-end 1080p HTML export speedup recorded in the table below. **Met 2026-10-25.**
 
 ### Phase 4: Host session and agent surface
 
-- `director-host` with patch, revision and cancellation; the CLI becomes a thin client.
+- `director-host` with patch, revision and cancellation; the CLI becomes a thin client. Landed: the session, patch ops, cancellable export and input loading. Open: CLI commands and the preview worker on `Session`.
 - An MCP server mode, generated skills, and `outline`, `diff` and QA-score commands with one JSON error envelope.
 - An editor protocol: shared-memory frames, generation cancel, windowed audio and an edit and seek control plane.
 
@@ -94,9 +94,10 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 431 | 2026-10-25 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 975 | 2026-10-25 | `cargo test --workspace --release` |
+| workspace release tests | 984 | 2026-10-25 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 21 | 2026-10-25 | `cargo test -p director-render --release` |
+| director-host | 9 | 2026-10-25 | `cargo test -p director-host --release` |
 | 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | 1080p HTML export on Vulkan, CLI `html render --gpu` serial `render_export_at_scale` vs pipelined `export_on` (one session, four frames in flight; 90 frames, x264, median of 3; CPU pool export for reference) | native-motion 565 vs 505 ms (CPU 546), image-background 483 vs 415 ms (CPU 396), nested-rule 474 vs 421 ms (CPU 371), text-decoration 485 vs 417 ms (CPU 379); GPU outputs frame-identical to the serial GPU export (framemd5) | 2026-10-25 | `director-engine html render examples/html/<name>.html -o <out>.mp4 --gpu` from `cargo build -p director-cli --release --features vulkan` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
@@ -134,7 +135,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Close phase 3: every CLI export runs the pipelined document export. On CPU it leads the serial export 2.13x and 1.48x on animated scenes and 1.03x to 1.04x on static ones. On Vulkan it cuts 11 to 14 percent off the serial GPU export and beats the CPU pool on native-motion; static GPU scenes trail the CPU pool by about 40 ms because the synchronous readback paces the painter. Next options: record the phase 3 gate as met and start phase 4 (`director-host`); convert GPU frames to YUV420 on the GPU to cut readback and FFmpeg conversion; or run two Vulkan sessions on separate contexts.
+1. Continue phase 4. Options: an MCP server mode (`director-engine mcp`, stdio JSON-RPC over `Session`: open, outline, patch, inspect, render frame, export) to reach the gate first; or move `inspect`, `project edit` and the preview worker onto `Session` so the CLI becomes a thin client; or add `outline` and `diff` commands with the error envelope. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

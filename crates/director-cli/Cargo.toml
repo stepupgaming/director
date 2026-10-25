@@ -11,6 +11,7 @@ clap = { version = "4.5.53", features = ["derive"] }
 director-core = { path = "../director-core" }
 director-html = { path = "../director-html" }
 director-render = { path = "../director-render" }
+director-host = { path = "../director-host" }
 director-schema = { path = "../director-schema" }
 serde = { version = "1.0", features = ["derive"] }
 rhai = "1.23.6"
@@ -37,7 +38,7 @@ tower = { version = "0.5", features = ["util"] }
 [features]
 default = ["video"]
 video = []
-vulkan = ["director-core/vulkan", "director-render/vulkan", "dep:ash"]
+vulkan = ["director-core/vulkan", "director-render/vulkan", "director-host/vulkan", "dep:ash"]
 [[bin]]
 name = "director-engine"
 path = "src/main.rs"

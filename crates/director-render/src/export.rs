@@ -22,6 +22,30 @@ const BATCHES: usize = 2;
 /// leaves the painter room to run ahead.
 const SESSION_FRAMES: usize = 4;
 
+/// Settings of one export beyond the document.
+#[derive(Clone, Default)]
+pub struct ExportOptions {
+    pub mode: EncoderMode,
+    /// Software x264 ultrafast at CRF 30.
+    pub draft: bool,
+    /// Pool sessions for a CPU export; `None` sizes the pool by [`Renderer::pool_for`].
+    pub workers: Option<usize>,
+    /// Checked before each batch paints. A set flag ends the export with
+    /// [`RenderError::Cancelled`] and leaves nothing at the output path.
+    pub cancel: Option<Arc<AtomicBool>>,
+    /// Called on the writer thread with `(encoded, total)` frames after each batch.
+    pub progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+}
+
+impl ExportOptions {
+    pub fn new(mode: EncoderMode) -> Self {
+        Self {
+            mode,
+            ..Self::default()
+        }
+    }
+}
+
 /// Where an export paints.
 enum Target<'a> {
     /// A pool of `Some(workers)` CPU sessions, or one sized by [`Renderer::pool_for`].
@@ -120,18 +144,28 @@ impl Renderer {
     /// Export through `workers` sessions, or a pool sized to the frame count
     /// when `None`. Each pool call paints one frame per worker.
     pub fn export_with(&self, path: &Path, mode: EncoderMode, workers: Option<usize>) -> Result<(), RenderError> {
-        self.export_encoded(path, mode, Target::Pool(workers), false)
+        let options = ExportOptions {
+            workers,
+            ..ExportOptions::new(mode)
+        };
+        self.export_options(path, &options, None)
     }
 
     /// Export through one session that paints on `context`, a Vulkan context
     /// in a `vulkan` build, or on a CPU raster when `None`. The session paints
     /// on the calling thread while the writer thread encodes.
     pub fn export_on(&self, path: &Path, mode: EncoderMode, context: Option<&mut GpuContext>) -> Result<(), RenderError> {
-        self.export_encoded(path, mode, Target::Session(context), false)
+        self.export_encoded(path, &ExportOptions::new(mode), Target::Session(context))
     }
 
-    /// `draft` selects software x264 ultrafast at CRF 30.
-    fn export_encoded(&self, path: &Path, mode: EncoderMode, target: Target, draft: bool) -> Result<(), RenderError> {
+    /// Export with `options`: on one session on `gpu` when given, otherwise
+    /// on a CPU pool of `options.workers`.
+    pub fn export_options(&self, path: &Path, options: &ExportOptions, gpu: Option<&mut GpuContext>) -> Result<(), RenderError> {
+        let target = gpu.map_or(Target::Pool(options.workers), |gpu| Target::Session(Some(gpu)));
+        self.export_encoded(path, options, target)
+    }
+
+    fn export_encoded(&self, path: &Path, options: &ExportOptions, target: Target) -> Result<(), RenderError> {
         let fps = self.document.fps.max(1e-6);
         let times = self.frame_times();
         let (batch, in_flight) = match &target {
@@ -142,9 +176,9 @@ impl Renderer {
         let (width, height) = self.output_size();
         let mut settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
             .with_fps(fps)
-            .with_encoder_mode(mode)
+            .with_encoder_mode(options.mode)
             .with_alpha(self.document.transparent_background)
-            .with_draft(draft);
+            .with_draft(options.draft);
         settings.sample_rate = self.document.audio.sample_rate as i32;
         let (full_tx, full_rx) = mpsc::sync_channel::<(usize, Vec<Frame>)>(in_flight);
         let (empty_tx, empty_rx) = mpsc::channel::<Vec<Frame>>();
@@ -154,6 +188,7 @@ impl Renderer {
         let failed = AtomicBool::new(false);
         std::thread::scope(|scope| {
             let (times, failed) = (&times, &failed);
+            let progress = options.progress.clone();
             // The writer starts FFmpeg, then imports and mixes the whole track while
             // FFmpeg launches and the first batch paints.
             let writer = scope.spawn(move || -> anyhow::Result<()> {
@@ -165,6 +200,9 @@ impl Renderer {
                     full_rx.iter().try_for_each(|(start, frames)| {
                         for (frame, &time) in frames.iter().zip(&times[start..]) {
                             encoder.encode(&frame.rgba, time)?;
+                        }
+                        if let Some(progress) = &progress {
+                            progress(start + frames.len(), times.len());
                         }
                         let _ = empty_tx.send(frames);
                         anyhow::Ok(())
@@ -183,6 +221,9 @@ impl Renderer {
                     Target::Session(context) => Painter::Session(Box::new(SerialSession::new(self, context)?)),
                 };
                 for (index, chunk) in times.chunks(batch).enumerate() {
+                    if options.cancel.as_ref().is_some_and(|cancel| cancel.load(Ordering::Acquire)) {
+                        return Err(RenderError::Cancelled);
+                    }
                     // The writer hung up, so it failed; its join reports why.
                     let Ok(mut frames) = empty_rx.recv() else { break };
                     painter.render_into(chunk, &mut frames)?;
@@ -219,6 +260,10 @@ pub fn export_director(
     draft: bool,
     gpu: Option<&mut GpuContext>,
 ) -> anyhow::Result<()> {
+    let options = ExportOptions {
+        draft,
+        ..ExportOptions::new(director.encoder_mode)
+    };
     let previous = (director.output_scale_x, director.output_scale_y, director.transparent_background);
     let document = set_output_scale(director, scale).map_err(anyhow::Error::msg).and_then(|_| {
         director.transparent_background = alpha;
@@ -230,6 +275,6 @@ pub fn export_director(
     Renderer::new(Arc::new(document?), director.assets.loader.clone())
         .with_registry(registry)
         .with_render_mode(director.render_mode)
-        .export_encoded(path, director.encoder_mode, gpu.map_or(Target::Pool(None), |gpu| Target::Session(Some(gpu))), draft)?;
+        .export_options(path, &options, gpu)?;
     Ok(())
 }

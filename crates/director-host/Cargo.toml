@@ -1,0 +1,25 @@
+[package]
+name = "director-host"
+version = "0.1.0"
+edition = "2021"
+description = "Host session over a Director scene document: open, patch, inspect, render and export."
+license = "MIT"
+
+[dependencies]
+director-core = { workspace = true }
+director-scene = { workspace = true }
+director-render = { path = "../director-render" }
+director-html = { path = "../director-html" }
+rhai = "1.23.6"
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1.43"
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[features]
+default = []
+vulkan = ["director-render/vulkan"]

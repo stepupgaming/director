@@ -960,6 +960,7 @@ dependencies = [
  "axum",
  "clap",
  "director-core",
+ "director-host",
  "director-html",
  "director-render",
  "director-schema",
@@ -1017,6 +1018,23 @@ dependencies = [
  "unicode-segmentation",
  "usvg",
  "uuid",
+]
+
+[[package]]
+name = "director-host"
+version = "0.1.0"
+dependencies = [
+ "director-core",
+ "director-html",
+ "director-render",
+ "director-scene",
+ "rhai",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]
