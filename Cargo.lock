@@ -1050,6 +1050,7 @@ dependencies = [
  "director-core",
  "director-html",
  "director-scene",
+ "keyframe",
  "rayon",
  "rhai",
  "serde_json",

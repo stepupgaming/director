@@ -11,6 +11,7 @@ director-scene = { workspace = true }
 skia-safe = { workspace = true }
 thiserror = { workspace = true }
 rayon = "1.10"
+keyframe = "1.1.1"
 anyhow = { workspace = true }
 
 [dev-dependencies]

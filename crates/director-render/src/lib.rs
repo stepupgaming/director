@@ -9,6 +9,7 @@
 
 mod export;
 mod frame;
+mod paint;
 
 pub use export::frame_times;
 

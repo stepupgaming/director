@@ -269,6 +269,8 @@ incremental pass still hits a clean static node without comparing the
 key. Image-only caches (composition surfaces, captured HTML frames)
 still miss on every full pass. Acceptance: `tests/pipeline_equivalence.rs`
 and `tests/static_reuse.rs`.
+`director-render::paint` mirrors this traversal and key with a session-owned
+layer cache; change both together until the core frame path is deleted.
 `Element::shares_3d` defaults false and `view_depth` defaults to 0.
 When `shares_3d` is true, `render_node_subtree` collects one depth list.
 A direct child that also shares 3d contributes its descendants. Depth

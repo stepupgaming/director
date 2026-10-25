@@ -1,6 +1,6 @@
 # Plan 10: Native platform overhaul
 
-> **Status:** In progress. The phase 1 gate is green locally. The phase 2 gate is green: the director-core golden corpus and the HTML examples and fixtures round-trip through the scene document. Phase 3 has started: `director-core::scene_import` loads a document back into a `Director`, every golden scene renders from its document identically, and `director-render` paints document frames, matching the compiled HTML examples, SMIL, looped video, sampled captures, Paper shaders, Lottie and spectrum scenes within the parity tolerance. Document audio mixes sample-equal to the live mixer. `director-render` owns the frame driver (evaluation into a frame plan, paint, shutter sampling and transitions) and matches the core path live and from the document across all 59 Rhai examples, the HTML examples and every golden scene.
+> **Status:** In progress. The phase 1 gate is green locally. The phase 2 gate is green: the director-core golden corpus and the HTML examples and fixtures round-trip through the scene document. Phase 3 has started: `director-core::scene_import` loads a document back into a `Director`, every golden scene renders from its document identically, and `director-render` paints document frames, matching the compiled HTML examples, SMIL, looped video, sampled captures, Paper shaders, Lottie and spectrum scenes within the parity tolerance. Document audio mixes sample-equal to the live mixer. `director-render` owns the frame driver (evaluation into a frame plan, paint, shutter sampling and transitions), the node traversal, preserve-3d sorting, a session-owned static layer cache and composition paint, and matches the core path live and from the document across all 59 Rhai examples, the HTML examples and every golden scene.
 > **Product direction:** Exceed HyperFrames, FFrames and Remotion with a library-first native video platform: HTML/CSS authoring that compiles to a typed scene document, a parallel deterministic renderer, one host session API shared by the CLI, agents and a future editor, and measured proof of speed and quality.
 
 This file is the current-state and handoff document for the active phase. It replaces [plan 09](09-native-fidelity.md) as the active plan. Feature contracts for HTML live in [`crates/director-html/AGENTS.md`](../../crates/director-html/AGENTS.md).
@@ -96,8 +96,8 @@ One row per check, holding the most recent passing count. Replace the row when a
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
 | workspace release tests | 968 | 2026-10-25 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
-| director-render | 12 | 2026-10-25 | `cargo test -p director-render --release` |
-| 1080p HTML export, core vs `Renderer::export` (pipelined, single FFmpeg pass with premixed audio, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1185 vs 569 ms (2.08x), image-background 607 vs 401 ms (1.51x), nested-rule 371 vs 383 ms (0.97x), text-decoration 386 vs 398 ms (0.97x); single-pass encode-only floor 405, 329, 336, 335 ms; outputs pixel-identical (PSNR inf) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
+| director-render | 15 | 2026-10-25 | `cargo test -p director-render --release` |
+| 1080p HTML export, core vs `Renderer::export` (pipelined, single FFmpeg pass with premixed audio, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1181 vs 580 ms (2.04x), image-background 607 vs 401 ms (1.51x), nested-rule 371 vs 383 ms (0.97x), text-decoration 372 vs 396 ms (0.94x); single-pass encode-only floor 408, 329, 336, 328 ms; native-motion and text-decoration re-run after the paint move; outputs pixel-identical (PSNR inf) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
 | HTML scene_document | 7 | 2026-10-25 | `cargo test -p director-html --release --test scene_document` |
@@ -133,7 +133,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Continue phase 3: document export runs in one FFmpeg pass and leads core 2.08x and 1.51x on animated scenes; static scenes sit within 12 ms of core and about 50 ms above the x264 floor, mostly from FFmpeg starting after the audio import and mix. Move the node traversal, the static layer cache and per-kind paint from core `render_recursive` into `director-render` behind the same parity tests, then switch export to `director-render`.
+1. Continue phase 3: document export runs in one FFmpeg pass and leads core 2.08x and 1.51x on animated scenes; static scenes sit within 12 ms of core and about 50 ms above the x264 floor, mostly from FFmpeg starting after the audio import and mix. The node traversal, static layer cache, depth sort and composition paint now run in `director-render::paint`. Next, switch core export, preview and the CLI to `director-render`, route HTML captures through its traversal, then delete the core frame path.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification

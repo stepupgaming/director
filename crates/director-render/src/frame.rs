@@ -4,9 +4,9 @@
 //! draws into a [`FramePlan`]. [`paint`] draws a plan, and [`render_sampled`]
 //! averages evaluated sub-frames across the shutter for motion blur.
 
+use crate::paint::{LayerCache, Painter};
 use crate::RenderError;
 use director_core::systems::layout::LayoutEngine;
-use director_core::systems::renderer::render_recursive;
 use director_core::systems::transitions::{draw_transition, Transition, TransitionType};
 use director_core::types::NodeId;
 use director_core::Director;
@@ -25,11 +25,12 @@ enum Layer {
     Transition { from: NodeId, to: NodeId, progress: f32, kind: TransitionType },
 }
 
-/// Scratch rasters a session reuses across frames.
+/// Rasters and static layers a session reuses across frames.
 #[derive(Default)]
 pub(crate) struct Scratch {
     accumulation: Option<Surface>,
     transitions: Option<(Surface, Surface)>,
+    layers: LayerCache,
 }
 
 /// Advance `director` to `time`, lay it out and resolve the layers it draws.
@@ -131,12 +132,14 @@ fn begin_scene_canvas(canvas: &Canvas, director: &Director) {
     }
 }
 
-/// Draw `plan` onto `target`. Transition rasters match `target` and are allocated on first use.
+/// Draw `plan` onto `target`, reusing static layers from `cache`. Transition
+/// rasters match `target` and are allocated on first use.
 pub(crate) fn paint(
-    director: &mut Director,
+    director: &Director,
     plan: &FramePlan,
     target: &mut Surface,
     transitions: &mut Option<(Surface, Surface)>,
+    cache: &mut LayerCache,
 ) -> Result<(), RenderError> {
     if transitions.is_none() && plan.layers.iter().any(|layer| matches!(layer, Layer::Transition { .. })) {
         let info = target.image_info();
@@ -145,34 +148,16 @@ pub(crate) fn paint(
     }
     target.canvas().clear(clear_color(director));
     begin_scene_canvas(target.canvas(), director);
-    let dirty = plan.dirty.as_ref();
+    let painter = Painter { scene: &director.scene, dirty: plan.dirty.as_ref() };
     for layer in &plan.layers {
         match layer {
-            Layer::Scene { root, opacity } => render_recursive(
-                &director.scene,
-                &director.assets,
-                &mut director.static_cache,
-                *root,
-                target.canvas(),
-                *opacity,
-                0,
-                dirty,
-            )?,
+            Layer::Scene { root, opacity } => painter.root(cache, *root, target.canvas(), *opacity)?,
             Layer::Transition { from, to, progress, kind } => {
                 let (a, b) = transitions.as_mut().unwrap();
                 for (surface, root) in [(&mut *a, *from), (&mut *b, *to)] {
                     surface.canvas().clear(Color::TRANSPARENT);
                     begin_scene_canvas(surface.canvas(), director);
-                    render_recursive(
-                        &director.scene,
-                        &director.assets,
-                        &mut director.static_cache,
-                        root,
-                        surface.canvas(),
-                        1.0,
-                        0,
-                        dirty,
-                    )?;
+                    painter.root(cache, root, surface.canvas(), 1.0)?;
                 }
                 let (from_image, to_image) = (a.image_snapshot(), b.image_snapshot());
                 let canvas = target.canvas();
@@ -209,7 +194,7 @@ pub(crate) fn render_sampled(
     let samples = director.samples_per_frame.max(1);
     if samples == 1 {
         let plan = evaluate(director, layout, time);
-        return paint(director, &plan, target, &mut scratch.transitions);
+        return paint(director, &plan, target, &mut scratch.transitions, &mut scratch.layers);
     }
     if scratch.accumulation.is_none() {
         let info = target.image_info();
@@ -226,7 +211,7 @@ pub(crate) fn render_sampled(
     for sample in 0..samples {
         let sample_time = shutter_start + (sample as f64 / (samples - 1) as f64) * shutter;
         let plan = evaluate(director, layout, sample_time);
-        paint(director, &plan, sample_target, &mut scratch.transitions)?;
+        paint(director, &plan, sample_target, &mut scratch.transitions, &mut scratch.layers)?;
         target.canvas().draw_image(sample_target.image_snapshot(), (0, 0), Some(&weight));
     }
     Ok(())
