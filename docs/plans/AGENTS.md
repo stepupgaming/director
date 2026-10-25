@@ -10,6 +10,7 @@
 - `08-native-projects-and-runtime.md` - portable HTML/capture projects, validated CLI edits, common input loading and native backend execution. **Done.**
 - `09-native-fidelity.md` - native paint and media fidelity. **Superseded.** Keeps the implemented list, Hyper CN smoke coverage and the refusal backlog. Feature contracts live in `crates/director-html/AGENTS.md`.
 - `10-native-platform-overhaul.md` - scene document, parallel renderer, host session, HTML-first authoring and proof. **In progress.** It is the current-state and handoff document: phases and gates, the latest measurement table, and the next action.
+- `11-transcription-and-competitive-gaps.md` - optional `director-asr` crate with transcript-driven captions and edits, the corrected FFrames scorecard, distribution and the head-to-head benchmark protocol. **Spec.** Its checks record measurements in the plan 10 table while plan 10 is active.
 
 ## Local Contracts
 

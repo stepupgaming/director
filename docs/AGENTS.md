@@ -5,7 +5,7 @@
 ## Ownership
 
 - `architecture/` - engine overview, **normative core contracts**, and reproducible measurements plus the baseline-tracking workflow in `render-performance.md`.
-- `plans/` - engineering plans: completed core hardening, motion/recipes, native projects/runtime, superseded native fidelity, and the active native platform overhaul.
+- `plans/` - engineering plans: completed core hardening, motion/recipes, native projects/runtime, superseded native fidelity, the active native platform overhaul, and the transcription and competitive-gaps spec.
 - `contributing/` - development and documentation workflow.
 - `archive/` - superseded or deferred docs (not current contracts).
 
@@ -31,6 +31,6 @@
 ## Child DOX Index
 
 - `architecture/` - Overview, core contracts, and render performance measurements. Raw benchmark outputs stay under ignored `target/`.
-- `plans/` - Plan index (00), completed plans 01–08, superseded plan 09, and the active plan 10 (native platform overhaul), which is the current-state and handoff document.
+- `plans/` - Plan index (00), completed plans 01–08, superseded plan 09, the active plan 10 (native platform overhaul), which is the current-state and handoff document, and spec plan 11 (transcription engine and competitive gaps).
 - `contributing/` - Development and documentation workflow.
 - `archive/` - Historical audit and deferred product docs.

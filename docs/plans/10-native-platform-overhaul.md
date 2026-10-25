@@ -135,6 +135,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 ## Next action
 
 1. Close phase 3: every CLI export runs the pipelined document export. On CPU it leads the serial export 2.13x and 1.48x on animated scenes and 1.03x to 1.04x on static ones. On Vulkan it cuts 11 to 14 percent off the serial GPU export and beats the CPU pool on native-motion; static GPU scenes trail the CPU pool by about 40 ms because the synchronous readback paces the painter. Next options: record the phase 3 gate as met and start phase 4 (`director-host`); convert GPU frames to YUV420 on the GPU to cut readback and FFmpeg conversion; or run two Vulkan sessions on separate contexts.
+   Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification

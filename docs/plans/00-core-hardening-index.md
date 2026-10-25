@@ -2,7 +2,7 @@
 
 > **Status:** Plans 01–06 implemented (2026-07-19) — core hardening program complete
 > **Priority:** Engine solidity over product surface
-> **Post-core product:** compositions, motion/recipes and CLI landed. Native projects and runtime are [plan 08](08-native-projects-and-runtime.md) (**Done**). Native paint and media fidelity is [plan 09](09-native-fidelity.md) (**Superseded**). The native platform overhaul is [plan 10](10-native-platform-overhaul.md) (**In progress**), which holds current status and the next action.
+> **Post-core product:** compositions, motion/recipes and CLI landed. Native projects and runtime are [plan 08](08-native-projects-and-runtime.md) (**Done**). Native paint and media fidelity is [plan 09](09-native-fidelity.md) (**Superseded**). The native platform overhaul is [plan 10](10-native-platform-overhaul.md) (**In progress**), which holds current status and the next action. Transcription and the FFrames scorecard are [plan 11](11-transcription-and-competitive-gaps.md) (**Spec**).
 
 ## Goal
 
@@ -54,7 +54,7 @@ Do not schedule under this program:
 - Live preview server (landed: `director-engine preview`)
 - Agent inspect→repair product loop
 - Recipes / SDK L1–L3 / template strategy
-- New shader batches, NLE UI, GPU rewrite, in-engine STT
+- New shader batches, NLE UI, GPU rewrite, STT inside the render core (plan 11 places ASR in the optional `director-asr` crate)
 
 ## Plan sequence
 
@@ -71,6 +71,7 @@ Do not schedule under this program:
 | 8 | [08-native-projects-and-runtime.md](08-native-projects-and-runtime.md) | Portable native projects, common loading, headless inspection/edits and GPU backend | **Done** |
 | 9 | [09-native-fidelity.md](09-native-fidelity.md) | Native CSS, SVG, 3D, shader, and captured-media fidelity for the Hyper CN corpus and authored HTML | **Superseded** |
 | 10 | [10-native-platform-overhaul.md](10-native-platform-overhaul.md) | Scene document, parallel renderer, host session, HTML-first authoring, proof of speed and quality | **In progress** |
+| 11 | [11-transcription-and-competitive-gaps.md](11-transcription-and-competitive-gaps.md) | Optional `director-asr` crate (Whisper, Parakeet v3 and Bark 3.0 TDT packs), transcript-driven captions and edits, FFrames scorecard, distribution and head-to-head protocol | **Spec** |
 
 **Dependency order:** `01` first (everything samples time). `02` before trusting incremental edit. `03` can start once dirty APIs are understood; finish after `01`–`02`. `04` parallel after `01` time helpers exist. `05` after identity stabilizes. `06` continuous background; fonts/CI can land anytime.
 
