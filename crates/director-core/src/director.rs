@@ -431,6 +431,7 @@ impl Director {
             duration: None,
             loop_audio: false,
             source_path: None,
+            source_start: 0.0,
         };
         self.audio_mixer.add_track(track)
     }
@@ -551,6 +552,7 @@ impl Director {
             duration: Some(duration),
             loop_audio: false,
             source_path: None,
+            source_start: 0.0,
         };
         self.audio_mixer.add_track(track)
     }

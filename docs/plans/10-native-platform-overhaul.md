@@ -94,10 +94,10 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 433 | 2026-10-25 | `cargo test -p director-core --release` |
 | visual_suite (render and scene round trip) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 955 | 2026-10-25 | `cargo test --workspace --release` |
+| workspace release tests | 956 | 2026-10-25 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
-| HTML scene_document | 6 | 2026-10-25 | `cargo test -p director-html --release --test scene_document` |
+| HTML scene_document | 7 | 2026-10-25 | `cargo test -p director-html --release --test scene_document` |
 | Vulkan engine clippy | pass | 2026-10-22 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
@@ -131,7 +131,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 ## Next action
 
 1. Start phase 3: a `director-render` crate that reads a `SceneDocument` and its asset table and paints one frame, beginning with box, text, image and `html` bodies, compared against the golden corpus and the HTML examples.
-2. HTML audio embeds decoded samples in the asset table. Record its source path through the compile `AssetStore` so the document references the file.
+2. HTML video embeds the whole file in the asset table. Record its `src` through the compile `AssetStore` as audio does.
 3. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification

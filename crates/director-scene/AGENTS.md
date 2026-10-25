@@ -21,7 +21,8 @@
 - Every kind has a `NodeBody` variant tagged by `type` in snake_case. The document has no placeholder body: an element without a document form fails export.
 - `Channel` keyframes are in time order and carry their easing. A still value is one keyframe at time 0.
 - Effects and transitions use their primary `api_catalog` names. Parameters are keyed by name.
-- Media live in the `assets` table and nodes refer to them by `AssetId`. An asset is a source path or base64-embedded bytes with a media type.
+- Media live in the `assets` table and nodes refer to them by `AssetId`. An asset is a source path or base64-embedded bytes with a media type. A path is the reference the scene's asset loader resolved.
+- An audio track's `source_start` skips that many seconds of its path asset. It is 0 and omitted for embedded samples.
 - Entities are sorted by id so equal scenes write equal documents.
 - Values JSON cannot hold have a finite form: an unbounded end time or `infinite` iteration count is `None`. CSS transforms and mixed `calc()` gradient stops are CSS text.
 - `director-core::scene_export` writes this document. It does not read one back into a `Director`.

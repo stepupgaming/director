@@ -1220,6 +1220,11 @@ impl Builder {
                         volume as f32
                     });
                     track.loop_audio = el.value().attr("loop").is_some();
+                    // The document references the file through the compile asset loader.
+                    if !src.starts_with("data:") {
+                        track.source_path = Some(src.into());
+                        track.source_start = media_start;
+                    }
                 }
                 None
             }

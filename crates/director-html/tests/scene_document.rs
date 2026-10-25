@@ -7,7 +7,7 @@ use director_html::{
     CapturedShader, CompileOptions, CompiledHtml, CAPTURE_FORMAT,
 };
 use director_scene::html::{BackgroundLayer, CssFilter, CssValue, GradientShape, SmilEffect};
-use director_scene::{NodeBody, SceneDocument};
+use director_scene::{AssetSource, NodeBody, SceneDocument};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -202,6 +202,39 @@ fn looped_video_round_trips() {
 }
 
 #[test]
+fn audio_files_export_as_path_assets() {
+    let temp = tempfile::tempdir().unwrap();
+    let tone = ffmpeg_tone();
+    std::fs::write(temp.path().join("tone.wav"), &tone).unwrap();
+    let html = format!(
+        "<audio src='tone.wav' data-start='0' data-duration='1' data-media-start='0.25'></audio>         <audio src='data:audio/wav;base64,{}' data-start='0' data-duration='1'></audio>",
+        base64::engine::general_purpose::STANDARD.encode(&tone)
+    );
+    let compiled = compile(
+        &html,
+        CompileOptions {
+            base_dir: temp.path().into(),
+            ..options(64, 64)
+        },
+    )
+    .unwrap();
+    let document = round_trip(&compiled);
+    let [file, inline] = document.audio.tracks.as_slice() else {
+        panic!("expected two audio tracks");
+    };
+    let source = |id: &str| &document.assets.iter().find(|asset| asset.id == id).unwrap().source;
+    assert_eq!(
+        source(&file.asset),
+        &AssetSource::Path {
+            path: "tone.wav".into()
+        }
+    );
+    assert_eq!(file.source_start, 0.25);
+    assert!(matches!(source(&inline.asset), AssetSource::Embedded { .. }));
+    assert_eq!(inline.source_start, 0.0);
+}
+
+#[test]
 fn captures_round_trip_with_shared_samples() {
     let src = "clip.mkv";
     let assets = BTreeMap::from([(
@@ -310,6 +343,23 @@ fn ffmpeg_clip() -> Vec<u8> {
     let result = std::process::Command::new("ffmpeg")
         .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
         .args(["color=c=red:s=64x64:r=30:d=0.5", "-c:v", "ffv1"])
+        .arg(&path)
+        .output()
+        .expect("FFmpeg must be installed for native media compiler tests");
+    assert!(
+        result.status.success(),
+        "fixture generation failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    std::fs::read(path).unwrap()
+}
+
+fn ffmpeg_tone() -> Vec<u8> {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("tone.wav");
+    let result = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
+        .args(["sine=frequency=440:sample_rate=48000:duration=0.5", "-c:a", "pcm_s16le"])
         .arg(&path)
         .output()
         .expect("FFmpeg must be installed for native media compiler tests");

@@ -22,6 +22,9 @@ pub struct AudioTrack {
     pub slot: usize,
     /// The audio file, or the decoded samples when no file exists.
     pub asset: AssetId,
+    /// Seconds of a path asset skipped before playback starts. Embedded samples start at 0.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub source_start: f64,
     /// Gain. `1.0` is unity.
     pub volume: Channel,
     /// Pan. `0.5` is center.
@@ -57,4 +60,8 @@ pub struct AudioParamAnimation {
     /// Parameter name.
     pub param: String,
     pub channel: Channel,
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
 }

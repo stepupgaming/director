@@ -224,6 +224,10 @@ pub(crate) fn compile_capture_with_assets(
                 spec.media.volume as f32
             });
             track.loop_audio = spec.media.looped;
+            if !packed.starts_with("data:") {
+                track.source_path = Some(packed.clone());
+                track.source_start = spec.media.media_start;
+            }
         }
     }
     let metrics = Metrics {

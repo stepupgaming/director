@@ -10,16 +10,17 @@ pub(super) fn export_audio(mixer: &AudioMixer, cx: &mut ExportContext) -> Result
         let Some(track) = track else {
             continue;
         };
-        let asset = match &track.source_path {
-            Some(path) => cx.path_asset("audio", "audio/*", path),
+        let (asset, source_start) = match &track.source_path {
+            Some(path) => (cx.path_asset("audio", "audio/*", path), track.source_start),
             None => {
                 let bytes: Vec<u8> = track.samples.iter().flat_map(|s| s.to_le_bytes()).collect();
-                cx.embedded_asset("audio", "audio/x-f32le", &bytes)
+                (cx.embedded_asset("audio", "audio/x-f32le", &bytes), 0.0)
             }
         };
         tracks.push(AudioTrack {
             slot,
             asset,
+            source_start,
             volume: channel(&track.volume),
             pan: channel(&track.pan),
             start_time: track.start_time,

@@ -128,7 +128,8 @@
 - Background images and inline SVG markup embed as assets. Paper shader images embed as raw RGBA8 (`application/x-rgba8`).
 - Native and captured videos have kind `html_video` and export `HtmlVideoBody` with their loop flag and duration. A capture exports each distinct sampled graph once through `export_graph`, with a per-sample index list.
 - Fonts registered from HTML stay outside the document, matching core text.
-- `tests/scene_document.rs` round-trips every `examples/html` file, a paint fixture, SMIL, a looped video, a two-graph capture and a Paper shader through JSON.
+- Audio with a file `src` exports as a path asset holding that `src`, which the compile `AssetStore` resolves against `base_dir` or frozen blobs, and `data-media-start` becomes `source_start`. A captured track records its packed asset reference the same way. A data URI `src` embeds the decoded samples.
+- `tests/scene_document.rs` round-trips every `examples/html` file, a paint fixture, SMIL, a looped video, file and data URI audio, a two-graph capture and a Paper shader through JSON.
 
 ### CSS animation
 
