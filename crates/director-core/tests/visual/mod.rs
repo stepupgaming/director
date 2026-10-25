@@ -304,7 +304,7 @@ pub fn assert_visual_match(
 /// Compare `module`/`name` with a per-test tolerance override.
 /// Every golden scene exports to a scene document that survives JSON and
 /// names its effects and transitions by their catalog names.
-fn assert_scene_round_trips(director: &Director) -> Result<(), String> {
+fn assert_scene_round_trips(director: &Director) -> Result<director_scene::SceneDocument, String> {
     let document = director_core::scene_export::export_scene(director)
         .map_err(|err| format!("scene export failed: {err}"))?;
     let json = document
@@ -315,7 +315,8 @@ fn assert_scene_round_trips(director: &Director) -> Result<(), String> {
     if parsed != document {
         return Err("scene document changed across a JSON round trip".to_string());
     }
-    check_catalog_names(&document)
+    check_catalog_names(&document)?;
+    Ok(parsed)
 }
 
 fn check_catalog_names(document: &director_scene::SceneDocument) -> Result<(), String> {
@@ -349,7 +350,7 @@ pub fn assert_visual_match_with(
     config: &VisualConfig,
 ) -> Result<(), String> {
     require_bundled_fonts(director)?;
-    assert_scene_round_trips(director)?;
+    let document = assert_scene_round_trips(director)?;
     let rendered_bytes = render_png(director, time)?;
     let golden = golden_path(module, name);
 
@@ -359,12 +360,52 @@ pub fn assert_visual_match_with(
         return Ok(());
     }
 
-    let actual_path = artifact_dir(module).join(format!("{name}.actual.png"));
-    let diff_path = artifact_dir(module).join(format!("{name}.diff.png"));
+    compare_to_golden(&rendered_bytes, module, name, name, config)?;
+    assert_document_renders(&document, director.render_mode, time, module, name, config)
+}
+
+/// Import the exported document into a fresh `Director` and compare its frame
+/// with the same golden. Kinds the importer does not cover yet are skipped.
+fn assert_document_renders(
+    document: &director_scene::SceneDocument,
+    render_mode: RenderMode,
+    time: f64,
+    module: &str,
+    name: &str,
+    config: &VisualConfig,
+) -> Result<(), String> {
+    use director_core::scene_import::{import_scene, ImportRegistry};
+    let loader: Arc<dyn AssetLoader> = Arc::new(ManifestAssetLoader);
+    let mut imported = match import_scene(document, loader, &ImportRegistry::core(), render_mode) {
+        Ok(imported) => imported,
+        Err(err) if err.is_unsupported() => {
+            eprintln!("document render skipped {module}/{name}: {err}");
+            return Ok(());
+        }
+        Err(err) => return Err(format!("scene import failed for {module}/{name}: {err}")),
+    };
+    let rendered_bytes = render_png(&mut imported, time)?;
+    compare_to_golden(&rendered_bytes, module, name, &format!("{name}.document"), config)?;
+    eprintln!("document render matched {module}/{name}");
+    Ok(())
+}
+
+/// Compare an encoded frame with the golden for `name`, writing actual and
+/// diff artifacts under `artifact_name` on failure.
+fn compare_to_golden(
+    rendered_bytes: &[u8],
+    module: &str,
+    name: &str,
+    artifact_name: &str,
+    config: &VisualConfig,
+) -> Result<(), String> {
+    let golden = golden_path(module, name);
+    let actual_path = artifact_dir(module).join(format!("{artifact_name}.actual.png"));
+    let diff_path = artifact_dir(module).join(format!("{artifact_name}.diff.png"));
 
     if !golden.is_file() {
         let mut notes = Vec::new();
-        if let Err(err) = write_bytes(&actual_path, &rendered_bytes) {
+        if let Err(err) = write_bytes(&actual_path, rendered_bytes) {
             notes.push(err);
         } else {
             eprintln!("actual: {}", actual_path.display());
@@ -384,15 +425,15 @@ pub fn assert_visual_match_with(
     let reference = image::open(&golden)
         .map_err(|err| format!("failed to open golden {}: {err}", golden.display()))?
         .to_rgba8();
-    let rendered = image::load_from_memory(&rendered_bytes)
+    let rendered = image::load_from_memory(rendered_bytes)
         .map_err(|err| format!("failed to decode rendered frame: {err}"))?
         .to_rgba8();
 
     if reference.dimensions() != rendered.dimensions() {
-        write_bytes(&actual_path, &rendered_bytes)?;
+        write_bytes(&actual_path, rendered_bytes)?;
         eprintln!("actual: {}", actual_path.display());
         return Err(format!(
-            "size mismatch for {module}/{name}: golden {:?} rendered {:?}\nactual: {}\n{GENERATE_HINT}",
+            "size mismatch for {module}/{artifact_name}: golden {:?} rendered {:?}\nactual: {}\n{GENERATE_HINT}",
             reference.dimensions(),
             rendered.dimensions(),
             actual_path.display()
@@ -408,12 +449,12 @@ pub fn assert_visual_match_with(
         config.channel_delta,
     )?;
     if exceeds_tolerance(&diff, config.max_fraction) {
-        write_bytes(&actual_path, &rendered_bytes)?;
+        write_bytes(&actual_path, rendered_bytes)?;
         save_diff_image(&reference, &rendered, &diff_path, config.channel_delta)?;
         eprintln!("actual: {}", actual_path.display());
         eprintln!("diff: {}", diff_path.display());
         return Err(format!(
-            "visual mismatch for {module}/{name}: {:.6} of pixels differ ({} / {}), channel delta {}, max fraction {}\nactual: {}\ndiff: {}\ngolden: {}",
+            "visual mismatch for {module}/{artifact_name}: {:.6} of pixels differ ({} / {}), channel delta {}, max fraction {}\nactual: {}\ndiff: {}\ngolden: {}",
             diff.fraction,
             diff.different,
             diff.total,

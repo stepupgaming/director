@@ -167,6 +167,23 @@ pub struct TransformChannels {
     pub pivot_y: f32,
 }
 
+impl Default for TransformChannels {
+    /// The identity transform pivoting on the node center.
+    fn default() -> Self {
+        Self {
+            translate_x: Channel::still(0.0),
+            translate_y: Channel::still(0.0),
+            scale_x: Channel::still(1.0),
+            scale_y: Channel::still(1.0),
+            rotation: Channel::still(0.0),
+            skew_x: Channel::still(0.0),
+            skew_y: Channel::still(0.0),
+            pivot_x: 0.5,
+            pivot_y: 0.5,
+        }
+    }
+}
+
 /// CSS filter values. Defaults leave the subtree unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Filter {

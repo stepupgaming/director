@@ -130,6 +130,7 @@
 - Fonts registered from HTML stay outside the document, matching core text.
 - Audio and video with a file `src` export as a path asset holding that `src`, which the compile `AssetStore` resolves against `base_dir` or frozen blobs. Captured media record their packed asset reference the same way. Audio `data-media-start` becomes the track `source_start`; video keeps it on the HTML body. A data URI `src` embeds the decoded audio samples or the video file bytes.
 - `tests/scene_document.rs` round-trips every `examples/html` file, a paint fixture, SMIL, a looped video with a path asset, file and data URI audio, a two-graph capture and a Paper shader through JSON.
+- `src/import.rs` is the inverse for kind `html`: `register_import(&mut registry)` adds its decoder. It rebuilds `PaintStyle` (the compiled `filter` chain from `filters`, the transform from its CSS text), decodes the content body through the registry, rebuilds text content with `compiler::prepare_paragraph`, and restores animations and the Paper shader through each module's `from_doc`. `html_video`, `html_capture` and `svg_smil` have no decoder yet.
 
 ### CSS animation
 

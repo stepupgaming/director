@@ -25,7 +25,7 @@
 - An audio track's `source_start` skips that many seconds of its path asset. It is 0 and omitted for embedded samples.
 - Entities are sorted by id so equal scenes write equal documents.
 - Values JSON cannot hold have a finite form: an unbounded end time or `infinite` iteration count is `None`. CSS transforms and mixed `calc()` gradient stops are CSS text.
-- `director-core::scene_export` writes this document. It does not read one back into a `Director`.
+- `director-core::scene_export` writes this document and `director-core::scene_import` reads it back into a `Director`. `NodeBody::kind` returns the record kind tag of a body, and `TransformChannels::default` is the identity transform pivoting on the center.
 
 ## Work Guidance
 

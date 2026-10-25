@@ -12,6 +12,7 @@ use lightningcss::{
     vendor_prefix::VendorPrefix,
 };
 use director_core::scene_export::{export_length, ExportError};
+use director_core::scene_import::{length, ImportError};
 use director_scene::html as doc;
 use skia_safe::{Matrix, Rect, Shader, TileMode};
 use taffy::LengthPercentage;
@@ -656,6 +657,63 @@ impl NativeGradient {
                         a: f32::from(c.a()) / 255.0,
                     })
                 })
+                .collect(),
+            stops,
+        })
+    }
+}
+
+impl NativeGradient {
+    /// Rebuild a gradient from its scene document form.
+    pub(crate) fn from_doc(gradient: &doc::CssGradient) -> Result<Self, ImportError> {
+        let center = |c: &[director_scene::layout::Length; 2]| (length(c[0]), length(c[1]));
+        let extent = |e: &doc::ShapeExtent| match e {
+            doc::ShapeExtent::ClosestSide => ShapeExtent::ClosestSide,
+            doc::ShapeExtent::FarthestSide => ShapeExtent::FarthestSide,
+            doc::ShapeExtent::ClosestCorner => ShapeExtent::ClosestCorner,
+            doc::ShapeExtent::FarthestCorner => ShapeExtent::FarthestCorner,
+        };
+        let kind = match &gradient.shape {
+            doc::GradientShape::Linear { direction } => Kind::Linear(match *direction {
+                doc::LinearDirection::Angle(angle) => LinearTo::Angle(angle),
+                doc::LinearDirection::Corner { right, bottom } => LinearTo::Corner { right, bottom },
+            }),
+            doc::GradientShape::Radial { center: c, radius } => Kind::Radial {
+                center: center(c),
+                radius: match radius {
+                    doc::RadialSize::CircleExtent(e) => Radius::CircleExtent(extent(e)),
+                    doc::RadialSize::EllipseExtent(e) => Radius::EllipseExtent(extent(e)),
+                    doc::RadialSize::Circle(r) => Radius::Circle(*r),
+                    doc::RadialSize::Ellipse { x, y } => Radius::Ellipse(length(*x), length(*y)),
+                },
+            },
+            doc::GradientShape::Conic { center: c, angle } => Kind::Conic {
+                center: center(c),
+                angle: *angle,
+            },
+        };
+        let stops = gradient
+            .stops
+            .iter()
+            .map(|stop| {
+                stop.as_ref()
+                    .map(|stop| match stop {
+                        doc::GradientStop::Fixed(value) => Ok(StopPos::Fixed(length(*value))),
+                        doc::GradientStop::Calc(css) => CssLength::parse_string(css)
+                            .map(StopPos::Mixed)
+                            .map_err(|e| ImportError::Invalid(format!("gradient stop `{css}`: {e:?}"))),
+                    })
+                    .transpose()
+            })
+            .collect::<Result<_, _>>()?;
+        let channel = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+        Ok(Self {
+            kind,
+            repeating: gradient.repeating,
+            colors: gradient
+                .colors
+                .iter()
+                .map(|color| color.map(|c| skia_safe::Color::from_argb(channel(c.a), channel(c.r), channel(c.g), channel(c.b))))
                 .collect(),
             stops,
         })

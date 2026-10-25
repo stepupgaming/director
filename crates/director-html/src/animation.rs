@@ -3,6 +3,7 @@ use crate::{
     style::{color, number, px, Metrics, PaintStyle},
 };
 use director_core::scene_export::{export_easing, rgba, ExportError};
+use director_core::scene_import::{color as import_color, easing as import_easing, ImportError};
 use director_core::{animation::EasingType, types::Color};
 use director_scene::html as doc;
 use lightningcss::traits::ToCss;
@@ -556,6 +557,51 @@ impl Animation {
             iteration_count: self.count.is_finite().then_some(self.count),
             direction: self.direction.clone(),
             fill_mode: self.fill.clone(),
+            channels,
+        })
+    }
+}
+
+impl Animation {
+    /// Rebuild an animation from its scene document form.
+    pub(crate) fn from_doc(animation: &doc::CssAnimation) -> Result<Self, ImportError> {
+        let channels = animation
+            .channels
+            .iter()
+            .map(|channel| {
+                let points = channel
+                    .keyframes
+                    .iter()
+                    .map(|keyframe| {
+                        Ok(Point {
+                            offset: keyframe.offset,
+                            value: match &keyframe.value {
+                                doc::CssValue::Scalar(v) => Value::Scalar(*v),
+                                doc::CssValue::Color(c) => Value::Color(import_color(*c)),
+                                doc::CssValue::Transform(css) => Value::Transform(
+                                    TransformList::parse_string(css)
+                                        .map_err(|e| ImportError::Invalid(format!("animation transform `{css}`: {e:?}")))?,
+                                ),
+                            },
+                            ease: match &keyframe.timing {
+                                doc::CssTiming::Curve(easing) => Ease::Curve(import_easing(easing)),
+                                doc::CssTiming::Steps { count, start } => Ease::Steps(*count, *start),
+                            },
+                        })
+                    })
+                    .collect::<Result<_, ImportError>>()?;
+                Ok(Channel {
+                    name: channel.property.clone(),
+                    points,
+                })
+            })
+            .collect::<Result<_, ImportError>>()?;
+        Ok(Self {
+            delay: animation.delay,
+            duration: animation.duration,
+            count: animation.iteration_count.unwrap_or(f64::INFINITY),
+            direction: animation.direction.clone(),
+            fill: animation.fill_mode.clone(),
             channels,
         })
     }

@@ -15,6 +15,7 @@ mod decoration_value;
 mod element;
 mod export;
 mod gradient;
+mod import;
 mod grid_template;
 mod object_pos;
 mod project;
@@ -27,6 +28,7 @@ pub use capture::{
     CapturedShader, CapturedShaderImage, CAPTURE_FORMAT,
 };
 pub use compiler::{compile, compile_file};
+pub use import::register_import;
 pub use project::{ElementEdit, NativeProject, ProjectSource, PROJECT_FORMAT};
 
 pub struct CompiledHtml {

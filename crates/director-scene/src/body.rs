@@ -31,6 +31,31 @@ pub enum NodeBody {
     SvgSmil(SvgSmilBody),
 }
 
+impl NodeBody {
+    /// The `NodeRecord::kind` tag this body serializes under.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            NodeBody::Box(_) => "box",
+            NodeBody::Text(_) => "text",
+            NodeBody::Image(_) => "image",
+            NodeBody::Video(_) => "video",
+            NodeBody::Shape(_) => "shape",
+            NodeBody::Vector(_) => "vector",
+            NodeBody::Lottie(_) => "lottie",
+            NodeBody::Composition(_) => "composition",
+            NodeBody::Effect(_) => "effect",
+            NodeBody::Caption(_) => "caption",
+            NodeBody::SmartCaption(_) => "smart_caption",
+            NodeBody::ActiveSpeakerCamera(_) => "active_speaker_camera",
+            NodeBody::SpectrumVisualizer(_) => "spectrum_visualizer",
+            NodeBody::Html(_) => "html",
+            NodeBody::HtmlVideo(_) => "html_video",
+            NodeBody::HtmlCapture(_) => "html_capture",
+            NodeBody::SvgSmil(_) => "svg_smil",
+        }
+    }
+}
+
 /// A painted rectangle.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BoxBody {

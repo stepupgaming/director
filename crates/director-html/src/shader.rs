@@ -2030,3 +2030,32 @@ impl PaperPaint {
         }
     }
 }
+
+impl PaperPaint {
+    /// Rebuild a shader from its scene document form, reading each image's RGBA8 asset.
+    pub(crate) fn from_doc(
+        paper: &director_scene::html::PaperShader,
+        cx: &director_core::scene_import::ImportContext,
+    ) -> Result<Self, director_core::scene_import::ImportError> {
+        let images = paper
+            .images
+            .iter()
+            .map(|(name, image)| {
+                Ok((
+                    name.clone(),
+                    PaperImage {
+                        width: image.width,
+                        height: image.height,
+                        rgba: std::sync::Arc::new(cx.asset_bytes(&image.asset)?),
+                        flip_y: image.flip_y,
+                    },
+                ))
+            })
+            .collect::<Result<_, director_core::scene_import::ImportError>>()?;
+        Ok(Self {
+            sksl: paper.sksl.clone(),
+            uniforms: paper.uniforms.clone(),
+            images,
+        })
+    }
+}

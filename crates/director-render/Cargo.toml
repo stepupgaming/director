@@ -1,0 +1,16 @@
+[package]
+name = "director-render"
+version = "0.1.0"
+edition = "2021"
+description = "Paints frames of a Director scene document."
+license = "MIT"
+
+[dependencies]
+director-core = { workspace = true }
+director-scene = { workspace = true }
+skia-safe = { workspace = true }
+thiserror = { workspace = true }
+rayon = "1.10"
+
+[dev-dependencies]
+director-html = { path = "../director-html" }

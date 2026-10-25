@@ -1041,6 +1041,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "director-render"
+version = "0.1.0"
+dependencies = [
+ "director-core",
+ "director-html",
+ "director-scene",
+ "rayon",
+ "skia-safe",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "director-scene"
 version = "0.1.0"
 dependencies = [
