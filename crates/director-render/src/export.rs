@@ -1,6 +1,7 @@
 //! Document export: a [`FramePool`] paints the next batch of frames while a
 //! writer thread pipes the previous batch to one FFmpeg process that also
-//! encodes the premixed audio track.
+//! encodes the premixed audio track. FFmpeg starts from the document alone, so
+//! it launches while the writer imports and mixes the audio.
 
 use crate::{set_output_scale, Frame, RenderError, Renderer};
 use director_core::scene_export::export_scene;
@@ -26,6 +27,18 @@ pub fn frame_times(director: &Director) -> Vec<f64> {
 }
 
 impl Renderer {
+    /// Export frame times of the document, equal to [`frame_times`] of its import.
+    pub fn frame_times(&self) -> Vec<f64> {
+        let document = &self.document;
+        let fps = document.fps.max(1e-6);
+        let clips = document.timeline.tracks.iter().flat_map(|track| &track.clips);
+        let mut duration = clips.map(|clip| clip.start_time + clip.duration).fold(0.0, f64::max);
+        if duration == 0.0 {
+            duration = 5.0;
+        }
+        (0..duration_to_frame_count(duration, fps)).map(|i| frame_to_time(i, fps)).collect()
+    }
+
     /// Export the document to `path` as H.264 (VP9 with alpha for a transparent
     /// background) with mixed audio, through a pool sized by [`Renderer::pool_for`].
     pub fn export(&self, path: &Path, mode: EncoderMode) -> Result<(), RenderError> {
@@ -46,17 +59,16 @@ impl Renderer {
         workers: Option<usize>,
         draft: bool,
     ) -> Result<(), RenderError> {
-        let mut audio = import_scene(&self.document, self.loader.clone(), &self.registry, self.render_mode)?;
-        let fps = audio.fps.max(1e-6);
-        let times = frame_times(&audio);
+        let fps = self.document.fps.max(1e-6);
+        let times = self.frame_times();
         let mut pool = workers.map_or_else(|| self.pool_for(times.len()), |workers| self.pool_with(workers));
         let (width, height) = self.output_size();
-        let settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
+        let mut settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
             .with_fps(fps)
             .with_encoder_mode(mode)
-            .with_alpha(audio.transparent_background)
+            .with_alpha(self.document.transparent_background)
             .with_draft(draft);
-        let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, fps, 1);
+        settings.sample_rate = self.document.audio.sample_rate as i32;
         let batch = pool.workers();
         let (full_tx, full_rx) = mpsc::sync_channel::<(usize, Vec<Frame>)>(BATCHES);
         let (empty_tx, empty_rx) = mpsc::channel::<Vec<Frame>>();
@@ -66,17 +78,22 @@ impl Renderer {
         let failed = AtomicBool::new(false);
         std::thread::scope(|scope| {
             let (times, failed) = (&times, &failed);
-            // The writer mixes the whole track and starts FFmpeg while the first batch paints.
+            // The writer starts FFmpeg, then imports and mixes the whole track while
+            // FFmpeg launches and the first batch paints.
             let writer = scope.spawn(move || -> anyhow::Result<()> {
-                let samples: Vec<f32> = times.iter().flat_map(|&time| audio.mix_audio(block, time)).collect();
-                let mut encoder = Encoder::with_audio(path, settings, &samples)?;
-                let written = full_rx.iter().try_for_each(|(start, frames)| {
-                    for (frame, &time) in frames.iter().zip(&times[start..]) {
-                        encoder.encode(&frame.rgba, time)?;
-                    }
-                    let _ = empty_tx.send(frames);
-                    anyhow::Ok(())
-                });
+                let mut encoder = Encoder::with_audio_input(path, settings)?;
+                let written = (|| {
+                    let mut audio = import_scene(&self.document, self.loader.clone(), &self.registry, self.render_mode)?;
+                    let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, fps, 1);
+                    encoder.send_audio(times.iter().flat_map(|&time| audio.mix_audio(block, time)).collect())?;
+                    full_rx.iter().try_for_each(|(start, frames)| {
+                        for (frame, &time) in frames.iter().zip(&times[start..]) {
+                            encoder.encode(&frame.rgba, time)?;
+                        }
+                        let _ = empty_tx.send(frames);
+                        anyhow::Ok(())
+                    })
+                })();
                 // A failed paint or write leaves nothing at `path`.
                 if written.is_err() || failed.load(Ordering::Acquire) {
                     encoder.abort();

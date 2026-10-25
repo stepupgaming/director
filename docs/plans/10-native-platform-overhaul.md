@@ -91,13 +91,13 @@ One row per check, holding the most recent passing count. Replace the row when a
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
 | workspace clippy | pass | 2026-10-25 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
-| director-core release tests | 430 | 2026-10-25 | `cargo test -p director-core --release` |
+| director-core release tests | 431 | 2026-10-25 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 974 | 2026-10-25 | `cargo test --workspace --release` |
+| workspace release tests | 975 | 2026-10-25 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 21 | 2026-10-25 | `cargo test -p director-render --release` |
-| 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, single FFmpeg pass with premixed audio, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1159 vs 550 ms (2.11x), image-background 605 vs 395 ms (1.53x), nested-rule 386 vs 395 ms (0.98x), text-decoration 383 vs 392 ms (0.98x); single-pass encode-only floor 400, 337, 337, 328 ms; outputs frame-identical (framemd5); CLI `html render` of native-motion reports export_ms 548 through `export_director` | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
+| 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
 | HTML scene_document | 7 | 2026-10-25 | `cargo test -p director-html --release --test scene_document` |
@@ -133,7 +133,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Close phase 3: CLI CPU exports now run the pipelined document export, which leads the serial export 2.11x and 1.53x on animated scenes and sits within 12 ms of it on static scenes, about 60 ms above the x264 floor. Next options: record the phase 3 gate as met and start phase 4 (`director-host`); start FFmpeg before the audio import and mix to close the static-scene gap; or give the GPU path the pipelined export.
+1. Close phase 3: the pipelined document export now leads the serial export on every bench scene, 2.13x and 1.48x on animated scenes and 1.03x to 1.04x on static scenes, 40 to 50 ms above the x264 floor there. Next options: record the phase 3 gate as met and start phase 4 (`director-host`); give the GPU path the pipelined export; or cut the static-scene x264 drain with faster presets for draft exports.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 
 ## Verification

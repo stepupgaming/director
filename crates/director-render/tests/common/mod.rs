@@ -23,6 +23,7 @@ pub fn differing_fraction(a: &Frame, b: &Frame) -> f64 {
 /// Frames at `times` where `renderer` differs from the live `original`.
 #[allow(dead_code)]
 pub fn mismatches(name: &str, original: Director, renderer: &Renderer, times: &[f64]) -> Vec<String> {
+    assert_eq!(renderer.frame_times(), director_render::frame_times(&original), "{name}: document frame times");
     let mut imported = renderer.session().unwrap_or_else(|e| panic!("{name}: {e}"));
     let mut original = FrameSession::new(original, renderer.output_size()).unwrap();
     let mut failures = Vec::new();
