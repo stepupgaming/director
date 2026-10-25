@@ -380,8 +380,8 @@ five 640x360 premultiplied RGBA frames per workload via
   fraction plus a pixel offset on each axis. The default is 50% 50% with no
   offset. A missing `object_position` key stays at that default. Media is
   reloaded from disk on load when available. Tests: `tests/object_position.rs`.
-- `Lottie` embeds the parsed model JSON and restores speed, loop flag, frame,
-  and opacity.
+- `Lottie` embeds the authored Lottie JSON (`LottieNode::source`) and restores
+  speed, loop flag, frame, and opacity.
 - `Effect` serializes every `EffectType` variant to JSON and rebuilds the
   effect stack, sharing the director's shader cache.
 - `Composition` recursively serializes its internal `Director` project.
@@ -451,9 +451,11 @@ five 640x360 premultiplied RGBA frames per workload via
 - `AudioTrack::source_start` is the seconds of `source_path` skipped before the first decoded sample. A path asset exports it as `source_start`; embedded samples are already trimmed and export 0.
 - Values the document cannot hold fail with `ExportError::Unrepresentable`, such as unresolved `calc()` lengths and text with a prebuilt stroke paragraph.
 - Effects and transitions export under their primary `api_catalog` names.
-- `src/scene_import/` is the inverse: `import_scene(document, loader, registry, render_mode)` rebuilds a live `Director`. An `ImportRegistry` maps a record `kind` to a `Decoder`; `ImportRegistry::core()` covers box, text, image, video, vector, shape, composition, effect, caption and smart caption, and frontends add their kinds through `register`. A kind with no decoder, document audio tracks, node audio bindings and entity refs return `ImportError::Unsupported` (`is_unsupported` looks through node wrappers); malformed data returns `Invalid` or `Asset`.
+- `src/scene_import/` is the inverse: `import_scene(document, loader, registry, render_mode)` rebuilds a live `Director`. An `ImportRegistry` maps a record `kind` to a `Decoder`; `ImportRegistry::core()` covers box, text, image, video, vector, shape, composition, effect, caption, smart caption, Lottie and spectrum visualizer, and frontends add their kinds through `register`. A kind with no decoder, an unknown audio effect kind and entity refs return `ImportError::Unsupported` (`is_unsupported` looks through node wrappers); malformed data returns `Invalid` or `Asset`.
 - Nodes import in arena order with ids remapped by `(index, generation)`. `import_layout` restores every element's Taffy style. Compositions import their nested document through `ImportContext::nested`, sharing the parent fonts. `ImportContext::element` decodes a body nested inside another element.
 - `import_graph(records, scene, cx)` adds records with their node state and parent links to any `SceneGraph` and returns the `NodeIds` map that `resolve` reads; `import_scene` uses it for the root graph and frontends use it for nested graphs such as captures. `ImportContext::shared(key, make)` memoizes a value for one import, such as a shared video decoder.
+- `audio.rs` rebuilds the mixer at the document sample rate with each track at its slot, empty slots kept. A path asset decodes through the loader with `source_start` seconds skipped; an `audio/x-f32le` asset holds the samples. Effects rebuild by kind (reverb, delay, eq with its filter, compressor) from their named parameters. Node audio bindings import with the node state.
+- Lottie nodes export and import `LottieNode::source`, the authored JSON, because the `lottie-data` model serializes into a form its deserializer does not read. `LottieBody::images` carries the override images by Lottie asset id.
 - `nodes::video_node` decodes a path asset in place through `AssetLoader::media_path` (default: the path when it names a file) and an embedded asset through a temporary file.
 - Downstream decoders build on the public helpers: `animated`, `color_animated`, `animated_with`, `easing`, `color`, `gradient`, `blend_mode`, `length`, `effect_type`, `caption_node`, `smart_caption_node`, `resolve` and `nodes::{box_node, text_node, image, image_node, video_node, vector_node, shape_node, text_shadow, text_align, object_fit, object_position}`.
 - The visual suite exports every golden scene, checks the JSON round trip and catalog names, renders the scene, then imports the document into a fresh `Director` and compares that render with the same golden. Failing document renders write `<name>.document.actual.png` and `.diff.png`; an unsupported kind skips the document render with a message.

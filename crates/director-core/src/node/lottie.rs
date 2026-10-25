@@ -61,6 +61,7 @@ impl LottieContext for LottieAssetManager {
 /// A node that renders Lottie animations (JSON-based vector animations).
 pub struct LottieNode {
     asset: Arc<LottieAsset>,
+    source: Arc<serde_json::Value>,
     player: Mutex<LottiePlayer>,
     pub style: Style,
     pub opacity: Animated<f32>,
@@ -101,6 +102,7 @@ impl Clone for LottieNode {
 
         Self {
             asset: self.asset.clone(),
+            source: self.source.clone(),
             player: Mutex::new(player),
             style: self.style.clone(),
             opacity: self.opacity.clone(),
@@ -120,15 +122,23 @@ impl LottieNode {
         assets: HashMap<String, Image>,
         asset_manager: &AssetManager,
     ) -> anyhow::Result<Self> {
-        let json_str = std::str::from_utf8(data)?;
-        let model: LottieJson = serde_json::from_str(json_str)?;
+        Self::from_json(serde_json::from_slice(data)?, assets, asset_manager)
+    }
 
+    /// Creates a new LottieNode from parsed Lottie JSON.
+    pub fn from_json(
+        animation: serde_json::Value,
+        assets: HashMap<String, Image>,
+        asset_manager: &AssetManager,
+    ) -> anyhow::Result<Self> {
+        let model: LottieJson = serde_json::from_value(animation.clone())?;
         let asset = Arc::new(LottieAsset::from_model(model));
         let mut player = LottiePlayer::new();
         player.load(asset.clone());
 
         Ok(Self {
             asset,
+            source: Arc::new(animation),
             player: Mutex::new(player),
             style: Style::DEFAULT,
             opacity: Animated::new(1.0),
@@ -146,6 +156,11 @@ impl LottieNode {
     /// Returns a reference to the underlying Lottie model.
     pub fn model(&self) -> &LottieJson {
         &self.asset.model
+    }
+
+    /// The Lottie JSON this node was built from.
+    pub fn source(&self) -> &serde_json::Value {
+        &self.source
     }
 }
 

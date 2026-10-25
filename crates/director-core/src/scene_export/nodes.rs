@@ -292,16 +292,20 @@ pub(crate) fn vector_body(node: &VectorNode, cx: &mut ExportContext) -> Result<E
     })
 }
 
-pub(crate) fn lottie_body(node: &LottieNode, _cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
-    let animation = serde_json::to_value(node.model())
-        .map_err(|error| ExportError::Unrepresentable(format!("lottie model: {error}")))?;
+pub(crate) fn lottie_body(node: &LottieNode, cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
     Ok(ElementExport {
         opacity: channel(&node.opacity),
         body: NodeBody::Lottie(doc::LottieBody {
-            animation,
+            animation: node.source().clone(),
             frame: channel(&node.frame),
             speed: node.speed,
             loop_animation: node.loop_anim,
+            images: node
+                .asset_manager
+                .images
+                .iter()
+                .map(|(id, image)| Ok((id.clone(), image_asset(image, cx)?)))
+                .collect::<Result<_, ExportError>>()?,
         }),
     })
 }

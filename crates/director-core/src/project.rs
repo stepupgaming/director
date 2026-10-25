@@ -627,9 +627,7 @@ fn lottie_props_to_json(node: &LottieNode) -> JsonMap<String, JsonValue> {
     p.insert("loop_anim".into(), JsonValue::from(node.loop_anim));
     p.insert("frame".into(), JsonValue::from(node.frame.current_value));
     p.insert("opacity".into(), JsonValue::from(node.opacity.current_value));
-    if let Ok(model_json) = serde_json::to_value(node.model()) {
-        p.insert("model".into(), model_json);
-    }
+    p.insert("model".into(), node.source().clone());
     p
 }
 
@@ -637,12 +635,8 @@ fn rebuild_lottie_node_from_props(
     props: &JsonMap<String, JsonValue>,
     assets: &crate::systems::assets::AssetManager,
 ) -> Option<LottieNode> {
-    let model: Option<lottie_data::model::LottieJson> = props
-        .get("model")
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-    let data = if let Some(model) = model {
-        serde_json::to_vec(&model).ok()?
+    let data = if let Some(model) = props.get("model") {
+        serde_json::to_vec(model).ok()?
     } else {
         // Fallback to loading from a persisted source path.
         let path = props

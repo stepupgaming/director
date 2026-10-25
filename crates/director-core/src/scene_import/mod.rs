@@ -5,6 +5,7 @@
 //! its own kinds; `director-html` registers the HTML kinds. A kind with no
 //! decoder is an [`ImportError::Unsupported`].
 
+mod audio;
 mod caption;
 mod effect;
 mod layout;
@@ -86,6 +87,8 @@ impl ImportRegistry {
         registry.register("effect", effect::decode_effect);
         registry.register("caption", caption::decode_caption);
         registry.register("smart_caption", caption::decode_smart_caption);
+        registry.register("lottie", nodes::decode_lottie);
+        registry.register("spectrum_visualizer", nodes::decode_spectrum);
         registry
     }
 
@@ -215,11 +218,6 @@ fn import_into(
     render_mode: RenderMode,
     context: Option<DirectorContext>,
 ) -> Result<Director, ImportError> {
-    if !document.audio.tracks.is_empty() {
-        return Err(ImportError::Unsupported {
-            kind: "audio".to_string(),
-        });
-    }
     let mut director = Director::new(document.width, document.height, document.fps, loader, render_mode, context);
     director.output_scale_x = document.output_scale_x;
     director.output_scale_y = document.output_scale_y;
@@ -234,6 +232,7 @@ fn import_into(
         render_mode,
         shared: HashMap::new(),
     };
+    audio::import_audio(&document.audio, &mut director.audio_mixer, &cx)?;
     let ids = import_graph(&document.nodes, &mut director.scene, &mut cx)?;
     timeline::import_timeline(&mut director, &document.timeline, &ids)?;
     Ok(director)
@@ -278,11 +277,6 @@ pub fn import_graph(
 }
 
 fn import_element(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
-    if !record.audio_bindings.is_empty() {
-        return Err(ImportError::Unsupported {
-            kind: "audio_bindings".to_string(),
-        });
-    }
     if !record.entity_refs.is_empty() {
         return Err(ImportError::Unsupported {
             kind: "entity_refs".to_string(),
@@ -315,6 +309,7 @@ struct NodeState {
     filter: FilterConfig,
     path_animation: Option<PathAnimationState>,
     path_morph: Option<PathMorphState>,
+    audio_bindings: Vec<crate::scene::AudioBinding>,
 }
 
 impl NodeState {
@@ -327,6 +322,7 @@ impl NodeState {
         node.filter = self.filter;
         node.path_animation = self.path_animation;
         node.path_morph = self.path_morph;
+        node.audio_bindings = self.audio_bindings;
     }
 }
 
@@ -386,6 +382,19 @@ fn node_state(record: &NodeRecord, ids: &HashMap<(u32, u32), NodeId>) -> Result<
                 Ok(state)
             })
             .transpose()?,
+        audio_bindings: record
+            .audio_bindings
+            .iter()
+            .map(|binding| crate::scene::AudioBinding {
+                track_id: binding.track,
+                band: binding.band.clone(),
+                property: binding.property.clone(),
+                min_value: binding.min_value,
+                max_value: binding.max_value,
+                smoothing: binding.smoothing,
+                prev_value: binding.min_value,
+            })
+            .collect(),
     })
 }
 

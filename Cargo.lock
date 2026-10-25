@@ -1050,6 +1050,7 @@ dependencies = [
  "director-scene",
  "rayon",
  "skia-safe",
+ "taffy",
  "tempfile",
  "thiserror 2.0.17",
 ]

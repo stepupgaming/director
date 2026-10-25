@@ -1,4 +1,5 @@
-//! Elements for the box, text, image, vector, shape and composition bodies.
+//! Elements for the box, text, image, video, vector, shape, composition,
+//! Lottie and spectrum visualizer bodies.
 //!
 //! Each `*_node` builder reads one body without a node record, so frontends
 //! can rebuild the content they nest inside their own elements.
@@ -6,8 +7,8 @@
 use super::{animated, color, color_animated, gradient, ImportContext, ImportError};
 use crate::element::{Element, TextFit, TextShadow, TextSpan};
 use crate::node::{
-    text::CounterConfig, BoxNode, BoxShadow, CompositionNode, ImageNode, PathCommand, ShapeNode, ShapeType, TextAnimProperty,
-    TextAnimator, TextNode, VectorNode, VideoNode, VideoSource,
+    text::CounterConfig, BoxNode, BoxShadow, CompositionNode, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType,
+    SpectrumVisualizerNode, TextAnimProperty, TextAnimator, TextNode, VectorNode, VideoNode, VideoSource,
 };
 use crate::text_direction::TextDirectionMode;
 use crate::types::{ObjectFit, ObjectPosition};
@@ -320,4 +321,41 @@ pub fn video_node(body: &doc::MediaBody, opacity: &Channel, cx: &ImportContext) 
     node.object_position = object_position(body.position);
     node.border_radius = animated(&body.border_radius)?;
     Ok(node)
+}
+
+pub(crate) fn decode_lottie(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
+    let NodeBody::Lottie(body) = &record.body else {
+        return Err(mismatch(record));
+    };
+    let images = body
+        .images
+        .iter()
+        .map(|(id, asset)| Ok((id.clone(), image(asset, cx)?)))
+        .collect::<Result<_, ImportError>>()?;
+    let mut node = LottieNode::from_json(body.animation.clone(), images, &cx.assets)
+        .map_err(|error| ImportError::Invalid(format!("lottie animation: {error}")))?;
+    node.opacity = animated(&record.opacity)?;
+    node.frame = animated(&body.frame)?;
+    node.speed = body.speed;
+    node.loop_anim = body.loop_animation;
+    Ok(Box::new(node))
+}
+
+pub(crate) fn decode_spectrum(record: &NodeRecord, _cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
+    let NodeBody::SpectrumVisualizer(body) = &record.body else {
+        return Err(mismatch(record));
+    };
+    let mut node = SpectrumVisualizerNode::new(
+        body.track,
+        body.bar_count,
+        color(body.bar_color),
+        body.bar_gap,
+        body.smoothing,
+        body.position.clone(),
+        body.min_height,
+        body.max_height,
+        body.border_radius,
+    );
+    node.opacity = animated(&record.opacity)?;
+    Ok(Box::new(node))
 }

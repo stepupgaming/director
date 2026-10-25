@@ -306,6 +306,9 @@ pub struct LottieBody {
     pub frame: Channel,
     pub speed: f32,
     pub loop_animation: bool,
+    /// Images that replace the animation's image assets, by Lottie asset id.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub images: std::collections::BTreeMap<String, AssetId>,
 }
 
 /// A nested composition with its own canvas, timeline and nodes.

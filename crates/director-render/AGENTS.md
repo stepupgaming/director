@@ -6,6 +6,7 @@
 
 - `src/lib.rs` owns `Renderer`, `FrameSession`, `Frame` and `RenderError`.
 - `tests/html_examples.rs` owns parity between the document render and the compiled `Director` render for HTML: every example, a paint fixture, SMIL, looped video, a sampled capture with path and embedded video, text, SVG and nested boxes, and a Paper shader. Video fixtures need FFmpeg on the path.
+- `tests/core_nodes.rs` owns the same parity for core Lottie (with an override image) and audio scenes: the document re-exports unchanged, the mix is sample-equal and frames match, including a spectrum visualizer and an audio binding.
 
 ## Local Contracts
 
