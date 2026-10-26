@@ -7,6 +7,7 @@
 - `src/` owns parsing, cascade, style translation, deterministic animation, native element adapters, and captured-scene loading.
 - `src/property.rs` owns the property table: every compiled longhand, whether it inherits, and its translation group. `css::inherited` and the unsupported-property refusal read it. `src/computed.rs` owns `ComputedStyle`, which parses each longhand once into a typed Lightning CSS `Property`.
 - `src/style/mod.rs` owns `translate` and the text-path property groups. `src/style/layout.rs` owns the typed layout longhands.
+- `src/element/mod.rs` owns `HtmlElement`, its layout hooks, and the paint order: transform, clip path, effect layer, outer shadows, background, inset shadows, content and children, borders, mask. `src/element/background.rs` owns box shadows, background colors and layers, and `background-clip: text`. `src/element/borders.rs` owns border sides, styles, and corner joins. `src/element/text.rs` owns text decoration lines.
 - `src/project.rs` owns `director-native-project/1`, editable source and validated element overrides; `src/assets.rs` owns asset recording, deduplicated SHA-256 blobs and temporary media-file leases.
 - `tools/` owns optional compile-time browser extraction, Chromium and CPU/GPU parity, real HyperFrames CLI and CPU/GPU export benchmarks, and Hyper CN registry auditing.
 - `tests/` owns executable compatibility and pixel regressions.
@@ -151,7 +152,7 @@
 - Keep measured parity and performance claims tied to reproducible commands and artifacts.
 - CPU/GPU comparisons must synchronize GPU work through readback, verify the actual backend/encoder and probe every MP4's frame count and audio/video/container duration. GPU rendering and NVENC encoding are separate controls.
 - Exercise real Hyper CN original and portrait registry files. Compilation/render smoke results are separate from measured pixel parity.
-- A new CSS longhand needs a `src/property.rs` entry. Port a property group to typed values by matching Lightning CSS `Property` variants in its own `src/style/` module. Painting is in `src/element.rs`. Parallel edits must own separate files or separate match arms.
+- A new CSS longhand needs a `src/property.rs` entry. Port a property group to typed values by matching Lightning CSS `Property` variants in its own `src/style/` module. Painting stages live in `src/element/`. Parallel edits must own separate files or separate match arms.
 - HTML pixel tests clear to opaque black, inject Roboto, and set `body{margin:0}`. Treat a pixel as empty when r, g, and b are below 20.
 
 ## Verification
