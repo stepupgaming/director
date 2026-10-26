@@ -63,7 +63,7 @@ Gate: golden corpus parity with the old core, and a measured end-to-end 1080p HT
 
 ### Phase 4: Host session and agent surface
 
-- `director-host` with patch, revision and cancellation; the CLI becomes a thin client. Landed: the session, patch ops, cancellable export, input loading, reload, cached audio, GPU frames and native project edits; every top-level CLI command that opens an input runs on `Session`, and `Input::load` is gone. Open: the MCP server; `outline` and `diff` commands.
+- `director-host` with patch, revision and cancellation; the CLI becomes a thin client. Landed: the session, patch ops, cancellable export, input loading, reload, cached audio, GPU frames and native project edits; every top-level CLI command that opens an input runs on `Session`, and `Input::load` is gone; `outline` and `diff` print JSON and the error envelope, and the diff carries the patch between two inputs. Open: the MCP server; generated skills; a QA-score command.
 - An MCP server mode, generated skills, and `outline`, `diff` and QA-score commands with one JSON error envelope.
 - An editor protocol: shared-memory frames, generation cancel, windowed audio and an edit and seek control plane.
 
@@ -94,10 +94,10 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 431 | 2026-10-25 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 986 | 2026-10-25 | `cargo test --workspace --release` |
+| workspace release tests | 993 | 2026-10-25 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 21 | 2026-10-25 | `cargo test -p director-render --release` |
-| director-host | 12 | 2026-10-25 | `cargo test -p director-host --release` |
+| director-host | 15 | 2026-10-25 | `cargo test -p director-host --release` |
 | 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | 1080p HTML export on Vulkan, CLI `html render --gpu` serial `render_export_at_scale` vs pipelined `export_on` (one session, four frames in flight; 90 frames, x264, median of 3; CPU pool export for reference) | native-motion 565 vs 505 ms (CPU 546), image-background 483 vs 415 ms (CPU 396), nested-rule 474 vs 421 ms (CPU 371), text-decoration 485 vs 417 ms (CPU 379); GPU outputs frame-identical to the serial GPU export (framemd5) | 2026-10-25 | `director-engine html render examples/html/<name>.html -o <out>.mp4 --gpu` from `cargo build -p director-cli --release --features vulkan` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
@@ -135,7 +135,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Continue phase 4. Options: an MCP server mode (`director-engine mcp`, stdio JSON-RPC over `Session`: open, outline, patch, inspect, render frame, export) to reach the gate first; or add `outline` and `diff` commands with the error envelope; or move `html render|still|benchmark` onto `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Continue phase 4. Options: an MCP server mode (`director-engine mcp`, stdio JSON-RPC over `Session`: open, outline, patch, inspect, render frame, export) to reach the gate; or a QA-score command over `check`, `audio` and the manifest; or move `html render|still|benchmark` onto `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

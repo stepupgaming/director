@@ -241,3 +241,45 @@ fn project_edits_compile_before_they_apply_and_save_atomically() {
     let html_edit = Session::open(&Source::new(html)).unwrap().edit_project(edit("box")).unwrap_err();
     assert_eq!(html_edit.code, ErrorCode::InvalidArgument);
 }
+
+#[test]
+fn diff_of_equal_inputs_is_empty() {
+    let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let before = Session::open(&Source::new(html_input(one.path(), "red"))).unwrap();
+    let after = Session::open(&Source::new(html_input(two.path(), "red"))).unwrap();
+    let diff = director_host::diff(&before, &after);
+    assert!(diff.equal, "{}", json!(diff));
+    assert!(diff.patchable);
+    assert!(diff.patch.is_empty());
+}
+
+#[test]
+fn diff_patch_turns_before_into_after() {
+    let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut before = Session::open(&Source::new(html_input(one.path(), "red"))).unwrap();
+    let mut after = Session::open(&Source::new(html_input(two.path(), "blue"))).unwrap();
+    let diff = director_host::diff(&before, &after);
+    assert!(!diff.equal);
+    assert!(diff.added_nodes.is_empty() && diff.removed_nodes.is_empty() && diff.moved_nodes.is_empty());
+    let changed = diff.changed_nodes.iter().find(|node| node.name.as_deref() == Some("box"));
+    assert!(changed.is_some_and(|node| !node.changes.is_empty()), "{}", json!(diff));
+    assert!(diff.patchable);
+    before.patch(0, &diff.patch).unwrap();
+    assert_eq!(**before.document(), **after.document());
+    assert_eq!(before.render_frame(0.1).unwrap(), after.render_frame(0.1).unwrap());
+}
+
+#[test]
+fn diff_reports_added_and_removed_nodes_by_name() {
+    let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let before = Session::open(&Source::new(html_input(one.path(), "red"))).unwrap();
+    let input = html_input(two.path(), "red");
+    std::fs::write(&input, "<link rel='stylesheet' href='style.css'><main data-composition-id='main' data-width='32' data-height='32' data-duration='.6'><div id='dot'></div></main>").unwrap();
+    let after = Session::open(&Source::new(input)).unwrap();
+    let diff = director_host::diff(&before, &after);
+    let names = |nodes: &[director_host::DiffNode]| nodes.iter().filter_map(|node| node.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(&diff.removed_nodes), ["box"], "{}", json!(diff));
+    assert_eq!(names(&diff.added_nodes), ["dot"]);
+    assert!(!diff.patchable);
+    assert!(diff.patch.is_empty());
+}

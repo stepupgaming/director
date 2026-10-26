@@ -9,6 +9,7 @@ mod project;
 mod renderer;
 mod run;
 mod onion;
+mod outline;
 mod sample_times;
 mod sheet;
 mod snapshot;
@@ -86,6 +87,10 @@ enum Commands {
     Project(project::ProjectArgs),
     /// Inspect source IDs, layout, timeline and audio as JSON
     Inspect(InspectArgs),
+    /// Print the node tree and clips of the scene document as JSON
+    Outline(outline::OutlineArgs),
+    /// Diff two inputs' scene documents as JSON, with the patch between them
+    Diff(outline::DiffArgs),
     /// Render a script (or named composition) to video
     Render(RenderArgs),
     /// Render each input with the software encoder into one directory
@@ -569,6 +574,8 @@ fn main() {
         Some(Commands::Html(args)) => html::run(args),
         Some(Commands::Project(args)) => project::run(args),
         Some(Commands::Inspect(args)) => cmd_inspect(args),
+        Some(Commands::Outline(args)) => std::process::exit(flush_status(outline::run_outline(args))),
+        Some(Commands::Diff(args)) => std::process::exit(flush_status(outline::run_diff(args))),
         None => {
             let script = match cli.script {
                 Some(s) => s,

@@ -1,15 +1,16 @@
 # Purpose
 
-- Own the host session API of plan 10 phase 4: one open project as a revisioned `director_scene::SceneDocument` with patch, outline, inspect, frame render and export. The CLI, an MCP server and a future Tauri editor link this crate.
+- Own the host session API of plan 10 phase 4: one open project as a revisioned `director_scene::SceneDocument` with patch, outline, diff, inspect, frame render and export. The CLI, an MCP server and a future Tauri editor link this crate.
 
 ## Ownership
 
 - `src/load.rs` owns `Source` (an input path plus HTML compile settings, the Rhai composition and props) and `Loaded`: loading Rhai, HTML, capture JSON, portable native projects and versioned core projects into a live `Director`, and `Loaded::from_compiled` for compiled HTML, captures and native projects.
 - `src/script.rs` owns Rhai evaluation with the composition registry (`eval_script`) and movie resolution (`resolve_movie`, `ResolveOpts`).
 - `src/session.rs` owns `Session`, `ExportSettings`, the `Outline` types and `import_registry` (core kinds plus `director-html` kinds).
+- `src/diff.rs` owns `diff` and the `Diff` types: the structural diff of two sessions' documents and the patch between them.
 - `src/patch.rs` owns `PatchOp`, `NodeSelector`, `Patch`, selector resolution and op application.
 - `src/error.rs` owns `HostError`, `ErrorCode` and the JSON error envelope.
-- `tests/session.rs` covers open, outline, accepted and rejected patches, conflicts, removal, retiming, frame repaint, inspection, export progress and cancellation on `examples/html/native-motion.html`, plus dependency reload, the cached WAV and native project edits on generated HTML.
+- `tests/session.rs` covers open, outline, accepted and rejected patches, conflicts, removal, retiming, frame repaint, inspection, export progress and cancellation on `examples/html/native-motion.html`, plus dependency reload, the cached WAV, native project edits and diffs on generated HTML.
 
 ## Local Contracts
 
@@ -24,6 +25,7 @@
 - `manifest` returns the render manifest at a time and `audio_mixer` the decoded tracks, both on the `Director` imported from the current revision. `missing_fonts` lists required bundled fonts the system lacks.
 - `audio_wav` mixes the timeline into one float-stereo WAV in export-sized chunks on the export clock and caches it until the next revision.
 - `export` paints the current revision through `director_render::Renderer::export_options` at `ExportSettings::scale` with an optional alpha override, on a CPU pool or on a supplied GPU context. Missing required fonts fail with `missing_font`. A set cancel flag fails with `cancelled` and leaves nothing at the path. Progress reports encoded frames on the writer thread.
+- `diff(before, after)` matches nodes by authored name, then by node id, when kinds agree. It reports document changes outside `/nodes`, added, removed and moved nodes (another parent or sibling order), and node record changes outside `/id`, `/parent` and `/children`, each at the deepest JSON pointer where both sides share the shape. `patchable` holds when no node was added or moved and every match keeps its node id; `patch` (document sets, node sets by name or id, then removals of removed subtree roots) applied to `before` then yields `after`.
 - Times must be finite and nonnegative (`invalid_argument`). Every operation fails with a `HostError`; `envelope()` is `{"error":{"code","message"}}` with snake_case codes.
 
 ## Work Guidance

@@ -4,8 +4,8 @@
 
 ## Ownership
 
-- `src/main.rs` owns the `director-engine` CLI: `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect`, `project`, `compositions`, `preview`, `html`, plus legacy bare `SCRIPT [OUTPUT]`.
-- `src/sheet.rs` owns the contact-sheet plan and PNG. `src/audio_report.rs` owns the mixer loudness report. `src/check.rs` owns canvas-edge findings. `src/snapshot.rs` owns golden PNG comparison. `src/onion.rs` owns the weighted frame blend.
+- `src/main.rs` owns the `director-engine` CLI: `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect`, `outline`, `diff`, `project`, `compositions`, `preview`, `html`, plus legacy bare `SCRIPT [OUTPUT]`.
+- `src/sheet.rs` owns the contact-sheet plan and PNG. `src/audio_report.rs` owns the mixer loudness report. `src/check.rs` owns canvas-edge findings. `src/snapshot.rs` owns golden PNG comparison. `src/onion.rs` owns the weighted frame blend. `src/outline.rs` owns `outline`, `diff` and the error envelope exit mapping.
 - `src/batch.rs` owns batch output names and the status report. It stays free of other crate dependencies so `tests/repair_batch.rs` can include it.
 - `src/input.rs` owns the shared input flags (`Input`, converted to `director_host::Source`, which loads every input kind), `Input::open` into a `director_host::Session`, and encoder selection.
 - `src/project.rs` owns portable project packing and `project edit|repair`, which apply element-ID keyed JSON edits through `director_host::Session::edit_project`.
@@ -26,9 +26,10 @@
 - `audio` prints `{"tracks":[...]}` with integrated LUFS, true peak, loudness range, `clipped_samples`, and `silent`. Non-finite levels are JSON null. A non-finite sample or more than 57600000 samples sets `error` and skips analysis. It exits 0 when the report prints, including silence or clipping, and 1 on load failure.
 - `check` samples the timeline, reports `off_canvas` (error), `clipped` (warning), and `missing_font` (error), and exits 2 when `--fail-on` matches. `--safe-zone <preset>` warns with `safe_zone` when `text`, `caption`, or `smart_caption` enters that inset; other nodes stay on the canvas check. An unknown preset exits 1 with no JSON. Without the flag there is no inset. Zero-size and non-finite bounds are ignored.
 - `snapshot --golden <png>` compares one frame. A channel delta above 16 counts. A difference above 0.001 exits 2 and writes `<stem>.actual.png` and a red `<stem>.diff.png`. `--update` replaces the golden and exits 0. Load and bad arguments exit 1.
+- `outline` prints `Session::outline` as one JSON object. `diff BEFORE AFTER` opens both inputs with the same input flags and prints `director_host::diff`. Both print a failure as the `{"error":{"code","message"}}` envelope on stdout and exit 2 for `render`, `export`, `cancelled` and `missing_font`, else 1.
 - `onion -n N` blends frames with weights 1 through N, capped at 8, and prints JSON.
 - `render --scale` accepts a finite value in `(0, 1]`. Layout width and height stay put, and the raster rounds each side down to an even size. Scale 1 is unchanged, including odd sizes. `--draft-encode` sets software x264 to ultrafast and CRF 30 without changing the raster size. Hardware qp and the alpha VP9 path stay put. The default stays slow and CRF 18.
-- Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect`, `project edit|repair` and `preview` open their input as a `director_host::Session`. Frames paint through `Session::render_frame`, on the session's Vulkan context under `--gpu`. Inspect JSON is `Session::inspect`. `--props` belongs to Rhai composition builders; native project edits use `project edit --patch`. Rhai packing is outside the native authoring format.
+- Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect`, `outline`, `diff`, `project edit|repair` and `preview` open their input as a `director_host::Session`. Frames paint through `Session::render_frame`, on the session's Vulkan context under `--gpu`. Inspect JSON is `Session::inspect`. `--props` belongs to Rhai composition builders; native project edits use `project edit --patch`. Rhai packing is outside the native authoring format.
 - `project repair` uses the `project edit` patch, saves only after validation, then prints inspect JSON at t=0. A rejected repair leaves the saved file unchanged.
 - `render` and `batch` export through `Session::export`; `html render` and `html benchmark --export` through `export_video`. Both run the pipelined document export, which refuses missing required fonts and encodes in one FFmpeg pass while it paints on a CPU worker pool, or with `--gpu` on one session on the Vulkan context. Alpha, `--scale` and `--draft-encode` behave the same on both.
 - `batch --input <path> --output <dir>` renders each input with the software encoder. One failure still reports the other items and exits with the highest item code. `batch --json` prints `{"exit_code","items"}` in place of the `ok`/`fail` lines and keeps that exit code.
@@ -56,6 +57,7 @@
 - `cargo test -p director-cli --features vulkan --bin director-engine gpu_readback -- --ignored` requires a live Vulkan device.
 - `tests/html_export.rs` verifies real FFmpeg/ffprobe frame count and audio/video/container duration alignment.
 - `tests/project_workflow.rs` verifies pack → remove sources → inspect/edit/still/export, including atomic rejection and native command parity.
+- `tests/outline_diff.rs` verifies outline and diff JSON and the load error envelope.
 - `tests/repair_batch.rs` verifies a rejected repair does not write, and the batch report for one failure plus one success.
 - `cargo test -p director-cli --features vulkan --bin director-engine gpu_preview_worker -- --ignored` verifies live GPU ownership with concurrent requests and shutter sampling.
 - `cargo run -p director-cli --bin director-engine -- --help`

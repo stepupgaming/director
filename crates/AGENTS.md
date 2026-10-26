@@ -10,7 +10,7 @@
 - `director-schema/` owns schema-facing types and JSON schema reflection.
 - `director-scene/` owns the serializable scene document. It has no renderer types. `director-core` exports every golden scene into it and imports it back.
 - `director-render/` owns every frame path: painting and exporting a live `Director` or a scene document on worker-owned surfaces.
-- `director-host/` owns input loading and the host session: a revisioned scene document with atomic patches, outline, inspect, frame render and cancellable export, plus the JSON error envelope.
+- `director-host/` owns input loading and the host session: a revisioned scene document with atomic patches, outline, diff, inspect, frame render and cancellable export, plus the JSON error envelope.
 - `lottie-core/`, `lottie-data/`, and `lottie-skia/` own Lottie parsing, data models, animation logic, and Skia rendering.
 
 ## Local Contracts
