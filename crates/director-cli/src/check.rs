@@ -3,8 +3,6 @@
 
 use crate::input::Input;
 use clap::{Parser, ValueEnum};
-use director_core::render_manifest::build_render_manifest;
-use director_core::video_wrapper::RenderMode;
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -159,23 +157,16 @@ pub fn exit_code(findings: &[Finding], fail_on: FailOn) -> i32 {
 }
 
 pub fn run(args: CheckArgs) -> i32 {
-    let loaded = match args.input.load(RenderMode::Export) {
-        Ok(loaded) => loaded,
+    let mut session = match args.input.open() {
+        Ok(session) => session,
         Err(error) => {
             eprintln!("{error}");
             return 1;
         }
     };
-    let mut director = match loaded.movie.director.lock() {
-        Ok(director) => director,
-        Err(_) => {
-            eprintln!("Director lock poisoned");
-            return 1;
-        }
-    };
-    let duration = director.timeline_duration();
-    let mut findings = director
-        .missing_required_fonts
+    let duration = session.duration();
+    let mut findings = session
+        .missing_fonts()
         .iter()
         .map(|font| Finding {
             time: 0.0,
@@ -185,8 +176,8 @@ pub fn run(args: CheckArgs) -> i32 {
             detail: font.clone(),
         })
         .collect::<Vec<_>>();
-    let width = director.width as f32;
-    let height = director.height as f32;
+    let width = session.document().width as f32;
+    let height = session.document().height as f32;
     let zone = match args.safe_zone.as_deref() {
         None => None,
         Some(name) => match director_core::node::caption::scaled_safe_zone(name, height) {
@@ -198,7 +189,13 @@ pub fn run(args: CheckArgs) -> i32 {
         },
     };
     for time in sample_times(duration, args.every) {
-        let manifest = build_render_manifest(&mut director, time);
+        let manifest = match session.manifest(time) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                eprintln!("{error}");
+                return 1;
+            }
+        };
         let canvas_nodes = manifest
             .nodes
             .iter()

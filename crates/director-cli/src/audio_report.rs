@@ -3,7 +3,6 @@
 use crate::input::Input;
 use clap::Parser;
 use director_core::loudness::{analyze_stereo, LoudnessAnalysis};
-use director_core::video_wrapper::RenderMode;
 
 /// 10 minutes of stereo at 48 kHz. Longer tracks are reported and not analyzed.
 pub const MAX_AUDIO_SAMPLES: usize = 48_000 * 2 * 600;
@@ -102,22 +101,21 @@ fn finite_or_null(value: f64) -> serde_json::Value {
 }
 
 pub fn run(args: AudioArgs) -> i32 {
-    let loaded = match args.input.load(RenderMode::Export) {
-        Ok(loaded) => loaded,
+    let mut session = match args.input.open() {
+        Ok(session) => session,
         Err(error) => {
             eprintln!("{error}");
             return 1;
         }
     };
-    let director = match loaded.movie.director.lock() {
-        Ok(director) => director,
-        Err(_) => {
-            eprintln!("Director lock poisoned");
+    let mixer = match session.audio_mixer() {
+        Ok(mixer) => mixer,
+        Err(error) => {
+            eprintln!("{error}");
             return 1;
         }
     };
-    let tracks = director
-        .audio_mixer
+    let tracks = mixer
         .tracks
         .iter()
         .enumerate()
@@ -133,7 +131,7 @@ pub fn run(args: AudioArgs) -> i32 {
         .collect::<Vec<_>>();
     println!(
         "{}",
-        report_tracks(&tracks, director.audio_mixer.sample_rate)
+        report_tracks(&tracks, mixer.sample_rate)
     );
     0
 }

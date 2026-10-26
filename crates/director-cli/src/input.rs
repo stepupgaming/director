@@ -1,12 +1,9 @@
 //! Command-line input flags. Loading lives in `director_host::load`.
 
 use clap::{Args, ValueEnum};
-use director_core::video_wrapper::RenderMode;
-use director_host::Source;
+use director_host::{Session, Source};
 use director_html::{CompileOptions, CompiledHtml};
 use std::path::PathBuf;
-
-pub use director_host::Loaded as LoadedInput;
 
 #[derive(Debug, Args, Clone)]
 pub struct Input {
@@ -52,8 +49,9 @@ impl Input {
         self.source().load_html()
     }
 
-    pub fn load(&self, mode: RenderMode) -> Result<LoadedInput, String> {
-        self.source().load(mode)
+    /// Open the input as a host session with export media semantics.
+    pub fn open(&self) -> Result<Session, String> {
+        Session::open(&self.source()).map_err(|error| error.to_string())
     }
 }
 

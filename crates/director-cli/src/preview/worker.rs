@@ -81,15 +81,8 @@ impl Worker {
 
 /// Open the input on the worker thread, which then owns the GPU context.
 fn open(input: &Input, gpu: bool) -> Result<Session, String> {
-    let context = crate::gpu::required_context(gpu)?;
-    #[cfg_attr(not(feature = "vulkan"), allow(unused_mut))]
-    let mut session = Session::open(&input.source()).map_err(|error| error.to_string())?;
-    #[cfg(feature = "vulkan")]
-    if let Some(context) = context {
-        session.use_gpu(context);
-    }
-    #[cfg(not(feature = "vulkan"))]
-    let _ = context;
+    let mut session = input.open()?;
+    crate::renderer::use_gpu(&mut session, gpu)?;
     Ok(session)
 }
 
@@ -115,12 +108,5 @@ pub(super) fn metadata(session: &Session) -> serde_json::Value {
 
 pub(super) fn png(session: &mut Session, time: f64) -> Result<Vec<u8>, String> {
     let frame = session.render_frame(time).map_err(|error| error.to_string())?;
-    // Frames carry straight alpha.
-    let info = skia_safe::ImageInfo::new(
-        (frame.width as i32, frame.height as i32),
-        skia_safe::ColorType::RGBA8888,
-        skia_safe::AlphaType::Unpremul,
-        Some(skia_safe::ColorSpace::new_srgb()),
-    );
-    crate::renderer::encode_png(info, &frame.rgba)
+    crate::renderer::frame_png(&frame)
 }

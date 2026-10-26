@@ -1,10 +1,9 @@
 //! Contact sheet for every input `director-engine` already loads.
 
 use crate::input::Input;
-use crate::renderer::{self, Renderer};
+use crate::renderer;
 use clap::Parser;
-use director_core::video_wrapper::RenderMode;
-use director_core::Director;
+use director_host::Session;
 use std::path::PathBuf;
 
 pub const MAX_SHEET_FRAMES: usize = 64;
@@ -118,8 +117,7 @@ pub fn sheet_raster_size(width: i64, height: i64) -> Result<(i32, i32), String> 
     Ok((width as i32, height as i32))
 }
 
-pub fn render_sheet_png(director: &mut Director, plan: &SheetPlan, gpu: bool) -> Result<Vec<u8>, String> {
-    let mut renderer = Renderer::new(gpu)?;
+pub fn render_sheet_png(session: &mut Session, plan: &SheetPlan) -> Result<Vec<u8>, String> {
     let (sheet_w, sheet_h) = sheet_raster_size(
         plan.columns as i64 * i64::from(plan.cell_width),
         plan.rows as i64 * i64::from(plan.cell_height),
@@ -130,10 +128,11 @@ pub fn render_sheet_png(director: &mut Director, plan: &SheetPlan, gpu: bool) ->
         .ok_or_else(|| format!("sheet exceeds {MAX_SHEET_PIXELS} pixels"))?;
     let mut pixels = vec![0u8; bytes];
     for slot in &plan.frames {
-        let png = renderer.png(director, slot.time)?;
-        let decoded = image::load_from_memory(&png).map_err(|e| e.to_string())?;
+        let frame = renderer::paint(session, slot.time)?;
+        let frame = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba)
+            .ok_or("frame pixels do not match its size")?;
         let cell = image::imageops::resize(
-            &decoded,
+            &frame,
             plan.cell_width as u32,
             plan.cell_height as u32,
             image::imageops::FilterType::Nearest,
@@ -157,27 +156,20 @@ pub fn render_sheet_png(director: &mut Director, plan: &SheetPlan, gpu: bool) ->
 }
 
 pub fn run(args: SheetArgs) -> i32 {
-    let loaded = match args.input.load(RenderMode::Export) {
-        Ok(loaded) => loaded,
+    let mut session = match args.input.open() {
+        Ok(session) => session,
         Err(error) => {
             eprintln!("{error}");
             return 1;
         }
     };
-    let mut director = match loaded.movie.director.lock() {
-        Ok(director) => director,
-        Err(_) => {
-            eprintln!("Director lock poisoned");
-            return 2;
-        }
-    };
-    let duration = director.timeline_duration();
+    let document = session.document();
     let plan = match plan_sheet(
-        duration,
+        session.duration(),
         args.frames,
         args.columns,
-        director.width,
-        director.height,
+        document.width,
+        document.height,
         args.cell_width,
     ) {
         Ok(plan) => plan,
@@ -186,7 +178,9 @@ pub fn run(args: SheetArgs) -> i32 {
             return 1;
         }
     };
-    let png = match render_sheet_png(&mut director, &plan, args.gpu) {
+    let png = match renderer::use_gpu(&mut session, args.gpu)
+        .and_then(|()| render_sheet_png(&mut session, &plan))
+    {
         Ok(png) => png,
         Err(error) => {
             eprintln!("{error}");
@@ -279,26 +273,12 @@ mod tests {
 
     #[test]
     fn agent_sheet_renders_a_red_html_frame_into_two_cells() {
-        let mut compiled = director_html::compile(
+        let mut session = crate::renderer::html_session(
             "<style>body{margin:0}div{width:64px;height:64px;background:red}</style><div></div>",
-            director_html::CompileOptions {
-                width: 64,
-                height: 64,
-                duration: 1.0,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let plan = plan_sheet(
-            compiled.director.timeline_duration(),
-            2,
-            2,
-            compiled.director.width,
-            compiled.director.height,
-            32,
-        )
-        .unwrap();
-        let png = render_sheet_png(&mut compiled.director, &plan, false).unwrap();
+            64,
+        );
+        let plan = plan_sheet(session.duration(), 2, 2, 64, 64, 32).unwrap();
+        let png = render_sheet_png(&mut session, &plan).unwrap();
         let image = image::load_from_memory(&png).unwrap().to_rgba8();
         assert_eq!(image.width(), 64);
         assert_eq!(image.height(), plan.cell_height as u32);

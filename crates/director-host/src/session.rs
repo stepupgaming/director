@@ -3,7 +3,8 @@
 use crate::error::{ErrorCode, HostError};
 use crate::load::{Loaded, Source};
 use crate::patch::{self, PatchOp};
-use director_core::render_manifest::build_render_manifest;
+use director_core::audio::AudioMixer;
+use director_core::render_manifest::{build_render_manifest, RenderManifest};
 use director_core::scene_export::{export_scene, node_ref};
 use director_core::scene_import::{import_scene, ImportRegistry};
 use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_count};
@@ -213,6 +214,11 @@ impl Session {
         timeline_duration(&self.document)
     }
 
+    /// Required bundled fonts the system lacks. Export refuses while any are missing.
+    pub fn missing_fonts(&self) -> &[String] {
+        &self.missing_fonts
+    }
+
     /// Why the last reload failed, until one succeeds.
     pub fn reload_error(&self) -> Option<&HostError> {
         self.reload_error.as_ref()
@@ -393,6 +399,18 @@ impl Session {
             "missing_required_fonts": self.missing_fonts,
             "audio_tracks": audio_tracks,
         }))
+    }
+
+    /// The render manifest of the current revision at `time`: node bounds,
+    /// kinds and timeline state.
+    pub fn manifest(&mut self, time: f64) -> Result<RenderManifest, HostError> {
+        check_time(time)?;
+        Ok(build_render_manifest(self.inspector()?, time))
+    }
+
+    /// The audio mixer of the current revision with its decoded tracks.
+    pub fn audio_mixer(&mut self) -> Result<&AudioMixer, HostError> {
+        Ok(&self.inspector()?.audio_mixer)
     }
 
     /// The timeline mix of the current revision as a float-stereo WAV, mixed

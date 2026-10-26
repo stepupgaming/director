@@ -14,7 +14,6 @@ mod sheet;
 mod snapshot;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use director_core::scripting::MovieHandle;
 use director_core::video_wrapper::RenderMode;
 use input::{Encoder, Input};
 use run::{default_video_output, eval_script};
@@ -262,12 +261,9 @@ fn init_logging(level: LogLevel, format: LogFormat) {
     }
 }
 
-fn write_manifest(movie: &MovieHandle, path: &PathBuf, time: f64) -> Result<(), String> {
-    let mut director = movie
-        .director
-        .lock()
-        .map_err(|_| "Director lock poisoned".to_string())?;
-    let json = director_core::render_manifest_json(&mut director, time);
+fn write_manifest(session: &mut director_host::Session, path: &Path, time: f64) -> Result<(), String> {
+    let manifest = session.manifest(time).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| format!("failed to write manifest: {}", e))?;
     info!("Wrote render manifest to {:?}", path);
     Ok(())
@@ -282,7 +278,7 @@ fn cmd_render(args: RenderArgs) {
         eprintln!("alpha export requires VP9/WebM; --encoder nvenc selects H.264 without alpha");
         std::process::exit(1);
     }
-    let loaded = args.input.load(RenderMode::Export).unwrap_or_else(|e| {
+    let mut session = args.input.open().unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(1);
     });
@@ -294,7 +290,7 @@ fn cmd_render(args: RenderArgs) {
         )
     });
     if let Some(path) = &args.manifest {
-        if let Err(e) = write_manifest(&loaded.movie, path, args.manifest_time) {
+        if let Err(e) = write_manifest(&mut session, path, args.manifest_time) {
             eprintln!("{e}");
             std::process::exit(1);
         }
@@ -303,24 +299,18 @@ fn cmd_render(args: RenderArgs) {
         eprintln!("{e}");
         std::process::exit(2);
     });
-    let mut director = loaded.movie.director.lock().unwrap_or_else(|_| {
-        eprintln!("Director lock poisoned");
-        std::process::exit(2);
-    });
-    director.encoder_mode = args.encoder.mode();
-    if let Err(e) = renderer::export_video(
-        &mut director,
-        &output,
-        context.as_mut(),
-        args.alpha,
-        args.scale,
-        args.draft_encode,
-    ) {
+    let settings = director_host::ExportSettings {
+        scale: args.scale,
+        alpha: Some(args.alpha),
+        options: director_render::ExportOptions {
+            draft: args.draft_encode,
+            ..director_render::ExportOptions::new(args.encoder.mode())
+        },
+    };
+    if let Err(e) = session.export(&output, &settings, context.as_mut()) {
         eprintln!("{e}");
         std::process::exit(2);
     }
-    drop(director);
-    drop(loaded);
     println!("{}", output.display());
 }
 
@@ -366,28 +356,23 @@ struct ItemFailure {
 
 /// Software encoder, CPU paint, no alpha. Same export entry as `render`.
 fn render_software_item(input_path: &Path, output: &Path) -> Result<(), ItemFailure> {
-    let input = Input::new(input_path.to_path_buf());
-    let loaded = input.load(RenderMode::Export).map_err(|message| ItemFailure {
-        exit_code: 1,
-        message,
-    })?;
-    let mut context = gpu::required_context(false).map_err(|message| ItemFailure {
-        exit_code: 2,
-        message,
-    })?;
-    let mut director = loaded.movie.director.lock().map_err(|_| ItemFailure {
-        exit_code: 2,
-        message: "Director lock poisoned".into(),
-    })?;
-    director.encoder_mode = Encoder::Software.mode();
-    renderer::export_video(&mut director, output, context.as_mut(), false, 1.0, false)
-    .map_err(|error| ItemFailure {
-        exit_code: 2,
-        message: error.to_string(),
-    })?;
-    drop(director);
-    drop(loaded);
-    Ok(())
+    let session = Input::new(input_path.to_path_buf())
+        .open()
+        .map_err(|message| ItemFailure {
+            exit_code: 1,
+            message,
+        })?;
+    let settings = director_host::ExportSettings {
+        alpha: Some(false),
+        options: director_render::ExportOptions::new(Encoder::Software.mode()),
+        ..Default::default()
+    };
+    session
+        .export(output, &settings, None)
+        .map_err(|error| ItemFailure {
+            exit_code: 2,
+            message: error.to_string(),
+        })
 }
 
 fn flush_status(code: i32) -> i32 {
@@ -397,16 +382,12 @@ fn flush_status(code: i32) -> i32 {
 }
 
 fn cmd_still(args: StillArgs) {
-    let loaded = args.input.load(RenderMode::Export).unwrap_or_else(|e| {
+    let mut session = args.input.open().unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(1);
     });
-    let mut director = loaded.movie.director.lock().unwrap_or_else(|_| {
-        eprintln!("Director lock poisoned");
-        std::process::exit(2);
-    });
     let time = args.frame.map_or(args.time, |f| {
-        director_core::timeline::frame_to_time(f, director.fps)
+        director_core::timeline::frame_to_time(f, session.document().fps)
     });
     let output = args.output.unwrap_or_else(|| {
         let time_label = format!("{time:.3}").replace('.', "_");
@@ -426,21 +407,18 @@ fn cmd_still(args: StillArgs) {
             .input
             .with_file_name(format!("frame_{stem}{suffix}_{time_label}.png"))
     });
-    let mut renderer = renderer::Renderer::new(args.gpu).unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(2);
-    });
-    let png = renderer.png(&mut director, time).unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(2);
-    });
+    let png = renderer::use_gpu(&mut session, args.gpu)
+        .and_then(|()| renderer::paint(&mut session, time))
+        .and_then(|frame| renderer::frame_png(&frame))
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(2);
+        });
     if let Err(e) = fs::write(&output, png) {
         eprintln!("{e}");
         std::process::exit(2);
     }
-    drop(director);
-    drop(loaded);
-    drop(renderer);
+    drop(session);
     println!("{}", output.display());
 }
 

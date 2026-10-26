@@ -1,9 +1,8 @@
 //! Weighted blend of frames. Later frames have the higher weight.
 
 use crate::input::Input;
-use crate::renderer::{self, frame_within_limit, paint_rgba};
+use crate::renderer::{self, frame_within_limit};
 use clap::Parser;
-use director_core::video_wrapper::RenderMode;
 use std::path::PathBuf;
 
 pub const MAX_ONION_FRAMES: usize = 8;
@@ -82,44 +81,42 @@ pub fn blend_onion(frames: &[Vec<u8>]) -> Result<Vec<u8>, String> {
 }
 
 pub fn run(args: OnionArgs) -> i32 {
-    let loaded = match args.input.load(RenderMode::Export) {
-        Ok(loaded) => loaded,
+    let mut session = match args.input.open() {
+        Ok(session) => session,
         Err(error) => {
             eprintln!("{error}");
             return 1;
         }
     };
-    let mut director = match loaded.movie.director.lock() {
-        Ok(director) => director,
-        Err(_) => {
-            eprintln!("Director lock poisoned");
-            return 1;
-        }
-    };
-    if let Err(error) = frame_within_limit(director.width, director.height) {
+    let document = session.document();
+    if let Err(error) = frame_within_limit(document.width, document.height) {
         eprintln!("{error}");
         return 1;
     }
-    let times = match frame_times(director.timeline_duration(), args.frames) {
+    let times = match frame_times(session.duration(), args.frames) {
         Ok(times) => times,
         Err(error) => {
             eprintln!("{error}");
             return 1;
         }
     };
+    if let Err(error) = renderer::use_gpu(&mut session, args.gpu) {
+        eprintln!("{error}");
+        return 2;
+    }
     let mut frames = Vec::with_capacity(times.len());
     let mut width = 0u32;
     let mut height = 0u32;
     for time in &times {
-        match paint_rgba(&mut director, *time, args.gpu) {
-            Ok((pixels, frame_w, frame_h)) => {
-                if !frames.is_empty() && (frame_w != width || frame_h != height) {
+        match renderer::paint(&mut session, *time) {
+            Ok(frame) => {
+                if !frames.is_empty() && (frame.width != width || frame.height != height) {
                     eprintln!("onion frames must share one size");
                     return 2;
                 }
-                width = frame_w;
-                height = frame_h;
-                frames.push(pixels);
+                width = frame.width;
+                height = frame.height;
+                frames.push(frame.rgba);
             }
             Err(error) => {
                 eprintln!("{error}");
@@ -203,19 +200,12 @@ mod tests {
 
     #[test]
     fn agent_onion_of_a_static_frame_stays_that_frame() {
-        let mut compiled = director_html::compile(
+        let mut session = crate::renderer::html_session(
             "<style>body{margin:0}div{width:32px;height:32px;background:red}</style><div></div>",
-            director_html::CompileOptions {
-                width: 32,
-                height: 32,
-                duration: 1.0,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let (first, _, _) = crate::renderer::paint_rgba(&mut compiled.director, 0.0, false).unwrap();
-        let (second, _, _) =
-            crate::renderer::paint_rgba(&mut compiled.director, 0.5, false).unwrap();
+            32,
+        );
+        let first = crate::renderer::paint(&mut session, 0.0).unwrap().rgba;
+        let second = crate::renderer::paint(&mut session, 0.5).unwrap().rgba;
         let blended = blend_onion(&[first.clone(), second]).unwrap();
         assert_eq!(blended, first);
     }

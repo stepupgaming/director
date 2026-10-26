@@ -1,9 +1,8 @@
 //! One-frame comparison against a golden PNG.
 
 use crate::input::Input;
-use crate::renderer::{self, frame_within_limit, paint_rgba};
+use crate::renderer::{self, frame_within_limit};
 use clap::Parser;
-use director_core::video_wrapper::RenderMode;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
@@ -110,22 +109,17 @@ pub fn run(args: SnapshotArgs) -> i32 {
         eprintln!("frame time must be finite and nonnegative");
         return 1;
     }
-    let loaded = match args.input.load(RenderMode::Export) {
-        Ok(loaded) => loaded,
+    let mut session = match args.input.open() {
+        Ok(session) => session,
         Err(error) => {
             eprintln!("{error}");
             return 1;
         }
     };
-    let mut director = match loaded.movie.director.lock() {
-        Ok(director) => director,
-        Err(_) => {
-            eprintln!("Director lock poisoned");
-            return 1;
-        }
-    };
-    let (pixels, width, height) = match paint_rgba(&mut director, args.time, args.gpu) {
-        Ok(frame) => frame,
+    let painted = renderer::use_gpu(&mut session, args.gpu)
+        .and_then(|()| renderer::paint(&mut session, args.time));
+    let (pixels, width, height) = match painted {
+        Ok(frame) => (frame.rgba, frame.width, frame.height),
         Err(error) => {
             eprintln!("{error}");
             return 2;
@@ -309,19 +303,13 @@ mod tests {
 
     #[test]
     fn agent_snapshot_matches_its_own_frame() {
-        let mut compiled = director_html::compile(
+        let mut session = crate::renderer::html_session(
             "<style>body{margin:0}div{width:64px;height:64px;background:red}</style><div></div>",
-            director_html::CompileOptions {
-                width: 64,
-                height: 64,
-                duration: 1.0,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let (pixels, width, height) =
-            crate::renderer::paint_rgba(&mut compiled.director, 0.0, false).unwrap();
-        let compared = compare_rgba(&pixels, &pixels, width, height, width, height, 16).unwrap();
+            64,
+        );
+        let frame = crate::renderer::paint(&mut session, 0.0).unwrap();
+        let (width, height) = (frame.width, frame.height);
+        let compared = compare_rgba(&frame.rgba, &frame.rgba, width, height, width, height, 16).unwrap();
         assert_eq!(compared.different, 0);
         assert!(compared.difference <= 0.001);
     }
