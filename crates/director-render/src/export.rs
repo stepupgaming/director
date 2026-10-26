@@ -171,11 +171,19 @@ impl Renderer {
             // The writer starts FFmpeg, then imports and mixes the whole track while
             // FFmpeg launches and the first batch paints.
             let writer = scope.spawn(move || -> anyhow::Result<()> {
-                let mut encoder = Encoder::with_audio_input(path, settings)?;
+                // A document without audio tracks exports a video stream alone.
+                let silent = self.document.audio.tracks.is_empty();
+                let mut encoder = if silent {
+                    Encoder::video_only(path, settings)?
+                } else {
+                    Encoder::with_audio_input(path, settings)?
+                };
                 let written = (|| {
-                    let mut audio = import_scene(&self.document, self.loader.clone(), &self.registry, self.render_mode)?;
-                    let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, fps, 1);
-                    encoder.send_audio(times.iter().flat_map(|&time| audio.mix_audio(block, time)).collect())?;
+                    if !silent {
+                        let mut audio = import_scene(&self.document, self.loader.clone(), &self.registry, self.render_mode)?;
+                        let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, fps, 1);
+                        encoder.send_audio(times.iter().flat_map(|&time| audio.mix_audio(block, time)).collect())?;
+                    }
                     full_rx.iter().try_for_each(|(start, frames)| {
                         for (frame, &time) in frames.iter().zip(&times[start..]) {
                             encoder.encode(&frame.rgba, time)?;

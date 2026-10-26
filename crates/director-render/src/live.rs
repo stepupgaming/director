@@ -145,7 +145,9 @@ fn export_scaled(
         .with_encoder_mode(director.encoder_mode)
         .with_alpha(alpha)
         .with_draft(draft);
-    let mut encoder = Encoder::new(&out_path, settings)?;
+    // A timeline without audio tracks exports a video stream alone.
+    let silent = director.audio_mixer.tracks.iter().flatten().next().is_none();
+    let mut encoder = if silent { Encoder::video_only(&out_path, settings)? } else { Encoder::new(&out_path, settings)? };
     let info = ImageInfo::new(
         (width, height),
         ColorType::RGBA8888,
@@ -168,7 +170,9 @@ fn export_scaled(
         }
         anyhow::ensure!(surface.read_pixels(&read_info, &mut pixels, row_bytes, (0, 0)), RenderError::Readback);
         encoder.encode(&pixels, time)?;
-        encoder.encode_audio(&director.mix_audio(block, time), time)?;
+        if !silent {
+            encoder.encode_audio(&director.mix_audio(block, time), time)?;
+        }
     }
     encoder.finish()
 }

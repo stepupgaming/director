@@ -359,7 +359,20 @@ enum AudioSink {
     Streamed(BufWriter<File>),
     /// Read by the encoding FFmpeg process as a second input.
     Input(AudioInput),
+    /// No audio stream: FFmpeg writes the video alone to the destination.
+    Silent,
 }
+
+/// How [`Encoder::spawn`] takes its audio.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AudioMode {
+    Streamed,
+    Premixed,
+    Silent,
+}
+
+/// FFmpeg flags that keep its stderr to errors: no banner, no encoder stats.
+const QUIET: [&str; 4] = ["-hide_banner", "-nostats", "-loglevel", "error"];
 
 /// A loopback TCP listener that the encoding FFmpeg process connects to at
 /// startup and reads interleaved stereo f32 from, so FFmpeg starts before the
@@ -437,7 +450,12 @@ pub struct Encoder {
 impl Encoder {
     /// Stream audio per frame with [`Encoder::encode_audio`]; `finish` muxes it in a second pass.
     pub fn new(dest: &Path, settings: EncoderSettings) -> Result<Self> {
-        Self::spawn(dest, settings, false)
+        Self::spawn(dest, settings, AudioMode::Streamed)
+    }
+
+    /// Encode video frames with no audio stream in the output.
+    pub fn video_only(dest: &Path, settings: EncoderSettings) -> Result<Self> {
+        Self::spawn(dest, settings, AudioMode::Silent)
     }
 
     /// Encode `samples` (interleaved stereo f32 at `settings.sample_rate`) in the
@@ -452,7 +470,7 @@ impl Encoder {
     /// stereo f32 at `settings.sample_rate`) to [`Encoder::send_audio`] once,
     /// before [`Encoder::finish`]; video frames may be encoded before and after.
     pub fn with_audio_input(dest: &Path, settings: EncoderSettings) -> Result<Self> {
-        Self::spawn(dest, settings, true)
+        Self::spawn(dest, settings, AudioMode::Premixed)
     }
 
     /// Feed the whole premixed track to an encoder from [`Encoder::with_audio_input`].
@@ -463,7 +481,7 @@ impl Encoder {
         input.send(samples)
     }
 
-    fn spawn(dest: &Path, settings: EncoderSettings, premixed: bool) -> Result<Self> {
+    fn spawn(dest: &Path, settings: EncoderSettings, mode: AudioMode) -> Result<Self> {
         let temp_dir = std::env::temp_dir();
         let uuid = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
@@ -477,7 +495,8 @@ impl Encoder {
         let audio_path = temp_dir.join(format!("director_aud_{}.raw", uuid));
 
         let mut cmd = Command::new(FFmpegDriver::binary());
-        cmd.arg("-y")
+        cmd.args(QUIET)
+            .arg("-y")
             .arg("-f")
             .arg("rawvideo")
             .arg("-pixel_format")
@@ -488,7 +507,7 @@ impl Encoder {
             .arg(settings.fps.to_string())
             .arg("-i")
             .arg("pipe:0");
-        let input = if premixed { Some(AudioInput::bind()?) } else { None };
+        let input = if mode == AudioMode::Premixed { Some(AudioInput::bind()?) } else { None };
         if let Some(input) = &input {
             cmd.arg("-f")
                 .arg("f32le")
@@ -590,6 +609,9 @@ impl Encoder {
                 .arg(audio_codec)
                 .arg(dest);
             AudioSink::Input(input)
+        } else if mode == AudioMode::Silent {
+            cmd.arg("-map").arg("0:v").arg(dest);
+            AudioSink::Silent
         } else {
             cmd.arg(&video_temp_path);
             AudioSink::Streamed(BufWriter::new(File::create(&audio_path)?))
@@ -642,9 +664,15 @@ impl Encoder {
         let _ = self.video_process.wait();
         let _ = std::fs::remove_file(&self.audio_path);
         let _ = std::fs::remove_file(&self.video_temp_path);
-        if let AudioSink::Input(input) = &mut self.audio {
-            let _ = input.close();
-            let _ = std::fs::remove_file(&self.dest_path);
+        match &mut self.audio {
+            AudioSink::Input(input) => {
+                let _ = input.close();
+                let _ = std::fs::remove_file(&self.dest_path);
+            }
+            AudioSink::Silent => {
+                let _ = std::fs::remove_file(&self.dest_path);
+            }
+            AudioSink::Streamed(_) => {}
         }
     }
 
@@ -658,11 +686,17 @@ impl Encoder {
         // 1. Finish Video
         self.video_process.stdin = None; // EOF
         let status = self.video_process.wait()?;
-        let AudioSink::Streamed(mut audio_file) = self.audio else {
-            let AudioSink::Input(mut input) = self.audio else { unreachable!() };
-            let fed = input.close();
-            anyhow::ensure!(status.success(), "Video encoding failed");
-            return fed.context("feed the audio to FFmpeg");
+        let mut audio_file = match self.audio {
+            AudioSink::Streamed(audio_file) => audio_file,
+            AudioSink::Input(mut input) => {
+                let fed = input.close();
+                anyhow::ensure!(status.success(), "Video encoding failed");
+                return fed.context("feed the audio to FFmpeg");
+            }
+            AudioSink::Silent => {
+                anyhow::ensure!(status.success(), "Video encoding failed");
+                return Ok(());
+            }
         };
         if !status.success() {
             return Err(anyhow::anyhow!("Video encoding failed"));
@@ -676,6 +710,7 @@ impl Encoder {
         // ffmpeg -y -i video.mp4 -f f32le -ar 48000 -ac 2 -i audio.raw -c:v copy -c:a aac output.mp4
         tracing::info!("Muxing audio and video...");
         let mux_status = Command::new(FFmpegDriver::binary())
+            .args(QUIET)
             .arg("-y")
             .arg("-i")
             .arg(&self.video_temp_path)
@@ -1285,6 +1320,24 @@ mod tests {
         let settings = super::EncoderSettings::preset_h264_yuv420p(64, 64);
         assert!(!settings.draft);
         assert!(settings.with_draft(true).draft);
+    }
+
+    #[test]
+    fn a_video_only_encoder_writes_no_audio_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.mp4");
+        let settings = super::EncoderSettings::preset_h264_yuv420p(16, 16).with_fps(30.0);
+        let mut encoder = super::Encoder::video_only(&path, settings).unwrap();
+        for frame in 0..3 {
+            encoder.encode(&[0; 16 * 16 * 4], frame as f64 / 30.0).unwrap();
+        }
+        encoder.finish().unwrap();
+        let probe = Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&probe.stdout).split_whitespace().collect::<Vec<_>>(), ["video"]);
     }
 
     #[test]

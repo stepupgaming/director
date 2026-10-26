@@ -5,7 +5,9 @@ fn native_html_export_keeps_audio_and_video_duration_aligned() {
     let temp = tempfile::tempdir().unwrap();
     let input = temp.path().join("timing.html");
     let output = temp.path().join("timing.mp4");
-    std::fs::write(&input, "<div data-composition-id='timing' data-no-timeline data-width='32' data-height='32' data-fps='30' data-duration='0.6' style='background:red'></div>").unwrap();
+    let tone = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/assets/tone.wav");
+    std::fs::copy(tone, temp.path().join("tone.wav")).unwrap();
+    std::fs::write(&input, "<div data-composition-id='timing' data-no-timeline data-width='32' data-height='32' data-fps='30' data-duration='0.6' style='background:red'><audio src='tone.wav' data-start='0' data-duration='0.6'></audio></div>").unwrap();
     let rendered = Command::new(env!("CARGO_BIN_EXE_director-engine"))
         .args(["html", "render"])
         .arg(input)
@@ -63,6 +65,32 @@ fn native_html_export_keeps_audio_and_video_duration_aligned() {
         (duration - 0.6).abs() < 0.05,
         "MP4 duration {duration}, expected 0.6"
     );
+}
+
+#[test]
+fn a_scene_without_audio_tracks_exports_no_audio_stream() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("silent.html");
+    let output = temp.path().join("silent.mp4");
+    std::fs::write(&input, "<div data-composition-id='silent' data-no-timeline data-width='32' data-height='32' data-fps='30' data-duration='0.2' style='background:red'></div>").unwrap();
+    for args in [&["html", "render"][..], &["render"][..]] {
+        let rendered = Command::new(env!("CARGO_BIN_EXE_director-engine"))
+            .args(args)
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .expect("run native exporter");
+        assert!(rendered.status.success(), "{}", String::from_utf8_lossy(&rendered.stderr));
+        let probe = Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0"])
+            .arg(&output)
+            .output()
+            .expect("ffprobe must be installed for export verification");
+        let kinds = String::from_utf8_lossy(&probe.stdout).split_whitespace().map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(kinds, ["video"], "{args:?}");
+        std::fs::remove_file(&output).unwrap();
+    }
 }
 
 #[test]
