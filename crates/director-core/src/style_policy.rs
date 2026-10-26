@@ -912,7 +912,7 @@ mod tests {
         director.add_global_audio(samples);
         director.audio_mixer.tracks[0].as_mut().unwrap().duration = Some(2.0);
 
-        let quiet = crate::loudness::analyze_stereo(&sine(0.25 * 0.5f32.sqrt(), 2), 48000).integrated_lufs;
+        let quiet = crate::loudness::analyze_stereo(&sine(0.25, 2), 48000).integrated_lufs;
         let mut policy = StylePolicy::default();
         policy.audio.target_loudness_db = quiet as f32;
         policy.audio.loudness_tolerance_db = 0.1;

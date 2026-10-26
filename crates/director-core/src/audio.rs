@@ -539,9 +539,9 @@ mod tests {
 
         let mixed = mixer.mix(100, 0.0);
         assert_eq!(mixed.len(), 200);
-        let center_db = 0.5_f32.sqrt();
-        assert!((mixed[0] - 0.5 * center_db).abs() < 1e-5);
-        assert!((mixed[1] - 0.5 * center_db).abs() < 1e-5);
+        // Centered stereo passes through at unity.
+        assert!((mixed[0] - 0.5).abs() < 1e-5);
+        assert!((mixed[1] - 0.5).abs() < 1e-5);
 
         // Test pan: full left
         if let Some(t) = mixer.get_track_mut(tid) {

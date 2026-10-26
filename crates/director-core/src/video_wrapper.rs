@@ -174,6 +174,9 @@ pub fn detect_available_encoders() -> Vec<&'static str> {
 }
 
 /// Test if a specific encoder is available in FFmpeg.
+/// ffmpeg's 128k AAC default smears music; 256k is transparent for stereo AAC and Opus.
+const AUDIO_BITRATE: &str = "256k";
+
 fn test_encoder_available(encoder: &str) -> bool {
     let output = Command::new(FFmpegDriver::binary())
         .arg("-encoders")
@@ -607,6 +610,8 @@ impl Encoder {
                 .arg("1:a")
                 .arg("-c:a")
                 .arg(audio_codec)
+                .arg("-b:a")
+                .arg(AUDIO_BITRATE)
                 .arg(dest);
             AudioSink::Input(input)
         } else if mode == AudioMode::Silent {
@@ -726,6 +731,8 @@ impl Encoder {
             .arg("copy")
             .arg("-c:a")
             .arg(self.audio_codec)
+            .arg("-b:a")
+            .arg(AUDIO_BITRATE)
             .arg(&self.dest_path)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())

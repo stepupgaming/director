@@ -1,11 +1,14 @@
 use std::f32::consts;
 use std::fmt;
 
-/// Constant-power pan law: given pan 0..1, returns (left_gain, right_gain).
+/// Stereo balance: given pan 0..1, returns (left_gain, right_gain).
+///
+/// Tracks are already stereo, so center is unity on both channels and panning
+/// only attenuates the far side. A constant-power law here would drop every
+/// centered track by 3 dB.
 pub fn pan_gains(pan: f32) -> (f32, f32) {
     let p = pan.clamp(0.0, 1.0);
-    let angle = p * consts::FRAC_PI_2;
-    (angle.cos(), angle.sin())
+    ((2.0 * (1.0 - p)).min(1.0), (2.0 * p).min(1.0))
 }
 
 #[derive(Clone)]
