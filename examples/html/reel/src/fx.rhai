@@ -7,10 +7,9 @@ let track = music.id();
 let s0 = movie.add_scene(3.808);
 s0.add_box(#{ width: 1920.0, height: 1080.0, bg_color: "#000000" });
 
-// Eye shot: viewfinder locks on (Lottie trim paths).
+// Eye shot: no overlay.
 let s1 = movie.add_scene(1.904);
 let b1 = s1.add_box(#{ width: 1920.0, height: 1080.0, bg_color: "#000000" });
-let finder = b1.add_lottie("examples/html/reel/assets/finder.json", #{ width: 900.0, height: 900.0, speed: 1.0, "loop": false, position: "absolute", left: 450.0, top: 60.0 });
 
 let s2 = movie.add_scene(15.209);
 s2.add_box(#{ width: 1920.0, height: 1080.0, bg_color: "#000000" });
