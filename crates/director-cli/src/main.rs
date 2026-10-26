@@ -13,6 +13,7 @@ mod onion;
 mod outline;
 mod sample_times;
 mod sheet;
+mod skills;
 mod snapshot;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -114,6 +115,8 @@ enum Commands {
     Preview(CliPreviewArgs),
     /// Model Context Protocol server on stdio over host sessions
     Mcp(mcp::McpArgs),
+    /// Write agent skills generated from the MCP tool schemas
+    Skills(skills::SkillsArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -580,6 +583,7 @@ fn main() {
         Some(Commands::Outline(args)) => std::process::exit(flush_status(outline::run_outline(args))),
         Some(Commands::Diff(args)) => std::process::exit(flush_status(outline::run_diff(args))),
         Some(Commands::Mcp(args)) => std::process::exit(flush_status(mcp::run(args))),
+        Some(Commands::Skills(args)) => std::process::exit(flush_status(skills::run(args))),
         None => {
             let script = match cli.script {
                 Some(s) => s,

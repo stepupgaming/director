@@ -9,7 +9,7 @@
 - `src/session.rs` owns `Session`, `ExportSettings`, the `Outline` types and `import_registry` (core kinds plus `director-html` kinds).
 - `src/diff.rs` owns `diff` and the `Diff` types: the structural diff of two sessions' documents and the patch between them.
 - `src/patch.rs` owns `PatchOp`, `NodeSelector`, `Patch`, selector resolution and op application.
-- `src/error.rs` owns `HostError`, `ErrorCode` and the JSON error envelope.
+- `src/error.rs` owns `HostError`, `ErrorCode` (with a JSON schema whose variant docs describe each code to agents) and the JSON error envelope.
 - `tests/session.rs` covers open, outline, accepted and rejected patches, conflicts, removal, retiming, frame repaint, inspection, export progress and cancellation on `examples/html/native-motion.html`, plus dependency reload, the cached WAV, native project edits and diffs on generated HTML.
 
 ## Local Contracts

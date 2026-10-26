@@ -86,6 +86,12 @@ director-engine mcp
 
 `mcp` serves host sessions to agents as a Model Context Protocol server on stdio. Register the command `director-engine` with the argument `mcp` in an MCP client, plus `--gpu` on a Vulkan build. Tools: `open` an input into a session id with its outline, `outline`, `diff` two sessions, `patch` nodes by authored name against a base revision, `inspect` at a time, `render_frame` as PNG image content or a file, `export` a video, and `close`. A failed tool returns `isError` with `{"error":{"code","message"}}`.
 
+```bash
+director-engine skills .agent/skills
+```
+
+`skills DIR` writes the `director-mcp` agent skill generated from the tool schemas: `DIR/director-mcp/SKILL.md` and `DIR/director-mcp/tools.json`. Point it at a project's skills directory to install it.
+
 ## Portable native projects
 
 ```bash

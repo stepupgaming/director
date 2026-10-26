@@ -9,7 +9,7 @@ use director_host::{ErrorCode, ExportSettings, HostError, PatchOp, Session, Sour
 use schemars::gen::SchemaSettings;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -18,10 +18,10 @@ use std::path::PathBuf;
 /// Supported protocol revisions, newest first.
 const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
-const INSTRUCTIONS: &str = "Director renders video from HTML/CSS, Rhai and native projects. \
+pub const INSTRUCTIONS: &str = "Director renders video from HTML/CSS, Rhai and native projects. \
 `open` an input to get a session id and its outline, then `patch` nodes by authored name against \
 the session revision, `inspect` layout and timeline, `render_frame` to look at a frame, and \
-`export` the video. Failed tools return {\"error\":{\"code\",\"message\"}}.";
+`export` the video. Failed tools return `{\"error\":{\"code\",\"message\"}}`.";
 
 #[derive(Parser, Debug)]
 pub struct McpArgs {
@@ -289,7 +289,7 @@ struct ExportArgs {
     draft: bool,
 }
 
-#[derive(Clone, Copy, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum EncoderArg {
     #[default]
@@ -317,7 +317,7 @@ fn initialize(params: &Value) -> Value {
     })
 }
 
-fn tools() -> Vec<Value> {
+pub fn tools() -> Vec<Value> {
     vec![
         tool::<OpenArgs>("open", "Open an input as a session at revision 0. Returns the session id, source kind, missing fonts, compositions and outline.", false),
         tool::<SessionArgs>("close", "Close a session and free its renderers.", false),
@@ -330,8 +330,18 @@ fn tools() -> Vec<Value> {
     ]
 }
 
-/// A tool whose input schema is `T` with every subschema inline.
+/// A tool whose input schema is `T`.
 fn tool<T: JsonSchema>(name: &str, description: &str, read_only: bool) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": schema::<T>(),
+        "annotations": { "readOnlyHint": read_only },
+    })
+}
+
+/// The JSON schema of `T` with every subschema inline and no title.
+pub fn schema<T: JsonSchema>() -> Value {
     let generator = SchemaSettings::draft07()
         .with(|settings| {
             settings.inline_subschemas = true;
@@ -342,12 +352,7 @@ fn tool<T: JsonSchema>(name: &str, description: &str, read_only: bool) -> Value 
     if let Some(schema) = schema.as_object_mut() {
         schema.remove("title");
     }
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": schema,
-        "annotations": { "readOnlyHint": read_only },
-    })
+    schema
 }
 
 fn parse<T: DeserializeOwned>(arguments: Value) -> Result<T, HostError> {

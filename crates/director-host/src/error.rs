@@ -1,16 +1,17 @@
 //! The one error every host operation returns, with a stable code for clients.
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 /// What kind of failure a [`HostError`] is. Clients branch on this code.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     /// The input did not load or compile.
     Load,
     /// The patch named a base revision other than the current one.
     Conflict,
-    /// A selector named no node.
+    /// A node selector or session id matched nothing.
     NotFound,
     /// A patch op or the document it produced was rejected.
     InvalidPatch,
