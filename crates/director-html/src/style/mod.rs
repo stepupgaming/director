@@ -1871,10 +1871,10 @@ fn m44_from(matrix: &Matrix3d<f32>) -> M44 {
     ])
 }
 
-pub fn shows_backface(list: &TransformList, m: Metrics, size: (f32, f32)) -> bool {
-    prepare_projective(list, m, size)
-        .to_matrix()
-        .is_some_and(|matrix| matrix.m33 < 0.0)
+/// CSS backface rule: the plane faces away when the inverse of its accumulated
+/// matrix flips z. A 2D mirror such as `scaleX(-1)` keeps its front face.
+pub fn shows_backface(matrix: &M44) -> bool {
+    matrix.invert().is_some_and(|inverse| inverse.rc(2, 2) < 0.0)
 }
 
 pub fn perspective_matrix(distance: f32) -> M44 {

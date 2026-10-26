@@ -361,12 +361,6 @@ impl Element for HtmlElement {
             || self.time < self.start
             || self.time >= self.end
             || self.paint.opacity <= 0.0
-            || (self.paint.backface_hidden
-                && shows_backface(
-                    &self.paint.transform,
-                    self.metrics,
-                    (rect.width(), rect.height()),
-                ))
         {
             return Ok(());
         }
@@ -403,6 +397,12 @@ impl Element for HtmlElement {
                 -origin.1,
                 -self.paint.origin_z,
             ));
+        }
+        // Facing comes from the matrix accumulated through preserve-3d ancestors,
+        // not this element's own transform alone.
+        if self.paint.backface_hidden && shows_backface(&canvas.local_to_device()) {
+            canvas.restore();
+            return Ok(());
         }
         if let Some(points) = &self.paint.box_node.clip_path {
             if let Some(first) = points.first() {

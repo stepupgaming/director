@@ -55,6 +55,23 @@ fn hidden_backface_stays_unpainted() {
 }
 
 #[test]
+fn backface_follows_the_preserve_3d_ancestor() {
+    let source = |turn: &str| {
+        format!("<style>body{{margin:0}}.stage{{width:64px;height:64px;transform-style:preserve-3d;transform:rotateY({turn})}}.card{{width:64px;height:64px;background:red;backface-visibility:hidden}}</style><div class='stage'><div class='card'></div></div>")
+    };
+    assert_eq!(pixel(&frame(&source("180deg"), 0.0), 32, 32), [0, 0, 0, 255]);
+    assert_eq!(pixel(&frame(&source("0deg"), 0.0), 32, 32), [255, 0, 0, 255]);
+    let unturned = "<style>body{margin:0}.stage{width:64px;height:64px;transform-style:preserve-3d;transform:rotateY(180deg)}.card{width:64px;height:64px;background:red;backface-visibility:hidden;transform:rotateY(180deg)}</style><div class='stage'><div class='card'></div></div>";
+    assert_eq!(pixel(&frame(unturned, 0.0), 32, 32), [255, 0, 0, 255]);
+}
+
+#[test]
+fn mirrored_card_keeps_its_front_face() {
+    let html = "<style>body{margin:0}div{width:64px;height:64px;background:red;transform:scaleX(-1);backface-visibility:hidden}</style><div></div>";
+    assert_eq!(pixel(&frame(html, 0.0), 32, 32), [255, 0, 0, 255]);
+}
+
+#[test]
 fn flat_origin_z_stays_on_the_card() {
     let html = "<style>body{margin:0}div{width:64px;height:64px;background:red;transform-origin:50% 50% 40px}</style><div></div>";
     let pixels = frame(html, 0.0);
