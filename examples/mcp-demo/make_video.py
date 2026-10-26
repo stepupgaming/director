@@ -5,46 +5,75 @@ from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "director-agent.mp4")
-W, H, FPS = 1600, 900, 30
+# Sized for the page: the player is ~560 CSS px wide, so a 1120 px canvas is 2x and text lands at ~11 px.
+W, H, FPS = 1120, 630, 30
 FONTS = os.path.join(HERE, "..", "assets", "fonts")
 CORE = os.path.join(HERE, "..", "..", "crates", "director-core", "assets", "fonts")
-mono = ImageFont.truetype(os.path.join(FONTS, "JetBrainsMono-Regular.ttf"), 15)
-sans_b = ImageFont.truetype(os.path.join(CORE, "Inter-Bold.ttf"), 24)
-sans = ImageFont.truetype(os.path.join(CORE, "Inter-Regular.ttf"), 17)
+mono = ImageFont.truetype(os.path.join(FONTS, "JetBrainsMono-Regular.ttf"), 21)
+sans_b = ImageFont.truetype(os.path.join(CORE, "Inter-Bold.ttf"), 28)
+sans = ImageFont.truetype(os.path.join(CORE, "Inter-Regular.ttf"), 21)
 BG, PANEL, FG, DIM = (10, 10, 15), (18, 17, 26), (230, 226, 215), (120, 117, 138)
 OUTC, INC, ERR = (255, 179, 71), (42, 212, 200), (255, 90, 54)
-SKIP = ("element_ids", "manifest", "changed_nodes", "audio_tracks", "inputSchema", "capabilities", "serverInfo", "outputSchema")
 
 
-def elide(v):
-    if isinstance(v, dict):
-        if "roots" in v:  # outline: keep authored names only
-            names = []
+def short(v, n=34):
+    t = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+    return t if len(t) <= n else t[: n - 1] + "…"
 
-            def walk(n):
-                names.append(n.get("name"))
-                for c in n["children"]:
-                    walk(c)
-            for r in v["roots"]:
-                walk(r)
-            v = {k: x for k, x in v.items() if k not in ("roots", "clips")}
-            v["roots"] = "[" + ", ".join(map(str, names)) + "]"
-        out = {}
-        for k, x in v.items():
-            if k in SKIP:
-                out[k] = "…"
-            elif k == "patch" and isinstance(x, list):
-                out[k] = [elide(o) for o in x[:2]] + ([f"…{len(x) - 2} more ops"] if len(x) > 2 else [])
-            else:
-                out[k] = elide(x)
-        return out
-    if isinstance(v, list):
-        if v and isinstance(v[0], dict) and "description" in v[0]:
-            return [t["name"] for t in v]
-        return [elide(x) for x in v]
-    if isinstance(v, float):
-        return round(v, 3)
-    return v
+
+def call_text(name, a):
+    """One compact line per tool call, built from the recorded arguments."""
+    if name == "patch":
+        ops = a.get("ops", [])
+        o = ops[0]
+        leaf = o.get("path", "").rstrip("/").split("/")[-1] if o.get("path") else ""
+        first = f'{o["op"]} {o["node"]}' + (f".{leaf} = {short(o.get('value'), 26)}" if leaf else "")
+        more = f" +{len(ops) - 1} ops" if len(ops) > 1 else ""
+        return f"patch @rev {a.get('base_revision')}: {first}{more}"
+    if name == "render_frame":
+        return f"render_frame t={a.get('time', 0)}s -> {os.path.basename(a.get('output', ''))}"
+    if name == "node":
+        return f"node {a.get('node')}"
+    if name in ("open",):
+        return f"open {a.get('input')}"
+    if name == "diff":
+        return f"diff {a.get('before')} -> {a.get('after')}"
+    if name in ("export",):
+        return f"export -> {a.get('output')}"
+    if name == "close":
+        return f"close {a.get('session')}"
+    return name + "".join(f" {k}={short(v, 16)}" for k, v in a.items() if k != "session")
+
+
+def result_text(b, err):
+    if err:
+        e = b.get("error", {})
+        return f"error {e.get('code')}: {e.get('message', '')}"
+    if "tools" in b:
+        return f"{len(b['tools'])} tools"
+    if "capabilities" in b:
+        return "initialized"
+    if "revision" in b and "output" in b and str(b["output"]).endswith(".png"):
+        return f"frame {b['width']}x{b['height']} at rev {b['revision']}"
+    if "bytes" in b:
+        return f"exported {b['duration']} s, {b['bytes'] // 1000} KB, rev {b['revision']}"
+    if "pass" in b:
+        return f"qa pass={str(b['pass']).lower()} score {b['score']}, {b['errors']} errors"
+    if set(b) == {"revision"}:
+        return f"ok, now revision {b['revision']}"
+    if "kind" in b and "id" in b:
+        return f"{b['kind']} node, {len(b.get('leaves', {}))} leaves"
+    if "changed_nodes" in b:
+        return f"{len(b['changed_nodes'])} nodes changed"
+    if "closed" in b:
+        return f"closed {b['closed']}"
+    if "element_ids" in b:
+        return f"{len(b['element_ids'])} elements"
+    if "compositions" in b:
+        return "session opened"
+    if "fps" in b:
+        return f"{b['duration']} s at {b['fps']:g} fps"
+    return short(b, 40)
 
 
 recs = [json.loads(l) for l in open(os.path.join(HERE, "session.jsonl"), encoding="utf-8")]
@@ -55,39 +84,41 @@ for r in recs:
         if m.get("method") == "notifications/initialized":
             continue
         if m.get("method") == "tools/call":
-            txt = m["params"]["name"] + " " + json.dumps(elide(m["params"]["arguments"]), ensure_ascii=False)
+            txt = call_text(m["params"]["name"], m["params"]["arguments"])
         else:
-            txt = m["method"] + " " + json.dumps(elide(m["params"]), ensure_ascii=False)
-        events.append(("out", f'[{r["t"]:6.3f}s] >> {txt}', None))
+            txt = m["method"]
+        events.append(("out", f">> {txt}", None))
     else:
+        if r.get("ms") is None:  # progress notifications
+            continue
         res = m.get("result", {})
         body = res.get("structuredContent", res)
         frame = None
         if isinstance(body, dict) and str(body.get("output", "")).endswith(".png"):
             frame = os.path.join(HERE, body["output"])
         kind = "err" if res.get("isError") else "in"
-        events.append((kind, f'[{r["t"]:6.3f}s] << {json.dumps(elide(body), ensure_ascii=False)}  ({r["ms"]} ms)', frame))
+        events.append((kind, f"<< {result_text(body, kind == 'err')}  {r['ms']:g} ms", frame))
 
-LW, COLS, LINE_H, TOP = 820, 84, 20, 70
-MAXL = (H - TOP - 40) // LINE_H
+LW, COLS, LINE_H, TOP = 560, 40, 27, 64
+MAXL = (H - TOP - 26) // LINE_H
 
 
 def wrap(t):
-    return textwrap.wrap(t, COLS, subsequent_indent="    ", break_long_words=True) or [""]
+    return textwrap.wrap(t, COLS, subsequent_indent="   ", break_long_words=True) or [""]
 
 
-CPS = 200
+CPS = 70
 tl = []
 t = 0.6
 for k, txt, fr in events:
     lines = wrap(txt)
     n = sum(len(l) for l in lines)
-    dur = max(0.3, min(1.6, n / CPS)) if k == "out" else max(0.2, min(1.2, n / (CPS * 1.6)))
+    dur = max(0.25, min(1.0, n / CPS)) if k == "out" else 0.2
     tl.append((t, dur, k, lines, fr))
-    t += dur + (0.9 if fr else 0.3)
+    t += dur + (0.9 if fr else 0.25)
 SPLIT_END = t + 1.5
 
-FRAME_BOX = (LW + 40, 110, W - 30, 110 + int((W - 30 - LW - 40) * 9 / 16))
+FRAME_BOX = (LW + 30, 100, W - 20, 100 + int((W - 20 - LW - 30) * 9 / 16))
 cache = {}
 
 
@@ -109,10 +140,10 @@ def label_of(p):
 def draw_frame(now):
     im = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle((20, 20, LW + 10, H - 20), 14, fill=PANEL)
+    d.rounded_rectangle((14, 14, LW + 6, H - 14), 12, fill=PANEL)
     for i, c in enumerate([(255, 95, 86), (255, 189, 46), (39, 201, 63)]):
-        d.ellipse((40 + i * 22, 36, 52 + i * 22, 48), fill=c)
-    d.text((120, 33), "agent <-> director-engine mcp   (JSON-RPC over stdio)", font=mono, fill=DIM)
+        d.ellipse((32 + i * 22, 30, 44 + i * 22, 42), fill=c)
+    d.text((106, 24), "agent <-> director mcp", font=mono, fill=DIM)
     shown, cur = [], None
     for (t0, dur, k, lines, fr) in tl:
         if now < t0:
@@ -129,20 +160,20 @@ def draw_frame(now):
             cur = fr
     vis = shown[-MAXL:]
     for i, (l, c) in enumerate(vis):
-        d.text((40, TOP + i * LINE_H), l, font=mono, fill=c)
+        d.text((32, TOP + i * LINE_H), l, font=mono, fill=c)
     if vis and int(now * 2) % 2 == 0:
         y = TOP + (len(vis) - 1) * LINE_H
-        x = 40 + int(d.textlength(vis[-1][0], font=mono))
+        x = 32 + int(d.textlength(vis[-1][0], font=mono))
         d.rectangle((x + 2, y + 2, x + 10, y + 18), fill=FG)
-    d.text((LW + 40, 36), "An AI agent edits a Director video over MCP", font=sans_b, fill=FG)
-    d.text((LW + 40, 72), "left: the real session log  ·  right: each render_frame PNG", font=sans, fill=DIM)
+    d.text((LW + 30, 24), "An agent edits a video over MCP", font=sans_b, fill=FG)
+    d.text((LW + 30, 62), "real session log, each rendered frame", font=sans, fill=DIM)
     size = (FRAME_BOX[2] - FRAME_BOX[0], FRAME_BOX[3] - FRAME_BOX[1])
     if cur:
         im.paste(img(cur, size), FRAME_BOX[:2])
-        tag = f"revision {rev_of(cur)}  ·  {label_of(cur)}  ·  t = 2.5 s"
+        tag = f"rev {rev_of(cur)}  ·  {label_of(cur)}"
         tw = d.textlength(tag, font=sans_b)
         x0, y0 = FRAME_BOX[0] + 14, FRAME_BOX[1] + 14
-        d.rounded_rectangle((x0, y0, x0 + tw + 20, y0 + 38), 8, fill=BG)
+        d.rounded_rectangle((x0, y0, x0 + tw + 20, y0 + 42), 8, fill=BG)
         d.text((x0 + 10, y0 + 6), tag, font=sans_b, fill=INC)
     else:
         d.rectangle(FRAME_BOX, outline=(50, 48, 66))
@@ -162,7 +193,7 @@ def draw_frame(now):
 
 
 ff = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-                       "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart", OUT],
+                       "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", OUT],
                       stdin=subprocess.PIPE)
 nf = int(SPLIT_END * FPS)
 for f in range(nf):
@@ -172,16 +203,16 @@ for f in range(nf):
         im.save(os.path.join(HERE, "poster_src.png"))
 
 # Outro: the exported clip itself, decoded frame by frame, untouched apart from scaling.
-fw = W - 80
+fw = W - 160
 fh = fw * 9 // 16
 dec = subprocess.run(["ffmpeg", "-v", "error", "-i", os.path.join(HERE, "export.mp4"), "-vf", f"scale={fw}:{fh}",
                       "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
 sz = fw * fh * 3
-cap = 'export {"session":"s1","output":"export.mp4"}  ->  revision 4, as exported'
+cap = "export.mp4, revision 4, exactly as the agent exported it"
 for i in range(len(dec) // sz):
     im = Image.new("RGB", (W, H), BG)
-    im.paste(Image.frombytes("RGB", (fw, fh), dec[i * sz:(i + 1) * sz]), (40, 24))
-    ImageDraw.Draw(im).text((40, 24 + fh + 12), cap, font=mono, fill=INC)
+    im.paste(Image.frombytes("RGB", (fw, fh), dec[i * sz:(i + 1) * sz]), (80, 24))
+    ImageDraw.Draw(im).text((80, 24 + fh + 16), cap, font=mono, fill=INC)
     ff.stdin.write(im.tobytes())
 ff.stdin.close()
 ff.wait()
