@@ -4,7 +4,7 @@
 
 ## Ownership
 
-- `src/lib.rs` owns `SceneDocument`, `NodeRecord`, `Filter`, `PathAnimation`, `PathMorph`, `AudioBinding`, `AssetRecord`, `VERSION`, JSON read/write and the JSON Schema.
+- `src/lib.rs` owns `SceneDocument`, `NodeRecord`, `Filter`, `PathAnimation`, `PathMorph`, `AudioBinding`, `AssetRecord`, `FontFace`, `VERSION`, JSON read/write and the JSON Schema.
 - `src/body.rs` owns `NodeBody` and the box, text, media, shape, vector, Lottie, composition, effect and spectrum bodies.
 - `src/caption.rs` owns the caption, smart caption and active speaker camera bodies.
 - `src/channel.rs` owns `Channel`, `Keyframe`, `Easing` and `Rgba`.
@@ -22,6 +22,7 @@
 - `Channel` keyframes are in time order and carry their easing. A still value is one keyframe at time 0.
 - Effects and transitions use their primary `api_catalog` names. Parameters are keyed by name.
 - Media live in the `assets` table and nodes refer to them by `AssetId`. An asset is a source path or base64-embedded bytes with a media type. A path is the reference the scene's asset loader resolved.
+- `fonts` lists font files by family and asset in registration order, omitted when empty. A renderer registers them on top of its bundled fonts before painting.
 - An audio track's `source_start` skips that many seconds of its path asset. It is 0 and omitted for embedded samples.
 - A Lottie body holds the authored Lottie JSON and `images`, the override images by Lottie asset id, omitted when empty.
 - Entities are sorted by id so equal scenes write equal documents.

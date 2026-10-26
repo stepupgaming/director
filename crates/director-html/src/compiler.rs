@@ -9,6 +9,7 @@ use crate::{
 use director_core::{
     element::TextSpan,
     node::{ImageNode, TextNode, VectorNode, VideoNode, VideoSource},
+    systems::assets::FontFace,
     types::{NodeId, ObjectFit},
     video_wrapper::RenderMode,
     Director, Element, RenderError,
@@ -417,26 +418,19 @@ pub(crate) fn load_fonts(
     fonts: &[(String, String)],
     assets: &AssetStore,
 ) -> Result<(), CompileError> {
-    if fonts.is_empty() {
-        return Ok(());
-    }
-    let mut provider = skia_safe::textlayout::TypefaceFontProvider::new();
-    for (family, src) in fonts {
-        let bytes = decoded_font(family, assets.read(&url(src)?)?)?;
-        let face = skia_safe::FontMgr::new()
-            .new_from_bytes(&bytes, 0)
-            .ok_or_else(|| {
-                CompileError::Input(format!("font '{family}' is not decodable by Skia"))
-            })?;
-        provider.register_typeface(face, Some(family.as_str()));
-    }
+    let faces = fonts
+        .iter()
+        .map(|(family, src)| {
+            Ok(FontFace {
+                family: family.clone(),
+                bytes: Arc::new(decoded_font(family, assets.read(&url(src)?)?)?),
+            })
+        })
+        .collect::<Result<Vec<_>, CompileError>>()?;
     director
         .assets
-        .font_collection
-        .lock()
-        .map_err(|_| CompileError::Input("font lock poisoned".into()))?
-        .set_dynamic_font_manager(skia_safe::FontMgr::from(provider));
-    Ok(())
+        .register_font_faces(faces)
+        .map_err(CompileError::Input)
 }
 
 pub fn validate_options(options: &CompileOptions) -> Result<(), CompileError> {

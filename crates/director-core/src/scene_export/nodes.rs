@@ -1,7 +1,7 @@
 //! Bodies for the box, text, media, shape, vector, Lottie, composition and
 //! spectrum elements.
 
-use super::{channel, color_channel, export_scene, gradient, rgba, ElementExport, ExportContext, ExportError};
+use super::{channel, color_channel, export_nested, gradient, rgba, ElementExport, ExportContext, ExportError};
 use crate::element::{TextFit, TextShadow};
 use crate::node::{
     BoxNode, CompositionNode, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType,
@@ -322,7 +322,7 @@ pub(crate) fn composition_body(
         opacity: Channel::still(1.0),
         body: NodeBody::Composition(doc::CompositionBody {
             start_offset: node.start_offset,
-            document: Box::new(export_scene(&inner)?),
+            document: Box::new(export_nested(&inner)?),
         }),
     })
 }

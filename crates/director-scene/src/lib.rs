@@ -66,6 +66,18 @@ pub struct SceneDocument {
     pub entities: Vec<Entity>,
     /// Media the nodes and audio tracks refer to, by id.
     pub assets: Vec<AssetRecord>,
+    /// Font files registered under their families on top of the bundled
+    /// fonts, such as HTML `@font-face` rules, in registration order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fonts: Vec<FontFace>,
+}
+
+/// One font file and the family it answers to.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FontFace {
+    pub family: String,
+    /// Asset holding the TrueType or OpenType bytes.
+    pub asset: AssetId,
 }
 
 /// Temporal supersampling.
@@ -374,6 +386,7 @@ mod tests {
             timeline: Timeline::default(),
             audio: AudioMix::default(),
             entities: vec![],
+            fonts: vec![],
             assets: vec![AssetRecord {
                 id: "image-0".to_string(),
                 media_type: "image/png".to_string(),

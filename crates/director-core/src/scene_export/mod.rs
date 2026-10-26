@@ -22,7 +22,7 @@ use crate::types::{Color, GradientConfig, GradientType, NodeId};
 use base64::Engine as _;
 use director_scene::{
     AssetId, AssetRecord, AssetSource, AudioBinding, Channel, Easing, Entity, EntityKind,
-    EntitySample, Filter, Gradient, GradientKind, Keyframe, MotionBlur, NodeBody, NodeRecord,
+    EntitySample, Filter, FontFace, Gradient, GradientKind, Keyframe, MotionBlur, NodeBody, NodeRecord,
     NodeRef, PathAnimation, PathMorph, Rgba, SceneDocument, TransformChannels, VERSION,
 };
 use std::collections::HashMap;
@@ -98,6 +98,30 @@ impl ExportContext {
 
 /// Copy the scene graph, timeline, audio, entities and assets into a document.
 pub fn export_scene(director: &Director) -> Result<SceneDocument, ExportError> {
+    let mut document = export_nested(director)?;
+    let faces = director
+        .assets
+        .font_faces
+        .lock()
+        .map_err(|_| ExportError::Unrepresentable("poisoned font faces".to_string()))?
+        .clone();
+    let mut cx = ExportContext {
+        assets: std::mem::take(&mut document.assets),
+        ..Default::default()
+    };
+    document.fonts = faces
+        .iter()
+        .map(|face| FontFace {
+            family: face.family.clone(),
+            asset: cx.embedded_asset("font", "font/ttf", &face.bytes),
+        })
+        .collect();
+    document.assets = cx.assets;
+    Ok(document)
+}
+
+/// Export a director that shares its parent's fonts, leaving `fonts` empty.
+pub(crate) fn export_nested(director: &Director) -> Result<SceneDocument, ExportError> {
     let mut cx = ExportContext::default();
     let nodes = export_graph(&director.scene, &mut cx)?;
     let audio = audio::export_audio(&director.audio_mixer, &mut cx)?;
@@ -118,6 +142,7 @@ pub fn export_scene(director: &Director) -> Result<SceneDocument, ExportError> {
         audio,
         entities: export_entities(&director.entities),
         assets: cx.assets,
+        fonts: Vec::new(),
     })
 }
 

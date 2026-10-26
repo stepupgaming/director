@@ -1,6 +1,6 @@
 use crate::AssetLoader;
 use skia_safe::textlayout::{FontCollection, TypefaceFontProvider};
-use skia_safe::{Data, Image, RuntimeEffect};
+use skia_safe::{Data, FontMgr, Image, RuntimeEffect};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +23,16 @@ pub struct AssetManager {
     pub image_cache: Arc<Mutex<HashMap<String, Image>>>,
     /// Blob/Metadata Cache (e.g. Lottie JSON, raw bytes)
     pub blob_cache: Arc<Mutex<HashMap<String, Arc<Vec<u8>>>>>,
+    /// Faces registered on the dynamic font manager, in registration order.
+    pub font_faces: Arc<Mutex<Vec<FontFace>>>,
+}
+
+/// A font file registered under a family on top of the bundled fonts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontFace {
+    pub family: String,
+    /// TrueType or OpenType bytes.
+    pub bytes: Arc<Vec<u8>>,
 }
 
 impl AssetManager {
@@ -40,7 +50,38 @@ impl AssetManager {
             font_provider,
             image_cache: Arc::new(Mutex::new(HashMap::new())),
             blob_cache: Arc::new(Mutex::new(HashMap::new())),
+            font_faces: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Adds `faces` after the faces already registered, skipping equal ones,
+    /// and installs them all as the font collection's dynamic font manager.
+    /// Fails, registering nothing, when Skia cannot decode a face.
+    pub fn register_font_faces(&self, faces: impl IntoIterator<Item = FontFace>) -> Result<(), String> {
+        let mut registered = self.font_faces.lock().map_err(|_| "font face lock poisoned".to_string())?;
+        let mut all = registered.clone();
+        for face in faces {
+            if !all.contains(&face) {
+                all.push(face);
+            }
+        }
+        if all.len() == registered.len() {
+            return Ok(());
+        }
+        let manager = FontMgr::new();
+        let mut provider = TypefaceFontProvider::new();
+        for face in &all {
+            let typeface = manager
+                .new_from_bytes(&face.bytes, 0)
+                .ok_or_else(|| format!("font '{}' is not decodable by Skia", face.family))?;
+            provider.register_typeface(typeface, Some(face.family.as_str()));
+        }
+        self.font_collection
+            .lock()
+            .map_err(|_| "font collection lock poisoned".to_string())?
+            .set_dynamic_font_manager(FontMgr::from(provider));
+        *registered = all;
+        Ok(())
     }
 
     /// Loads an image from the given path, caching the result.

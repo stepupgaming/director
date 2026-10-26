@@ -198,6 +198,26 @@ fn ffmpeg_clip(dir: &Path) -> std::path::PathBuf {
 }
 
 #[test]
+fn font_faces_render_from_the_document() {
+    let html = "<style>
+        @font-face { font-family: 'Display Face'; src: url(Poppins-Bold.ttf); }
+        body { margin: 0; background: #fff }
+        p { margin: 8px; width: 150px; font: 22px 'Display Face'; color: #000 }
+      </style>
+      <p>Faces travel with the scene document</p>";
+    let options = CompileOptions {
+        base_dir: Path::new(env!("CARGO_MANIFEST_DIR")).join("../director-core/assets/fonts"),
+        ..options(160, 120)
+    };
+    let compiled = compile(html, options).unwrap();
+    let document = export_scene(&compiled.director).unwrap();
+    assert_eq!(document.fonts.len(), 1);
+    assert_eq!(document.fonts[0].family, "Display Face");
+    let failures = mismatches("font faces", compiled);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn smil_svg_renders_from_the_document() {
     let html = "<style>body{margin:0;background:#fff}</style>
         <svg width='64' height='32' viewBox='0 0 64 32'>

@@ -90,20 +90,20 @@ One row per check, holding the most recent passing count. Replace the row when a
 
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
-| workspace clippy | pass | 2026-10-25 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
+| workspace clippy | pass | 2026-10-26 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
 | director-core release tests | 431 | 2026-10-25 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 1009 of 1012 (the untracked `examples/html/showreel.html` fails the HTML example round trip and document render; `compile_logs_an_unchanged_violation_list_once` flaked once and passes alone) | 2026-10-26 | `cargo test --workspace --release --no-fail-fast` |
+| workspace release tests | 1009, 2 ignored (961 without director-cli plus 48 in director-cli, run apart while another process held the engine binary; the untracked `examples/html/showreel.html` was present) | 2026-10-26 | `cargo test --workspace --release --no-fail-fast --exclude director-cli` and `cargo test -p director-cli --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
-| director-render | 21 | 2026-10-25 | `cargo test -p director-render --release` |
+| director-render | 22 | 2026-10-26 | `cargo test -p director-render --release` |
 | director-host | 24 | 2026-10-26 | `cargo test -p director-host --release` |
 | director-cli | 48 | 2026-10-26 | `cargo test -p director-cli --release` |
 | 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | 1080p HTML export on Vulkan, CLI `html render --gpu` serial `render_export_at_scale` vs pipelined `export_on` (one session, four frames in flight; 90 frames, x264, median of 3; CPU pool export for reference) | native-motion 565 vs 505 ms (CPU 546), image-background 483 vs 415 ms (CPU 396), nested-rule 474 vs 421 ms (CPU 371), text-decoration 485 vs 417 ms (CPU 379); GPU outputs frame-identical to the serial GPU export (framemd5) | 2026-10-25 | `director-engine html render examples/html/<name>.html -o <out>.mp4 --gpu` from `cargo build -p director-cli --release --features vulkan` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
-| HTML scene_document | 7 | 2026-10-25 | `cargo test -p director-html --release --test scene_document` |
+| HTML scene_document | 7 | 2026-10-26 | `cargo test -p director-html --release --test scene_document` |
 | Vulkan engine clippy | pass | 2026-10-25 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |

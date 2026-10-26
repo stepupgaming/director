@@ -19,7 +19,7 @@ pub use layout::{import_layout, length};
 use crate::animation::{Animated, EasingType};
 use crate::director::{Director, DirectorContext};
 use crate::element::Element;
-use crate::systems::assets::AssetManager;
+use crate::systems::assets::{AssetManager, FontFace};
 use crate::types::{Color, FilterConfig, GradientConfig, GradientType, NodeId, PathAnimationState, PathMorphState};
 use crate::video_wrapper::RenderMode;
 use crate::AssetLoader;
@@ -232,6 +232,17 @@ fn import_into(
         render_mode,
         shared: HashMap::new(),
     };
+    let faces = document
+        .fonts
+        .iter()
+        .map(|face| {
+            Ok(FontFace {
+                family: face.family.clone(),
+                bytes: Arc::new(cx.asset_bytes(&face.asset)?),
+            })
+        })
+        .collect::<Result<Vec<_>, ImportError>>()?;
+    director.assets.register_font_faces(faces).map_err(ImportError::Invalid)?;
     audio::import_audio(&document.audio, &mut director.audio_mixer, &cx)?;
     let ids = import_graph(&document.nodes, &mut director.scene, &mut cx)?;
     timeline::import_timeline(&mut director, &document.timeline, &ids)?;

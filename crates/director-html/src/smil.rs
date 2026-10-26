@@ -1737,7 +1737,7 @@ impl SmilAnim {
 }
 
 /// Rebuild an `svg_smil` element from its document body. Text resolves
-/// against the bundled SVG faces.
+/// against the bundled SVG faces and the document's font faces.
 pub(crate) fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
     let NodeBody::SvgSmil(body) = &record.body else {
         return Err(crate::import::mismatch(record));
@@ -1746,8 +1746,17 @@ pub(crate) fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<
         id: body.markup.clone(),
         reason: format!("SVG markup: {error}"),
     })?;
-    let fonts = crate::compiler::bundled_svg_fonts(cx.assets.loader.as_ref())
+    let mut fonts = crate::compiler::bundled_svg_fonts(cx.assets.loader.as_ref())
         .map_err(|error| ImportError::Invalid(error.to_string()))?;
+    let faces = cx
+        .assets
+        .font_faces
+        .lock()
+        .map_err(|_| ImportError::Invalid("font face lock poisoned".to_string()))?
+        .clone();
+    for face in faces {
+        fonts.load_font_data(face.bytes.to_vec());
+    }
     let plan = SmilPlan {
         anims: body.animations.iter().map(SmilAnim::from_doc).collect::<Result<_, _>>()?,
         targets: HashMap::new(),

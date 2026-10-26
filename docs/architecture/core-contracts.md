@@ -116,6 +116,7 @@ See plan **05** (implemented). Acceptance: `tests/project_roundtrip.rs` Plan 05 
 | Item | Contract | Status |
 |------|----------|--------|
 | Fonts | Roboto R/B/I, Inter R/B, Poppins Bold required; export fails via `ensure_required_fonts` | **Locked** (plan 06) |
+| Document fonts | `SceneDocument::fonts` embeds authored faces such as HTML `@font-face` files; import registers them before any node decodes, so a document render shapes text with the faces of the live compile | **Implemented**; `crates/director-render/tests/html_examples.rs` |
 | RNG | `rand_float` / `set_seed` use process `StdRng` default `0xC0FFEE`; no `thread_rng` in lib | **Locked** |
 | Video seek | **Floor** onto the probed source frame grid (`video_seek_time` / `video_source_frame_index`); 30 FPS fallback when frame-rate probing fails; freeze pins local time. Exact VFR presentation timestamps are not supported. | **Locked for CFR** |
 | Video decode | Reuse a persistent FFmpeg pipe for sequential reads; cache up to 8 frames; restart on uncached backward or >60-frame seeks. Sessions kill/reap their child on drop; threaded decoders disconnect both channels and join on drop. | **Implemented**; real decode/lifecycle coverage in `video_wrapper::tests` |
