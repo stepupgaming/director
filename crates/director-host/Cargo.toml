@@ -10,6 +10,8 @@ director-core = { workspace = true }
 director-scene = { workspace = true }
 director-render = { path = "../director-render" }
 director-html = { path = "../director-html" }
+base64 = "0.22"
+memmap2 = "0.9"
 rhai = "1.23.6"
 serde = { workspace = true }
 serde_json = { workspace = true }

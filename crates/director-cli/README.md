@@ -100,6 +100,14 @@ director-engine skills .agent/skills
 
 `skills DIR` writes the `director-mcp` agent skill generated from the tool schemas: `DIR/director-mcp/SKILL.md` and `DIR/director-mcp/tools.json`. Point it at a project's skills directory to install it.
 
+## Editor protocol
+
+```bash
+director-engine editor scene.html --frames scene.ring
+```
+
+`editor` drives one host session for an editor process. Send one command per line on stdin: `{"op":"seek","time":1.5}`, `{"op":"patch","base_revision":0,"ops":[...]}`, `{"op":"reload"}`, `{"op":"inspect","time":1}`, `{"op":"outline"}` and `{"op":"audio","start":0,"duration":2}`. Each command takes the next generation, starting at 1. Events print one per line on stdout: `opened` first, then `frame`, `cancelled`, `patched`, `reloaded`, `inspected`, `outline`, `audio` and `error`, each with its command's generation. A seek superseded by a newer one reports `cancelled`. Edits and source changes repaint the last seek. Frames land in the `--frames` ring file: map it and read the slot a `frame` event names (layout in `crates/director-host/AGENTS.md`). Audio arrives as base64 little-endian float stereo in `samples_f32le`. Close stdin to exit.
+
 ## Portable native projects
 
 ```bash

@@ -1,6 +1,7 @@
 mod audio_report;
 mod batch;
 mod check;
+mod editor;
 mod gpu;
 mod html;
 mod input;
@@ -116,6 +117,8 @@ enum Commands {
     Compositions(CompositionsArgs),
     /// Preview API server for editors and agents (frames, inspect, audio, reload)
     Preview(CliPreviewArgs),
+    /// Editor protocol on stdio: JSON-line commands and events with frames in a shared-memory ring
+    Editor(editor::EditorArgs),
     /// Model Context Protocol server on stdio over host sessions
     Mcp(mcp::McpArgs),
     /// Write agent skills generated from the MCP tool schemas
@@ -586,6 +589,7 @@ fn main() {
         Some(Commands::Outline(args)) => std::process::exit(flush_status(outline::run_outline(args))),
         Some(Commands::Diff(args)) => std::process::exit(flush_status(outline::run_diff(args))),
         Some(Commands::Qa(args)) => std::process::exit(flush_status(qa::run(args))),
+        Some(Commands::Editor(args)) => std::process::exit(flush_status(editor::run(args))),
         Some(Commands::Mcp(args)) => std::process::exit(flush_status(mcp::run(args))),
         Some(Commands::Skills(args)) => std::process::exit(flush_status(skills::run(args))),
         None => {

@@ -1,6 +1,6 @@
 # Purpose
 
-- Own the host session API of plan 10 phase 4: one open project as a revisioned `director_scene::SceneDocument` with patch, outline, diff, inspect, the QA report, frame render and export. The CLI, an MCP server and a future Tauri editor link this crate.
+- Own the host session API of plan 10 phase 4: one open project as a revisioned `director_scene::SceneDocument` with patch, outline, diff, inspect, the QA report, frame render and export, plus the editor protocol over it. The CLI, an MCP server and a future Tauri editor link this crate.
 
 ## Ownership
 
@@ -8,10 +8,12 @@
 - `src/script.rs` owns Rhai evaluation with the composition registry (`eval_script`) and movie resolution (`resolve_movie`, `ResolveOpts`).
 - `src/session.rs` owns `Session`, `ExportSettings`, the `Outline` types and `import_registry` (core kinds plus `director-html` kinds).
 - `src/diff.rs` owns `diff` and the `Diff` types: the structural diff of two sessions' documents and the patch between them.
+- `src/editor.rs` owns the editor protocol: `Editor`, `EditorOptions`, `Command`, `Event` and the owner thread that holds the `Session`.
+- `src/frames.rs` owns `SharedFrames`, the shared-memory frame ring (file-backed or anonymous), `FrameStamp` and `SharedFrame`.
 - `src/qa.rs` owns `Session::qa`, `QaOptions`, `QaReport`, `QaIssue`, `QaAudio` and `sample_times` (the layout sampling grid shared with the CLI `check`).
 - `src/patch.rs` owns `PatchOp`, `NodeSelector`, `Patch`, selector resolution and op application.
 - `src/error.rs` owns `HostError`, `ErrorCode` (with a JSON schema whose variant docs describe each code to agents) and the JSON error envelope.
-- `tests/session.rs` covers open, outline, accepted and rejected patches, conflicts, removal, retiming, frame repaint, inspection, export progress and cancellation on `examples/html/native-motion.html`, plus dependency reload, the cached WAV, native project edits, diffs and QA scores on generated HTML.
+- `tests/session.rs` covers open, outline, accepted and rejected patches, conflicts, removal, retiming, frame repaint, inspection, export progress and cancellation on `examples/html/native-motion.html`, plus dependency reload, the cached WAV, native project edits, diffs and QA scores on generated HTML. `tests/editor.rs` covers seeks into the ring, repaint after patches and source reloads, seek cancellation, a second mapping of the ring file and audio windows.
 
 ## Local Contracts
 
@@ -24,10 +26,13 @@
 - `reload` loads the input again as the next revision and drops unsaved project edits. A failure keeps the document and sets `reload_error` until a reload succeeds. `source_changed` compares the modification time and length of the input and its dependency paths with the last load or reload attempt.
 - `edit_project` applies `director_html::ElementEdit`s by element id to the native project input and holds the compiled result as the next revision. Edits that do not compile fail with `invalid_patch` and leave the session unchanged. `save_project` writes the edited project atomically.
 - `manifest` returns the render manifest at a time and `audio_mixer` the decoded tracks, both on the `Director` imported from the current revision. `missing_fonts` lists required bundled fonts the system lacks.
+- `audio_window(start, duration)` mixes export-frame chunks covering `[start, start + duration)` on the export clock as interleaved float stereo. `start` snaps down to a frame time; `duration` must be in `(0, MAX_AUDIO_WINDOW]` (60 s). Effect tails carry over from the previous mix on the revision.
 - `audio_wav` mixes the timeline into one float-stereo WAV in export-sized chunks on the export clock and caches it until the next revision.
 - `export` paints the current revision through `director_render::Renderer::export_options` at `ExportSettings::scale` with an optional alpha override, on a CPU pool or on a supplied GPU context. Missing required fonts fail with `missing_font`. A set cancel flag fails with `cancelled` and leaves nothing at the path. Progress reports encoded frames on the writer thread.
 - `diff(before, after)` matches nodes by authored name, then by node id, when kinds agree. It reports document changes outside `/nodes`, added, removed and moved nodes (another parent or sibling order), and node record changes outside `/id`, `/parent` and `/children`, each at the deepest JSON pointer where both sides share the shape. `patchable` holds when no node was added or moved and every match keeps its node id; `patch` (document sets, node sets by name or id, then removals of removed subtree roots) applied to `before` then yields `after`.
 - `qa(options)` reports on the current revision: `score` is 100 minus 20 per error and 5 per warning, floored at 0, and `pass` holds with no errors. Layout samples follow `sample_times(duration, every)` (at most 240). errors (20 points each) are missing required fonts, nodes outside the canvas at every layout sample (reported at the topmost such node), clipped mix samples and non-finite audio; warnings (5 points each) are `text`, `caption` or `smart_caption` nodes crossing the canvas edge or inside the `safe_zone` inset for at least one second of samples, the manifest's caption-over-face and subject-out-of-frame detectors on a one-second grid, true peak above -1 dBTP, a silent mix and integrated loudness more than 2 LU from the target; info covers static stretches (painted frames 0.5 s apart with no visible change for 2 s or more) and mixes above 57600000 samples, which skip analysis. Issues merge per kind and node with `start`, `end`, `count`, the authored `name` and a `fix`, sorted errors first. `audio` holds the mix loudness when the timeline has tracks. A nonpositive or non-finite `every`, a non-finite `loudness_target` or an unknown safe-zone preset fail with `invalid_argument`.
+- `Editor::open` opens the session on its own owner thread, runs `EditorOptions::setup` there (a GPU context stays on that thread), creates a `SharedFrames` ring of `FRAME_SLOTS` slots sized for the canvas at its output scale, and sends `Opened` first. `send` gives each `Command` the next generation. A seek older than the newest seek sent reports `Cancelled`; otherwise it paints and publishes a `Frame` naming the ring slot. `Patched` and `Reloaded` repaint the last painted seek unless a newer seek is queued. A changed source reloads before the next command. Failures report `Error` with the command's generation. Dropping the `Editor` finishes queued commands and joins the thread.
+- `SharedFrames` layout: a 64-byte header (magic `DRFM`, version 1, slot count, capacity, newest slot plus one, published count) and slots of a 64-byte header (seqlock sequence, generation, revision, time bits, width, height) plus straight-alpha RGBA. One writer publishes; readers in any process copy the newest slot and retry torn reads. `Event::Audio` serializes samples as base64 little-endian `f32` in `samples_f32le`.
 - Times must be finite and nonnegative (`invalid_argument`). Every operation fails with a `HostError`; `envelope()` is `{"error":{"code","message"}}` with snake_case codes.
 
 ## Work Guidance

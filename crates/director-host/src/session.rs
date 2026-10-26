@@ -19,6 +19,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+/// Longest audio window in seconds.
+pub const MAX_AUDIO_WINDOW: f64 = 60.0;
+
+/// Interleaved float stereo of part of the timeline.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioWindow {
+    /// Timeline seconds of the first sample, on an export frame boundary.
+    pub start: f64,
+    pub sample_rate: u32,
+    pub samples: Vec<f32>,
+}
+
 /// A source file and its modification time and length when it was last read.
 type Fingerprint = (PathBuf, Option<(SystemTime, u64)>);
 
@@ -452,6 +464,35 @@ impl Session {
         let audio: Arc<[u8]> = wav.into();
         self.audio = Some(Arc::clone(&audio));
         Ok(audio)
+    }
+
+    /// The timeline mix from the export frame at or before `start` through the
+    /// one covering `start + duration`, mixed in the same export-sized chunks
+    /// as [`Session::audio_wav`] and clipped to the timeline. Effect tails
+    /// (reverb, delay) carry over from the previous mix on this revision.
+    pub fn audio_window(&mut self, start: f64, duration: f64) -> Result<AudioWindow, HostError> {
+        check_time(start)?;
+        if !(duration.is_finite() && duration > 0.0 && duration <= MAX_AUDIO_WINDOW) {
+            return Err(HostError::new(
+                ErrorCode::InvalidArgument,
+                format!("an audio window lasts more than 0 and at most {MAX_AUDIO_WINDOW} seconds"),
+            ));
+        }
+        let director = self.inspector()?;
+        let (rate, fps) = (director.audio_mixer.sample_rate, director.fps);
+        let total = duration_to_frame_count(director.timeline_duration(), fps);
+        let first = ((start * fps).floor() as u64).min(total);
+        let end = (((start + duration) * fps).ceil() as u64).min(total);
+        let chunk = audio_samples_per_video_frame(rate, fps, 1);
+        let mut samples = Vec::with_capacity((end - first) as usize * chunk * 2);
+        for frame in first..end {
+            samples.extend(director.mix_audio(chunk, frame as f64 / fps));
+        }
+        Ok(AudioWindow {
+            start: first as f64 / fps,
+            sample_rate: rate,
+            samples,
+        })
     }
 
     /// Paint the frame at `time` seconds on a session kept warm across calls

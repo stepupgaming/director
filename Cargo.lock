@@ -1026,10 +1026,12 @@ dependencies = [
 name = "director-host"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "director-core",
  "director-html",
  "director-render",
  "director-scene",
+ "memmap2",
  "rhai",
  "schemars",
  "serde",
