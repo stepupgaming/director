@@ -63,7 +63,7 @@ Gate: golden corpus parity with the old core, and a measured end-to-end 1080p HT
 
 ### Phase 4: Host session and agent surface
 
-- `director-host` with patch, revision and cancellation; the CLI becomes a thin client. Landed: the session, patch ops, cancellable export, input loading, reload, cached audio, GPU frames and native project edits; every top-level CLI command that opens an input runs on `Session`, and `Input::load` is gone; `outline` and `diff` print JSON and the error envelope, and the diff carries the patch between two inputs; `director-engine mcp` serves the session to agents as MCP tools, and `director-engine skills` generates the `director-mcp` skill from their schemas; `Session::qa` scores a revision for publishing through `director-engine qa` and the MCP `qa` tool; `director_host::Editor` serves the editor protocol in-process and `director-engine editor` serves it over stdio with a frame ring file.
+- `director-host` with patch, revision and cancellation; the CLI becomes a thin client. Landed: the session, patch ops, cancellable export, input loading, reload, cached audio, GPU frames and native project edits; every top-level CLI command that opens an input runs on `Session`, and `Input::load` is gone; `outline` and `diff` print JSON and the error envelope, and the diff carries the patch between two inputs; `director-engine mcp` serves the session to agents as MCP tools, and `director-engine skills` generates the `director-mcp` skill from their schemas; `Session::qa` scores a revision for publishing through `director-engine qa` and the MCP `qa` tool; `director_host::Editor` serves the editor protocol in-process and `director-engine editor` serves it over stdio with a frame ring file; MCP hardening (2026-10-26): the `node` tool reads records and settable pointers, `diff` sets a changed color as one op, outputs stay inside allowed roots (`--allow-dir`), `qa` and `export` send progress notifications, logs are plain `warn` and FFmpeg prints errors only, and exports without audio tracks carry no audio stream.
 - An MCP server mode, generated skills, and `outline`, `diff` and QA-score commands with one JSON error envelope.
 - An editor protocol: shared-memory frames, generation cancel, windowed audio and an edit and seek control plane.
 
@@ -91,14 +91,14 @@ One row per check, holding the most recent passing count. Replace the row when a
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
 | workspace clippy | pass | 2026-10-26 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
-| director-core release tests | 431 | 2026-10-25 | `cargo test -p director-core --release` |
+| director-core release tests | 432 | 2026-10-26 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
-| html_export | 4 | 2026-10-22 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 1014 of 1015, 2 ignored (`compile_logs_an_unchanged_violation_list_once` flaked under the parallel run and passes alone with `cargo test -p director-core --release --test compiler`; the untracked `examples/html/showreel.html` was present) | 2026-10-26 | `cargo test --workspace --release --no-fail-fast` |
+| html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test html_export` |
+| workspace release tests | 1021, 2 ignored | 2026-10-26 | `cargo test --workspace --release --no-fail-fast` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 22 | 2026-10-26 | `cargo test -p director-render --release` |
-| director-host | 24 | 2026-10-26 | `cargo test -p director-host --release` |
-| director-cli | 48 | 2026-10-26 | `cargo test -p director-cli --release` |
+| director-host | 25 | 2026-10-26 | `cargo test -p director-host --release` |
+| director-cli | 52 | 2026-10-26 | `cargo test -p director-cli --release` |
 | 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | 1080p HTML export on Vulkan, CLI `html render --gpu` serial `render_export_at_scale` vs pipelined `export_on` (one session, four frames in flight; 90 frames, x264, median of 3; CPU pool export for reference) | native-motion 565 vs 505 ms (CPU 546), image-background 483 vs 415 ms (CPU 396), nested-rule 474 vs 421 ms (CPU 371), text-decoration 485 vs 417 ms (CPU 379); GPU outputs frame-identical to the serial GPU export (framemd5) | 2026-10-25 | `director-engine html render examples/html/<name>.html -o <out>.mp4 --gpu` from `cargo build -p director-cli --release --features vulkan` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
@@ -136,7 +136,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Continue phase 5: port the remaining property groups to typed values and carry typed values through the cascade so `var()` substitution replaces the stringify and reparse. Then timeline JSON and GSAP to native tracks. Phase 4 follow-ups stay available: MCP progress notifications and cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Continue phase 5: port the remaining property groups to typed values and carry typed values through the cascade so `var()` substitution replaces the stringify and reparse. Then timeline JSON and GSAP to native tracks. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

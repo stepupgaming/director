@@ -264,9 +264,39 @@ fn diff_patch_turns_before_into_after() {
     let changed = diff.changed_nodes.iter().find(|node| node.name.as_deref() == Some("box"));
     assert!(changed.is_some_and(|node| !node.changes.is_empty()), "{}", json!(diff));
     assert!(diff.patchable);
+    // red to blue changes two channels of one color: one `set` of the color.
+    assert_eq!(diff.patch.len(), 1, "{}", json!(diff.patch));
+    let PatchOp::Set { path, value, .. } = &diff.patch[0] else { panic!("{:?}", diff.patch) };
+    assert!(value.is_object(), "{value}");
+    let read = before.node(&NodeSelector::Name("box".into()), Some(path), false).unwrap();
+    assert_eq!(read.value, changed.unwrap().changes[0].before);
     before.patch(0, &diff.patch).unwrap();
     assert_eq!(**before.document(), **after.document());
     assert_eq!(before.render_frame(0.1).unwrap(), after.render_frame(0.1).unwrap());
+}
+
+#[test]
+fn node_reads_a_record_and_leaf_paths_that_patch_accepts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::open(&Source::new(html_input(dir.path(), "red"))).unwrap();
+    let selector = NodeSelector::Name("box".into());
+    let record = session.node(&selector, None, true).unwrap();
+    assert_eq!((record.name.as_deref(), record.path.as_str()), (Some("box"), ""));
+    assert_eq!(record.value["id"], json!(record.id));
+    let leaves = record.leaves.unwrap();
+    assert!(leaves.keys().all(|path| !path.starts_with("/id") && !path.starts_with("/children")));
+    // Every leaf path round-trips: setting it to its own value is accepted and changes nothing.
+    let ops: Vec<PatchOp> = leaves
+        .iter()
+        .map(|(path, value)| PatchOp::Set { node: selector.clone(), path: path.clone(), value: value.clone() })
+        .collect();
+    let document = (**session.document()).clone();
+    session.patch(0, &ops).unwrap();
+    assert_eq!(**session.document(), document);
+    let opacity = session.node(&NodeSelector::Ref(record.id), Some("/opacity"), false).unwrap();
+    assert_eq!(opacity.value, record.value["opacity"]);
+    assert_eq!(session.node(&selector, Some("/nope"), false).unwrap_err().code, ErrorCode::NotFound);
+    assert_eq!(session.node(&NodeSelector::Name("gone".into()), None, false).unwrap_err().code, ErrorCode::NotFound);
 }
 
 #[test]

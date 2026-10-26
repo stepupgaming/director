@@ -92,7 +92,9 @@ director-engine qa video.html --safe-zone tiktok --loudness-target -14
 director-engine mcp
 ```
 
-`mcp` serves host sessions to agents as a Model Context Protocol server on stdio. Register the command `director-engine` with the argument `mcp` in an MCP client, plus `--gpu` on a Vulkan build. Tools: `open` an input into a session id with its outline, `outline`, `diff` two sessions, `patch` nodes by authored name against a base revision, `inspect` at a time, `qa` to score the revision, `render_frame` as PNG image content or a file, `export` a video, and `close`. A failed tool returns `isError` with `{"error":{"code","message"}}`.
+`mcp` serves host sessions to agents as a Model Context Protocol server on stdio. Register the command `director-engine` with the argument `mcp` in an MCP client, plus `--gpu` on a Vulkan build. Tools: `open` an input into a session id with its outline, `outline`, `node` to read a node record or the value at a JSON pointer (with `leaves: true`, every settable pointer `patch` takes), `diff` two sessions, `patch` nodes by authored name against a base revision, `inspect` at a time, `qa` to score the revision, `render_frame` as PNG image content or a file, `export` a video, and `close`. A failed tool returns `isError` with `{"error":{"code","message"}}`.
+
+`render_frame` and `export` outputs must resolve inside the server's working directory, the session's input directory or a root added with `--allow-dir DIR` (repeatable, alias `--output-root`). A `..` escape or an absolute path elsewhere fails with `output_outside_root`. A `qa` or `export` request with `_meta.progressToken` gets `notifications/progress` messages before its reply. Under `mcp`, logs on stderr are plain text at `warn` unless `--log-level` says otherwise, and FFmpeg prints errors only.
 
 ```bash
 director-engine skills .agent/skills

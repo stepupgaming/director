@@ -209,12 +209,15 @@ fn to_value(value: &impl Serialize, skip: &[&str]) -> Value {
 
 /// Record the deepest paths where `left` and `right` differ. Objects with the
 /// same keys and arrays of the same length recurse; anything else is one change.
+/// An object or array of numbers (a color, a point) that differs in more than
+/// one field is one change of the whole value, which replays the same.
 fn compare(left: &Value, right: &Value, path: &mut String, changes: &mut Vec<Change>) {
     if left == right {
         return;
     }
     let len = path.len();
-    match (left, right) {
+    let start = changes.len();
+    let scalars = match (left, right) {
         (Value::Object(a), Value::Object(b)) if a.len() == b.len() && a.keys().all(|field| b.contains_key(field)) => {
             for (field, value) in a {
                 path.push('/');
@@ -222,6 +225,7 @@ fn compare(left: &Value, right: &Value, path: &mut String, changes: &mut Vec<Cha
                 compare(value, &b[field], path, changes);
                 path.truncate(len);
             }
+            a.values().all(Value::is_number)
         }
         (Value::Array(a), Value::Array(b)) if a.len() == b.len() => {
             for (index, (x, y)) in a.iter().zip(b).enumerate() {
@@ -230,11 +234,23 @@ fn compare(left: &Value, right: &Value, path: &mut String, changes: &mut Vec<Cha
                 compare(x, y, path, changes);
                 path.truncate(len);
             }
+            a.iter().all(Value::is_number)
         }
-        _ => changes.push(Change {
+        _ => {
+            changes.push(Change {
+                path: path.clone(),
+                before: left.clone(),
+                after: right.clone(),
+            });
+            return;
+        }
+    };
+    if scalars && changes.len() - start > 1 {
+        changes.truncate(start);
+        changes.push(Change {
             path: path.clone(),
             before: left.clone(),
             after: right.clone(),
-        }),
+        });
     }
 }

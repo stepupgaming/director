@@ -25,6 +25,8 @@ pub enum ErrorCode {
     Cancelled,
     /// The scene needs fonts that are not installed or bundled.
     MissingFont,
+    /// An output path resolves outside the roots the server may write to.
+    OutputOutsideRoot,
 }
 
 /// A failed host operation. [`HostError::envelope`] is the JSON form every

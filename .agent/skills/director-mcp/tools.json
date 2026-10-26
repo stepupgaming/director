@@ -106,6 +106,69 @@
       "annotations": {
         "readOnlyHint": true
       },
+      "description": "A node's document record, or the value at a JSON pointer inside it, by authored name or node id. `leaves` lists every settable pointer below it, each one a `path` that `patch` `set` takes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "leaves": {
+            "default": false,
+            "description": "Also list every settable leaf below `path` as `{pointer: value}`; colors and other objects of numbers are one leaf",
+            "type": "boolean"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "description": "Stable identity. Matches `director-core`'s generational `NodeId`.",
+                "properties": {
+                  "generation": {
+                    "description": "Slot generation. A recycled slot has a new generation.",
+                    "format": "uint32",
+                    "minimum": 0.0,
+                    "type": "integer"
+                  },
+                  "index": {
+                    "description": "Arena slot.",
+                    "format": "uint32",
+                    "minimum": 0.0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "generation",
+                  "index"
+                ],
+                "type": "object"
+              }
+            ],
+            "description": "Authored name (an HTML `id`) or `{\"index\",\"generation\"}` node id, as `patch` takes it"
+          },
+          "path": {
+            "description": "JSON pointer inside the node record, such as `/body`; the whole record when absent",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session": {
+            "description": "Session id from `open`",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "session"
+        ],
+        "type": "object"
+      },
+      "name": "node"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true
+      },
       "description": "Document, added, removed, moved and changed nodes between two sessions as JSON pointers, with `patch`: the ops that turn `before` into `after` when `patchable`.",
       "inputSchema": {
         "additionalProperties": false,
@@ -315,7 +378,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "Score the current revision 0-100 for publishing. Errors cost 20: missing fonts, nodes never on the canvas, clipped or non-finite audio. Warnings cost 5: text clipped by the canvas edge or inside the safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target. Static stretches are info. `pass` holds with no errors. Each issue carries the authored node name, time range and a fix.",
+      "description": "Score the current revision 0-100 for publishing. Errors cost 20: missing fonts, nodes never on the canvas, clipped or non-finite audio. Warnings cost 5: text clipped by the canvas edge or inside the safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target. Static stretches are info. `pass` holds with no errors. Each issue carries the authored node name, time range and a fix. Reports progress when the request carries a `progressToken`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -359,7 +422,7 @@
         "additionalProperties": false,
         "properties": {
           "output": {
-            "description": "Write the PNG here and return its path; without it the PNG returns as image content",
+            "description": "Write the PNG here and return its path; without it the PNG returns as image content. It must resolve inside the server directory, the session's input directory or an `--allow-dir` root",
             "type": [
               "string",
               "null"
@@ -387,7 +450,7 @@
       "annotations": {
         "readOnlyHint": false
       },
-      "description": "Export the current revision as a video file. Fails with `missing_font` when required fonts are absent.",
+      "description": "Export the current revision as a video file, with an audio stream only when the scene has audio tracks. Reports encoded frames as progress when the request carries a `progressToken`. Fails with `missing_font` when required fonts are absent and `output_outside_root` for a path outside the allowed roots.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -413,7 +476,7 @@
             "type": "string"
           },
           "output": {
-            "description": "Video path",
+            "description": "Video path inside the server directory, the session's input directory or an `--allow-dir` root",
             "type": "string"
           },
           "scale": {

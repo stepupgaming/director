@@ -194,6 +194,12 @@ impl Session {
     /// captions over faces, reframed subjects out of frame, static stretches
     /// and the loudness, peak and clipping of the audio mix.
     pub fn qa(&mut self, options: &QaOptions) -> Result<QaReport, HostError> {
+        self.qa_with_progress(options, &mut |_, _| {})
+    }
+
+    /// [`Session::qa`] that calls `progress(done, total)` as the layout
+    /// samples, the detector grid, the audio and the static pass finish.
+    pub fn qa_with_progress(&mut self, options: &QaOptions, progress: &mut dyn FnMut(usize, usize)) -> Result<QaReport, HostError> {
         let invalid = |message: String| HostError::new(ErrorCode::InvalidArgument, message);
         if !(options.every.is_finite() && options.every > 0.0) {
             return Err(invalid("every must be finite and positive".into()));
@@ -227,12 +233,18 @@ impl Session {
             .collect();
 
         let times = sample_times(duration, options.every);
+        let grid = sample_times(duration, 1.0);
+        let total = times.len() + grid.len() + 2;
+        let mut done = 0;
+        progress(done, total);
         let step = if times.len() > 1 { times[1] - times[0] } else { end };
         let mut seen = Seen::new();
         let director = self.inspector()?;
         for &time in &times {
             let manifest = build_render_manifest(director, time);
             layout(&manifest, time, zone.as_ref().map(|(preset, zone)| (*preset, zone)), &mut seen, &mut issues);
+            done += 1;
+            progress(done, total);
         }
         let held = HELD_SECONDS.min(end);
         issues.0.retain(|(kind, _), issue| !matches!(*kind, "clipped" | "safe_zone") || issue.count as f64 * step >= held);
@@ -256,7 +268,9 @@ impl Session {
             static_stretch_window: 0.0,
             ..VerificationConfig::default()
         };
-        for time in sample_times(duration, 1.0) {
+        for time in grid {
+            done += 1;
+            progress(done, total);
             let manifest = build_render_manifest(director, time);
             for issue in manifest.verify(director, &config) {
                 let node = issue.node_ids.first().copied();
@@ -298,6 +312,8 @@ impl Session {
             }
         };
 
+        done += 1;
+        progress(done, total);
         for (start, stop) in self.static_stretches(duration)? {
             report.push(QaIssue {
                 kind: "static",
@@ -312,6 +328,7 @@ impl Session {
             });
         }
 
+        progress(total, total);
         report.extend(issues.0.into_values());
         for issue in &mut report {
             issue.name = issue.node.and_then(|id| names.get(&(id.index, id.generation)).cloned());

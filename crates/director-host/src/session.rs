@@ -2,7 +2,7 @@
 
 use crate::error::{ErrorCode, HostError};
 use crate::load::{Loaded, Source};
-use crate::patch::{self, PatchOp};
+use crate::patch::{self, NodeSelector, PatchOp};
 use director_core::audio::AudioMixer;
 use director_core::render_manifest::{build_render_manifest, RenderManifest};
 use director_core::scene_export::{export_scene, node_ref};
@@ -329,6 +329,38 @@ impl Session {
         Ok(self.advance())
     }
 
+    /// The record of the node `selector` names, or the value at JSON pointer
+    /// `path` inside it, in the addressing `PatchOp::Set` takes. With `leaves`
+    /// it also lists every settable leaf below `path` by its full pointer;
+    /// objects and arrays of numbers, such as colors, are one leaf.
+    pub fn node(&self, selector: &NodeSelector, path: Option<&str>, leaves: bool) -> Result<NodeView, HostError> {
+        let id = patch::resolve(&self.document, &self.names, selector)?;
+        let record = self.document.nodes.iter().find(|record| record.id == id).expect("resolved node");
+        let json = serde_json::to_value(record).map_err(|error| HostError::new(ErrorCode::Render, error.to_string()))?;
+        let path = path.unwrap_or_default().to_string();
+        let value = json
+            .pointer(&path)
+            .cloned()
+            .ok_or_else(|| HostError::new(ErrorCode::NotFound, format!("`{path}` names no field of the node")))?;
+        let leaves = leaves.then(|| {
+            let mut found = BTreeMap::new();
+            let mut pointer = path.clone();
+            collect_leaves(&value, &mut pointer, &mut found);
+            found.retain(|path: &String, _| !["/id", "/parent", "/children"].iter().any(|fixed| path == fixed || path.starts_with(&format!("{fixed}/"))));
+            found
+        });
+        let name = self.names.iter().find(|(_, node)| **node == id).map(|(name, _)| name.clone());
+        Ok(NodeView {
+            id,
+            name,
+            kind: record.kind.clone(),
+            revision: self.revision,
+            path,
+            value,
+            leaves,
+        })
+    }
+
     /// The node tree and clips of the current revision.
     pub fn outline(&self) -> Outline {
         let document = &self.document;
@@ -630,5 +662,51 @@ fn check_time(time: f64) -> Result<(), HostError> {
         Ok(())
     } else {
         Err(HostError::new(ErrorCode::InvalidArgument, "time must be finite and nonnegative"))
+    }
+}
+
+/// One node record or a value inside it, from [`Session::node`].
+#[derive(Clone, Debug, Serialize)]
+pub struct NodeView {
+    pub id: NodeRef,
+    pub name: Option<String>,
+    pub kind: String,
+    pub revision: u64,
+    /// The JSON pointer read, `""` for the whole record.
+    pub path: String,
+    pub value: serde_json::Value,
+    /// Settable leaf pointers below `path` with their values, when asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaves: Option<BTreeMap<String, serde_json::Value>>,
+}
+
+/// Every leaf below `value` at `pointer`. Objects and arrays of numbers (a
+/// color, a point) and empty containers are one leaf.
+fn collect_leaves(value: &serde_json::Value, pointer: &mut String, found: &mut BTreeMap<String, serde_json::Value>) {
+    use serde_json::Value;
+    let scalar = Value::is_number;
+    let len = pointer.len();
+    match value {
+        Value::Object(object) if !object.is_empty() && !object.values().all(scalar) => {
+            for (field, child) in object {
+                pointer.push('/');
+                pointer.push_str(&field.replace('~', "~0").replace('/', "~1"));
+                collect_leaves(child, pointer, found);
+                pointer.truncate(len);
+            }
+        }
+        Value::Array(array) if !array.is_empty() && !array.iter().all(scalar) => {
+            for (index, child) in array.iter().enumerate() {
+                pointer.push('/');
+                pointer.push_str(&index.to_string());
+                collect_leaves(child, pointer, found);
+                pointer.truncate(len);
+            }
+        }
+        _ => {
+            if !pointer.is_empty() {
+                found.insert(pointer.clone(), value.clone());
+            }
+        }
     }
 }

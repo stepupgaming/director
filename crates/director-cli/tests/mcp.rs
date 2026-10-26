@@ -64,7 +64,7 @@ fn an_agent_opens_patches_inspects_and_exports_over_stdio() {
     );
     assert_eq!(initialized["protocolVersion"], "2025-06-18");
     assert!(initialized["capabilities"]["tools"].is_object());
-    assert_eq!(client.send("tools/list", json!({}))["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(client.send("tools/list", json!({}))["tools"].as_array().unwrap().len(), 10);
 
     let session = client.call("open", json!({ "input": input }))["session"].clone();
     let ops = json!([{ "op": "set", "node": "box", "path": "/body/hidden", "value": true }]);

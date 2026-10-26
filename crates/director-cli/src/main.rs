@@ -56,9 +56,9 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     gpu: bool,
 
-    /// Log level
-    #[arg(long, value_enum, default_value_t = LogLevel::Info)]
-    log_level: LogLevel,
+    /// Log level (default info, warn under `mcp`)
+    #[arg(long, value_enum)]
+    log_level: Option<LogLevel>,
 
     /// Log format
     #[arg(long, value_enum, default_value_t = LogFormat::Pretty)]
@@ -242,7 +242,9 @@ enum LogFormat {
     Json,
 }
 
-fn init_logging(level: LogLevel, format: LogFormat) {
+/// Logs go to stderr. Under `mcp` they default to warn and carry no ANSI
+/// colors, so a client that captures stderr reads plain lines.
+fn init_logging(level: LogLevel, format: LogFormat, plain: bool) {
     let filter = EnvFilter::builder()
         .with_default_directive(level.to_string().parse().unwrap())
         .from_env_lossy();
@@ -250,6 +252,7 @@ fn init_logging(level: LogLevel, format: LogFormat) {
     let subscriber_builder = fmt::Subscriber::builder()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .with_ansi(!plain)
         .with_target(false);
 
     match format {
@@ -499,7 +502,9 @@ fn cmd_compositions(args: CompositionsArgs) {
 fn main() {
     let cli = Cli::parse();
 
-    init_logging(cli.log_level, cli.log_format);
+    let mcp = matches!(cli.command, Some(Commands::Mcp(_)));
+    let level = cli.log_level.unwrap_or(if mcp { LogLevel::Warn } else { LogLevel::Info });
+    init_logging(level, cli.log_format, mcp);
 
     match cli.command {
         Some(Commands::Render(args)) => cmd_render(args),
