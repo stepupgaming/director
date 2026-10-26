@@ -21,6 +21,15 @@ struct FrameQuery {
     frame: Option<u64>,
 }
 
+impl FrameQuery {
+    /// `?frame=` on the document clock, else `?t=` seconds, else zero.
+    fn time(&self, session: &director_host::Session) -> f64 {
+        self.frame.map_or(self.t.unwrap_or(0.0), |frame| {
+            director_core::timeline::frame_to_time(frame, session.document().fps)
+        })
+    }
+}
+
 pub struct PreviewArgs {
     pub input: Input,
     pub gpu: bool,
@@ -56,7 +65,7 @@ fn router(worker: Worker) -> Router {
 
 async fn api_meta(State(worker): State<Worker>) -> Result<Json<serde_json::Value>, AppError> {
     worker
-        .request(|session| session.metadata())
+        .request(|session| Ok(worker::metadata(session)))
         .await
         .map(Json)
         .map_err(AppError)
@@ -68,17 +77,7 @@ async fn api_frame(
 ) -> Result<Response, AppError> {
     let png = worker
         .request(move |session| {
-            let fps = session
-                .loaded
-                .movie
-                .director
-                .lock()
-                .map_err(|_| "Director lock poisoned")?
-                .fps;
-            let time = query.frame.map_or(query.t.unwrap_or(0.0), |frame| {
-                director_core::timeline::frame_to_time(frame, fps)
-            });
-            session.frame(time)
+            worker::png(session, query.time(session))
         })
         .await
         .map_err(AppError)?;
@@ -98,17 +97,9 @@ async fn api_inspect(
 ) -> Result<Json<serde_json::Value>, AppError> {
     worker
         .request(move |session| {
-            let fps = session
-                .loaded
-                .movie
-                .director
-                .lock()
-                .map_err(|_| "Director lock poisoned")?
-                .fps;
-            let time = query.frame.map_or(query.t.unwrap_or(0.0), |frame| {
-                director_core::timeline::frame_to_time(frame, fps)
-            });
-            session.loaded.inspect(time)
+            session
+                .inspect(query.time(session))
+                .map_err(|error| error.to_string())
         })
         .await
         .map(Json)
@@ -118,9 +109,10 @@ async fn api_inspect(
 async fn api_audio(State(worker): State<Worker>, headers: HeaderMap) -> Result<Response, AppError> {
     // One cached WAV per accepted revision. Ranges slice that body; they do not remix.
     let audio = worker
-        .request(|session| session.audio())
+        .request(|session| session.audio_wav().map_err(|error| error.to_string()))
         .await
-        .map_err(AppError)?;
+        .map_err(AppError)?
+        .to_vec();
     let range = resolve_byte_range(headers.get(header::RANGE), audio.len());
     Ok(wav_response(audio, range))
 }
@@ -245,8 +237,8 @@ fn parse_bound(text: &str) -> Option<u128> {
 async fn api_reload(State(worker): State<Worker>) -> Result<Json<serde_json::Value>, AppError> {
     worker
         .request(|session| {
-            session.reload()?;
-            session.metadata()
+            session.reload().map_err(|error| error.to_string())?;
+            Ok(worker::metadata(session))
         })
         .await
         .map(Json)
@@ -341,7 +333,7 @@ mod tests {
         .unwrap();
         let failed: serde_json::Value =
             serde_json::from_slice(&bytes(get(&app, "/api/meta").await).await).unwrap();
-        assert_eq!(failed["revision"], 1);
+        assert_eq!(failed["revision"], 0);
         assert!(failed["reload_error"]
             .as_str()
             .unwrap()
@@ -376,7 +368,7 @@ mod tests {
         let metadata: serde_json::Value =
             serde_json::from_slice(&bytes(get(&app, "/api/meta").await).await).unwrap();
         assert_eq!(metadata["renderer"], "cpu");
-        assert_eq!(metadata["revision"], 2);
+        assert_eq!(metadata["revision"], 1);
         assert!(metadata["reload_error"].is_null());
         assert_eq!(
             get(&app, "/api/frame?t=NaN").await.status(),
@@ -562,15 +554,13 @@ mod tests {
         let worker = Worker::start(source(directory.path()), true).unwrap();
         worker
             .request(|session| {
-                let mut director = session
-                    .loaded
-                    .movie
-                    .director
-                    .lock()
-                    .map_err(|_| "Director lock poisoned")?;
-                director.samples_per_frame = 4;
-                director.shutter_angle = 180.0;
-                Ok(())
+                let blur = director_host::PatchOp::SetDocument {
+                    path: "/motion_blur".into(),
+                    value: serde_json::json!({"samples_per_frame": 4, "shutter_angle": 180.0}),
+                };
+                session
+                    .patch(session.revision(), &[blur])
+                    .map_err(|error| error.to_string())
             })
             .await
             .unwrap();

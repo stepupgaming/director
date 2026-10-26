@@ -33,13 +33,6 @@ impl Renderer {
             pixels: Vec::new(),
         })
     }
-    pub fn backend(&self) -> &'static str {
-        if self.context.is_some() {
-            "vulkan"
-        } else {
-            "cpu"
-        }
-    }
     pub fn reset(&mut self) {
         self.surface = None;
         self.state = FrameState::default();

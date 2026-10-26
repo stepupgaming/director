@@ -1,6 +1,6 @@
 use crate::input::Input;
 use clap::{Args, Subcommand};
-use director_core::video_wrapper::RenderMode;
+use director_host::{Session, Source};
 use director_html::{ElementEdit, NativeProject};
 use std::{
     collections::BTreeMap,
@@ -72,10 +72,11 @@ fn execute(command: ProjectCommand) -> Result<(), String> {
             patch,
             output,
         } => {
-            let (project, saved) = validated_edit(&input, &patch, output)?;
+            let (session, saved) = validated_edit(&input, &patch, output)?;
+            let edited: Vec<_> = session.project().into_iter().flat_map(|project| project.edits.keys()).collect();
             println!(
                 "{}",
-                serde_json::json!({"output":saved,"edited_elements":project.edits.keys().collect::<Vec<_>>()})
+                serde_json::json!({"output":saved,"edited_elements":edited})
             );
         }
         ProjectCommand::Repair {
@@ -83,28 +84,27 @@ fn execute(command: ProjectCommand) -> Result<(), String> {
             patch,
             output,
         } => {
-            let (_, saved) = validated_edit(&input, &patch, output)?;
-            let inspection = Input::new(saved)
-                .load(RenderMode::Export)
-                .and_then(|loaded| loaded.inspect(0.0))?;
+            let (mut session, _) = validated_edit(&input, &patch, output)?;
+            let inspection = session.inspect(0.0).map_err(|e| e.to_string())?;
             println!("{inspection}");
         }
     }
     Ok(())
 }
 
-/// Same patch language as `project edit`. The saved file is replaced only after validation.
+/// Same patch language as `project edit`. The session validates the edits, and
+/// the saved file is replaced only after validation.
 fn validated_edit(
     input: &Path,
     patch: &Path,
     output: Option<PathBuf>,
-) -> Result<(NativeProject, PathBuf), String> {
+) -> Result<(Session, PathBuf), String> {
     let bytes = std::fs::read(patch).map_err(|e| format!("patch {}: {e}", patch.display()))?;
     let edits: BTreeMap<String, ElementEdit> =
         serde_json::from_slice(&bytes).map_err(|e| format!("patch JSON: {e}"))?;
-    let mut project = NativeProject::load(input).map_err(|e| e.to_string())?;
-    project.apply_edits(edits).map_err(|e| e.to_string())?;
+    let mut session = Session::open(&Source::new(input.to_path_buf())).map_err(|e| e.to_string())?;
+    session.edit_project(edits).map_err(|e| e.to_string())?;
     let output = output.unwrap_or_else(|| input.to_path_buf());
-    project.save(&output).map_err(|e| e.to_string())?;
-    Ok((project, output))
+    session.save_project(&output).map_err(|e| e.to_string())?;
+    Ok((session, output))
 }

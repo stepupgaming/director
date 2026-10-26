@@ -452,26 +452,22 @@ fn cmd_inspect(args: InspectArgs) {
             std::process::exit(1);
         }
     };
+    let mut session = director_host::Session::open(&args.input.source()).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
     match plan {
         sample_times::SamplePlan::Single => {
-            let inspection = args
-                .input
-                .load(RenderMode::Export)
-                .and_then(|loaded| loaded.inspect(args.time))
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                });
-            println!("{inspection}");
-        }
-        sample_times::SamplePlan::Repeated(times) => {
-            let loaded = args.input.load(RenderMode::Export).unwrap_or_else(|e| {
+            let inspection = session.inspect(args.time).unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(1);
             });
+            println!("{inspection}");
+        }
+        sample_times::SamplePlan::Repeated(times) => {
             let mut samples = Vec::with_capacity(times.len());
             for time in times {
-                match loaded.inspect(time) {
+                match session.inspect(time) {
                     Ok(inspection) => samples.push(serde_json::json!({
                         "time": time,
                         "inspection": inspection,

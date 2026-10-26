@@ -163,19 +163,7 @@ impl Source {
             None => self.load_html(),
         }
         .map_err(|e| e.to_string())?;
-        let source_inspection = compiled.source_inspection();
-        let dependency_paths = compiled.dependency_paths();
-        Ok(Loaded {
-            movie: MovieHandle {
-                director: Arc::new(Mutex::new(compiled.director)),
-            },
-            compositions: self.composition.iter().cloned().collect(),
-            source_kind: compiled.source_kind,
-            sample_rate: compiled.sample_rate,
-            element_ids: compiled.element_ids,
-            source_inspection,
-            dependency_paths,
-        })
+        Ok(Loaded::from_compiled(compiled, self.composition.iter().cloned().collect()))
     }
 }
 
@@ -191,22 +179,20 @@ pub struct Loaded {
 }
 
 impl Loaded {
-    pub fn inspect(&self, time: f64) -> Result<serde_json::Value, String> {
-        if !time.is_finite() || time < 0.0 {
-            return Err("inspection time must be finite and nonnegative".into());
+    /// Wrap compiled HTML, a capture or a native project with the composition names it was built from.
+    pub fn from_compiled(compiled: CompiledHtml, compositions: Vec<String>) -> Self {
+        let source_inspection = compiled.source_inspection();
+        let dependency_paths = compiled.dependency_paths();
+        Self {
+            movie: MovieHandle {
+                director: Arc::new(Mutex::new(compiled.director)),
+            },
+            compositions,
+            source_kind: compiled.source_kind,
+            sample_rate: compiled.sample_rate,
+            element_ids: compiled.element_ids,
+            source_inspection,
+            dependency_paths,
         }
-        let mut director = self
-            .movie
-            .director
-            .lock()
-            .map_err(|_| "Director lock poisoned")?;
-        let manifest = director_core::render_manifest::build_render_manifest(&mut director, time);
-        Ok(serde_json::json!({
-            "source_kind":self.source_kind, "sample_rate":self.sample_rate,
-            "element_ids":self.element_ids, "manifest":manifest,
-            "sampled_elements":self.source_inspection.as_ref().map(|s| s.at(time)),
-            "missing_required_fonts":director.missing_required_fonts,
-            "audio_tracks":director.audio_mixer.tracks.iter().flatten().map(|t| serde_json::json!({"start":t.start_time,"duration":t.duration,"stereo_sample_frames":t.samples.len()/2})).collect::<Vec<_>>()
-        }))
     }
 }

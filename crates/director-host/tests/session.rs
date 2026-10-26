@@ -167,3 +167,77 @@ fn errors_print_one_envelope() {
     let missing = Session::open(&Source::new(PathBuf::from("missing.html"))).err().unwrap();
     assert_eq!(missing.code, ErrorCode::Load);
 }
+
+fn html_input(dir: &std::path::Path, background: &str) -> PathBuf {
+    std::fs::write(
+        dir.join("style.css"),
+        format!("body{{margin:0}}#box{{width:32px;height:32px;background:{background}}}"),
+    )
+    .unwrap();
+    let input = dir.join("scene.html");
+    std::fs::write(&input, "<link rel='stylesheet' href='style.css'><main data-composition-id='main' data-width='32' data-height='32' data-duration='.6'><div id='box'></div></main>").unwrap();
+    input
+}
+
+#[test]
+fn reload_follows_dependencies_and_keeps_the_document_on_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::open(&Source::new(html_input(dir.path(), "red"))).unwrap();
+    assert!(!session.source_changed());
+    std::fs::write(dir.path().join("style.css"), "#box{perspective:0}").unwrap();
+    assert!(session.source_changed());
+    let document = session.document().clone();
+    let error = session.reload().unwrap_err();
+    assert_eq!(error.code, ErrorCode::Load);
+    assert_eq!(session.revision(), 0);
+    assert_eq!(**session.document(), *document);
+    assert!(session.reload_error().unwrap().message.contains("perspective"));
+    assert!(!session.source_changed());
+    html_input(dir.path(), "blue");
+    assert!(session.source_changed());
+    assert_eq!(session.reload().unwrap(), 1);
+    assert!(session.reload_error().is_none());
+    let frame = session.render_frame(0.1).unwrap();
+    assert_eq!(&frame.rgba[(16 * 32 + 16) * 4..][..4], &[0, 0, 255, 255]);
+}
+
+#[test]
+fn audio_wav_is_cached_until_the_next_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::open(&Source::new(html_input(dir.path(), "red"))).unwrap();
+    let audio = session.audio_wav().unwrap();
+    assert_eq!(&audio[..4], b"RIFF");
+    assert_eq!(audio.len(), 44 + 18 * 1600 * 2 * 4);
+    assert!(Arc::ptr_eq(&audio, &session.audio_wav().unwrap()));
+    session.reload().unwrap();
+    assert!(!Arc::ptr_eq(&audio, &session.audio_wav().unwrap()));
+}
+
+#[test]
+fn project_edits_compile_before_they_apply_and_save_atomically() {
+    let dir = tempfile::tempdir().unwrap();
+    let html = html_input(dir.path(), "red");
+    let project = dir.path().join("scene.dirproj");
+    director_html::NativeProject::from_file(&html, Source::new(html.clone()).html_options())
+        .unwrap()
+        .save(&project)
+        .unwrap();
+    let mut session = Session::open(&Source::new(project.clone())).unwrap();
+    let edit = |id: &str| -> std::collections::BTreeMap<String, director_html::ElementEdit> {
+        serde_json::from_value(json!({ id: {"styles": {"background-color": "blue"}} })).unwrap()
+    };
+    let error = session.edit_project(edit("missing")).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidPatch);
+    assert!(error.message.contains("missing"), "{}", error.message);
+    assert_eq!(session.revision(), 0);
+    assert!(session.project().is_none());
+    assert_eq!(session.edit_project(edit("box")).unwrap(), 1);
+    let frame = session.render_frame(0.1).unwrap();
+    assert_eq!(&frame.rgba[(16 * 32 + 16) * 4..][..4], &[0, 0, 255, 255]);
+    let saved = dir.path().join("edited.dirproj");
+    session.save_project(&saved).unwrap();
+    let mut reopened = Session::open(&Source::new(saved)).unwrap();
+    assert_eq!(reopened.render_frame(0.1).unwrap(), frame);
+    let html_edit = Session::open(&Source::new(html)).unwrap().edit_project(edit("box")).unwrap_err();
+    assert_eq!(html_edit.code, ErrorCode::InvalidArgument);
+}

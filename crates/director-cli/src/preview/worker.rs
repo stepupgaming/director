@@ -1,9 +1,6 @@
-use crate::{
-    input::{Input, LoadedInput},
-    renderer::Renderer,
-};
-use director_core::video_wrapper::RenderMode;
-use std::{path::PathBuf, sync::Arc, thread, time::SystemTime};
+use crate::input::Input;
+use director_host::Session;
+use std::{sync::Arc, thread};
 use tokio::sync::{mpsc, oneshot};
 
 type Job = Box<dyn FnOnce(&mut Session) + Send>;
@@ -34,7 +31,7 @@ impl Worker {
         let thread = thread::Builder::new()
             .name("director-native-preview".into())
             .spawn(move || {
-                let mut session = match Session::new(input, gpu) {
+                let mut session = match open(&input, gpu) {
                     Ok(session) => session,
                     Err(error) => {
                         let _ = ready_sender.send(Err(error));
@@ -45,7 +42,10 @@ impl Worker {
                     return;
                 }
                 while let Some(job) = receiver.blocking_recv() {
-                    session.refresh();
+                    if session.source_changed() {
+                        // A failure keeps the accepted scene and shows as `reload_error`.
+                        let _ = session.reload();
+                    }
                     job(&mut session);
                 }
             })
@@ -79,133 +79,48 @@ impl Worker {
     }
 }
 
-pub(super) struct Session {
-    pub loaded: LoadedInput,
-    pub renderer: Renderer,
-    input: Input,
-    revision: u64,
-    fingerprints: Vec<(PathBuf, Option<(SystemTime, u64)>)>,
-    last_reload_error: Option<String>,
-    audio: Option<Vec<u8>>,
+/// Open the input on the worker thread, which then owns the GPU context.
+fn open(input: &Input, gpu: bool) -> Result<Session, String> {
+    let context = crate::gpu::required_context(gpu)?;
+    #[cfg_attr(not(feature = "vulkan"), allow(unused_mut))]
+    let mut session = Session::open(&input.source()).map_err(|error| error.to_string())?;
+    #[cfg(feature = "vulkan")]
+    if let Some(context) = context {
+        session.use_gpu(context);
+    }
+    #[cfg(not(feature = "vulkan"))]
+    let _ = context;
+    Ok(session)
 }
 
-impl Session {
-    fn new(input: Input, gpu: bool) -> Result<Self, String> {
-        let loaded = input.load(RenderMode::Export)?;
-        let renderer = Renderer::new(gpu)?;
-        let mut session = Self {
-            loaded,
-            renderer,
-            input,
-            revision: 1,
-            fingerprints: Vec::new(),
-            last_reload_error: None,
-            audio: None,
-        };
-        session.fingerprints = session.fingerprints();
-        Ok(session)
-    }
+pub(super) fn metadata(session: &Session) -> serde_json::Value {
+    let document = session.document();
+    let source = session.source();
+    serde_json::json!({
+        "width": document.width,
+        "height": document.height,
+        "fps": document.fps,
+        "duration": session.duration(),
+        "script": source.map(|source| &source.input),
+        "composition": source.and_then(|source| source.composition.as_ref()),
+        "compositions": session.compositions(),
+        "source_kind": session.source_kind(),
+        "sample_rate": session.sample_rate(),
+        "renderer": session.backend(),
+        "revision": session.revision(),
+        "reload_error": session.reload_error().map(|error| &error.message),
+        "element_ids": session.names(),
+    })
+}
 
-    pub fn metadata(&self) -> Result<serde_json::Value, String> {
-        let director = self
-            .loaded
-            .movie
-            .director
-            .lock()
-            .map_err(|_| "Director lock poisoned")?;
-        Ok(serde_json::json!({
-            "width":director.width,"height":director.height,"fps":director.fps,"duration":director.timeline_duration(),
-            "script":self.input.input,"composition":self.input.composition,"compositions":self.loaded.compositions,
-            "source_kind":self.loaded.source_kind,"sample_rate":self.loaded.sample_rate,"renderer":self.renderer.backend(),
-            "revision":self.revision,"reload_error":self.last_reload_error,"element_ids":self.loaded.element_ids
-        }))
-    }
-
-    pub fn frame(&mut self, time: f64) -> Result<Vec<u8>, String> {
-        let mut director = self
-            .loaded
-            .movie
-            .director
-            .lock()
-            .map_err(|_| "Director lock poisoned")?;
-        self.renderer.png(&mut director, time)
-    }
-
-    pub fn reload(&mut self) -> Result<(), String> {
-        let candidate = self.input.load(RenderMode::Export)?;
-        self.renderer.reset();
-        self.loaded = candidate;
-        self.revision += 1;
-        self.audio = None;
-        self.last_reload_error = None;
-        self.fingerprints = self.fingerprints();
-        Ok(())
-    }
-
-    fn refresh(&mut self) {
-        let fingerprints = self.fingerprints();
-        if fingerprints != self.fingerprints {
-            if let Err(error) = self.reload() {
-                // Keep the accepted scene and retry when the source changes again.
-                self.fingerprints = fingerprints;
-                self.last_reload_error = Some(error);
-            }
-        }
-    }
-
-    fn fingerprints(&self) -> Vec<(PathBuf, Option<(SystemTime, u64)>)> {
-        std::iter::once(self.input.input.clone())
-            .chain(self.loaded.dependency_paths.iter().cloned())
-            .map(|path| {
-                let metadata = std::fs::metadata(&path)
-                    .ok()
-                    .and_then(|m| m.modified().ok().map(|t| (t, m.len())));
-                (path, metadata)
-            })
-            .collect()
-    }
-
-    pub fn audio(&mut self) -> Result<Vec<u8>, String> {
-        if let Some(audio) = &self.audio {
-            return Ok(audio.clone());
-        }
-        let mut director = self
-            .loaded
-            .movie
-            .director
-            .lock()
-            .map_err(|_| "Director lock poisoned")?;
-        let rate = director.audio_mixer.sample_rate;
-        let frames = director_core::timeline::duration_to_frame_count(
-            director.timeline_duration(),
-            director.fps,
-        );
-        let samples = director_core::timeline::audio_samples_per_video_frame(rate, director.fps, 1);
-        let data_size = frames
-            .checked_mul(samples as u64)
-            .and_then(|n| n.checked_mul(8))
-            .filter(|n| *n <= (u32::MAX - 36) as u64)
-            .ok_or("audio exceeds RIFF/WAV size limit")? as u32;
-        let mut wav = Vec::with_capacity(data_size as usize + 44);
-        wav.extend_from_slice(b"RIFF");
-        wav.extend_from_slice(&(data_size + 36).to_le_bytes());
-        wav.extend_from_slice(b"WAVEfmt ");
-        wav.extend_from_slice(&16u32.to_le_bytes());
-        wav.extend_from_slice(&3u16.to_le_bytes());
-        wav.extend_from_slice(&2u16.to_le_bytes());
-        wav.extend_from_slice(&rate.to_le_bytes());
-        wav.extend_from_slice(&(rate * 8).to_le_bytes());
-        wav.extend_from_slice(&8u16.to_le_bytes());
-        wav.extend_from_slice(&32u16.to_le_bytes());
-        wav.extend_from_slice(b"data");
-        wav.extend_from_slice(&data_size.to_le_bytes());
-        let fps = director.fps;
-        for frame in 0..frames {
-            for sample in director.mix_audio(samples, frame as f64 / fps) {
-                wav.extend_from_slice(&sample.to_le_bytes());
-            }
-        }
-        self.audio = Some(wav.clone());
-        Ok(wav)
-    }
+pub(super) fn png(session: &mut Session, time: f64) -> Result<Vec<u8>, String> {
+    let frame = session.render_frame(time).map_err(|error| error.to_string())?;
+    // Frames carry straight alpha.
+    let info = skia_safe::ImageInfo::new(
+        (frame.width as i32, frame.height as i32),
+        skia_safe::ColorType::RGBA8888,
+        skia_safe::AlphaType::Unpremul,
+        Some(skia_safe::ColorSpace::new_srgb()),
+    );
+    crate::renderer::encode_png(info, &frame.rgba)
 }

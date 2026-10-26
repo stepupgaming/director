@@ -235,6 +235,48 @@ impl FrameSession {
     }
 }
 
+/// One imported `Director` painting into a render target of a GPU context, or
+/// into a CPU raster when created without one. A GPU session stays on its
+/// context's thread and paints only with the context it was created with.
+pub struct TargetSession {
+    director: Director,
+    state: FrameState,
+    info: ImageInfo,
+    surface: Surface,
+}
+
+impl TargetSession {
+    /// Import the document of `renderer` into a target on `context`, or a CPU raster.
+    pub fn new(renderer: &Renderer, context: Option<&mut GpuContext>) -> Result<Self, RenderError> {
+        let info = frame_info(renderer.output_size())?;
+        let surface =
+            live::render_surface(&mut { context }, &info).ok_or(RenderError::Surface(info.width(), info.height()))?;
+        let director = import_scene(&renderer.document, renderer.loader.clone(), &renderer.registry, renderer.render_mode)?;
+        Ok(Self {
+            director,
+            state: FrameState::default(),
+            info,
+            surface,
+        })
+    }
+
+    pub fn director(&self) -> &Director {
+        &self.director
+    }
+
+    /// Paint the frame at `time` seconds into `frame`, submitting through the
+    /// session's `context` before readback.
+    #[cfg_attr(not(feature = "vulkan"), allow(unused_variables))]
+    pub fn render_into(&mut self, time: f64, frame: &mut Frame, context: Option<&mut GpuContext>) -> Result<(), RenderError> {
+        self.state.render(&mut self.director, time, &mut self.surface)?;
+        #[cfg(feature = "vulkan")]
+        if let Some(context) = context {
+            context.flush_and_submit();
+        }
+        read_frame(&mut self.surface, &self.info, self.director.transparent_background, frame)
+    }
+}
+
 /// An RGBA8 sRGB premultiplied surface description of `width` x `height`.
 fn frame_info((width, height): (i32, i32)) -> Result<ImageInfo, RenderError> {
     if width <= 0 || height <= 0 {

@@ -5,15 +5,15 @@
 ## Ownership
 
 - `mod.rs` owns Axum routes, response contracts and backend acceptance tests.
-- `worker.rs` owns the bounded job queue, accepted scene revisions, reload and audio caching.
+- `worker.rs` owns the bounded job queue, the `director_host::Session` it drives on the worker thread, `/api/meta` metadata and PNG encoding.
 
 ## Local Contracts
 
-- Create, use and drop the Director, render targets and Vulkan context on one native worker thread. Async handlers exchange owned results through the bounded queue; never move the GPU context into a Tokio task.
-- Load inputs through `input.rs` with export media semantics. Render PNGs through `renderer.rs`, which paints with `director-render` and the export sampling clock.
-- Before requests, compare input/native dependency modification time and length. A successful reload replaces the complete scene, resets render targets/audio and advances its revision. A failed reload retains the accepted scene and exposes `reload_error`; forced `/api/reload` returns the error.
+- Create, use and drop the `director_host::Session` and its Vulkan context on one native worker thread. Async handlers exchange owned results through the bounded queue; never move the GPU context into a Tokio task.
+- Open the input as a `Session` with export media semantics. Frames paint through `Session::render_frame` on the export sampling clock, on the owned GPU context under `--gpu`, and encode as PNG.
+- Before each request the worker reloads when `Session::source_changed`. A successful reload replaces the scene document, drops warm frames and audio and advances the revision, which starts at 0. A failed reload retains the accepted scene and exposes `reload_error`; forced `/api/reload` returns the error.
 - `/api/meta` reports the actual backend and accepted revision. `/api/inspect` reports layout/timeline, authored IDs, sampled capture elements and audio metadata; these are layout bounds rather than final pixel extents.
-- `/api/audio` builds one full float-stereo WAV in export-sized sample chunks and caches it per accepted revision. A request with no Range header returns that body. A single `bytes` range returns 206 and a slice of the same cache. An unsatisfiable range returns 416. Malformed ranges return the full body.
+- `/api/audio` serves `Session::audio_wav`: one full float-stereo WAV in export-sized sample chunks, cached per accepted revision. A request with no Range header returns that body. A single `bytes` range returns 206 and a slice of the same cache. An unsatisfiable range returns 416. Malformed ranges return the full body.
 - The server serves API routes only; there is no `/` page and no browser launch.
 - Worker teardown closes its queue and joins the owner thread so native resources finish on that thread.
 

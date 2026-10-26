@@ -4,14 +4,12 @@
 //! from the document alone, so it launches while the writer imports and mixes
 //! the audio.
 
-use crate::live::render_surface;
-use crate::{frame_info, read_frame, set_output_scale, Frame, FramePool, FrameState, GpuContext, RenderError, Renderer};
+use crate::{set_output_scale, Frame, FramePool, GpuContext, RenderError, Renderer, TargetSession};
 use director_core::scene_export::export_scene;
 use director_core::scene_import::{import_scene, ImportRegistry};
 use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_count, frame_to_time};
 use director_core::video_wrapper::{Encoder, EncoderMode, EncoderSettings};
 use director_core::Director;
-use skia_safe::{ImageInfo, Surface};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -54,39 +52,20 @@ enum Target<'a> {
     Session(Option<&'a mut GpuContext>),
 }
 
-/// One imported `Director` painting serially into a render target of the
-/// export's GPU context, or into a CPU raster. A GPU session stays on the thread
-/// that owns its context.
+/// One [`TargetSession`] with the export's GPU context, or a CPU raster.
 struct SerialSession<'a> {
-    director: Director,
-    state: FrameState,
-    info: ImageInfo,
-    surface: Surface,
-    #[cfg_attr(not(feature = "vulkan"), allow(dead_code))]
+    session: TargetSession,
     context: Option<&'a mut GpuContext>,
 }
 
 impl<'a> SerialSession<'a> {
     fn new(renderer: &Renderer, mut context: Option<&'a mut GpuContext>) -> Result<Self, RenderError> {
-        let info = frame_info(renderer.output_size())?;
-        let surface = render_surface(&mut context, &info).ok_or(RenderError::Surface(info.width(), info.height()))?;
-        let director = import_scene(&renderer.document, renderer.loader.clone(), &renderer.registry, renderer.render_mode)?;
-        Ok(Self {
-            director,
-            state: FrameState::default(),
-            info,
-            surface,
-            context,
-        })
+        let session = TargetSession::new(renderer, context.as_deref_mut())?;
+        Ok(Self { session, context })
     }
 
     fn render_into(&mut self, time: f64, frame: &mut Frame) -> Result<(), RenderError> {
-        self.state.render(&mut self.director, time, &mut self.surface)?;
-        #[cfg(feature = "vulkan")]
-        if let Some(context) = self.context.as_deref_mut() {
-            context.flush_and_submit();
-        }
-        read_frame(&mut self.surface, &self.info, self.director.transparent_background, frame)
+        self.session.render_into(time, frame, self.context.as_deref_mut())
     }
 }
 

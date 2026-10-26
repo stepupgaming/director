@@ -8,7 +8,7 @@
 - `src/sheet.rs` owns the contact-sheet plan and PNG. `src/audio_report.rs` owns the mixer loudness report. `src/check.rs` owns canvas-edge findings. `src/snapshot.rs` owns golden PNG comparison. `src/onion.rs` owns the weighted frame blend.
 - `src/batch.rs` owns batch output names and the status report. It stays free of other crate dependencies so `tests/repair_batch.rs` can include it.
 - `src/input.rs` owns the shared input flags (`Input`, converted to `director_host::Source`, which loads every input kind) and encoder selection.
-- `src/project.rs` owns portable project packing, element-ID keyed JSON edits, and `project repair`.
+- `src/project.rs` owns portable project packing and `project edit|repair`, which apply element-ID keyed JSON edits through `director_host::Session::edit_project`.
 - `src/renderer.rs` owns persistent native frame targets, a `director_render::FrameState` per renderer, synchronized PNG readback and `export_video` (with `director_host::import_registry`), the one video export entry for `render`, `batch`, `html render` and `html benchmark --export`.
 - `src/html.rs` owns `html check|still|render|capture|benchmark`. HTML and capture JSON compile through `director-html`; browser extraction is explicit and is never invoked by native render/still.
 - `src/preview/` owns the preview API server (Axum endpoints and the native worker) for editors and agents; its child DOX owns thread lifetime, accepted revisions, reload and audio caching. The repo ships no browser client.
@@ -29,6 +29,7 @@
 - `onion -n N` blends frames with weights 1 through N, capped at 8, and prints JSON.
 - `render --scale` accepts a finite value in `(0, 1]`. Layout width and height stay put, and the raster rounds each side down to an even size. Scale 1 is unchanged, including odd sizes. `--draft-encode` sets software x264 to ultrafast and CRF 30 without changing the raster size. Hardware qp and the alpha VP9 path stay put. The default stays slow and CRF 18.
 - Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect` and `preview` share input loading. `--props` belongs to Rhai composition builders; native project edits use `project edit --patch`. Rhai packing is outside the native authoring format.
+- `inspect`, `project edit|repair` and the preview worker run on `director_host::Session`. Inspect JSON is `Session::inspect`.
 - `project repair` uses the `project edit` patch, saves only after validation, then prints inspect JSON at t=0. A rejected repair leaves the saved file unchanged.
 - Video export runs the pipelined `director_render::export_director`, which encodes in one FFmpeg pass while it paints on a CPU worker pool, or with `--gpu` on one session on the Vulkan context. Alpha, `--scale` and `--draft-encode` behave the same on both.
 - `batch --input <path> --output <dir>` renders each input with the software encoder. One failure still reports the other items and exits with the highest item code. `batch --json` prints `{"exit_code","items"}` in place of the `ok`/`fail` lines and keeps that exit code.
