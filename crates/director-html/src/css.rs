@@ -720,25 +720,7 @@ fn insert_winner(
 }
 
 pub fn inherited(name: &str) -> bool {
-    name.starts_with("--")
-        || matches!(
-            name,
-            "color"
-                | "font-family"
-                | "font-size"
-                | "font-weight"
-                | "font-style"
-                | "line-height"
-                | "letter-spacing"
-                | "text-align"
-                | "white-space"
-                | "direction"
-                | "text-transform"
-                | "overflow-wrap"
-                | "word-wrap"
-                | "word-break"
-                | "visibility"
-        )
+    crate::property::is_inherited(name)
 }
 
 fn resolve_vars(value: &str, variables: &Values, depth: usize) -> Result<String, CompileError> {

@@ -1,5 +1,6 @@
 use crate::background_box::AxisRepeat;
 use crate::box_edges::{parse_box_edge, BoxEdge};
+use crate::computed::ComputedStyle;
 use crate::css::{split, Values};
 use director_core::{
     animation::Animated,
@@ -25,6 +26,8 @@ use lightningcss::{
 use skia_safe::{Matrix, M44};
 use taffy::prelude::*;
 use taffy::style::Overflow;
+
+mod layout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BorderLine {
@@ -511,32 +514,6 @@ fn gap_length(value: &str, m: Metrics, basis: Option<f32>) -> Result<LengthPerce
     }
 }
 
-fn dimension_on(s: &str, m: Metrics, basis: Option<f32>) -> Result<Dimension, String> {
-    if s == "auto" {
-        Ok(auto())
-    } else {
-        let v = length_on(s, m, basis)?;
-        Ok(if v.is_percent() {
-            percent(v.value())
-        } else {
-            length_dimension(v.value())
-        })
-    }
-}
-
-fn lpa_on(s: &str, m: Metrics, basis: Option<f32>) -> Result<LengthPercentageAuto, String> {
-    if s == "auto" {
-        Ok(auto())
-    } else {
-        let v = length_on(s, m, basis)?;
-        Ok(if v.is_percent() {
-            percent(v.value())
-        } else {
-            LengthPercentageAuto::length(v.value())
-        })
-    }
-}
-
 pub fn soft_wrap(paint: &PaintStyle) -> bool {
     paint.break_word || paint.overflow_wrap != OverflowWrap::Normal
 }
@@ -757,47 +734,8 @@ pub fn px(s: &str, m: Metrics) -> Result<f32, String> {
         Ok(l.value())
     }
 }
-fn dimension(s: &str, m: Metrics) -> Result<Dimension, String> {
-    if s == "auto" {
-        Ok(auto())
-    } else {
-        let v = length(s, m)?;
-        Ok(if v.is_percent() {
-            percent(v.value())
-        } else {
-            length_dimension(v.value())
-        })
-    }
-}
 fn length_dimension(v: f32) -> Dimension {
     Dimension::length(v)
-}
-
-fn align(s: &str) -> Result<AlignItems, String> {
-    match s {
-        "normal" | "stretch" => Ok(AlignItems::Stretch),
-        "start" => Ok(AlignItems::Start),
-        "end" => Ok(AlignItems::End),
-        "flex-start" => Ok(AlignItems::FlexStart),
-        "flex-end" => Ok(AlignItems::FlexEnd),
-        "center" => Ok(AlignItems::Center),
-        "baseline" => Ok(AlignItems::Baseline),
-        _ => Err(format!("unsupported alignment '{s}'")),
-    }
-}
-fn content(s: &str) -> Result<JustifyContent, String> {
-    match s {
-        "normal" | "stretch" => Ok(JustifyContent::Stretch),
-        "start" => Ok(JustifyContent::Start),
-        "end" => Ok(JustifyContent::End),
-        "flex-start" => Ok(JustifyContent::FlexStart),
-        "flex-end" => Ok(JustifyContent::FlexEnd),
-        "center" => Ok(JustifyContent::Center),
-        "space-between" => Ok(JustifyContent::SpaceBetween),
-        "space-around" => Ok(JustifyContent::SpaceAround),
-        "space-evenly" => Ok(JustifyContent::SpaceEvenly),
-        _ => Err(format!("unsupported alignment '{s}'")),
-    }
 }
 
 fn grid_track(s: &str, m: Metrics) -> Result<TrackSizingFunction, String> {
@@ -1004,107 +942,25 @@ pub fn translate(
             Err(e) => errors.push(e),
         }
     }
+    let computed = ComputedStyle::parse(values);
     for (name, value) in values {
         let s = value.as_str();
         let result: Result<(), String> = (|| {
+            if let Some(entry) = computed.get(name) {
+                let Some(info) = crate::property::info(name) else {
+                    return Err(format!("unsupported property '{name}'"));
+                };
+                if info.group == crate::property::Group::Layout {
+                    if let Some(result) = layout::apply(name, entry, &mut style, m, block) {
+                        return result;
+                    }
+                }
+            }
             match name.as_str() {
                 n if n.starts_with("--") => {}
                 "color" | "font-size" => {}
-                "display" => {
-                    style.display = match s {
-                        "block" => Display::Block,
-                        "flex" | "inline-flex" => Display::Flex,
-                        "grid" | "inline-grid" => Display::Grid,
-                        "none" => Display::None,
-                        "inline" => {
-                            return Err(
-                                "inline formatting requires a rich text parent or extraction"
-                                    .into(),
-                            )
-                        }
-                        _ => return Err(format!("unsupported display '{s}'")),
-                    }
-                }
-                "box-sizing" => {
-                    style.box_sizing = match s {
-                        "border-box" => BoxSizing::BorderBox,
-                        "content-box" => BoxSizing::ContentBox,
-                        _ => return Err("invalid box-sizing".into()),
-                    }
-                }
-                "position" => {
-                    style.position = match s {
-                        "static" | "relative" | "sticky" => Position::Relative,
-                        "absolute" | "fixed" => Position::Absolute,
-                        _ => return Err(format!("unsupported position '{s}'")),
-                    }
-                }
-                "width" => style.size.width = dimension_on(s, m, block.width)?,
-                "height" => style.size.height = dimension_on(s, m, block.height)?,
-                "min-width" => style.min_size.width = dimension_on(s, m, block.width)?,
-                "min-height" => style.min_size.height = dimension_on(s, m, block.height)?,
-                "max-width" => {
-                    style.max_size.width = if s == "none" {
-                        auto()
-                    } else {
-                        dimension_on(s, m, block.width)?
-                    }
-                }
-                "max-height" => {
-                    style.max_size.height = if s == "none" {
-                        auto()
-                    } else {
-                        dimension_on(s, m, block.height)?
-                    }
-                }
-                "left" => style.inset.left = lpa_on(s, m, block.width)?,
-                "right" => style.inset.right = lpa_on(s, m, block.width)?,
-                "top" => style.inset.top = lpa_on(s, m, block.height)?,
-                "bottom" => style.inset.bottom = lpa_on(s, m, block.height)?,
-                "margin-left" => style.margin.left = lpa_on(s, m, block.width)?,
-                "margin-right" => style.margin.right = lpa_on(s, m, block.width)?,
-                "margin-top" => style.margin.top = lpa_on(s, m, block.width)?,
-                "margin-bottom" => style.margin.bottom = lpa_on(s, m, block.width)?,
-                "padding-left" => style.padding.left = length_on(s, m, block.width)?,
-                "padding-right" => style.padding.right = length_on(s, m, block.width)?,
-                "padding-top" => style.padding.top = length_on(s, m, block.width)?,
-                "padding-bottom" => style.padding.bottom = length_on(s, m, block.width)?,
                 // Resolved after the content box is known. Percent gap uses this element's size.
                 "column-gap" | "row-gap" => {}
-                "flex-direction" => {
-                    style.flex_direction = match s {
-                        "row" => FlexDirection::Row,
-                        "column" => FlexDirection::Column,
-                        "row-reverse" => FlexDirection::RowReverse,
-                        "column-reverse" => FlexDirection::ColumnReverse,
-                        _ => return Err("invalid flex-direction".into()),
-                    }
-                }
-                "flex-wrap" => {
-                    style.flex_wrap = match s {
-                        "nowrap" => FlexWrap::NoWrap,
-                        "wrap" => FlexWrap::Wrap,
-                        "wrap-reverse" => FlexWrap::WrapReverse,
-                        _ => return Err("invalid flex-wrap".into()),
-                    }
-                }
-                "flex-grow" => style.flex_grow = number(s)?,
-                "flex-shrink" => style.flex_shrink = number(s)?,
-                "flex-basis" => {
-                    style.flex_basis = if s == "auto" || s == "content" {
-                        dimension(s, m)?
-                    } else {
-                        dimension_on(s, m, block.width)?
-                    }
-                }
-                "align-items" => style.align_items = Some(align(s)?),
-                "align-self" => style.align_self = if s == "auto" { None } else { Some(align(s)?) },
-                "justify-items" => style.justify_items = Some(align(s)?),
-                "justify-self" => {
-                    style.justify_self = if s == "auto" { None } else { Some(align(s)?) }
-                }
-                "justify-content" => style.justify_content = Some(content(s)?),
-                "align-content" => style.align_content = Some(content(s)?),
                 "grid-template-columns" => {
                     let (tracks, names) =
                         crate::grid_template::install_tracks(true, grid(s, m, true)?);
@@ -1129,29 +985,10 @@ pub fn translate(
                         .map(|s| grid_track(s, m))
                         .collect::<Result<_, _>>()?
                 }
-                "grid-auto-flow" => {
-                    style.grid_auto_flow = match s {
-                        "row" => GridAutoFlow::Row,
-                        "column" => GridAutoFlow::Column,
-                        "row dense" | "dense" => GridAutoFlow::RowDense,
-                        "column dense" => GridAutoFlow::ColumnDense,
-                        _ => return Err("invalid grid-auto-flow".into()),
-                    }
-                }
                 "grid-column-start" => style.grid_column.start = placement(s, true)?,
                 "grid-column-end" => style.grid_column.end = placement(s, true)?,
                 "grid-row-start" => style.grid_row.start = placement(s, false)?,
                 "grid-row-end" => style.grid_row.end = placement(s, false)?,
-                "aspect-ratio" => {
-                    if s != "auto" {
-                        let v = split(s, false);
-                        style.aspect_ratio = Some(if v.len() == 3 && v[1] == "/" {
-                            number(&v[0])? / number(&v[2])?
-                        } else {
-                            number(s)?
-                        });
-                    }
-                }
                 "background-color" => {
                     paint.box_node.bg_color = Some(Animated::new(color(s, paint.color)?))
                 }

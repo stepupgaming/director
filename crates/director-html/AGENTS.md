@@ -5,6 +5,8 @@
 ## Ownership
 
 - `src/` owns parsing, cascade, style translation, deterministic animation, native element adapters, and captured-scene loading.
+- `src/property.rs` owns the property table: every compiled longhand, whether it inherits, and its translation group. `css::inherited` and the unsupported-property refusal read it. `src/computed.rs` owns `ComputedStyle`, which parses each longhand once into a typed Lightning CSS `Property`.
+- `src/style/mod.rs` owns `translate` and the text-path property groups. `src/style/layout.rs` owns the typed layout longhands.
 - `src/project.rs` owns `director-native-project/1`, editable source and validated element overrides; `src/assets.rs` owns asset recording, deduplicated SHA-256 blobs and temporary media-file leases.
 - `tools/` owns optional compile-time browser extraction, Chromium and CPU/GPU parity, real HyperFrames CLI and CPU/GPU export benchmarks, and Hyper CN registry auditing.
 - `tests/` owns executable compatibility and pixel regressions.
@@ -64,6 +66,8 @@
 
 ### Layout
 
+- `display`, `box-sizing`, `position`, sizes, insets, margins, paddings, `flex-direction`, `flex-wrap`, `flex-grow`, `flex-shrink`, `flex-basis`, the `align-*` and `justify-*` properties, `aspect-ratio`, and `grid-auto-flow` translate from typed values in `style/layout.rs`. Grid templates, grid placements, and gaps stay on the text path.
+- `display` accepts `block`, `flex`, `inline-flex`, `grid`, `inline-grid`, and `none`; `inline` asks for a rich text parent. Alignment accepts `normal`, `stretch`, `start`, `end`, `flex-start`, `flex-end`, `center`, and first `baseline`; content alignment adds the `space-*` values. Overflow keywords, `left`, `right`, `self-*`, and `last baseline` fail. Sizes other than `auto`, `none` for maxima, and a length fail.
 - Homogeneous `calc()`, `min()`, `max()`, and `clamp()` lengths become px. Homogeneous percents stay percents (`50%` is fraction `0.5`). `convert_length` passes no percent basis. `length_on` resolves a mixed calc when the caller supplies a finite basis greater than 0.
 - Mixed-calc bases: width, min-width, max-width, left, right, margin, padding, text-indent, and a length flex-basis use the containing-block width. Height, min-height, max-height, top, and bottom use the containing-block height. Padding and margin use width on every side. column-gap uses the element's own definite content width; row-gap uses its own definite content height.
 - The root containing block is the composition size. A nested box uses its parent's definite content box. An auto block width stretches to that box. An auto height, an auto shrink-to-fit width, and a grid item with width auto stay indefinite. A missing, zero, negative, or non-finite basis fails with `mixed calc() requires a length basis`.
@@ -147,7 +151,7 @@
 - Keep measured parity and performance claims tied to reproducible commands and artifacts.
 - CPU/GPU comparisons must synchronize GPU work through readback, verify the actual backend/encoder and probe every MP4's frame count and audio/video/container duration. GPU rendering and NVENC encoding are separate controls.
 - Exercise real Hyper CN original and portrait registry files. Compilation/render smoke results are separate from measured pixel parity.
-- Most CSS properties are one large match in `src/style.rs`, and painting is in `src/element.rs`. Parallel edits must own separate files or separate match arms.
+- A new CSS longhand needs a `src/property.rs` entry. Port a property group to typed values by matching Lightning CSS `Property` variants in its own `src/style/` module. Painting is in `src/element.rs`. Parallel edits must own separate files or separate match arms.
 - HTML pixel tests clear to opaque black, inject Roboto, and set `body{margin:0}`. Treat a pixel as empty when r, g, and b are below 20.
 
 ## Verification
