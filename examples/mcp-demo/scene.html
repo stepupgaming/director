@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { margin:0; background:#0a0a0f; }
+  #card { position:relative; width:1920px; height:1080px; overflow:hidden; background:#0a0a0f; font-family:Inter; color:#f4efe6; }
+  #glow { position:absolute; left:1050px; top:-180px; width:1000px; height:1000px; border-radius:500px; background:#7b5cff; opacity:.45; filter:blur(140px); animation:drift 6s linear both; }
+  #kicker { position:absolute; left:120px; top:300px; font-size:34px; font-weight:700; letter-spacing:8px; color:#8d8a9e; animation:fadeup .6s ease-out .2s both; }
+  #title { position:absolute; left:112px; top:370px; width:1700px; font-size:150px; font-weight:700; letter-spacing:-4px; line-height:1.05; color:#f4efe6; animation:fadeup .8s cubic-bezier(.2,.9,.2,1) .4s both; }
+  #bar { position:absolute; left:120px; top:720px; width:520px; height:14px; border-radius:7px; background:#ff5a36; animation:grow 1s cubic-bezier(.7,0,.2,1) .9s both; }
+  #sub { position:absolute; left:120px; top:780px; font-size:40px; color:#cfc9da; animation:fadeup .7s ease-out 1.3s both; }
+  @keyframes fadeup { from { opacity:0; transform:translateY(40px); } to { opacity:1; transform:translateY(0px); } }
+  @keyframes grow { from { width:0px; } to { width:520px; } }
+  @keyframes drift { from { transform:translateX(0px); } to { transform:translateX(-300px); } }
+</style></head><body>
+<div id="card" data-composition-id="card" data-width="1920" data-height="1080" data-fps="30" data-duration="5">
+  <div id="glow"></div>
+  <div id="kicker">DIRECTOR ENGINE</div>
+  <div id="title">Hello, world.</div>
+  <div id="bar"></div>
+  <div id="sub">An HTML scene, rendered natively.</div>
+</div>
+</body></html>

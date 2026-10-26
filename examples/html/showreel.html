@@ -1,0 +1,163 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  @font-face { font-family:Inter; src:url("../../crates/director-core/assets/fonts/Inter-Regular.ttf"); font-weight:400; }
+  @font-face { font-family:Inter; src:url("../../crates/director-core/assets/fonts/Inter-Bold.ttf"); font-weight:700; }
+  @font-face { font-family:"Instrument Serif"; src:url("../assets/fonts/InstrumentSerif-Italic.ttf"); font-weight:400; font-style:italic; }
+  @font-face { font-family:"JetBrains Mono"; src:url("../assets/fonts/JetBrainsMono-Regular.ttf"); font-weight:400; }
+  html, body { margin:0; background:#0a0a0f; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  #reel { position:relative; width:1920px; height:1080px; overflow:hidden; background:#0a0a0f; font-family:Inter; color:#f4efe6; }
+  .scene { position:absolute; left:0; top:0; width:1920px; height:1080px; overflow:hidden; }
+  .tag { position:absolute; left:96px; top:84px; font-family:"JetBrains Mono"; font-size:22px; letter-spacing:4px; color:#8d8a9e; text-transform:uppercase; }
+  .num { position:absolute; right:96px; top:84px; font-family:"JetBrains Mono"; font-size:22px; letter-spacing:4px; color:#ff5a36; }
+
+  /* ---------- Beat 1: kinetic type ---------- */
+  #s1 { background:radial-gradient(circle at 20% 30%, #2a1a3a 0%, #0a0a0f 60%); }
+  #s1 .glow { position:absolute; left:1100px; top:-200px; width:1100px; height:1100px; border-radius:550px;
+    background:conic-gradient(from 0deg, #ff5a36, #ffb347, #7b5cff, #2ad4c8, #ff5a36); filter:blur(120px); opacity:.55;
+    animation:spin 6s linear both; }
+  #s1 .lines { position:absolute; left:96px; top:300px; width:1500px; display:flex; flex-wrap:wrap; gap:8px 26px; }
+  #s1 .w { font-size:118px; font-weight:700; letter-spacing:-3px; line-height:1.05; padding:4px 18px; border-radius:18px; color:#f4efe6; }
+  #s1 .w.it { font-family:"Instrument Serif"; font-style:italic; font-weight:400; letter-spacing:0px; }
+  #s1 .cap { position:absolute; left:114px; top:820px; font-family:"JetBrains Mono"; font-size:26px; color:#8d8a9e; animation:fadeup .6s ease-out 1.6s both; }
+
+  /* ---------- Beat 2: 3D grid city ---------- */
+  #s2 { background:linear-gradient(180deg, #0a0a0f 0%, #141024 100%); }
+  #s2 .stage { position:absolute; left:0; top:60px; width:1920px; height:1080px; perspective:1800px; }
+  #s2 .plane { position:absolute; left:820px; top:250px; width:800px; height:640px; transform-style:preserve-3d;
+    display:grid; grid-template-columns:repeat(5, 1fr); grid-template-rows:repeat(4, 1fr); gap:22px;
+    animation:tilt 3.2s 3.4s cubic-bezier(.2,.7,.2,1) both; }
+  #s2 .t { border-radius:14px; transform-style:preserve-3d; background:#221c3a; border:1px solid #3a3160; }
+  #s2 .t.a { background:linear-gradient(135deg, #ff5a36, #ffb347); border:0px solid #000; }
+  #s2 .t.b { background:linear-gradient(135deg, #7b5cff, #2ad4c8); border:0px solid #000; }
+  #s2 .t.c { background:#f4efe6; border:0px solid #000; }
+  #s2 .title { position:absolute; left:96px; top:820px; font-family:"Instrument Serif"; font-style:italic; font-size:96px; line-height:1; animation:fadeup .7s ease-out 3.8s both; }
+  #s2 .sub { position:absolute; left:100px; top:930px; font-family:"JetBrains Mono"; font-size:24px; color:#8d8a9e; animation:fadeup .7s ease-out 4s both; }
+
+  /* ---------- Beat 3: flex morph + gradients ---------- */
+  #s3 { background:#0a0a0f; }
+  #s3 .row { position:absolute; left:96px; top:200px; width:1728px; height:600px; display:flex; gap:20px; }
+  #s3 .p { flex-grow:1; flex-basis:0px; height:600px; border-radius:28px; overflow:hidden; position:relative; }
+  #s3 .p .lbl { position:absolute; left:28px; bottom:26px; font-family:"JetBrains Mono"; font-size:22px; color:#0a0a0f; background:#f4efe6; padding:8px 14px; border-radius:10px; }
+  #s3 .p1 { background:linear-gradient(160deg, #ff5a36 0%, #ffb347 55%, #ffe3a3 100%); flex-grow:0; flex-basis:auto; width:120px; animation:grow1 3s 6.6s cubic-bezier(.7,0,.2,1) both; }
+  #s3 .p2 { background:radial-gradient(circle at 30% 30%, #ffffff 0%, #7b5cff 35%, #1b1240 100%); }
+  #s3 .p3 { background:conic-gradient(from 90deg at 50% 50%, #2ad4c8, #7b5cff, #ff5a36, #ffb347, #2ad4c8); flex-grow:0; flex-basis:auto; width:700px; animation:shrink3 3s 6.6s cubic-bezier(.7,0,.2,1) both; }
+  #s3 .p4 { background:repeating-linear-gradient(45deg, #f4efe6 0px, #f4efe6 14px, #ff5a36 14px, #ff5a36 28px); }
+  #s3 .title { position:absolute; left:96px; top:850px; font-family:"Instrument Serif"; font-style:italic; font-size:96px; line-height:1; animation:fadeup .7s ease-out 6.9s both; }
+  #s3 .sub { position:absolute; left:1100px; top:880px; width:720px; text-align:right; font-family:"JetBrains Mono"; font-size:24px; color:#8d8a9e; animation:fadeup .7s ease-out 7.1s both; }
+
+  /* ---------- Beat 4: blend, blur, mask, SVG ---------- */
+  #s4 { background:#f4efe6; }
+  #s4 .orbit { position:absolute; left:660px; top:140px; width:800px; height:800px; animation:spin 3s 9.7s linear both; }
+  #s4 .orb { position:absolute; width:440px; height:440px; border-radius:220px; mix-blend-mode:multiply; }
+  #s4 .o1 { left:180px; top:40px; background:#ff5a36; }
+  #s4 .o2 { left:40px; top:300px; background:#2ad4c8; }
+  #s4 .o3 { left:320px; top:300px; background:#7b5cff; }
+  #s4 .glass { position:absolute; left:1060px; top:560px; width:640px; height:300px; border-radius:32px; backdrop-filter:blur(30px);
+    background:rgba(255,255,255,.28); border:1px solid rgba(255,255,255,.7); box-shadow:0 30px 60px rgba(10,10,15,.25);
+    padding:40px; animation:slidein .8s cubic-bezier(.2,.9,.2,1) 10s both; }
+  #s4 .glass .k { font-family:"JetBrains Mono"; font-size:22px; color:#0a0a0f; letter-spacing:3px; }
+  #s4 .glass .v { font-family:"Instrument Serif"; font-style:italic; font-size:84px; color:#0a0a0f; line-height:1.1; margin-top:20px; }
+  #s4 .stripe { position:absolute; left:0; top:0; width:1920px; height:1080px;
+    background:repeating-linear-gradient(90deg, #0a0a0f 0px, #0a0a0f 2px, transparent 2px, transparent 48px);
+    mask-image:linear-gradient(90deg, black 0%, transparent 30%); opacity:.14; }
+  #s4 .ring { position:absolute; left:120px; top:640px; width:300px; height:300px; }
+  #s4 .title { position:absolute; left:96px; top:180px; font-family:"Instrument Serif"; font-style:italic; font-size:96px; line-height:1; color:#0a0a0f; animation:fadeup .7s ease-out 9.9s both; }
+  #s4 .sub { position:absolute; left:100px; top:300px; width:520px; font-family:"JetBrains Mono"; font-size:24px; line-height:1.5; color:#55526a; animation:fadeup .7s ease-out 10.1s both; }
+  #s4 .tag { color:#55526a; }
+
+  /* ---------- Beat 5: end card ---------- */
+  #s5 { background:radial-gradient(circle at 50% 120%, #3a1d2e 0%, #0a0a0f 60%); }
+  #s5 .halo { position:absolute; left:460px; top:240px; width:1000px; height:600px; border-radius:300px;
+    background:linear-gradient(90deg, #ff5a36, #7b5cff, #2ad4c8); filter:blur(140px); opacity:.35; animation:fadein 1.2s 12.6s ease-out both; }
+  #s5 .box { position:absolute; left:0; top:0; width:1920px; height:1080px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:34px; }
+  #s5 .logo { font-family:"Instrument Serif"; font-style:italic; font-size:260px; line-height:1; letter-spacing:-4px; animation:logo 1.1s 12.6s cubic-bezier(.2,.9,.2,1) both; }
+  #s5 .line { width:520px; height:2px; background:linear-gradient(90deg, transparent, #ff5a36, transparent); animation:fadein .8s ease-out 13.1s both; }
+  #s5 .tl { font-family:"JetBrains Mono"; font-size:32px; letter-spacing:2px; color:#cfc9da; animation:fadeup .8s ease-out 13.3s both; }
+
+  .fade { animation:fadein .35s ease-out both; }
+
+  @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(120deg); } }
+  @keyframes fadein { from { opacity:0; } to { opacity:1; } }
+  @keyframes fadeup { from { opacity:0; transform:translateY(30px); } to { opacity:1; transform:translateY(0px); } }
+  @keyframes wordin { from { opacity:0; transform:translateY(60px) rotate(4deg); } to { opacity:1; transform:translateY(0px) rotate(0deg); } }
+  @keyframes hl { 0% { background-color:rgba(255,90,54,0); color:#f4efe6; } 25% { background-color:rgba(255,90,54,1); color:#0a0a0f; } 75% { background-color:rgba(255,90,54,1); color:#0a0a0f; } 100% { background-color:rgba(255,90,54,0); color:#f4efe6; } }
+  @keyframes tilt { from { transform:rotateX(0deg) rotateZ(0deg) scale(.9); } to { transform:rotateX(58deg) rotateZ(-38deg) scale(1.05); } }
+  @keyframes z1 { from { transform:translateZ(0px); } to { transform:translateZ(30px); } }
+  @keyframes z2 { from { transform:translateZ(0px); } to { transform:translateZ(80px); } }
+  @keyframes z3 { from { transform:translateZ(0px); } to { transform:translateZ(140px); } }
+  @keyframes z4 { from { transform:translateZ(0px); } to { transform:translateZ(220px); } }
+  @keyframes grow1 { from { width:120px; } to { width:760px; } }
+  @keyframes shrink3 { from { width:700px; } to { width:160px; } }
+  @keyframes slidein { from { opacity:0; transform:translateX(120px); } to { opacity:1; transform:translateX(0px); } }
+  @keyframes logo { from { opacity:0; transform:translateY(40px) scale(.94); } to { opacity:1; transform:translateY(0px) scale(1); } }
+</style></head><body>
+<div id="reel" data-composition-id="showreel" data-no-timeline data-width="1920" data-height="1080" data-fps="30" data-duration="15">
+
+  <div id="s1" class="scene" data-start="0" data-duration="3.4">
+    <div class="glow"></div>
+    <div class="tag">Director / kinetic type</div><div class="num">01</div>
+    <div class="lines">
+      <div class="w" style="animation:wordin .5s cubic-bezier(.2,.9,.2,1) .10s both, hl .6s linear 1.00s both">Write</div>
+      <div class="w" style="animation:wordin .5s cubic-bezier(.2,.9,.2,1) .18s both, hl .6s linear 1.25s both">it</div>
+      <div class="w" style="animation:wordin .5s cubic-bezier(.2,.9,.2,1) .26s both, hl .6s linear 1.50s both">in</div>
+      <div class="w it" style="animation:wordin .5s cubic-bezier(.2,.9,.2,1) .34s both, hl .6s linear 1.75s both">HTML.</div>
+      <div class="w" style="animation:wordin .5s cubic-bezier(.2,.9,.2,1) .50s both, hl .6s linear 2.05s both">Render</div>
+      <div class="w" style="animation:wordin .5s cubic-bezier(.2,.9,.2,1) .58s both, hl .6s linear 2.30s both">it</div>
+      <div class="w it" style="animation:wordin .5s cubic-bezier(.2,.9,.2,1) .66s both, hl .9s linear 2.55s both">natively.</div>
+    </div>
+    <div class="cap">word-timed captions / CSS keyframes / cubic-bezier easing</div>
+  </div>
+
+  <div id="s2" class="scene fade" style="animation-delay:3.4s" data-start="3.4" data-duration="3.2">
+    <div class="tag">Grid + preserve-3d</div><div class="num">02</div>
+    <div class="stage"><div class="plane">
+      <div class="t" style="animation:z1 .9s cubic-bezier(.2,1.4,.4,1) 3.7s both"></div><div class="t a" style="animation:z4 .9s cubic-bezier(.2,1.4,.4,1) 3.8s both"></div><div class="t" style="animation:z1 .9s cubic-bezier(.2,1.4,.4,1) 3.9s both"></div><div class="t b" style="animation:z3 .9s cubic-bezier(.2,1.4,.4,1) 4s both"></div><div class="t" style="animation:z2 .9s cubic-bezier(.2,1.4,.4,1) 4.1s both"></div>
+      <div class="t b" style="animation:z2 .9s cubic-bezier(.2,1.4,.4,1) 3.85s both"></div><div class="t" style="animation:z1 .9s cubic-bezier(.2,1.4,.4,1) 3.95s both"></div><div class="t c" style="animation:z4 .9s cubic-bezier(.2,1.4,.4,1) 4.05s both"></div><div class="t" style="animation:z2 .9s cubic-bezier(.2,1.4,.4,1) 4.15s both"></div><div class="t a" style="animation:z3 .9s cubic-bezier(.2,1.4,.4,1) 4.25s both"></div>
+      <div class="t" style="animation:z1 .9s cubic-bezier(.2,1.4,.4,1) 4s both"></div><div class="t a" style="animation:z4 .9s cubic-bezier(.2,1.4,.4,1) 4.1s both"></div><div class="t" style="animation:z2 .9s cubic-bezier(.2,1.4,.4,1) 4.2s both"></div><div class="t" style="animation:z1 .9s cubic-bezier(.2,1.4,.4,1) 4.3s both"></div><div class="t b" style="animation:z3 .9s cubic-bezier(.2,1.4,.4,1) 4.4s both"></div>
+      <div class="t b" style="animation:z2 .9s cubic-bezier(.2,1.4,.4,1) 4.15s both"></div><div class="t" style="animation:z1 .9s cubic-bezier(.2,1.4,.4,1) 4.25s both"></div><div class="t a" style="animation:z3 .9s cubic-bezier(.2,1.4,.4,1) 4.35s both"></div><div class="t" style="animation:z2 .9s cubic-bezier(.2,1.4,.4,1) 4.45s both"></div><div class="t c" style="animation:z3 .9s cubic-bezier(.2,1.4,.4,1) 4.55s both"></div>
+    </div></div>
+    <div class="title">Real depth.</div>
+    <div class="sub">CSS Grid on a perspective stage, depth-sorted planes</div>
+  </div>
+
+  <div id="s3" class="scene fade" style="animation-delay:6.6s" data-start="6.6" data-duration="3.1">
+    <div class="tag">Flexbox layout</div><div class="num">03</div>
+    <div class="row">
+      <div class="p p1"><div class="lbl">linear</div></div>
+      <div class="p p2"><div class="lbl">radial</div></div>
+      <div class="p p3"><div class="lbl">conic</div></div>
+      <div class="p p4"><div class="lbl">repeating</div></div>
+    </div>
+    <div class="title">Layout that moves.</div>
+    <div class="sub">Taffy reflows every frame</div>
+  </div>
+
+  <div id="s4" class="scene fade" style="animation-delay:9.7s" data-start="9.7" data-duration="2.9">
+    <div class="stripe"></div>
+    <div class="tag">Paint</div><div class="num">04</div>
+    <div class="orbit"><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div></div>
+    <div class="title">Blend. Blur. Mask.</div>
+    <div class="sub">mix-blend-mode, backdrop blur, gradient masks and animated SVG</div>
+    <svg class="ring" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="150" cy="150" r="120" fill="none" stroke="#d8d2c4" stroke-width="18"/>
+      <circle cx="150" cy="150" r="120" fill="none" stroke="#ff5a36" stroke-width="18" stroke-linecap="round" stroke-dasharray="754" stroke-dashoffset="754" transform="rotate(-90 150 150)">
+        <animate attributeName="stroke-dashoffset" from="754" to="120" begin="9.9s" dur="2s" fill="freeze"/>
+      </circle>
+      <path d="M150 90 L150 210 M90 150 L210 150" stroke="#0a0a0f" stroke-width="10" stroke-linecap="round">
+        <animateTransform attributeName="transform" type="rotate" from="0 150 150" to="180 150 150" begin="9.7s" dur="2.6s" fill="freeze"/>
+      </path>
+    </svg>
+    <div class="glass"><div class="k">BACKDROP-FILTER</div><div class="v">Frosted, natively.</div></div>
+  </div>
+
+  <div id="s5" class="scene fade" style="animation-delay:12.6s" data-start="12.6" data-duration="2.4">
+    <div class="halo"></div>
+    <div class="box">
+      <div class="logo">Director</div>
+      <div class="line"></div>
+      <div class="tl">HTML/CSS in. Native frames out. No browser.</div>
+    </div>
+  </div>
+</div>
+</body></html>

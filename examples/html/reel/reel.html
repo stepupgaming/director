@@ -1,0 +1,192 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  /* Director hero reel. Cuts follow the beats of assets/music.wav (Magenta RealTime, ~126 BPM).
+     Animation delays are absolute reel times, because Director evaluates CSS delays on the video clock. */
+  @font-face { font-family:"Instrument Serif"; src:url("../../assets/fonts/InstrumentSerif-Italic.ttf"); font-weight:400; font-style:italic; }
+  @font-face { font-family:"JetBrains Mono"; src:url("../../assets/fonts/JetBrainsMono-Regular.ttf"); font-weight:400; }
+  html, body { margin:0; background:#000; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  #reel { position:relative; width:1920px; height:1080px; overflow:hidden; background:#000; font-family:Inter; color:#f4ede2; }
+  .scene { position:absolute; left:0; top:0; width:1920px; height:1080px; overflow:hidden; background:#000; }
+  .plate { position:absolute; left:0; top:0; width:1920px; height:1080px; object-fit:cover; }
+  .grade { filter:contrast(1.08) saturate(1.06); }
+
+  /* Overlays shared by every shot */
+  .fx { position:absolute; left:0; top:0; width:1920px; height:1080px; mix-blend-mode:screen; object-fit:cover; }
+  .vignette { position:absolute; left:0; top:0; width:1920px; height:1080px;
+    background:radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 45%, rgba(0,0,0,.62) 100%); }
+  .grain { position:absolute; left:-256px; top:-256px; width:2432px; height:1592px; background-image:url("assets/grain.png");
+    background-size:512px 512px; opacity:.09; mix-blend-mode:overlay; animation:grain .4s steps(1) infinite; }
+  .bar { position:absolute; left:0; width:1920px; height:132px; background:#000; }
+  .bar.top { top:0; } .bar.bot { bottom:0; }
+  .flash { position:absolute; left:0; top:0; width:1920px; height:1080px; background:#fff4e6; opacity:0; }
+
+  .tag { position:absolute; font-family:"JetBrains Mono"; font-size:20px; letter-spacing:6px; color:rgba(244,237,226,.72); text-transform:uppercase; }
+  .serif { font-family:"Instrument Serif"; font-style:italic; font-weight:400; }
+  .line { position:absolute; left:160px; top:820px; font-size:84px; line-height:1; letter-spacing:-1px; text-shadow:0 4px 30px rgba(0,0,0,.6); }
+  .kicker { position:absolute; left:164px; top:776px; }
+  .tc { position:absolute; right:160px; top:160px; font-family:"JetBrains Mono"; font-size:18px; letter-spacing:4px; color:rgba(255,154,92,.85); }
+
+  /* 01 salt flat: fade up from black, slow push */
+  #s1 .plate { transform-origin:72% 55%; animation:fadein 1.6s ease-out 0s both, push1 3.9s linear 0s both; }
+  #s1 .kicker { animation:rise .9s cubic-bezier(.2,.8,.2,1) 1.0s both, fadeout .3s ease-in 3.45s forwards; }
+  #s1 .line { animation:rise 1.1s cubic-bezier(.2,.8,.2,1) 1.904s both, fadeout .3s ease-in 3.45s forwards; }
+
+  /* 02 eye: push toward the pupil while the Lottie finder locks on */
+  #s2 .plate { transform-origin:47% 47%; animation:push2 1.95s cubic-bezier(.3,.0,.2,1) 3.808s both; }
+
+  /* 03 corridor: dolly forward */
+  #s3 .plate { transform-origin:47% 52%; animation:dolly 1.95s cubic-bezier(.4,0,.6,1) 5.712s both; }
+  #s3 .line { left:auto; right:160px; text-align:right; animation:rise .8s cubic-bezier(.2,.8,.2,1) 6.0s both; }
+
+  /* 04 street: drift, oversized type with difference blend */
+  #s4 .plate { animation:drift 2.4s linear 7.616s both; }
+  #s4 .big { position:absolute; left:0; top:360px; width:1920px; text-align:center; font-size:300px; font-weight:700; letter-spacing:-10px;
+    line-height:1; color:#f4ede2; mix-blend-mode:difference; animation:track 1.9s cubic-bezier(.1,.7,.2,1) 7.616s both; }
+  #s4 .tag { left:160px; top:176px; animation:fadein .4s ease-out 7.9s both; }
+
+  /* whip pan (Director sub-clip with motion blur) bridges street to profile */
+  #whip { position:absolute; left:0; top:0; width:1920px; height:1080px; object-fit:cover; }
+
+  /* 05 profile: slow lateral move */
+  #s5 .plate { animation:lateral 2.0s linear 9.52s both; }
+  #s5 .line { left:auto; right:160px; text-align:right; animation:rise .8s cubic-bezier(.2,.8,.2,1) 9.92s both; }
+
+  /* 06 prism: bloom copy screened over the plate, slow turn */
+  #s6 .plate { transform-origin:52% 55%; animation:turn 2.0s linear 11.401s both; }
+  #s6 .bloom { filter:blur(28px) brightness(1.4); mix-blend-mode:screen; opacity:.55; }
+  #s6 .tag { left:160px; top:176px; animation:fadein .4s ease-out 11.6s both; }
+
+  /* 07 road: wipes in through a clip-path, then pushes */
+  #s7 { animation:wipe .55s cubic-bezier(.7,0,.2,1) 13.1s both; }
+  #s7 .plate { transform-origin:30% 62%; animation:push7 2.3s linear 13.1s both; }
+  #s7 .line { animation:rise .8s cubic-bezier(.2,.8,.2,1) 13.6s both; }
+
+  /* 08 projector: flicker of the lamp */
+  #s8 .plate { transform-origin:85% 40%; animation:push8 1.95s linear 15.232s both, flicker .5s steps(1) 15.232s 4 both; }
+  #s8 .line { left:auto; right:160px; text-align:right; animation:rise .8s cubic-bezier(.2,.8,.2,1) 15.5s both; }
+
+  /* 09 montage: two-beat cuts with punch-ins, a 3D card turn on the street */
+  #m1 .plate { transform-origin:47% 47%; animation:punch .95s cubic-bezier(.1,.8,.2,1) 17.113s both; }
+  #m2 .plate { transform-origin:47% 52%; animation:punch .95s cubic-bezier(.1,.8,.2,1) 18.088s both; }
+  #m3 { perspective:1400px; background:#050506; }
+  #m3 .card { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-style:preserve-3d; animation:card .95s cubic-bezier(.2,.7,.2,1) 18.994s both; }
+  #m3 .plate { position:absolute; }
+  #m4 .plate { transform-origin:72% 55%; animation:punch .98s cubic-bezier(.1,.8,.2,1) 19.946s both; }
+  .flash.f1 { animation:flash .2s ease-out 17.113s forwards; }
+  .flash.f2 { animation:flash .2s ease-out 18.088s forwards; }
+  .flash.f3 { animation:flash .2s ease-out 18.994s forwards; }
+  .flash.f4 { animation:flash .2s ease-out 19.946s forwards; }
+  .flash.f5 { animation:flash .3s ease-out 20.921s forwards; }
+
+  /* 10 monolith: audio-reactive glow and equalizer from the FX track */
+  #s10 .plate { transform-origin:27% 40%; animation:push10 7.7s linear 20.921s both; }
+  #s10 .soft { filter:blur(10px) brightness(.42); transform-origin:27% 40%; animation:fadein 1.4s ease-in-out 24.2s both, push10 7.7s linear 20.921s both; }
+  #s10 .tc { animation:fadein .4s ease-out 21.2s both, fadeout .3s ease-in 24.4s forwards; }
+
+  /* 11 end card */
+  #end { position:absolute; left:0; top:0; width:1920px; height:1080px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  #end .logo { font-size:250px; line-height:1; letter-spacing:-4px; color:#f6efe4; text-shadow:0 0 60px rgba(255,122,51,.35);
+    animation:logo 1.6s cubic-bezier(.16,1,.3,1) 24.729s both; }
+  #end .rule { width:440px; height:2px; margin-top:34px; background:linear-gradient(90deg, rgba(255,122,51,0), #ff7a33, rgba(255,122,51,0));
+    animation:rule 1.1s cubic-bezier(.16,1,.3,1) 25.2s both; }
+  #end .sub { margin-top:30px; font-family:"JetBrains Mono"; font-size:24px; letter-spacing:8px; color:rgba(244,237,226,.8); text-transform:uppercase;
+    animation:rise 1.0s cubic-bezier(.2,.8,.2,1) 25.66s both; }
+  #black { position:absolute; left:0; top:0; width:1920px; height:1080px; background:#000; animation:fadein 1.0s ease-in 27.6s both; }
+
+  @keyframes fadein { from { opacity:0; } to { opacity:1; } }
+  @keyframes fadeout { from { opacity:1; } to { opacity:0; } }
+  @keyframes rise { from { opacity:0; transform:translateY(26px); } to { opacity:1; transform:translateY(0px); } }
+  @keyframes push1 { from { transform:scale(1.0); } to { transform:scale(1.09); } }
+  @keyframes push2 { from { transform:scale(1.12); } to { transform:scale(1.42); } }
+  @keyframes dolly { from { transform:scale(1.0); } to { transform:scale(1.32); } }
+  @keyframes drift { from { transform:scale(1.12) translateX(60px); } to { transform:scale(1.12) translateX(-60px); } }
+  @keyframes track { from { opacity:0; transform:scale(1.25); } to { opacity:1; transform:scale(1.0); } }
+  @keyframes lateral { from { transform:scale(1.1) translateX(-50px); } to { transform:scale(1.1) translateX(30px); } }
+  @keyframes turn { from { transform:scale(1.08) rotate(-2deg); } to { transform:scale(1.22) rotate(2deg); } }
+  @keyframes wipe { from { width:0px; } to { width:1920px; } }
+  @keyframes push7 { from { transform:scale(1.18); } to { transform:scale(1.04); } }
+  @keyframes push8 { from { transform:scale(1.0); } to { transform:scale(1.14); } }
+  @keyframes flicker { 0% { opacity:1; } 20% { opacity:.82; } 40% { opacity:1; } 60% { opacity:.9; } 80% { opacity:1; } }
+  @keyframes punch { from { transform:scale(1.35); } to { transform:scale(1.18); } }
+  @keyframes card { from { transform:rotateY(-38deg) translateZ(-500px) scale(1.1); } to { transform:rotateY(0deg) translateZ(0px) scale(1.06); } }
+  @keyframes flash { from { opacity:.85; } to { opacity:0; } }
+  @keyframes push10 { from { transform:scale(1.02); } to { transform:scale(1.16); } }
+  @keyframes logo { from { opacity:0; transform:scale(1.08); } to { opacity:1; transform:scale(1.0); } }
+  @keyframes rule { from { opacity:0; transform:scaleX(0); } to { opacity:1; transform:scaleX(1); } }
+  @keyframes grain { 0% { transform:translate(0px,0px); } 25% { transform:translate(-131px,77px); } 50% { transform:translate(89px,-163px); } 75% { transform:translate(-47px,-29px); } }
+</style></head><body>
+<div id="reel" data-composition-id="director-reel" data-no-timeline data-width="1920" data-height="1080" data-fps="30" data-duration="28.6">
+
+  <audio src="assets/music.wav" data-start="0" data-duration="28.6"></audio>
+
+  <div id="s1" class="scene" data-start="0" data-duration="3.808">
+    <img class="plate grade" src="assets/salt.jpg">
+    <div class="tag kicker">Director</div>
+    <div class="line serif">Every frame, rendered natively.</div>
+  </div>
+
+  <div id="s2" class="scene" data-start="3.808" data-duration="1.904">
+    <img class="plate grade" src="assets/eye.jpg">
+  </div>
+
+  <div id="s3" class="scene" data-start="5.712" data-duration="1.904">
+    <img class="plate grade" src="assets/corridor.jpg">
+    <div class="line serif">Written in HTML.</div>
+  </div>
+
+  <div id="s4" class="scene" data-start="7.616" data-duration="1.904">
+    <img class="plate grade" src="assets/street.jpg">
+    <div class="big">CSS</div>
+    <div class="tag">Keyframes / blend / 3D</div>
+  </div>
+
+  <div id="s5" class="scene" data-start="9.52" data-duration="1.881">
+    <img class="plate grade" src="assets/profile.jpg">
+    <div class="line serif">Composited in Rust.</div>
+  </div>
+
+  <video id="whip" muted src="assets/whip.mp4" data-start="9.12" data-duration="0.8"></video>
+
+  <div id="s6" class="scene" data-start="11.401" data-duration="1.904">
+    <img class="plate grade" src="assets/prism.jpg">
+    <img class="plate bloom" src="assets/prism.jpg">
+    <div class="tag">Skia / Taffy / FFmpeg</div>
+  </div>
+
+  <div id="s7" class="scene" data-start="13.1" data-duration="2.132">
+    <img class="plate grade" src="assets/road.jpg">
+    <div class="line serif">No browser in the loop.</div>
+  </div>
+
+  <div id="s8" class="scene" data-start="15.232" data-duration="1.881">
+    <img class="plate grade" src="assets/projector.jpg">
+    <div class="line serif">Deterministic, frame by frame.</div>
+  </div>
+
+  <div id="m1" class="scene" data-start="17.113" data-duration="0.975"><img class="plate grade" src="assets/eye.jpg"></div>
+  <div id="m2" class="scene" data-start="18.088" data-duration="0.906"><img class="plate grade" src="assets/corridor.jpg"></div>
+  <div id="m3" class="scene" data-start="18.994" data-duration="0.952"><div class="card"><img class="plate grade" src="assets/street.jpg"></div></div>
+  <div id="m4" class="scene" data-start="19.946" data-duration="0.975"><img class="plate grade" src="assets/salt.jpg"></div>
+
+  <div id="s10" class="scene" data-start="20.921" data-duration="7.679">
+    <img class="plate grade" src="assets/monolith.jpg">
+    <img class="plate soft" src="assets/monolith.jpg">
+    <div class="tc">Audio-reactive</div>
+  </div>
+
+  <video class="fx" muted src="assets/fx.mp4" data-start="0" data-duration="28.6"></video>
+
+  <div id="end" data-start="24.729" data-duration="3.871">
+    <div class="logo serif">Director</div>
+    <div class="rule"></div>
+    <div class="sub">HTML in. Cinema out.</div>
+  </div>
+
+  <div class="flash f1"></div><div class="flash f2"></div><div class="flash f3"></div><div class="flash f4"></div><div class="flash f5"></div>
+  <div class="vignette"></div>
+  <div class="grain"></div>
+  <div class="bar top"></div><div class="bar bot"></div>
+  <div id="black"></div>
+</div>
+</body></html>
