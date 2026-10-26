@@ -6,7 +6,6 @@ mod gpu;
 mod html;
 mod input;
 mod mcp;
-mod preview;
 mod project;
 mod qa;
 mod renderer;
@@ -24,9 +23,8 @@ use input::{Encoder, Input};
 use run::{default_video_output, eval_script};
 use std::fs;
 use std::io::Write;
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Parser, Debug)]
@@ -115,8 +113,6 @@ enum Commands {
     Onion(onion::OnionArgs),
     /// List compositions registered by a script
     Compositions(CompositionsArgs),
-    /// Preview API server for editors and agents (frames, inspect, audio, reload)
-    Preview(CliPreviewArgs),
     /// Editor protocol on stdio: JSON-line commands and events with frames in a shared-memory ring
     Editor(editor::EditorArgs),
     /// Model Context Protocol server on stdio over host sessions
@@ -217,18 +213,6 @@ struct CompositionsArgs {
     /// Emit JSON instead of a human table
     #[arg(long, default_value_t = false)]
     json: bool,
-}
-
-#[derive(Parser, Debug)]
-struct CliPreviewArgs {
-    #[command(flatten)]
-    input: Input,
-    #[arg(long)]
-    gpu: bool,
-
-    /// Bind address (default 127.0.0.1:7788)
-    #[arg(long, default_value = "127.0.0.1:7788")]
-    bind: String,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -512,31 +496,6 @@ fn cmd_compositions(args: CompositionsArgs) {
     }
 }
 
-fn cmd_preview(args: CliPreviewArgs) {
-    let bind: SocketAddr = match args.bind.parse() {
-        Ok(a) => a,
-        Err(e) => {
-            error!("invalid --bind '{}': {}", args.bind, e);
-            std::process::exit(1);
-        }
-    };
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            error!("failed to start tokio runtime: {}", e);
-            std::process::exit(1);
-        }
-    };
-    if let Err(e) = rt.block_on(preview::run_preview(preview::PreviewArgs {
-        input: args.input,
-        gpu: args.gpu,
-        bind,
-    })) {
-        error!("{}", e);
-        std::process::exit(1);
-    }
-}
-
 fn main() {
     let cli = Cli::parse();
 
@@ -582,7 +541,6 @@ fn main() {
             }
         }
         Some(Commands::Compositions(args)) => cmd_compositions(args),
-        Some(Commands::Preview(args)) => cmd_preview(args),
         Some(Commands::Html(args)) => html::run(args),
         Some(Commands::Project(args)) => project::run(args),
         Some(Commands::Inspect(args)) => cmd_inspect(args),
@@ -598,7 +556,7 @@ fn main() {
                 None => {
                     eprintln!(
                         "Usage: director-engine <SCRIPT> [OUTPUT]\n\
-                         Or:    director-engine render|still|sheet|audio|check|qa|snapshot|onion|batch|compositions|preview --help\n\
+                         Or:    director-engine render|still|sheet|audio|check|qa|snapshot|onion|batch|compositions|editor --help\n\
                          Note: a script named 'render.rhai' needs the explicit form:\n\
                                director-engine render render.rhai"
                     );

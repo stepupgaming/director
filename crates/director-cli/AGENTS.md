@@ -1,17 +1,16 @@
 # Purpose
 
-- Own command-line binaries for rendering, inspecting and previewing Director inputs.
+- Own command-line binaries for rendering, inspecting and editing Director inputs.
 
 ## Ownership
 
-- `src/main.rs` owns the `director-engine` CLI: `render`, `batch`, `still`, `sheet`, `audio`, `check`, `qa`, `snapshot`, `onion`, `inspect`, `outline`, `diff`, `editor`, `mcp`, `skills`, `project`, `compositions`, `preview`, `html`, plus legacy bare `SCRIPT [OUTPUT]`.
+- `src/main.rs` owns the `director-engine` CLI: `render`, `batch`, `still`, `sheet`, `audio`, `check`, `qa`, `snapshot`, `onion`, `inspect`, `outline`, `diff`, `editor`, `mcp`, `skills`, `project`, `compositions`, `html`, plus legacy bare `SCRIPT [OUTPUT]`.
 - `src/sheet.rs` owns the contact-sheet plan and PNG. `src/audio_report.rs` owns the mixer loudness report. `src/check.rs` owns canvas-edge findings on the host `sample_times` grid. `src/qa.rs` owns the `qa` command over `Session::qa`. `src/snapshot.rs` owns golden PNG comparison. `src/onion.rs` owns the weighted frame blend. `src/outline.rs` owns `outline`, `diff` and the error envelope exit mapping. `src/editor.rs` owns the `editor` command over `director_host::Editor`. `src/mcp.rs` owns the stdio MCP server: JSON-RPC framing, protocol negotiation, the session table and tool schemas generated from the argument types. `src/skills.rs` owns the `director-mcp` skill generated from those schemas and the host error codes.
 - `src/batch.rs` owns batch output names and the status report. It stays free of other crate dependencies so `tests/repair_batch.rs` can include it.
 - `src/input.rs` owns the shared input flags (`Input`, converted to `director_host::Source`, which loads every input kind), `Input::open` into a `director_host::Session`, and encoder selection.
 - `src/project.rs` owns portable project packing and `project edit|repair`, which apply element-ID keyed JSON edits through `director_host::Session::edit_project`.
 - `src/renderer.rs` owns `use_gpu` (a required Vulkan context handed to a session), `paint` under the frame pixel limit, PNG encoding, and `export_video` (with `director_host::import_registry`) for `html render` and `html benchmark --export`.
 - `src/html.rs` owns `html check|still|render|capture|benchmark`. HTML and capture JSON compile through `director-html`; browser extraction is explicit and is never invoked by native render/still.
-- `src/preview/` owns the preview API server (Axum endpoints and the native worker) for editors and agents; its child DOX owns thread lifetime, accepted revisions, reload and audio caching. The repo ships no browser client.
 - `src/run.rs` owns default output naming (`default_video_output`). Script evaluation and movie resolution live in `director_host::script`.
 - `src/gpu.rs` owns Vulkan context creation (`director_render::GpuContext`), explicit HTML GPU requests, native render-surface creation and synchronous RGBA readback.
 - `src/bin/director_manifest.rs` owns agent-facing JSON manifest export (`api`, `schema`, `from-json`, `from-script`).
@@ -33,17 +32,16 @@
 - `skills DIR` writes `DIR/director-mcp/SKILL.md` (setup, loop, one argument bullet per schema property with type, requirement and default, tagged variants such as patch ops, and error codes) and `DIR/director-mcp/tools.json` (the `tools/list` result), then prints the files as JSON. The checked-in copy in `.agent/skills/director-mcp/` must match the generator.
 - `onion -n N` blends frames with weights 1 through N, capped at 8, and prints JSON.
 - `render --scale` accepts a finite value in `(0, 1]`. Layout width and height stay put, and the raster rounds each side down to an even size. Scale 1 is unchanged, including odd sizes. `--draft-encode` sets software x264 to ultrafast and CRF 30 without changing the raster size. Hardware qp and the alpha VP9 path stay put. The default stays slow and CRF 18.
-- Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `qa`, `snapshot`, `onion`, `inspect`, `outline`, `diff`, `mcp`, `project edit|repair` and `preview` open their input as a `director_host::Session`. Frames paint through `Session::render_frame`, on the session's Vulkan context under `--gpu`. Inspect JSON is `Session::inspect`. `--props` belongs to Rhai composition builders; native project edits use `project edit --patch`. Rhai packing is outside the native authoring format.
+- Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `qa`, `snapshot`, `onion`, `inspect`, `outline`, `diff`, `editor`, `mcp` and `project edit|repair` open their input as a `director_host::Session`. Frames paint through `Session::render_frame`, on the session's Vulkan context under `--gpu`. Inspect JSON is `Session::inspect`. `--props` belongs to Rhai composition builders; native project edits use `project edit --patch`. Rhai packing is outside the native authoring format.
 - `project repair` uses the `project edit` patch, saves only after validation, then prints inspect JSON at t=0. A rejected repair leaves the saved file unchanged.
 - `render` and `batch` export through `Session::export`; `html render` and `html benchmark --export` through `export_video`. Both run the pipelined document export, which refuses missing required fonts and encodes in one FFmpeg pass while it paints on a CPU worker pool, or with `--gpu` on one session on the Vulkan context. Alpha, `--scale` and `--draft-encode` behave the same on both.
 - `batch --input <path> --output <dir>` renders each input with the software encoder. One failure still reports the other items and exits with the highest item code. `batch --json` prints `{"exit_code","items"}` in place of the `ok`/`fail` lines and keeps that exit code.
 - `inspect --sample <seconds>` may be repeated. With no sample, inspect prints one object at `--time`. With samples, it loads once and prints `{"samples":[{"time","inspection"}]}` in order. A non-finite or negative sample exits 1.
-- Explicit `--gpu` requires Vulkan across top-level render/still/preview as well as HTML commands. Render accepts independent `--encoder software|nvenc`.
-- Preview frames and audio use export mode and clocks. `/api/inspect` returns native layout plus authored IDs and sampled capture elements; bounds describe layout, not final composited pixels.
+- Explicit `--gpu` requires Vulkan across top-level render/still/editor as well as HTML commands. Render accepts independent `--encoder software|nvenc`.
 - HTML `render` and `benchmark` accept independent `--gpu` and `--encoder software|nvenc`; `still` accepts `--gpu`. An explicit GPU request requires the Vulkan build and a GPU surface; failures exit 2. Default HTML rendering/encoding remains CPU/software.
 - HTML benchmark FPS includes layout, paint, submission and RGBA readback on both CPU and GPU. Report the backend, codec and setup cost; PNG encoding remains outside the frame timer.
 - CLI changes that expose or require Rhai API behavior must stay aligned with `director-core`.
-- Rendering, stills, inspection and the native preview worker load Rhai with `Export` semantics so media seek behavior matches export. Composition listing uses `Preview`.
+- Rendering, stills, inspection and the editor load Rhai with `Export` semantics so media seek behavior matches export. Composition listing uses `Preview`.
 - Named compositions: host keeps `CompositionRegistry` + compiled `AST`; builders are invoked via `FnPtr::call`, never `call_fn` by name.
 - Props merge is shallow (document in README). JSON object only.
 - Legacy scripts that return a `Movie` still work when no compositions are registered.
@@ -66,13 +64,11 @@
 - `tests/editor.rs` verifies seek, a rejected line and a patch repaint over the `editor` stdio protocol, reading frames from the ring file.
 - `tests/mcp.rs` verifies that an agent opens, patches, inspects, scores, paints and exports a project over stdio MCP alone.
 - `tests/repair_batch.rs` verifies a rejected repair does not write, and the batch report for one failure plus one success.
-- `cargo test -p director-cli --features vulkan --bin director-engine gpu_preview_worker -- --ignored` verifies live GPU ownership with concurrent requests and shutter sampling.
 - `cargo run -p director-cli --bin director-engine -- --help`
 - `cargo run -p director-cli --bin director-engine -- compositions examples/features/compositions.rhai --json`
 - `cargo run -p director-cli --bin director-engine -- still examples/features/compositions.rhai --composition intro -t 1 -o output/intro.png`
-- `cargo run -p director-cli --bin director-engine -- preview examples/features/compositions.rhai --composition intro`
 - `cargo run -p director-cli --bin director-manifest -- from-script examples/foo.rhai`
 
 ## Child DOX Index
 
-- `src/preview/AGENTS.md` — native worker ownership, endpoint contracts, reload, audio and backend verification.
+- None.

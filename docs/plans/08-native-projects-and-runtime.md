@@ -37,7 +37,6 @@
 
 ```powershell
 cargo test --release -p director-html -p director-cli --features director-cli/vulkan
-cargo test --release -p director-cli --features vulkan --bin director-engine gpu_preview_worker -- --ignored
 cargo clippy --release -p director-html --all-targets --no-deps -- -D warnings
 cargo clippy --release -p director-cli --features vulkan --bin director-engine --test project_workflow --no-deps -- -D warnings
 cargo check --release --workspace --all-targets --features director-cli/vulkan

@@ -137,28 +137,7 @@ Edits validate before atomic save. `-o` writes another project; otherwise the in
 
 `batch` renders every `--input` with the software encoder into `--output`. The file name is the input stem plus `.mp4`. A repeated stem becomes `stem-2.mp4`. One item failure still renders the rest. The exit code is the highest item code. `--json` prints one object, `{"exit_code","items"}`, instead of the status lines. `inspect --sample` repeats. Without it, inspect prints one object at `--time`. With it, one load prints `{"samples":[{"time","inspection"}]}`. A bad sample exits 1. `outline` prints the node tree with authored names and the clips. `diff` prints document, added, removed, moved and changed nodes as JSON pointers, plus `patch`: the host patch ops that turn the first input into the second when `patchable`. Both print failures as `{"error":{"code","message"}}` on stdout.
 
-Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `qa`, `snapshot`, `onion`, `inspect` and `preview` accept the same inputs. `sheet` writes a PNG grid and prints frame times as JSON. It rejects more than 64 frames or a raster above 16777216 pixels. `audio` prints per-track LUFS, true peak, clipped samples, and silence. Non-finite levels are null. A non-finite sample or a track above 57600000 samples sets `error` and skips analysis. `check` prints elements that leave the canvas and missing fonts. `--safe-zone tiktok` warns when text, caption, or smart_caption enters that inset. Other nodes stay on the canvas check. An unknown preset exits 1. `snapshot --golden shot.png -t 0` compares one frame. A channel delta above 16 counts. More than 0.1% different pixels exits 2 and writes `shot.actual.png` and `shot.diff.png`. `--update` replaces the golden. `onion -n 4 -o onion.png` blends frames with weights 1 through n. `render --scale 0.5` keeps the layout size and encodes even pixel dimensions at or below that scale. `--draft-encode` sets software x264 to ultrafast and CRF 30 and leaves the raster size on `--scale`. Hardware qp and alpha VP9 stay put. `html` commands additionally retain compile/capture/benchmark tooling. GPU rendering and encoder choice are independent; explicit GPU requests fail when unavailable.
-
-## Native preview API
-
-```bash
-director-engine preview script.rhai
-director-engine preview script.rhai --composition intro --props '{"title":"X"}'
-director-engine preview script.rhai --bind 127.0.0.1:7788
-director-engine preview target/movie.dirproj --gpu
-```
-
-The server exposes JSON and binary endpoints for editors and agents; the repo ships no browser client. A bounded queue serializes native work on one thread, including Vulkan construction/rendering/destruction. Native input and consumed asset modification time/length are checked before requests; invalid reloads keep the accepted scene and expose `reload_error`. Rhai/core project reload watches the input file.
-
-| Endpoint | Response |
-| --- | --- |
-| `GET /api/meta` | Canvas, timeline, source kind, backend, revision and reload diagnostics |
-| `GET /api/frame?t=1` or `?frame=30` | Native PNG with export shutter sampling and transitions |
-| `GET /api/inspect?t=1` | Layout/timeline, authored IDs, sampled elements and audio metadata |
-| `GET /api/audio` | Full float-stereo WAV mixed on the export clock, cached per revision. A `Range: bytes=` header returns 206 and a slice of that WAV. An unsatisfiable range returns 416 |
-| `POST /api/reload` | Force compile/load and accept the candidate only on success |
-
-Audio transport is one cached WAV per revision. Range requests slice it. Frontend playback controls are separate work. Projects are JSON with base64 media, so large media increases archive and loading memory. Shader/layout/media compatibility remains documented in `director-html`.
+Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `qa`, `snapshot`, `onion`, `inspect` and `editor` accept the same inputs. `sheet` writes a PNG grid and prints frame times as JSON. It rejects more than 64 frames or a raster above 16777216 pixels. `audio` prints per-track LUFS, true peak, clipped samples, and silence. Non-finite levels are null. A non-finite sample or a track above 57600000 samples sets `error` and skips analysis. `check` prints elements that leave the canvas and missing fonts. `--safe-zone tiktok` warns when text, caption, or smart_caption enters that inset. Other nodes stay on the canvas check. An unknown preset exits 1. `snapshot --golden shot.png -t 0` compares one frame. A channel delta above 16 counts. More than 0.1% different pixels exits 2 and writes `shot.actual.png` and `shot.diff.png`. `--update` replaces the golden. `onion -n 4 -o onion.png` blends frames with weights 1 through n. `render --scale 0.5` keeps the layout size and encodes even pixel dimensions at or below that scale. `--draft-encode` sets software x264 to ultrafast and CRF 30 and leaves the raster size on `--scale`. Hardware qp and alpha VP9 stay put. `html` commands additionally retain compile/capture/benchmark tooling. GPU rendering and encoder choice are independent; explicit GPU requests fail when unavailable.
 
 ## Installation
 

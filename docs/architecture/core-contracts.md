@@ -125,7 +125,7 @@ See plan **05** (implemented). Acceptance: `tests/project_roundtrip.rs` Plan 05 
 | MCP server | `director-engine mcp` exposes `Session` as tools over stdio JSON-RPC: open, close, outline, diff, patch, inspect, qa, render frame and export. Tool failures carry the host error envelope | **Implemented**; `crates/director-cli/tests/mcp.rs` |
 | Editor protocol | `director_host::Editor` drives a session on an owner thread with generation-numbered seek, patch, reload, inspect, outline and audio-window commands; frames land in a seqlocked shared-memory ring that other processes map. `director-engine editor` serves it over stdio JSON lines | **Implemented**; `crates/director-host/tests/editor.rs`, `crates/director-cli/tests/editor.rs` |
 | QA report | `Session::qa` scores a revision 0-100 from layout samples, manifest detectors, painted-frame motion and mix loudness; each issue names the authored node and a fix. `director-engine qa` and the MCP `qa` tool print it | **Implemented**; `crates/director-host/tests/session.rs` |
-| Native frame sampling | Export and CLI still/preview share `director_render::FrameState`, including shutter accumulation and transition targets | **Implemented**; CLI renderer sampling parity test |
+| Native frame sampling | Export, CLI stills and the editor share `director_render::FrameState`, including shutter accumulation and transition targets | **Implemented**; CLI renderer sampling parity test |
 | CI | One Linux job on push to `main` and pull requests: release clippy and release workspace tests, including the visual suite; fonts are committed | **Implemented** |
 
 See plan **06** (implemented). Acceptance: `tests/determinism_media.rs`.
@@ -136,7 +136,7 @@ See plan **06** (implemented). Acceptance: `tests/determinism_media.rs`.
 
 These are **not** core solidity work:
 
-- Live preview server, compositions/props CLI, recipes (plan 07), and agent repair/batch commands: landed as product surface above these contracts  
+- Editor protocol, compositions/props CLI, recipes (plan 07), and agent repair/batch commands: landed as product surface above these contracts  
 - A separate SDK crate  
 - New shader packs, NLE UI, GPU rewrite, in-engine STT  
 

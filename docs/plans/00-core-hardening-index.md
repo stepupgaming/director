@@ -51,7 +51,7 @@ This snapshot records the state at the 2026-07-19 truth pass. Later plans change
 Do not schedule under this program:
 
 - Named compositions / props / subcommand CLI (landed; see archive plan)
-- Live preview server (landed: `director-engine preview`)
+- Live preview (landed: `director-engine editor` and the `director_host::Editor` protocol)
 - Agent inspect→repair product loop
 - Recipes / SDK L1–L3 / template strategy
 - New shader batches, NLE UI, GPU rewrite, STT inside the render core (plan 11 places ASR in the optional `director-asr` crate)

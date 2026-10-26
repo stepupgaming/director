@@ -174,9 +174,9 @@ pub struct Director {
 /// `&`/`&mut` access. The enforced invariants are:
 ///
 /// 1. **Mutex confinement.** Every cross-thread handoff goes through
-///    `Arc<Mutex<Director>>`. The preview server (`director-cli/src/preview`)
-///    holds that lock across the whole `render_png` call, so two HTTP
-///    handlers never render concurrently.
+///    `Arc<Mutex<Director>>`. The host editor (`director_host::Editor`)
+///    keeps each session on one owner thread, so its frames never render
+///    concurrently.
 /// 2. **Disjoint parallel update.** `Director::update` uses Rayon's
 ///    `par_iter_mut` over arena slots; each `SceneNode` is touched by exactly
 ///    one thread, and cross-node handles (`NodeId`) are only read there.
