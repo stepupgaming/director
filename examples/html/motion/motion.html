@@ -133,20 +133,41 @@
   #e .shutter { position:absolute; left:0; top:0; width:1920px; height:1080px; background:#f2eee6; animation:fadein .25s linear 18.8s both; }
 
   /* ---------- F. Captions (19.04 - 22.848) ---------- */
-  #f .lt { position:absolute; left:120px; top:200px; display:flex; height:120px; overflow:hidden; }
-  #f .lt-bar { width:14px; height:120px; background:#2c46cf; }
-  #f .lt-box { padding:14px 36px; background:#141311; color:#f2eee6; animation:slideL .55s cubic-bezier(.2,.9,.2,1) 19.2s both; }
+  #f .plate { position:absolute; left:0; top:0; width:1920px; height:1080px; object-fit:cover; animation:push 3.808s linear 19.04s both; }
+  @keyframes push { from { transform:scale(1.0); } to { transform:scale(1.09); } }
+  #f .vig { position:absolute; left:0; top:0; width:1920px; height:1080px; background:linear-gradient(180deg, rgba(11,11,13,.55) 0%, rgba(11,11,13,0) 30%, rgba(11,11,13,0) 55%, rgba(11,11,13,.8) 100%); }
+  #f .lt { position:absolute; left:120px; top:170px; display:flex; height:120px; overflow:hidden; animation:fadeout .3s linear 20.85s both; }
+  #f .lt-bar { width:14px; height:120px; background:#ff7a33; }
+  #f .lt-box { padding:14px 36px; background:rgba(20,19,17,.85); color:#f2eee6; animation:slideL .55s cubic-bezier(.2,.9,.2,1) 19.15s both; }
   #f .lt-n { font-size:44px; font-weight:700; line-height:52px; }
   #f .lt-r { font-family:"JetBrains Mono"; font-size:24px; letter-spacing:3px; text-transform:uppercase; opacity:.7; }
-  #f .cc { position:absolute; left:0; top:600px; width:1920px; display:flex; justify-content:center; gap:30px; }
-  #f .cw { font-size:110px; font-weight:900; letter-spacing:-3px; text-transform:uppercase; color:rgba(20,19,17,.22); }
-  #f .k1 { animation:hit .3s ease-out 19.993s both; }
-  #f .k2 { animation:hit .3s ease-out 20.469s both; }
-  #f .k3 { animation:hit .3s ease-out 20.945s both; }
-  #f .k4 { animation:hit .3s ease-out 21.421s both; }
-  #f .k5 { animation:hitblue .3s ease-out 21.897s both; }
-  @keyframes hit { 0% { color:rgba(20,19,17,.22); transform:scale(1); } 40% { color:#141311; transform:scale(1.16); } 100% { color:#141311; transform:scale(1); } }
-  @keyframes hitblue { 0% { color:rgba(20,19,17,.22); transform:scale(1); } 40% { color:#2c46cf; transform:scale(1.22); } 100% { color:#2c46cf; transform:scale(1); } }
+  #f .tag { position:absolute; right:120px; top:96px; font-family:"JetBrains Mono"; font-size:26px; letter-spacing:4px; padding:8px 18px; border:2px solid rgba(242,238,230,.6); border-radius:999px; }
+  #f .tag1 { animation:fadein .3s linear 19.2s both, fadeout .2s linear 20.85s both; }
+  #f .tag2 { animation:fadein .3s linear 20.95s both; }
+  /* Style 1: social pop, one word per beat, the live word in a pill. */
+  #f .pop { position:absolute; left:0; top:640px; width:1920px; display:flex; justify-content:center; gap:22px; }
+  #f .pg1 { animation:fadeout .1s linear 19.95s both; }
+  #f .pg2 { animation:fadeout .2s linear 20.85s both; }
+  #f .pw { font-size:132px; font-weight:900; letter-spacing:-4px; text-transform:uppercase; color:#f2eee6; padding:0 22px; border-radius:22px; background-color:rgba(255,122,51,0); }
+  /* Style 2: subtitle bar with a karaoke sweep, two words per beat. */
+  #f .sub { position:absolute; left:360px; top:880px; width:1200px; height:96px; border-radius:18px; background:rgba(11,11,13,.72); display:flex; justify-content:center; align-items:center; gap:16px; animation:fadein .2s linear 20.944s both; }
+  #f .sw { font-size:50px; font-weight:700; color:rgba(242,238,230,.45); }
+  #f .p0 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 19.040s both, pw-live 0.476s linear 19.040s both; }
+  #f .p1 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 19.516s both, pw-live 0.476s linear 19.516s both; }
+  #f .p2 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 19.992s both, pw-live 0.476s linear 19.992s both; }
+  #f .p3 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 20.468s both, pw-live 0.476s linear 20.468s both; }
+  @keyframes pw-in { from { opacity:0; transform:translateY(40px) scale(.6); } to { opacity:1; transform:translateY(0px) scale(1); } }
+  @keyframes pw-live { 0% { background-color:rgba(255,122,51,1); color:#141311; } 85% { background-color:rgba(255,122,51,1); color:#141311; } 100% { background-color:rgba(255,122,51,0); color:#f2eee6; } }
+  #f .s0 { animation:sw-on .12s linear 20.944s both; }
+  #f .s1 { animation:sw-on .12s linear 21.182s both; }
+  #f .s2 { animation:sw-on .12s linear 21.420s both; }
+  #f .s3 { animation:sw-on .12s linear 21.658s both; }
+  #f .s4 { animation:sw-on .12s linear 21.896s both; }
+  #f .s5 { animation:sw-on .12s linear 22.134s both; }
+  #f .s6 { animation:sw-on .12s linear 22.372s both; }
+  #f .s7 { animation:sw-end .12s linear 22.610s both; }
+  @keyframes sw-on { from { color:rgba(242,238,230,.45); } to { color:#f2eee6; } }
+  @keyframes sw-end { from { color:rgba(242,238,230,.45); } to { color:#ff7a33; } }
 
   /* ---------- G. Why Director (22.848 - 26.656) ---------- */
   #g .grid { position:absolute; left:120px; top:200px; width:1680px; display:grid; grid-template-columns:repeat(3, 1fr); gap:28px; }
@@ -172,12 +193,6 @@
 <body>
 <div id="reel" data-composition-id="motion" data-width="1920" data-height="1080" data-duration="28.6">
   <audio src="assets/music.wav" data-start="0" data-duration="28.6"></audio>
-  <!-- "Every word on the beat": one Kitten TTS 2 voice per word (Serena, Marcus, Victoria, Leo, Bella), each clip starting on its caption hit. -->
-  <audio src="assets/vo-1-every.wav" data-start="19.993" data-duration="0.476" data-volume="0.8"></audio>
-  <audio src="assets/vo-2-word.wav" data-start="20.469" data-duration="0.476" data-volume="0.8"></audio>
-  <audio src="assets/vo-3-on.wav" data-start="20.945" data-duration="0.476" data-volume="0.8"></audio>
-  <audio src="assets/vo-4-the.wav" data-start="21.421" data-duration="0.476" data-volume="0.8"></audio>
-  <audio src="assets/vo-5-beat.wav" data-start="21.897" data-duration="0.8" data-volume="0.8"></audio>
 
   <!-- A. Kinetic type -->
   <div id="a" class="scene" data-start="0" data-duration="3.808">
@@ -274,10 +289,16 @@
   </div>
 
   <!-- F. Captions -->
-  <div id="f" class="scene paper" data-start="19.04" data-duration="3.808">
+  <div id="f" class="scene" data-start="19.04" data-duration="3.808">
+    <img class="plate" src="../reel/assets/profile.jpg">
+    <div class="vig"></div>
     <div class="label">06 / Captions</div>
+    <div class="tag tag1">STYLE / POP</div>
+    <div class="tag tag2">STYLE / SUBTITLE</div>
     <div class="lt"><div class="lt-bar"></div><div class="lt-box"><div class="lt-n">Steven Figler</div><div class="lt-r">Step Up Gaming</div></div></div>
-    <div class="cc"><div class="cw k1">Every</div><div class="cw k2">word</div><div class="cw k3">on</div><div class="cw k4">the</div><div class="cw k5">beat.</div></div>
+    <div class="pop pg1"><div class="pw p0">No</div><div class="pw p1">browser.</div></div>
+    <div class="pop pg2"><div class="pw p2">No</div><div class="pw p3">screenshots.</div></div>
+    <div class="sub"><div class="sw s0">Real</div><div class="sw s1">type,</div><div class="sw s2">timed</div><div class="sw s3">to</div><div class="sw s4">the</div><div class="sw s5">frame,</div><div class="sw s6">every</div><div class="sw s7">frame.</div></div>
   </div>
 
   <!-- G. Why Director -->
