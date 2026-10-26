@@ -7,6 +7,7 @@ mod input;
 mod mcp;
 mod preview;
 mod project;
+mod qa;
 mod renderer;
 mod run;
 mod onion;
@@ -105,6 +106,8 @@ enum Commands {
     Audio(audio_report::AudioArgs),
     /// Report elements outside the canvas and missing fonts
     Check(check::CheckArgs),
+    /// Score publishing quality: layout, safe zones, faces, motion and audio loudness
+    Qa(qa::QaArgs),
     /// Compare one frame to a golden PNG
     Snapshot(snapshot::SnapshotArgs),
     /// Blend frames so later frames count more
@@ -582,6 +585,7 @@ fn main() {
         Some(Commands::Inspect(args)) => cmd_inspect(args),
         Some(Commands::Outline(args)) => std::process::exit(flush_status(outline::run_outline(args))),
         Some(Commands::Diff(args)) => std::process::exit(flush_status(outline::run_diff(args))),
+        Some(Commands::Qa(args)) => std::process::exit(flush_status(qa::run(args))),
         Some(Commands::Mcp(args)) => std::process::exit(flush_status(mcp::run(args))),
         Some(Commands::Skills(args)) => std::process::exit(flush_status(skills::run(args))),
         None => {
@@ -590,7 +594,7 @@ fn main() {
                 None => {
                     eprintln!(
                         "Usage: director-engine <SCRIPT> [OUTPUT]\n\
-                         Or:    director-engine render|still|sheet|audio|check|snapshot|onion|batch|compositions|preview --help\n\
+                         Or:    director-engine render|still|sheet|audio|check|qa|snapshot|onion|batch|compositions|preview --help\n\
                          Note: a script named 'render.rhai' needs the explicit form:\n\
                                director-engine render render.rhai"
                     );

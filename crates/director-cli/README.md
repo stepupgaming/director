@@ -75,8 +75,16 @@ CPU exports paint frames in parallel on a worker pool and encode them in one FFm
 |------|---------|
 | 0 | Success |
 | 1 | Script / composition / HTML compilation / extraction / args error |
-| 2 | Render error |
+| 2 | Render error, or a `qa` report with an error issue |
 
+
+## QA score
+
+```bash
+director-engine qa video.html --safe-zone tiktok --loudness-target -14
+```
+
+`qa` checks whether a video is ready to publish and prints one report: a 0-100 `score`, `pass`, and `issues`, each with a kind, severity, the authored node name, a time range and a suggested `fix`. Errors cost 20 points: missing fonts, nodes that never reach the canvas, clipped audio. Warnings cost 5: text cut off by the canvas edge or sitting in the platform safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, a true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target. Static stretches of 2 s or more with no visible change are info. `audio` reports the mix loudness. The command exits 2 when the report fails.
 
 ## MCP server
 
@@ -84,7 +92,7 @@ CPU exports paint frames in parallel on a worker pool and encode them in one FFm
 director-engine mcp
 ```
 
-`mcp` serves host sessions to agents as a Model Context Protocol server on stdio. Register the command `director-engine` with the argument `mcp` in an MCP client, plus `--gpu` on a Vulkan build. Tools: `open` an input into a session id with its outline, `outline`, `diff` two sessions, `patch` nodes by authored name against a base revision, `inspect` at a time, `render_frame` as PNG image content or a file, `export` a video, and `close`. A failed tool returns `isError` with `{"error":{"code","message"}}`.
+`mcp` serves host sessions to agents as a Model Context Protocol server on stdio. Register the command `director-engine` with the argument `mcp` in an MCP client, plus `--gpu` on a Vulkan build. Tools: `open` an input into a session id with its outline, `outline`, `diff` two sessions, `patch` nodes by authored name against a base revision, `inspect` at a time, `qa` to score the revision, `render_frame` as PNG image content or a file, `export` a video, and `close`. A failed tool returns `isError` with `{"error":{"code","message"}}`.
 
 ```bash
 director-engine skills .agent/skills
@@ -121,7 +129,7 @@ Edits validate before atomic save. `-o` writes another project; otherwise the in
 
 `batch` renders every `--input` with the software encoder into `--output`. The file name is the input stem plus `.mp4`. A repeated stem becomes `stem-2.mp4`. One item failure still renders the rest. The exit code is the highest item code. `--json` prints one object, `{"exit_code","items"}`, instead of the status lines. `inspect --sample` repeats. Without it, inspect prints one object at `--time`. With it, one load prints `{"samples":[{"time","inspection"}]}`. A bad sample exits 1. `outline` prints the node tree with authored names and the clips. `diff` prints document, added, removed, moved and changed nodes as JSON pointers, plus `patch`: the host patch ops that turn the first input into the second when `patchable`. Both print failures as `{"error":{"code","message"}}` on stdout.
 
-Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `snapshot`, `onion`, `inspect` and `preview` accept the same inputs. `sheet` writes a PNG grid and prints frame times as JSON. It rejects more than 64 frames or a raster above 16777216 pixels. `audio` prints per-track LUFS, true peak, clipped samples, and silence. Non-finite levels are null. A non-finite sample or a track above 57600000 samples sets `error` and skips analysis. `check` prints elements that leave the canvas and missing fonts. `--safe-zone tiktok` warns when text, caption, or smart_caption enters that inset. Other nodes stay on the canvas check. An unknown preset exits 1. `snapshot --golden shot.png -t 0` compares one frame. A channel delta above 16 counts. More than 0.1% different pixels exits 2 and writes `shot.actual.png` and `shot.diff.png`. `--update` replaces the golden. `onion -n 4 -o onion.png` blends frames with weights 1 through n. `render --scale 0.5` keeps the layout size and encodes even pixel dimensions at or below that scale. `--draft-encode` sets software x264 to ultrafast and CRF 30 and leaves the raster size on `--scale`. Hardware qp and alpha VP9 stay put. `html` commands additionally retain compile/capture/benchmark tooling. GPU rendering and encoder choice are independent; explicit GPU requests fail when unavailable.
+Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `qa`, `snapshot`, `onion`, `inspect` and `preview` accept the same inputs. `sheet` writes a PNG grid and prints frame times as JSON. It rejects more than 64 frames or a raster above 16777216 pixels. `audio` prints per-track LUFS, true peak, clipped samples, and silence. Non-finite levels are null. A non-finite sample or a track above 57600000 samples sets `error` and skips analysis. `check` prints elements that leave the canvas and missing fonts. `--safe-zone tiktok` warns when text, caption, or smart_caption enters that inset. Other nodes stay on the canvas check. An unknown preset exits 1. `snapshot --golden shot.png -t 0` compares one frame. A channel delta above 16 counts. More than 0.1% different pixels exits 2 and writes `shot.actual.png` and `shot.diff.png`. `--update` replaces the golden. `onion -n 4 -o onion.png` blends frames with weights 1 through n. `render --scale 0.5` keeps the layout size and encodes even pixel dimensions at or below that scale. `--draft-encode` sets software x264 to ultrafast and CRF 30 and leaves the raster size on `--scale`. Hardware qp and alpha VP9 stay put. `html` commands additionally retain compile/capture/benchmark tooling. GPU rendering and encoder choice are independent; explicit GPU requests fail when unavailable.
 
 ## Native preview API
 

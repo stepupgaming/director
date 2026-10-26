@@ -5,7 +5,7 @@
 use crate::input::Encoder;
 use base64::Engine;
 use clap::Parser;
-use director_host::{ErrorCode, ExportSettings, HostError, PatchOp, Session, Source};
+use director_host::{ErrorCode, ExportSettings, HostError, PatchOp, QaOptions, Session, Source};
 use schemars::gen::SchemaSettings;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -20,8 +20,8 @@ const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", 
 
 pub const INSTRUCTIONS: &str = "Director renders video from HTML/CSS, Rhai and native projects. \
 `open` an input to get a session id and its outline, then `patch` nodes by authored name against \
-the session revision, `inspect` layout and timeline, `render_frame` to look at a frame, and \
-`export` the video. Failed tools return `{\"error\":{\"code\",\"message\"}}`.";
+the session revision, `inspect` layout and timeline, `render_frame` to look at a frame, `qa` to \
+score it, and `export` the video. Failed tools return `{\"error\":{\"code\",\"message\"}}`.";
 
 #[derive(Parser, Debug)]
 pub struct McpArgs {
@@ -104,6 +104,14 @@ impl Server {
             "diff" => parse(arguments).and_then(|args| self.diff(args)),
             "patch" => parse(arguments).and_then(|args| self.patch(args)),
             "inspect" => parse(arguments).and_then(|args: InspectArgs| Ok(structured(self.session(&args.session)?.inspect(args.time)?))),
+            "qa" => parse(arguments).and_then(|args: QaArgs| {
+                let options = QaOptions {
+                    every: args.every,
+                    safe_zone: args.safe_zone,
+                    loudness_target: args.loudness_target,
+                };
+                Ok(structured(json!(self.session(&args.session)?.qa(&options)?)))
+            }),
             "render_frame" => parse(arguments).and_then(|args| self.render_frame(args)),
             "export" => parse(arguments).and_then(|args| self.export(args)),
             _ => return Err((-32602, format!("unknown tool: {name}"))),
@@ -260,6 +268,29 @@ struct InspectArgs {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+struct QaArgs {
+    /// Session id from `open`
+    session: String,
+    /// Seconds between layout samples
+    #[serde(default = "default_every")]
+    every: f64,
+    /// Safe-zone preset for text: `tiktok`, `youtube_shorts`, `instagram_reel`, `instagram_story`, `linkedin`, `twitter`, `mobile` or `desktop`
+    safe_zone: Option<String>,
+    /// Integrated loudness target of the audio mix in LUFS
+    #[serde(default = "default_loudness_target")]
+    loudness_target: f64,
+}
+
+fn default_every() -> f64 {
+    QaOptions::default().every
+}
+
+fn default_loudness_target() -> f64 {
+    QaOptions::default().loudness_target
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct FrameArgs {
     /// Session id from `open`
     session: String,
@@ -325,6 +356,7 @@ pub fn tools() -> Vec<Value> {
         tool::<DiffArgs>("diff", "Document, added, removed, moved and changed nodes between two sessions as JSON pointers, with `patch`: the ops that turn `before` into `after` when `patchable`.", true),
         tool::<PatchArgs>("patch", "Apply patch ops atomically and return the new revision. `set` replaces the value at a JSON pointer in a node record (`{\"op\":\"set\",\"node\":\"box\",\"path\":\"/opacity\",\"value\":0.5}`), `set_document` one in the document, `remove` drops a subtree.", false),
         tool::<InspectArgs>("inspect", "Source ids, layout bounds, timeline and audio of the current revision at a time.", true),
+        tool::<QaArgs>("qa", "Score the current revision 0-100 for publishing. Errors cost 20: missing fonts, nodes never on the canvas, clipped or non-finite audio. Warnings cost 5: text clipped by the canvas edge or inside the safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target. Static stretches are info. `pass` holds with no errors. Each issue carries the authored node name, time range and a fix.", true),
         tool::<FrameArgs>("render_frame", "Paint one frame of the current revision as PNG.", false),
         tool::<ExportArgs>("export", "Export the current revision as a video file. Fails with `missing_font` when required fonts are absent.", false),
     ]
@@ -403,7 +435,7 @@ mod tests {
 
         let tools = request(&mut server, "tools/list", json!({}))["result"]["tools"].clone();
         let names: Vec<&str> = tools.as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["open", "close", "outline", "diff", "patch", "inspect", "render_frame", "export"]);
+        assert_eq!(names, ["open", "close", "outline", "diff", "patch", "inspect", "qa", "render_frame", "export"]);
         let patch = &tools[4]["inputSchema"];
         assert_eq!(patch["type"], "object");
         assert_eq!(patch["required"], json!(["ops", "session"]));
@@ -465,6 +497,10 @@ mod tests {
         let inspected = call(&mut server, "inspect", json!({ "session": "s1", "time": 0.1 }));
         assert!(inspected["structuredContent"].is_object(), "{inspected}");
         assert_eq!(call(&mut server, "outline", json!({ "session": "s1" }))["structuredContent"]["revision"], 1);
+        let qa = call(&mut server, "qa", json!({ "session": "s1" }))["structuredContent"].clone();
+        assert_eq!((qa["revision"].as_u64(), qa["pass"].as_bool()), (Some(1), Some(true)), "{qa}");
+        let zone = call(&mut server, "qa", json!({ "session": "s1", "safe_zone": "nope" }));
+        assert_eq!(zone["structuredContent"]["error"]["code"], "invalid_argument");
 
         call(&mut server, "open", json!({ "input": input }));
         let diff = call(&mut server, "diff", json!({ "before": "s2", "after": "s1" }))["structuredContent"].clone();

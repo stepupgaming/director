@@ -3,6 +3,7 @@
 
 use crate::input::Input;
 use clap::{Parser, ValueEnum};
+use director_host::qa::sample_times;
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -43,37 +44,6 @@ pub struct Finding {
     pub kind: &'static str,
     pub severity: &'static str,
     pub detail: String,
-}
-
-pub fn sample_times(duration: f64, every: f64) -> Vec<f64> {
-    if every <= 0.0 || !every.is_finite() || !duration.is_finite() || duration <= 0.0 {
-        return vec![0.0];
-    }
-    let mut step = every;
-    while (duration / step).ceil() as usize + 2 > 240 && step < duration {
-        step *= 2.0;
-    }
-    let mut times = Vec::new();
-    let mut t = 0.0;
-    while t < duration && times.len() < 240 {
-        times.push(t);
-        t += step;
-    }
-    let end = duration * 0.999;
-    let already = times.iter().any(|sample| (sample - end).abs() <= 1e-6);
-    if !already {
-        if times.len() < 240 {
-            times.push(end);
-        } else if let Some(last) = times.last_mut() {
-            if *last < end {
-                *last = end;
-            }
-        }
-    }
-    if times.is_empty() {
-        times.push(0.0);
-    }
-    times
 }
 
 pub fn canvas_findings(

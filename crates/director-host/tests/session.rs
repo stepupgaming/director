@@ -1,4 +1,4 @@
-use director_host::{ErrorCode, ExportSettings, NodeSelector, OutlineNode, PatchOp, Session, Source};
+use director_host::{ErrorCode, ExportSettings, NodeSelector, OutlineNode, PatchOp, QaOptions, Session, Source};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -282,4 +282,36 @@ fn diff_reports_added_and_removed_nodes_by_name() {
     assert_eq!(names(&diff.added_nodes), ["dot"]);
     assert!(!diff.patchable);
     assert!(diff.patch.is_empty());
+}
+
+#[test]
+fn qa_scores_a_clean_scene_and_names_nodes_never_on_the_canvas() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = html_input(dir.path(), "red");
+    let mut session = Session::open(&Source::new(input.clone())).unwrap();
+    let clean = session.qa(&QaOptions::default()).unwrap();
+    assert!(clean.pass && clean.score == 100 && clean.errors == 0, "{}", json!(clean));
+    assert!(clean.audio.is_none());
+    let still = clean.issues.iter().find(|issue| issue.kind == "static").expect("a still box is a static stretch");
+    assert_eq!(still.severity.as_str(), "info");
+
+    std::fs::write(&input, "<link rel='stylesheet' href='style.css'><main data-composition-id='main' data-width='32' data-height='32' data-duration='.6'><div id='box'></div><div id='gone' style='position:absolute;left:-100px;top:0;width:20px;height:20px;background:blue'></div></main>").unwrap();
+    session.reload().unwrap();
+    let report = session.qa(&QaOptions::default()).unwrap();
+    assert!(!report.pass, "{}", json!(report));
+    assert_eq!((report.revision, report.errors, report.score), (1, 1, 80));
+    let gone = &report.issues[0];
+    assert_eq!((gone.kind, gone.name.as_deref(), gone.count), ("off_canvas", Some("gone"), report.samples));
+    assert!(gone.fix.is_some());
+
+    let bad_zone = QaOptions {
+        safe_zone: Some("nope".into()),
+        ..QaOptions::default()
+    };
+    assert_eq!(session.qa(&bad_zone).unwrap_err().code, ErrorCode::InvalidArgument);
+    let bad_every = QaOptions {
+        every: 0.0,
+        ..QaOptions::default()
+    };
+    assert_eq!(session.qa(&bad_every).unwrap_err().code, ErrorCode::InvalidArgument);
 }

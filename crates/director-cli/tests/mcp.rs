@@ -64,12 +64,13 @@ fn an_agent_opens_patches_inspects_and_exports_over_stdio() {
     );
     assert_eq!(initialized["protocolVersion"], "2025-06-18");
     assert!(initialized["capabilities"]["tools"].is_object());
-    assert_eq!(client.send("tools/list", json!({}))["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(client.send("tools/list", json!({}))["tools"].as_array().unwrap().len(), 9);
 
     let session = client.call("open", json!({ "input": input }))["session"].clone();
     let ops = json!([{ "op": "set", "node": "box", "path": "/body/hidden", "value": true }]);
     assert_eq!(client.call("patch", json!({ "session": session, "base_revision": 0, "ops": ops }))["revision"], 1);
     assert!(client.call("inspect", json!({ "session": session, "time": 0.2 })).is_object());
+    assert_eq!(client.call("qa", json!({ "session": session }))["pass"], true);
     let painted = client.call("render_frame", json!({ "session": session, "time": 0.2, "output": frame }));
     assert_eq!(painted["revision"], 1);
     assert!(std::fs::metadata(&frame).unwrap().len() > 0);

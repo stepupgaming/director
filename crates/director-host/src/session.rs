@@ -505,7 +505,7 @@ impl Session {
         Renderer::new(document, self.loader.clone()).with_registry(self.registry.clone())
     }
 
-    fn inspector(&mut self) -> Result<&mut Director, HostError> {
+    pub(crate) fn inspector(&mut self) -> Result<&mut Director, HostError> {
         Ok(match &mut self.inspector {
             Some(inspector) => inspector,
             slot => slot.insert(

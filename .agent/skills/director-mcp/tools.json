@@ -313,6 +313,45 @@
     },
     {
       "annotations": {
+        "readOnlyHint": true
+      },
+      "description": "Score the current revision 0-100 for publishing. Errors cost 20: missing fonts, nodes never on the canvas, clipped or non-finite audio. Warnings cost 5: text clipped by the canvas edge or inside the safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target. Static stretches are info. `pass` holds with no errors. Each issue carries the authored node name, time range and a fix.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "every": {
+            "default": 0.25,
+            "description": "Seconds between layout samples",
+            "format": "double",
+            "type": "number"
+          },
+          "loudness_target": {
+            "default": -14.0,
+            "description": "Integrated loudness target of the audio mix in LUFS",
+            "format": "double",
+            "type": "number"
+          },
+          "safe_zone": {
+            "description": "Safe-zone preset for text: `tiktok`, `youtube_shorts`, `instagram_reel`, `instagram_story`, `linkedin`, `twitter`, `mobile` or `desktop`",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session": {
+            "description": "Session id from `open`",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "type": "object"
+      },
+      "name": "qa"
+    },
+    {
+      "annotations": {
         "readOnlyHint": false
       },
       "description": "Paint one frame of the current revision as PNG.",
