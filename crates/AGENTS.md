@@ -6,7 +6,7 @@
 
 - `director-core/` owns the engine model: scene graph, layout, animation, scripting API, media, encoder and decoder wrappers, and visual tests.
 - `director-html/` owns HTML/CSS/HyperFrames compilation, native CSS adapters, portable authoring projects and bundled assets, optional browser extraction, and Hyper CN compatibility/parity tooling.
-- `director-cli/` owns command-line rendering tools and helper binaries.
+- `director-cli/` owns command-line rendering tools, the stdio MCP server and helper binaries.
 - `director-schema/` owns schema-facing types and JSON schema reflection.
 - `director-scene/` owns the serializable scene document. It has no renderer types. `director-core` exports every golden scene into it and imports it back.
 - `director-render/` owns every frame path: painting and exporting a live `Director` or a scene document on worker-owned surfaces.

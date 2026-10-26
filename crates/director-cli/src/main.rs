@@ -4,6 +4,7 @@ mod check;
 mod gpu;
 mod html;
 mod input;
+mod mcp;
 mod preview;
 mod project;
 mod renderer;
@@ -111,6 +112,8 @@ enum Commands {
     Compositions(CompositionsArgs),
     /// Preview API server for editors and agents (frames, inspect, audio, reload)
     Preview(CliPreviewArgs),
+    /// Model Context Protocol server on stdio over host sessions
+    Mcp(mcp::McpArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -576,6 +579,7 @@ fn main() {
         Some(Commands::Inspect(args)) => cmd_inspect(args),
         Some(Commands::Outline(args)) => std::process::exit(flush_status(outline::run_outline(args))),
         Some(Commands::Diff(args)) => std::process::exit(flush_status(outline::run_diff(args))),
+        Some(Commands::Mcp(args)) => std::process::exit(flush_status(mcp::run(args))),
         None => {
             let script = match cli.script {
                 Some(s) => s,

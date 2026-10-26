@@ -2,7 +2,7 @@
 
 - DOX is highly performant AGENTS.md hierarchy installed here
 - Agent must follow DOX instructions across any edits
-- This repository is Director, a Rust workspace for programmatic video rendering with Rhai scripting, a native HTML/CSS compiler, Skia rendering, Taffy layout, Lottie support, and a CLI with agent inspection tools and a native preview backend.
+- This repository is Director, a Rust workspace for programmatic video rendering with Rhai scripting, a native HTML/CSS compiler, Skia rendering, Taffy layout, Lottie support, and a CLI with agent inspection tools, an MCP server and a native preview backend.
 
 ## Core Contract
 
