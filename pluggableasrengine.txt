@@ -1,0 +1,144 @@
+Here is the updated spec for `director-asr` tailored to **Whisper**, **Parakeet**, and **Bark**, configured specifically for a video editing/assembly Rust library crate.
+
+---
+
+# Architecture Spec: Pluggable ASR Engine (`director-asr`)
+
+## 1. Overview
+
+The `director` crate requires Automatic Speech Recognition (ASR) to handle timeline alignment, automatic clip cutting, disfluency removal, and word-level video editing. To balance developer choice between cross-language support, peak sub-frame accuracy, and compact efficiency, `director` exposes a unified Rust trait abstraction with feature-gated backends for **OpenAI Whisper**, **NVIDIA Parakeet TDT**, and **Underdog Bark 3.0**.
+
+---
+
+## 2. Core Abstraction (`director-core`)
+
+All backends implement a common asynchronous/synchronous trait that standardizes output structures regardless of the underlying model runner.
+
+```rust
+use async_trait::async_trait;
+
+#[derive(Debug, Clone)]
+pub struct WordSegment {
+    pub word: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct AsrResult {
+    pub text: String,
+    pub segments: Vec<WordSegment>,
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AsrOptions {
+    pub preserve_disfluencies: bool, // Capture "um", "ah", stutters
+    pub keyword_biasing: Vec<String>, // Custom vocabulary / jargon
+    pub language: Option<String>,     // Optional language hint
+}
+
+#[async_trait]
+pub trait AsrEngine: Send + Sync {
+    async fn transcribe(&self, pcm_data: &[f32], options: &AsrOptions) -> Result<AsrResult, AsrError>;
+}
+
+```
+
+---
+
+## 3. Backend Engines Matrix
+
+| Feature Flag | Target Model | Size / VRAM Footprint | Best Use Case in `director` | Multilingual | Timestamp Strategy |
+| --- | --- | --- | --- | --- | --- |
+| `asr-whisper` *(Default)* | **Whisper (via whisper.cpp)** | ~75 MB – 1.5 GB | Universal default, broad language support | **Yes** (99+ languages) | Cross-attention align |
+| `asr-parakeet` | **NVIDIA Parakeet TDT** | ~2.5 GB | Precision timeline cuts, frame-accurate clips | No (English-focused) | **Sub-frame TDT duration** |
+| `asr-bark` | **Bark 3.0 / Pro** | ~163 MB – 1.25 GB | High-speed, low-memory, verbatim/clean editing | English | Native token frame offset |
+
+---
+
+## 4. Backend Implementation Specifications
+
+### A. OpenAI Whisper (`features = ["asr-whisper"]`)
+
+* **Role:** Universal, multilingual default backend powered by native C/C++ bindings (`whisper-rs`).
+* **Characteristics:** Highly accessible runtime across CPU and GPU setups. Supports sizes from `tiny.en` (75 MB) to `large-v3` (1.5 GB).
+* **Timestamp Strategy:** Relies on cross-attention matrix alignment or DTW (Dynamic Time Warping) to map word boundaries.
+* **Why keep it:** Essential for non-English video editing pipelines or projects needing wide hardware compatibility.
+
+### B. NVIDIA Parakeet TDT (`features = ["asr-parakeet"]`)
+
+* **Role:** Precision video-assembly engine for frame-accurate timeline slicing, b-roll snapping, and subtitle synchronization.
+* **Characteristics:** Runs via ONNX / CUDA bindings (`ort`). Higher RAM/VRAM requirement (~2.5 GB).
+* **Timestamp Strategy:** Native **Token-and-Duration Transducer (TDT)** directly predicts token audio frame durations, eliminating timestamp drift over long video tracks.
+
+### C. Underdog Bark 3.0 (`features = ["asr-bark"]`)
+
+* **Role:** Lightweight, low-memory English engine for desktop tools.
+* **Characteristics:** High accuracy-to-size ratio (163 MB download expands to ~1.25 GB working RAM). Features dedicated **verbatim** vs **clean** pipeline options for capturing or stripping disfluencies ("um", "ah").
+* **Timestamp Strategy:** Decodes word/token alignments via explicit frame-offset decoder headers.
+
+---
+
+## 5. Cargo Configuration & Feature Gating
+
+In `Cargo.toml`:
+
+```toml
+[package]
+name = "director"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["asr-whisper"]
+
+# ASR Backend Options
+asr-whisper = ["dep:whisper-rs"]
+asr-parakeet = ["dep:ort", "dep:ort-cuda"]
+asr-bark = ["dep:onnxruntime"]
+
+[dependencies]
+async-trait = "0.1"
+
+# Feature-gated bindings
+whisper-rs = { version = "0.11", optional = true }
+ort = { version = "2.0", optional = true }
+onnxruntime = { version = "0.0.14", optional = true }
+
+```
+
+---
+
+## 6. Dynamic Backend Instantiation (`AsrFactory`)
+
+```rust
+pub enum BackendType {
+    Whisper,
+    Parakeet,
+    Bark,
+}
+
+pub struct AsrFactory;
+
+impl AsrFactory {
+    pub fn create_engine(backend: BackendType) -> Result<Box<dyn AsrEngine>, AsrError> {
+        match backend {
+            #[cfg(feature = "asr-whisper")]
+            BackendType::Whisper => Ok(Box::new(WhisperEngine::new()?)),
+
+            #[cfg(feature = "asr-parakeet")]
+            BackendType::Parakeet => Ok(Box::new(ParakeetEngine::new()?)),
+            
+            #[cfg(feature = "asr-bark")]
+            BackendType::Bark => Ok(Box::new(BarkEngine::new()?)),
+
+            _ => Err(AsrError::BackendNotCompiled(
+                "Requested ASR backend is not enabled in feature flags.",
+            )),
+        }
+    }
+}
+
+```

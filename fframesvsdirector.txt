@@ -1,0 +1,30 @@
+**Short answer: no, not yet.** Director is ahead of FFrames on authoring and on caption and layout features. FFrames is ahead on rendering, preview, distribution and maturity. We also have no head-to-head speed number. Our only benchmark is against HyperFrames, so any speed claim against FFrames would be a guess.
+
+## Where Director is ahead
+
+- **Authoring.** FFrames videos are Rust code returning SVG trees, so every edit means a recompile. Director takes HTML/CSS (and Rhai), needs no compile step, and compiles HyperFrames-style HTML natively. No other native engine does that.
+- **Layout.** We have flexbox and grid through Taffy. FFrames positions SVG elements by hand.
+- **Text.** We have Skia paragraph layout: rich spans, text fit, per-glyph animators, strokes, multiple shadows and counters. FFrames uses SVG `<text>`.
+- **Captions and reframing.** Our caption engine, smart captions that avoid faces, the entity registry and active-speaker reframing have no FFrames equivalent. Theirs is one subtitle example plus a WebVTT parser.
+- **Effects and transitions.** We ship a catalog of about 74 effects and 20 named transitions. FFrames gives you raw SkSL or Shadertoy shaders and leaves the rest to you.
+- **Determinism.** Our output is browser-free and deterministic on CPU, backed by a 41-frame golden suite.
+
+## Where FFrames is ahead
+
+- **Rendering speed (probably).** They render on the GPU by default (Metal or Vulkan) and claim about 10x over their own CPU path. Their one public number is a 128-second video rendered in 36 seconds, about 3.5x realtime. Our renderer is serial on CPU, and Vulkan is an opt-in feature.
+- **Encoding.** They link libav directly. We pipe raw RGBA through FFmpeg processes, which plan 10 calls out as a bottleneck.
+- **Caching.** They hash static SVG at compile time and reuse it. Our static-subtree cache never fires on HTML scenes.
+- **Preview and editing.** They have a GPU preview window with sound and frame stepping, plus a WebAssembly browser editor with a scrub timeline and live reload. We have no preview or editor right now; the editor is a future Tauri app.
+- **Distribution and maturity.** They have `cargo install cargo-fframes`, crates.io, prebuilt Skia and FFmpeg for macOS and Linux, a 1.x release and about 3.0k stars. We have no release and no binaries.
+- **Agent tooling.** They have an installable skill (`npx skills add`) and the `inspect`, `strip`, `frame`, `onion` and `timeline` commands with `--json` output. Plan 10 says it directly: "FFrames already matches the agent CLI." Our MCP server and host session are phase 4.
+- **Audio QA.** Their `audio analyze` reports LUFS, true peak, clipping and silence. LUFS normalization is in our phase 6.
+- **3D and shaders.** They have a 3D crate and paste-in Shadertoy GLSL.
+- **Their weak spot: Windows.** It needs a prebuilt FFmpeg shared build. We build and test on Windows already.
+
+## What would flip it
+
+1. **Phase 3, the parallel renderer.** It brings worker-pool painting, a layer cache that works on HTML, and an encoder path without RGBA round trips. This is the speed gap.
+2. **Phase 4, the host session and MCP.** This closes the agent-tooling gap and adds what FFrames can't do, such as patch-by-id editing without recompiling.
+3. **Phase 6, a public benchmark against FFrames on the same clip.** It is the only way to claim we're faster. Root `AGENTS.md` requires your explicit yes before a long benchmark run.
+
+Our position comes down to two things: HTML authoring with no compile step, and richer text, captions and layout. FFrames' advantage is a shipped, GPU-fast, previewable product. We're still mid-overhaul, in phase 2 of 6.
