@@ -24,6 +24,7 @@ mod property;
 mod shader;
 mod smil;
 mod style;
+mod timeline;
 mod transform_origin;
 pub use capture::{
     compile_capture, compile_capture_file, Capture, CapturedFrame, CapturedMedia, CapturedNode,
@@ -32,6 +33,9 @@ pub use capture::{
 pub use compiler::{compile, compile_file};
 pub use import::register_import;
 pub use project::{ElementEdit, NativeProject, ProjectSource, PROJECT_FORMAT};
+pub use timeline::{
+    Timeline, TimelineKeyframe, TimelineTrack, TimelineValue, TIMELINE_FORMAT, TIMELINE_SCRIPT,
+};
 
 pub struct CompiledHtml {
     pub director: director_core::Director,

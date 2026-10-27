@@ -8,6 +8,7 @@
 - `src/property.rs` owns the property table: every compiled longhand, whether it inherits, and its translation group. `css::inherited` and the unsupported-property refusal read it. `src/computed.rs` owns `ComputedStyle`: the text map plus a typed Lightning CSS `Property` per longhand, reached through `computed(name)`. It derefs to the text map for text-path readers.
 - `src/style/mod.rs` owns `translate`, group dispatch and the text-path properties: color, font-size, font-family, font-variant-numeric, gaps, grid templates and placements, background-image and the background-position shorthand, mask-image, transform and perspective origins, line clamps, decoration lines and thickness, underline offset, text stroke, paint-order, object-fit and object-position, clip-path, animation and transition. Typed group modules: `style/layout.rs`, `style/background.rs`, `style/border.rs`, `style/boxes.rs` (opacity, visibility, overflow, z-index), `style/effects.rs` (box shadows, filters, backdrop blur, blending, mask mode), `style/transform.rs` and `style/text.rs`. A group module returns `None` for names it leaves to the text path.
 - `src/element/mod.rs` owns `HtmlElement`, its layout hooks, and the paint order: transform, clip path, effect layer, outer shadows, background, inset shadows, content and children, borders, mask. `src/element/background.rs` owns box shadows, background colors and layers, and `background-clip: text`. `src/element/borders.rs` owns border sides, styles, and corner joins. `src/element/text.rs` owns text decoration lines.
+- `src/timeline.rs` owns `director-timeline/1`: the serde document, its validation and collection from the page. `animation::from_track` turns one track into a native `Animation`.
 - `src/project.rs` owns `director-native-project/1`, editable source and validated element overrides; `src/assets.rs` owns asset recording, deduplicated SHA-256 blobs and temporary media-file leases.
 - `tools/` owns optional compile-time browser extraction, Chromium and CPU/GPU parity, real HyperFrames CLI and CPU/GPU export benchmarks, and Hyper CN registry auditing.
 - `tests/` owns executable compatibility and pixel regressions.
@@ -142,9 +143,18 @@
 - `capture::decode_capture` imports each sampled graph through `scene_import::import_graph`, restores every node's sampled rect from `CaptureGraph::rects` and calls `post_layout` with it, and keeps equal samples on one shared graph. `smil::decode` rebuilds `AnimatedSvg` from its markup asset and animations, resolving SVG text against the bundled faces (`compiler::bundled_svg_fonts`) plus the document's font faces.
 - `AssetStore` implements `AssetLoader::media_path`, so imported path-asset video decodes from the project file.
 
+### Timeline JSON
+
+- `<script type="application/director-timeline+json">` carries a `director-timeline/1` document: `{format, tracks: [{target, property, keyframes: [{time, value, ease?}]}]}`. Unknown fields fail. Several timeline scripts merge into one timeline.
+- `target` is an HTML `id`; `time` is seconds on the composition clock. `value` is CSS text, or a number: unitless for `opacity`, px for `width`, `height`, `left`, `top` and `border-top-left-radius`. Color and transform tracks take CSS text.
+- `ease` takes a CSS timing function and shapes the segment arriving at its keyframe; it defaults to `linear`. A track holds its first value before its first keyframe and its last value after its last one. A single keyframe holds for the whole timeline.
+- Each track compiles to a native `Animation` (delay = first time, fill `both`) after the element's `@keyframes`, so it exports and edits as a `CssAnimation`.
+- Refusals: another format, a duplicate target and property, an empty track, negative or non-finite times, times that do not increase, an unsupported property, a number on a color or transform track, a target with no animatable element, and a property that `@keyframes` also animates on the same element.
+- `tests/timeline.rs` covers holds, easing, numeric values, color interpolation, scene export, serde round trips and refusals.
+
 ### CSS animation
 
-- Authored `@keyframes` become native animation tracks whose duration, easing, and values stay editable on HTML recompile. Scroll-driven keyframes fail. GSAP and JS timelines never become tracks.
+- Authored `@keyframes` become native animation tracks whose duration, easing, and values stay editable on HTML recompile. Scroll-driven keyframes fail. Executable GSAP and JS timelines never become tracks; GSAP translation will emit `director-timeline/1`.
 - `HtmlElement::local_transform` gives the core motion policy the animated transform about its origin, so keyframed movement counts toward motion scoring. A 3D transform contributes its planar part. `tests/motion_policy.rs` covers a static box, a moving box, and one over the speed limit.
 - `animation-direction` accepts `normal`, `reverse`, `alternate`, and `alternate-reverse`. `animation-fill-mode` accepts `none`, `forwards`, `backwards`, and `both`. `steps()` with `jump-none` or `jump-both` fails.
 

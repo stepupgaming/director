@@ -304,6 +304,72 @@ pub fn compile(
     Ok(animations)
 }
 
+/// One timeline track as a single-iteration animation that holds its first
+/// value before the first keyframe and its last value after the last.
+pub(crate) fn from_track(
+    track: &crate::timeline::TimelineTrack,
+    paint: &PaintStyle,
+    m: Metrics,
+) -> Result<Animation, String> {
+    use crate::timeline::TimelineValue;
+    let keys = &track.keyframes;
+    let first = keys.first().ok_or("timeline track has no keyframes")?;
+    let last = keys.last().unwrap_or(first);
+    let span = last.time - first.time;
+    // A single keyframe holds its value for the whole timeline.
+    let duration = if span > 0.0 { span } else { 1.0 };
+    let property = track.property.as_str();
+    let mut points = Vec::with_capacity(keys.len().max(2));
+    for (i, key) in keys.iter().enumerate() {
+        let text = match &key.value {
+            TimelineValue::Text(s) => s.clone(),
+            TimelineValue::Number(n) => match property {
+                "opacity" => n.to_string(),
+                "width" | "height" | "left" | "top" | "border-top-left-radius" => format!("{n}px"),
+                "color" | "background-color" | "transform" => {
+                    return Err(format!("timeline '{property}' takes CSS text"))
+                }
+                _ => return Err(format!("unsupported animated property '{property}'")),
+            },
+        };
+        let ease = match keys.get(i + 1).and_then(|next| next.ease.as_deref()) {
+            Some(ease) => Ease::parse(ease)?,
+            None => Ease::Curve(EasingType::Linear),
+        };
+        points.push(Point {
+            offset: ((key.time - first.time) / duration) as f32,
+            value: value(property, &text, m, paint.color)?,
+            ease,
+        });
+    }
+    if points.len() == 1 {
+        let mut end = points[0].clone();
+        end.offset = 1.0;
+        points.push(end);
+    }
+    for pair in points.windows(2) {
+        interpolate(&pair[0].value, &pair[1].value, 0.5)?;
+    }
+    Ok(Animation {
+        delay: first.time,
+        duration,
+        count: 1.0,
+        direction: "normal".into(),
+        fill: "both".into(),
+        channels: vec![Channel {
+            name: track.property.clone(),
+            points,
+        }],
+    })
+}
+
+impl Animation {
+    /// Names of the properties this animation drives.
+    pub(crate) fn properties(&self) -> impl Iterator<Item = &str> {
+        self.channels.iter().map(|c| c.name.as_str())
+    }
+}
+
 fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
