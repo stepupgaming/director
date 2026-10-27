@@ -111,6 +111,24 @@ The separate HyperFrames benchmark invokes the installed upstream CLI, records f
 
 Contracts were studied against [HyperFrames](https://github.com/heygen-com/hyperframes) commit `8147f7b940aaccde963a3ed5a3ee6099abf2b8cf` and the local [Hyper CN registry](https://github.com/stepupgaming/hypercn). Upstream JS is confined to optional reference/extraction tooling.
 
+## GSAP Chromium parity
+
+`tools/parity.mjs` with Playwright `chromium_headless_shell-1248` and GSAP 3.14.2 compared every 30fps frame of the GSAP fixtures and `examples/html/gsap-motion.html` with native renders on 2026-10-27 (AMD Ryzen 9 9900X, Windows). All four pass the default gates.
+
+| Input | Frames | SSIM | Mean RGB MAE | Worst frame MAE |
+| --- | --- | --- | --- | --- |
+| `tests/fixtures/gsap/entrance.html` 640x360 | 120 | .999317 | .0519 | .198 at 0.333 s |
+| `tests/fixtures/gsap/loop.html` 640x360 | 150 | .999945 | .0073 | .026 at 3.333 s |
+| `tests/fixtures/gsap/stagger.html` 640x360 | 120 | .999140 | .0790 | .229 at 3.100 s |
+| `examples/html/gsap-motion.html` 1080p | 150 | .995709 | .3758 | .454 at 1.567 s |
+
+The example's frame 0 already differs by MAE .249 (max channel error 8) before any tween starts: gradient and glyph rasterization set that floor. The first run failed `stagger.html` (SSIM .977181) because object staggers spread `each` per unit of distance; they now follow GSAP's `distribute`.
+
+```bash
+node crates/director-html/tools/parity.mjs --input crates/director-html/tests/fixtures/gsap/stagger.html --output target/gsap-parity/stagger --director target/release/director-engine --chrome /path/to/chrome-headless-shell
+node crates/director-html/tools/parity.mjs --input examples/html/gsap-motion.html --root . --output target/gsap-parity/gsap-motion --director target/release/director-engine --chrome /path/to/chrome-headless-shell
+```
+
 ## CPU/GPU measurements
 
 Measured on 2026-10-13 from the staged source, excluding unrelated working-tree edits, with the same Ryzen 9 9900X and RTX 5060 Ti, NVIDIA driver 616.64. The complete native-motion clip is 1920x1080, 90 frames at 30fps. All MP4 streams and container durations are verified at 3 seconds. Frame FPS includes synchronous RGBA readback in both modes. Export wall times use fresh CLI processes and include startup, compilation, GPU initialization, painting, encoding and muxing.

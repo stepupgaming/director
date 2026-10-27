@@ -105,7 +105,8 @@ One row per check, holding the most recent passing count. Replace the row when a
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
 | HTML scene_document | 7 | 2026-10-27 | `cargo test -p director-html --release --test scene_document` |
 | HTML timeline | 7 | 2026-10-26 | `cargo test -p director-html --release --test timeline` |
-| HTML gsap (phase 5 GSAP gate) | 11 | 2026-10-27 | `cargo test -p director-html --release --test gsap` |
+| HTML gsap (phase 5 GSAP gate) | 12 | 2026-10-27 | `cargo test -p director-html --release --test gsap` |
+| GSAP Chromium parity, 30fps every frame | entrance SSIM .999317 MAE .0519; loop .999945 / .0073; stagger .999140 / .0790; gsap-motion 1080p .995709 / .3758; all pass | 2026-10-27 | `node crates/director-html/tools/parity.mjs --input <fixture> --output target/gsap-parity/final/<name> --director target/release/director-engine.exe --chrome <chromium_headless_shell-1248>` (`--root .` for the example) |
 | Vulkan engine clippy | pass | 2026-10-25 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
@@ -139,7 +140,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes), or widen GSAP: a Chromium parity run of the GSAP fixtures (browser work, ask first), `transformOrigin`, `keyframes` arrays, and GSAP over inline text spans. Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes), or widen GSAP: `transformOrigin`, `keyframes` arrays, stagger `ease` and `grid`, and GSAP over inline text spans. The GSAP fixtures pass Chromium parity. Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

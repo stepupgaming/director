@@ -282,28 +282,28 @@
     for (const key of Object.keys(stagger)) {
       if (!["each", "amount", "from"].includes(key)) refuse("GSAP stagger option '" + key + "'");
     }
+    // GSAP's _distribute for one row: distances from the origin, normalized
+    // to [0, 1], spread over `amount` or `each * (count - 1)`.
     const from = stagger.from === undefined ? 0 : stagger.from;
-    const last = count - 1;
-    const distance = (i) => {
-      if (typeof from === "number") return Math.abs(i - from);
-      switch (from) {
-        case "start":
-          return i;
-        case "end":
-          return last - i;
-        case "center":
-          return Math.abs(i - last / 2);
-        case "edges":
-          return Math.min(i, last - i);
-        default:
-          return refuse("GSAP stagger from '" + from + "'");
+    let origin;
+    if (typeof from === "string") {
+      if (!["start", "center", "edges", "end"].includes(from)) {
+        refuse("GSAP stagger from '" + from + "'");
       }
-    };
-    let max = 0;
-    for (let i = 0; i < count; i++) max = Math.max(max, distance(i));
-    const each =
-      stagger.amount !== undefined ? (max ? stagger.amount / max : 0) : +stagger.each || 0;
-    return (i) => distance(i) * each;
+      origin = count * ({ center: 0.5, edges: 0.5, end: 1 }[from] || 0) - 0.5;
+    } else if (typeof from === "number") {
+      origin = from > 0 && from < 1 ? count * from - 0.5 : from;
+    } else {
+      refuse("GSAP stagger from '" + from + "'");
+    }
+    const distances = [];
+    for (let i = 0; i < count; i++) distances.push(Math.abs(i - origin));
+    const min = Math.min(...distances);
+    const span = Math.max(...distances) - min;
+    let total = parseFloat(stagger.amount) || (+stagger.each || 0) * (count - 1) || 0;
+    if (from === "edges") total = -total;
+    const base = total < 0 ? -total : 0;
+    return (i) => base + (span ? (distances[i] - min) / span : 0) * total;
   };
 
   const isRelative = (v) => typeof v === "string" && /^[+\-*]=/.test(v);

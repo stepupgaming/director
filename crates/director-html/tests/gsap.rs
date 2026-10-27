@@ -181,23 +181,25 @@ fn loop_pixels_follow_yoyo_and_steps() {
 #[test]
 fn stagger_runs_listeners_nested_timelines_and_function_values() {
     let c = load("stagger.html");
-    // Center-out stagger inside a nested timeline added at 0.25.
+    // Center-out stagger inside a nested timeline added at 0.25: GSAP spreads
+    // each * (n - 1) over the normalized distance, so neighbors start 0.2 later.
     assert_eq!(keys(track(&c, "/2", "height"))[0], (0.25, 0.0, None));
-    assert_eq!(keys(track(&c, "/0", "height"))[0], (0.45, 0.0, None));
-    assert_eq!(keys(track(&c, "/0", "height"))[1], (0.95, 200.0, Some("circ.out")));
+    assert_eq!(keys(track(&c, "/1", "height"))[0], (0.45, 0.0, None));
+    assert_eq!(keys(track(&c, "/0", "height"))[0], (0.65, 0.0, None));
+    assert_eq!(keys(track(&c, "/0", "height"))[1], (1.15, 200.0, Some("circ.out")));
     // Function values per index, from "swing+=0.2".
     assert_eq!(
         keys(track(&c, "/4", "skew-x")),
-        [(1.15, 0.0, None), (1.75, 10.0, Some("elastic.out(1, 0.4)"))]
+        [(1.35, 0.0, None), (1.95, 10.0, Some("elastic.out(1, 0.4)"))]
     );
     // "-=0.2" overlaps the swing on other channels; "none" stays linear.
     assert_eq!(
         keys(track(&c, "/1", "border-top-left-radius")),
-        [(1.55, 0.0, None), (2.05, 30.0, None)]
+        [(1.75, 0.0, None), (2.25, 30.0, None)]
     );
     // amount 0.4 from the end: the last bar leads.
-    assert_eq!(keys(track(&c, "/4", "opacity"))[0].0, 2.55);
-    assert_eq!(keys(track(&c, "/0", "opacity"))[0].0, 2.95);
+    assert_eq!(keys(track(&c, "/4", "opacity"))[0].0, 2.75);
+    assert_eq!(keys(track(&c, "/0", "opacity"))[0].0, 3.15);
 }
 
 #[test]
@@ -297,4 +299,25 @@ fn gsap_motion_example_compiles_to_tracks() {
         [(1.0, 0.6, None), (1.5, 1.0, Some("sine.inOut")), (2.0, 0.6, Some("sine.inOut"))]
     );
     assert_eq!(track(&c, "/5", "background-color").keyframes.len(), 2);
+}
+
+#[test]
+fn stagger_distribution_matches_gsap() {
+    let starts = |stagger: &str| {
+        let source = format!(
+            "<style>div div{{position:absolute;width:10px;height:10px;background:red}}</style>\
+             <div id='root' data-composition-id='main'><div></div><div></div><div></div><div></div><div></div></div>\
+             <script>const tl = gsap.timeline({{paused:true}}); tl.from('#root div', {{opacity: 0, duration: 1, stagger: {stagger}}}); window.__timelines.main = tl;</script>"
+        );
+        let c = compile(&source, CompileOptions::default()).unwrap();
+        (0..5)
+            .map(|i| keys(track(&c, &format!("/{i}"), "opacity"))[0].0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(starts("0.1"), [0.0, 0.1, 0.2, 0.3, 0.4]);
+    assert_eq!(starts("{each: 0.1, from: 'center'}"), [0.4, 0.2, 0.0, 0.2, 0.4]);
+    assert_eq!(starts("{each: 0.1, from: 'edges'}"), [0.0, 0.2, 0.4, 0.2, 0.0]);
+    assert_eq!(starts("{each: 0.1, from: 1}"), [0.1333, 0.0, 0.1333, 0.2667, 0.4]);
+    assert_eq!(starts("{amount: 0.4, from: 'end'}"), [0.4, 0.3, 0.2, 0.1, 0.0]);
+    assert_eq!(starts("{each: 0.1, from: 0.25}"), [0.0667, 0.0, 0.1333, 0.2667, 0.4]);
 }
