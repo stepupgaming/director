@@ -72,6 +72,7 @@ update(time, dirty?) → layout → post_layout → render → (mix_audio / enco
 | Dirty expansion | Ancestors, descendants, mask subtrees, reverse mask users; drop stale ids | **Done** |
 | Uncompiled graph | Incremental falls back to full (`!is_compiled()` ⇒ dirty `None`) | **Done** |
 | Mutation hook | Public pixel/layout mutations call `Director::note_mutation` | **Done** (color, mask, set_static, invalidate) |
+| Layout origin | After every `post_layout`, `run_post_layout` moves each node whose `Element::layout_origin` returns a point to that origin in its parent, so inline boxes sit on the text lines their sibling laid out | **Done** — `director-html/tests/rich_text.rs` |
 
 Entry points live in `director-render`: `FrameState::render` (export and preview; incremental-aware across frames), `render_frame` (one frame with a fresh state), `render_export` (serial live export) and `Renderer` (scene document sessions, pools and export).
 

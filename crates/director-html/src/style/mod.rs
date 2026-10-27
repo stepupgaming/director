@@ -174,6 +174,8 @@ pub struct PaintStyle {
     pub stroke_over_fill: bool,
     /// Text a `text` track shows in place of the element's own text. `None` keeps it.
     pub text: Option<String>,
+    /// Sizes of the atomic inline boxes the text's U+FFFC characters stand for, in order.
+    pub placeholders: Vec<director_scene::html::InlinePlaceholder>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -938,6 +940,7 @@ pub fn translate(
         text_stroke_color: None,
         stroke_over_fill: true,
         text: None,
+        placeholders: Vec::new(),
     };
     if let Some(s) = values.get("font-size") {
         match px(s, m) {

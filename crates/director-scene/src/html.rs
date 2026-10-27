@@ -29,6 +29,28 @@ pub struct HtmlBody {
     pub metrics: HtmlMetrics,
     /// A Paper shader painted in place of the background.
     pub paper: Option<PaperShader>,
+    /// This box's part in an inline formatting context with atomic inline boxes.
+    pub inline: Option<InlineFlow>,
+}
+
+/// Atomic inline boxes (`inline-block`) laid out on the lines of a sibling text
+/// paragraph. Boxes and the text that places them share one `flow` number.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineFlow {
+    /// The text holds U+FFFC once per box, in box order, sized by `boxes`.
+    Text { flow: u32, boxes: Vec<InlinePlaceholder> },
+    /// The box sits on placeholder `slot` of the text.
+    Box { flow: u32, slot: u32 },
+}
+
+/// One atomic inline box as its text line sees it, margins included, in px.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct InlinePlaceholder {
+    pub width: f32,
+    pub height: f32,
+    /// Distance from the top to the baseline.
+    pub baseline: f32,
 }
 
 /// Content an HTML box paints inside itself.

@@ -234,6 +234,10 @@ fn display_of(display: &CssDisplay, s: &str) -> Result<Display, String> {
         CssDisplay::Keyword(DisplayKeyword::None) => Ok(Display::None),
         CssDisplay::Pair(pair) if !pair.is_list_item => match (&pair.outside, &pair.inside) {
             (DisplayOutside::Block, DisplayInside::Flow) => Ok(Display::Block),
+            // A text block places `inline-block` on its lines; flex and grid items blockify it.
+            (DisplayOutside::Block | DisplayOutside::Inline, DisplayInside::FlowRoot) => {
+                Ok(Display::Block)
+            }
             (DisplayOutside::Block | DisplayOutside::Inline, DisplayInside::Flex(_)) => {
                 Ok(Display::Flex)
             }
@@ -451,9 +455,10 @@ mod tests {
         assert_eq!(applied("display", "grid").unwrap().display, Display::Grid);
         assert_eq!(applied("display", "none").unwrap().display, Display::None);
         assert!(applied("display", "inline").unwrap_err().contains("rich text"));
+        assert_eq!(applied("display", "inline-block").unwrap().display, Display::Block);
         assert_eq!(
-            applied("display", "inline-block").unwrap_err(),
-            "unsupported display 'inline-block'"
+            applied("display", "table").unwrap_err(),
+            "unsupported display 'table'"
         );
     }
 

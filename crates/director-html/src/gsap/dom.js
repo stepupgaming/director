@@ -500,6 +500,18 @@ class Node extends EventTarget {
     for (const n of nodes) p.insertBefore(nodeArg(n, "after"), next);
   }
   replaceWith(...nodes) { this.before(...nodes); this.remove(); }
+  normalize() {
+    for (const c of this.childNodes) {
+      if (c.parentNode !== this) continue;
+      if (c.nodeType === 1) { c.normalize(); continue; }
+      if (c.nodeType !== 3) continue;
+      for (let next = c.nextSibling; next && next.nodeType === 3; next = c.nextSibling) {
+        c.textContent += next.textContent;
+        next.remove();
+      }
+      if (c.textContent === "") c.remove();
+    }
+  }
   compareDocumentPosition(other) {
     if (other === this) return 0;
     if (this.contains(other)) return 20;
@@ -678,7 +690,8 @@ class Element extends ParentNode {
   get offsetParent() {
     if (this === document.body || this === document.documentElement || !this.isConnected) return null;
     if (S.styles.get(this.__i)?.get("display") === "none") return null;
-    return box(this) || selfSize(this, 0) != null ? document.body : null;
+    // An inline box lays out inside its parent's text.
+    return box(this) || selfSize(this, 0) != null || this.parentElement?.offsetParent ? document.body : null;
   }
   get offsetWidth() { return offsetSize(this, 0); }
   get offsetHeight() { return offsetSize(this, 1); }

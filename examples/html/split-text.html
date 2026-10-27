@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  @font-face { font-family:Roboto; src:url("../../crates/director-core/assets/fonts/Roboto-Regular.ttf"); font-weight:400; }
+  @font-face { font-family:Roboto; src:url("../../crates/director-core/assets/fonts/Roboto-Bold.ttf"); font-weight:700; }
+  html, body { margin:0; background:#0f172a; }
+  * { box-sizing:border-box; }
+  #stage { position:relative; width:100%; height:100%; overflow:hidden; background:linear-gradient(160deg,#0f172a 0%,#1e1b4b 100%); font-family:Roboto; color:#fff; }
+  #title { position:absolute; left:140px; top:220px; width:1100px; margin:0; font-size:120px; line-height:1.1; font-weight:700; }
+  #subtitle { position:absolute; left:144px; top:640px; width:1500px; margin:0; font-size:48px; line-height:1.4; color:#c7d2fe; }
+  .badge { display:inline-block; padding:4px 22px; border-radius:30px; background:#f472b6; color:#0f172a; font-weight:700; }
+  #accent { color:#c7d2fe; }
+</style></head><body>
+<div id="stage" data-composition-id="split-text" data-width="1920" data-height="1080" data-fps="30" data-duration="5">
+  <h1 id="title">Every character moves on its own line.</h1>
+  <p id="subtitle">SplitText runs at compile time, <span class="badge" id="badge">natively</span> placed on the <span id="accent">text lines</span>.</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/SplitText.min.js"></script>
+<script>
+  gsap.registerPlugin(SplitText);
+  window.__timelines = window.__timelines || {};
+  const split = SplitText.create("#title", { type: "lines,words,chars" });
+  const tl = gsap.timeline({ paused: true });
+  tl.from(split.chars, { y: 80, rotation: 12, opacity: 0, duration: 0.6, ease: "back.out(1.6)", stagger: 0.025 }, 0)
+    .from(split.lines, { x: -40, duration: 1.2, ease: "power3.out", stagger: 0.15 }, 0)
+    .from("#subtitle", { opacity: 0, y: 24, duration: 0.6, ease: "power2.out" }, 1.2)
+    .from("#badge", { scale: 0.4, opacity: 0, duration: 0.5, ease: "back.out(2)" }, 1.6)
+    .to("#accent", { color: "#f472b6", duration: 0.8, ease: "sine.inOut" }, 2.2);
+  window.__timelines["split-text"] = tl;
+</script>
+</body></html>

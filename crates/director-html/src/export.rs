@@ -2,7 +2,7 @@
 
 use crate::background_box::AxisRepeat;
 use crate::box_edges::BoxEdge;
-use crate::element::HtmlElement;
+use crate::element::{HtmlElement, InlineLink};
 use crate::style::{
     BackgroundFit, BackgroundLayer, BackgroundOrigin, BorderLine, FilterFn, OverflowWrap,
     PaintStyle, TextOverflow, TextTransform,
@@ -50,6 +50,16 @@ pub(crate) fn html_body(element: &HtmlElement, cx: &mut ExportContext) -> Result
                 font_size: element.metrics.font_size,
             },
             paper: element.paper.as_ref().map(|paper| paper.to_doc(cx)),
+            inline: element.inline.as_ref().map(|link| match link {
+                InlineLink::Text(flow) => doc::InlineFlow::Text {
+                    flow: flow.id,
+                    boxes: element.base_paint.placeholders.clone(),
+                },
+                InlineLink::Box(flow, slot) => doc::InlineFlow::Box {
+                    flow: flow.id,
+                    slot: *slot as u32,
+                },
+            }),
         })),
     })
 }

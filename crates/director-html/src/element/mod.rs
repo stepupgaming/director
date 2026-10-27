@@ -9,6 +9,7 @@ use crate::{
 use director_core::{Element, RenderError};
 use skia_safe::{color_filters, Canvas, Matrix, Rect, M44};
 use std::any::Any;
+use std::sync::{Arc, Mutex};
 use taffy::{
     geometry::Size,
     style::{AvailableSpace, Style},
@@ -17,6 +18,42 @@ use taffy::{
 mod background;
 mod borders;
 mod text;
+
+/// Origins a text paragraph lays out for its atomic inline boxes, relative to
+/// their shared parent, by slot.
+#[derive(Debug)]
+pub struct InlineFlow {
+    /// Names the flow in the scene document.
+    pub id: u32,
+    slots: Mutex<Vec<(f32, f32)>>,
+}
+impl InlineFlow {
+    pub fn new(id: u32) -> Arc<Self> {
+        Arc::new(Self {
+            id,
+            slots: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+/// A box's part in an inline flow.
+#[derive(Debug, Clone)]
+pub enum InlineLink {
+    /// The text whose U+FFFC placeholders place the boxes.
+    Text(Arc<InlineFlow>),
+    /// The box on one slot.
+    Box(Arc<InlineFlow>, usize),
+}
+
+/// A length margin in px. `auto` and percents are 0 on an inline box.
+pub(crate) fn margin_px(margin: taffy::style::LengthPercentageAuto) -> f32 {
+    let raw = margin.into_raw();
+    if raw.tag() == taffy::style::CompactLength::LENGTH_TAG {
+        raw.value()
+    } else {
+        0.0
+    }
+}
 
 /// Native CSS grouping adapter. Content uses Director's existing text/image/SVG/video nodes.
 #[derive(Debug, Clone)]
@@ -34,6 +71,7 @@ pub struct HtmlElement {
     pub base_style: Style,
     pub base_paint: PaintStyle,
     pub paper: Option<PaperPaint>,
+    pub inline: Option<InlineLink>,
     time: f64,
     baseline_offset: f32,
     /// The text a `text` track replaced, and the track text on screen.
@@ -61,6 +99,7 @@ impl HtmlElement {
             hidden: false,
             animations: Vec::new(),
             paper: None,
+            inline: None,
             time: 0.0,
             baseline_offset: 0.0,
             own_spans: None,
@@ -77,6 +116,60 @@ impl HtmlElement {
                 crate::style::TextOverflow::Ellipsis
             )
             && self.style.overflow.x == taffy::style::Overflow::Hidden
+    }
+    /// The CSS baseline of a first line of `text` and the line height, from the font metrics.
+    fn line_box(&self, text: &director_core::node::TextNode) -> Option<(f32, f32)> {
+        let style = skia_safe::FontStyle::new(
+            skia_safe::font_style::Weight::from(self.paint.font_weight as i32),
+            skia_safe::font_style::Width::NORMAL,
+            if self.paint.font_style == "italic" {
+                skia_safe::font_style::Slant::Italic
+            } else {
+                skia_safe::font_style::Slant::Upright
+            },
+        );
+        let faces = text
+            .font_collection
+            .lock()
+            .unwrap()
+            .find_typefaces(&[self.paint.font_family.as_str()], style);
+        let face = faces.first()?;
+        let (_, metrics) = skia_safe::Font::from_typeface(face.clone(), self.paint.font_size).metrics();
+        let ascent = (-metrics.ascent).round();
+        let descent = metrics.descent.round();
+        let height = self
+            .paint
+            .line_height
+            .map(|h| self.paint.font_size * h)
+            .unwrap_or(ascent + descent + metrics.leading.round());
+        Some((ascent + (height - ascent - descent) / 2.0, height))
+    }
+    /// Max-content width, height and last-line baseline of text content, as an
+    /// `inline-block` sizes it.
+    pub(crate) fn inline_text_metrics(&self) -> Option<(f32, f32, f32)> {
+        let text = self
+            .content
+            .as_ref()?
+            .as_any()
+            .downcast_ref::<director_core::node::TextNode>()?;
+        let size = self.measure(
+            Size {
+                width: None,
+                height: None,
+            },
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            },
+        );
+        let (baseline, line) = self.line_box(text)?;
+        let lines = text
+            .paragraph
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map_or(1, |p| p.line_number().max(1));
+        Some((size.width, size.height, baseline + (lines - 1) as f32 * line))
     }
     fn content_rect(&self, rect: Rect) -> Rect {
         let left = resolve(self.style.padding.left, rect.width()) + self.style.border.left.value();
@@ -222,6 +315,7 @@ impl Element for HtmlElement {
             .unwrap_or(Size::ZERO)
     }
     fn post_layout(&mut self, rect: Rect) {
+        let outer = rect;
         self.baseline_offset = 0.0;
         let rect = self.content_rect(Rect::from_wh(rect.width(), rect.height()));
         if let Some(content) = self.content.as_ref() {
@@ -229,34 +323,9 @@ impl Element for HtmlElement {
                 .as_any()
                 .downcast_ref::<director_core::node::TextNode>()
             {
-                let style = skia_safe::FontStyle::new(
-                    skia_safe::font_style::Weight::from(self.paint.font_weight as i32),
-                    skia_safe::font_style::Width::NORMAL,
-                    if self.paint.font_style == "italic" {
-                        skia_safe::font_style::Slant::Italic
-                    } else {
-                        skia_safe::font_style::Slant::Upright
-                    },
-                );
-                let faces = text
-                    .font_collection
-                    .lock()
-                    .unwrap()
-                    .find_typefaces(&[self.paint.font_family.as_str()], style);
-                if let Some(face) = faces.first() {
-                    let (_, metrics) =
-                        skia_safe::Font::from_typeface(face.clone(), self.paint.font_size)
-                            .metrics();
+                if let Some((css_baseline, _)) = self.line_box(text) {
                     if let Some(paragraph) = text.paragraph.lock().unwrap().as_mut() {
                         paragraph.layout(rect.width());
-                        let ascent = (-metrics.ascent).round();
-                        let descent = metrics.descent.round();
-                        let height = self
-                            .paint
-                            .line_height
-                            .map(|h| self.paint.font_size * h)
-                            .unwrap_or(ascent + descent + metrics.leading.round());
-                        let css_baseline = ascent + (height - ascent - descent) / 2.0;
                         self.baseline_offset = css_baseline - paragraph.alphabetic_baseline();
                     }
                 }
@@ -265,6 +334,42 @@ impl Element for HtmlElement {
         if let Some(content) = &mut self.content {
             content.post_layout(rect);
         }
+        if let Some(InlineLink::Text(flow)) = &self.inline {
+            let content = self.content_rect(Rect::from_wh(outer.width(), outer.height()));
+            let text = self
+                .content
+                .as_ref()
+                .and_then(|c| c.as_any().downcast_ref::<director_core::node::TextNode>());
+            // Lay out at the width `TextNode::render` uses.
+            let mut boxes = text
+                .and_then(|text| {
+                    let mut paragraph = text.paragraph.lock().unwrap();
+                    paragraph.as_mut().map(|p| {
+                        p.layout(content.width());
+                        p.get_rects_for_placeholders()
+                    })
+                })
+                .unwrap_or_default();
+            // A `text-indent` placeholder comes first.
+            boxes.drain(..boxes.len().saturating_sub(self.paint.placeholders.len()));
+            *flow.slots.lock().unwrap() = boxes
+                .iter()
+                .map(|b| {
+                    (
+                        outer.left + content.left + b.rect.left,
+                        outer.top + content.top + b.rect.top,
+                    )
+                })
+                .collect();
+        }
+    }
+    fn layout_origin(&self) -> Option<(f32, f32)> {
+        let Some(InlineLink::Box(flow, slot)) = &self.inline else {
+            return None;
+        };
+        let (x, y) = *flow.slots.lock().unwrap().get(*slot)?;
+        // The placeholder holds the margin box.
+        Some((x + margin_px(self.style.margin.left), y + margin_px(self.style.margin.top)))
     }
     fn update(&mut self, time: f64) -> bool {
         self.time = time;

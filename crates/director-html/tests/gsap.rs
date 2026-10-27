@@ -253,7 +253,7 @@ fn gsap_tracks_survive_scene_export() {
 fn page_scripts_fail_with_context() {
     for (source, message) in [
         (page("gsap.to('#box', {filter: 'blur(2px)', duration: 1})"), "'filter' on #box"),
-        (page("gsap.to('#word', {opacity: 0})"), "not an animatable box"),
+        (page("gsap.to('body', {opacity: 0})"), "not an animatable box"),
         (page("gsap.to('#box', {attr: {'data-x': 10}})"), "'data-x' attribute of #box"),
         (page("setTimeout(() => {}, 100)"), "setTimeout of 100 ms"),
         (page("fetch('data.json')"), "fetch is not available"),
@@ -543,4 +543,68 @@ fn draw_svg_and_path_geometry() {
     );
     let p = frame(&mut c, 0.0);
     assert!(blue(pixel(&p, 64, 32, 48)), "{:?}", pixel(&p, 64, 32, 48));
+}
+
+/// A 200x64 page of 20px Roboto on 24px lines holding `body`.
+fn line_page(body: &str, script: &str) -> CompiledHtml {
+    let source = format!(
+        "<style>body{{margin:0;background:white}}p,h1{{margin:0;font:20px Roboto;line-height:24px;color:black}}</style>\
+         <div data-composition-id='main' style='background:white' data-width='200' data-height='64' data-duration='2'>{body}</div>\
+         {GSAP}<script src='https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/SplitText.min.js'></script><script>{script}</script>"
+    );
+    compile(&source, opts()).unwrap_or_else(|e| panic!("{script}: {e}"))
+}
+
+/// Dark pixels in columns `x` and rows `y`.
+fn ink(p: &[u8], x: std::ops::Range<i32>, y: std::ops::Range<i32>) -> usize {
+    y.flat_map(|y| x.clone().map(move |x| (x, y))).filter(|&(x, y)| dark(pixel(p, 200, x, y))).count()
+}
+
+#[test]
+fn inline_blocks_sit_on_their_line_and_move() {
+    let mut c = line_page(
+        "<p>Ab <span id='w' style='display:inline-block'>Cd</span> Ef</p>",
+        "const r = document.querySelector('#w').getBoundingClientRect();\
+         if (!(r.left > 20 && r.left < 40 && Math.abs(r.top) < 1 && r.height === 24)) throw new Error('rect ' + [r.left, r.top, r.width, r.height]);\
+         gsap.from('#w', {y: 30, duration: 1, ease: 'none'})",
+    );
+    assert!(tracks(&c).iter().any(|t| t.target == "w" && t.property == "translate-y"));
+    let p = frame(&mut c, 0.0);
+    assert!(ink(&p, 30..56, 32..56) > 0, "the word starts 30px down");
+    assert!(ink(&p, 0..26, 2..22) > 0 && ink(&p, 60..90, 2..22) > 0, "its neighbours stay on the line");
+    let p = frame(&mut c, 1.5);
+    assert_eq!(ink(&p, 0..200, 26..64), 0);
+    assert!(ink(&p, 30..56, 2..22) > 0);
+}
+
+#[test]
+fn inline_spans_animate_opacity_and_color_without_transforms() {
+    let mut c = line_page(
+        "<p>Ab <span id='w'>Cd</span> Ef</p>",
+        "gsap.to('#w', {opacity: 0, y: 20, color: 'rgb(255,0,0)', duration: 1, ease: 'none'})",
+    );
+    track(&c, "w", "opacity");
+    track(&c, "w", "color");
+    assert!(!tracks(&c).iter().any(|t| t.target == "w" && t.property.starts_with("translate")));
+    let p = frame(&mut c, 0.0);
+    assert!(ink(&p, 30..56, 2..22) > 0);
+    let p = frame(&mut c, 1.5);
+    assert_eq!(ink(&p, 30..56, 0..64), 0, "the span faded out in place");
+    assert!(ink(&p, 0..26, 2..22) > 0 && ink(&p, 60..90, 2..22) > 0);
+}
+
+#[test]
+fn split_text_lines_words_and_chars_animate_natively() {
+    let mut c = line_page(
+        "<h1 id='t' style='width:110px'>Hello split world</h1>",
+        "gsap.registerPlugin(SplitText); const s = SplitText.create('#t', {type: 'lines,words,chars'});\
+         if (s.lines.length !== 2 || s.words.length !== 3 || s.chars.length !== 15) throw new Error([s.lines.length, s.words.length, s.chars.length].join());\
+         gsap.from(s.chars, {opacity: 0, y: 12, stagger: 0.05, duration: 0.3, ease: 'none'})",
+    );
+    let opacity = tracks(&c).iter().filter(|t| t.property == "opacity").count();
+    assert_eq!(opacity, 15, "one opacity track per character");
+    assert_eq!(ink(&frame(&mut c, 0.0), 0..200, 0..64), 0);
+    let p = frame(&mut c, 1.9);
+    assert!(ink(&p, 0..110, 2..22) > 0 && ink(&p, 0..110, 26..46) > 0, "two lines of text");
+    assert_eq!(ink(&p, 0..200, 50..64), 0);
 }

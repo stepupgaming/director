@@ -3,7 +3,7 @@ use crate::{
     assets::AssetStore,
     computed::ComputedStyle,
     css::{diagnostic, Css, Values},
-    element::HtmlElement,
+    element::{HtmlElement, InlineFlow, InlineLink},
     style::{self, Metrics, PaintStyle},
     CompileError, CompileOptions, CompiledHtml,
 };
@@ -683,6 +683,8 @@ fn build(
         probe: probing.then(Vec::new),
         root_element: root.id(),
         emitted: Vec::new(),
+        atomic: HashSet::new(),
+        flows: 0,
     };
     // Compute inherited values along the full ancestor chain, including body resets.
     let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
@@ -739,6 +741,19 @@ struct Builder {
     svg_fonts: Option<Arc<usvg::fontdb::Database>>,
     /// Timeline tracks not yet attached, by target id.
     timeline: BTreeMap<String, Vec<crate::timeline::TimelineTrack>>,
+    /// Elements compiling as atomic boxes on a text block's lines.
+    atomic: HashSet<ego_tree::NodeId>,
+    /// Inline formatting contexts with atomic boxes so far.
+    flows: u32,
+}
+
+/// The HTML element on scene node `id`.
+fn html_mut(director: &mut Director, id: NodeId) -> &mut HtmlElement {
+    director
+        .scene
+        .get_node_mut(id)
+        .and_then(|node| node.element.as_any_mut().downcast_mut::<HtmlElement>())
+        .expect("compiled nodes are HTML elements")
 }
 
 fn label(el: ElementRef<'_>) -> String {
@@ -910,7 +925,26 @@ fn build_paragraph_colored(
     let soft = style::soft_wrap(paint) && !paint.no_wrap;
     let mut line_width = 0.0;
     let mut line_empty = true;
+    let mut pieces = Vec::new();
+    let mut boxes = paint.placeholders.iter();
     for span in &node.spans {
+        if span.text == OBJECT {
+            let size = boxes.next().copied().unwrap_or_default();
+            if !paint.no_wrap && !line_empty && line_width + size.width > wrap + WRAP_SLACK {
+                // The space before the break hangs.
+                if let Some(Piece::Text(_, text)) = pieces.last_mut() {
+                    if text.ends_with(' ') {
+                        text.pop();
+                    }
+                }
+                pieces.push(Piece::Text(Box::new(default_text.clone()), "\n".into()));
+                line_width = 0.0;
+            }
+            pieces.push(Piece::Object(size));
+            line_width += size.width;
+            line_empty = false;
+            continue;
+        }
         let size = span.font_size.unwrap_or(paint.font_size);
         let family = span.font_family.as_deref().unwrap_or(&paint.font_family);
         let weight = span.font_weight.unwrap_or(paint.font_weight);
@@ -985,12 +1019,38 @@ fn build_paragraph_colored(
             }
             text.set_foreground_paint(&ink);
         }
-        builder.push_style(&text);
-        builder.add_text(&piece);
-        builder.pop();
+        pieces.push(Piece::Text(Box::new(text), piece));
+    }
+    for piece in pieces {
+        match piece {
+            Piece::Text(style, text) => {
+                builder.push_style(&style);
+                builder.add_text(&text);
+                builder.pop();
+            }
+            Piece::Object(size) => {
+                builder.add_placeholder(&skia_safe::textlayout::PlaceholderStyle::new(
+                    size.width,
+                    size.height,
+                    skia_safe::textlayout::PlaceholderAlignment::Baseline,
+                    skia_safe::textlayout::TextBaseline::Alphabetic,
+                    size.baseline,
+                ));
+            }
+        }
     }
     builder.build()
 }
+
+/// One run of a paragraph under construction.
+enum Piece {
+    Text(Box<skia_safe::textlayout::TextStyle>, String),
+    /// An atomic inline box's margin box.
+    Object(director_scene::html::InlinePlaceholder),
+}
+
+/// The text a text block holds for each atomic inline box.
+const OBJECT: &str = "\u{FFFC}";
 
 pub fn glyph_mask(
     node: &TextNode,
@@ -1069,7 +1129,48 @@ pub fn span(text: String, paint: &PaintStyle) -> TextSpan {
     }
 }
 
+/// How a text block lays out one element child.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Level {
+    /// Text that flows on the block's lines.
+    Inline,
+    /// An atomic box on the block's lines: an `inline-block`, or an inline box
+    /// that GSAP or the timeline animates.
+    Atomic,
+    Block,
+    /// `display: none`.
+    Skip,
+}
+
 impl Builder {
+    /// Whether GSAP or the timeline animates `el`.
+    fn animated(&self, el: ElementRef<'_>) -> bool {
+        let path = crate::timeline::element_path(el, self.root_element);
+        self.motion.series.contains_key(&el.id())
+            || el
+                .value()
+                .attr("id")
+                .into_iter()
+                .chain([path.as_str()])
+                .any(|key| self.timeline.contains_key(key))
+    }
+
+    /// How a text block lays out `child`, whose cascaded values are `values`.
+    fn level(&self, child: ElementRef<'_>, values: &ComputedStyle) -> Level {
+        let tag = child.value().name();
+        if tag == "br" {
+            return Level::Inline;
+        }
+        let animated = || if self.animated(child) { Level::Atomic } else { Level::Inline };
+        match values.get("display").map(|d| d.trim()) {
+            Some("none") => Level::Skip,
+            Some("inline-block") => Level::Atomic,
+            Some("inline") => animated(),
+            None if inline(tag) => animated(),
+            _ => Level::Block,
+        }
+    }
+
     /// Whether GSAP or the timeline sets the text of `el`.
     fn text_tracked(&self, el: ElementRef<'_>) -> bool {
         let path = crate::timeline::element_path(el, self.root_element);
@@ -1154,6 +1255,12 @@ impl Builder {
         } else {
             containing_block
         };
+        // An animated inline box lays out as a block on its parent's lines.
+        let authored_display = values.get("display").cloned();
+        let promoted = self.atomic.contains(&el.id()) && authored_display.as_deref() != Some("inline-block");
+        if promoted {
+            values.insert("display", "block");
+        }
         let (mut layout, mut paint, _grid_scope) =
             style::translate(&values, metrics, style_block, &self.assets).map_err(
                 |errors| {
@@ -1167,6 +1274,12 @@ impl Builder {
             )?;
         // Store computed font-size to avoid repeated relative-unit multiplication in descendants.
         values.insert("font-size", format!("{}px", paint.font_size));
+        if promoted {
+            match authored_display {
+                Some(display) => values.insert("display", display),
+                None => values.remove("display"),
+            }
+        }
         if root {
             layout.size = taffy::geometry::Size {
                 width: taffy::prelude::length(self.options.width as f32),
@@ -1240,6 +1353,7 @@ impl Builder {
             )));
         }
         let mut svg_viewport: Option<(f32, f32)> = None;
+        let mut atomics = Vec::new();
         let content: Option<Box<dyn Element>> = match tag {
             "img" => {
                 let src = el
@@ -1421,16 +1535,29 @@ impl Builder {
                 )]))
             }
             "body" | "div" | "section" | "article" | "main" | "header" | "footer" | "h1" | "h2"
-            | "h3" | "p" | "span" => {
+            | "h3" | "p" | "span" | "b" | "strong" | "em" | "i" | "small" => {
                 let children: Vec<_> = el
                     .children()
                     .filter_map(ElementRef::wrap)
                     .filter(|e| !matches!(e.value().name(), "script" | "style" | "link"))
                     .collect();
-                if children.iter().all(|e| inline(e.value().name())) {
+                let mut text_block = true;
+                for child in &children {
+                    let child_values = self.css.cascade(*child, &values)?;
+                    if self.level(*child, &child_values) == Level::Block {
+                        text_block = false;
+                        break;
+                    }
+                }
+                if text_block {
                     let mut spans = Vec::new();
-                    self.rich_text(el, &values, &paint, style_block, &mut spans)?;
+                    self.rich_text(el, &values, &paint, style_block, &mut spans, &mut atomics)?;
                     normalize(&mut spans, paint.preserve_space);
+                    if !atomics.is_empty() && self.text_tracked(el) {
+                        return Err(CompileError::Input(format!(
+                            "{context}: a text track replaces inline-block children; animate a text-only box"
+                        )));
+                    }
                     if spans.is_empty() && !self.text_tracked(el) {
                         None
                     } else {
@@ -1470,8 +1597,9 @@ impl Builder {
         })?;
         paint.box_node.style = layout.clone();
         let has_content = content.is_some();
+        // Absolute atomic boxes beside the text need the text in a leaf of its own.
         let anonymous_text = has_content
-            && matches!(layout.display, taffy::Display::Flex | taffy::Display::Grid)
+            && (matches!(layout.display, taffy::Display::Flex | taffy::Display::Grid) || !atomics.is_empty())
             && !matches!(tag, "img" | "svg" | "video");
         let mut element = HtmlElement::new(
             layout,
@@ -1504,7 +1632,11 @@ impl Builder {
         for key in el.value().attr("id").into_iter().chain([path.as_str()]) {
             tracks.extend(self.timeline.remove(key).unwrap_or_default());
         }
-        if let Some(series) = self.motion.series.remove(&el.id()) {
+        if let Some(mut series) = self.motion.series.remove(&el.id()) {
+            if promoted {
+                // Transforms and sizes do not apply to inline boxes.
+                series.retain(|property, _| !matches!(property.as_str(), "transform" | "width" | "height"));
+            }
             let target = el.value().attr("id").map_or_else(|| path.clone(), str::to_string);
             let base = |channel: &str| {
                 crate::gsap::base_value(channel, &element.base_style, &element.base_paint)
@@ -1590,6 +1722,14 @@ impl Builder {
             )));
             self.director.scene.add_child(id, child);
             self.nodes += 1;
+            if !atomics.is_empty() {
+                let next_start = if !root && el.value().attr("data-composition-id").is_some() {
+                    start
+                } else {
+                    composition_start
+                };
+                self.place_atomics(id, child, &atomics, next_start, child_block, depth)?;
+            }
         }
         if let Some(name) = el.value().attr("id") {
             if self.ids.insert(name.into(), id).is_some() {
@@ -1828,13 +1968,108 @@ impl Builder {
         }
         Ok(())
     }
-    fn rich_text(
+    /// Compiles the atomic inline boxes of the text block `parent`, whose text
+    /// is the leaf `text`, as absolute children placed on the text's lines.
+    fn place_atomics<'a>(
+        &mut self,
+        parent: NodeId,
+        text: NodeId,
+        atomics: &[(ElementRef<'a>, ComputedStyle)],
+        start: f64,
+        block: style::ContainingBlock,
+        depth: usize,
+    ) -> Result<(), CompileError> {
+        let flow = InlineFlow::new(self.flows);
+        self.flows += 1;
+        let mut boxes = Vec::new();
+        for (slot, (child, values)) in atomics.iter().enumerate() {
+            self.atomic.insert(child.id());
+            let id = self.node(*child, values, start, false, block, depth + 1);
+            self.atomic.remove(&child.id());
+            let id = id?;
+            boxes.push(self.size_atomic(id, *child)?);
+            let element = html_mut(&mut self.director, id);
+            element.inline = Some(InlineLink::Box(flow.clone(), slot));
+            self.director.scene.add_child(parent, id);
+        }
+        let leaf = html_mut(&mut self.director, text);
+        leaf.paint.placeholders = boxes.clone();
+        leaf.base_paint.placeholders = boxes;
+        leaf.inline = Some(InlineLink::Text(flow));
+        if let Some(node) = leaf
+            .content
+            .as_mut()
+            .and_then(|content| content.as_any_mut().downcast_mut::<TextNode>())
+        {
+            prepare_paragraph(node, &leaf.paint);
+        }
+        Ok(())
+    }
+
+    /// Sizes the compiled atomic box `id` to its max-content text, makes it
+    /// absolute, and returns its margin box for the parent's line.
+    fn size_atomic(&mut self, id: NodeId, el: ElementRef<'_>) -> Result<director_scene::html::InlinePlaceholder, CompileError> {
+        let children = self.director.scene.get_node(id).map(|n| n.children.clone()).unwrap_or_default();
+        let mut text = html_mut(&mut self.director, id).inline_text_metrics();
+        for (i, child) in children.iter().enumerate() {
+            let child = html_mut(&mut self.director, *child);
+            if i == 0 && text.is_none() && matches!(child.inline, Some(InlineLink::Text(_))) {
+                text = child.inline_text_metrics();
+            } else if child.base_style.position != taffy::style::Position::Absolute {
+                return Err(CompileError::Input(format!(
+                    "{}: inline-block with block children requires extraction",
+                    label(el)
+                )));
+            }
+        }
+        let element = html_mut(&mut self.director, id);
+        let mut style = element.base_style.clone();
+        let edge = |padding: taffy::style::LengthPercentage, border: taffy::style::LengthPercentage| {
+            style::resolve(padding, 0.0) + style::resolve(border, 0.0)
+        };
+        let left = edge(style.padding.left, style.border.left);
+        let right = edge(style.padding.right, style.border.right);
+        let top = edge(style.padding.top, style.border.top);
+        let bottom = edge(style.padding.bottom, style.border.bottom);
+        let (width, height, baseline) = match text {
+            Some((w, h, b)) => (w, h, Some(b)),
+            None => (0.0, 0.0, None),
+        };
+        let border_box = |size: taffy::style::Dimension, content: f32, edges: f32| match size.into_option() {
+            Some(length) if style.box_sizing == taffy::style::BoxSizing::BorderBox => length,
+            Some(length) => length + edges,
+            None => content + edges,
+        };
+        let width = border_box(style.size.width, width, left + right);
+        let height = border_box(style.size.height, height, top + bottom);
+        // A box without text sits on its bottom margin edge.
+        let baseline = baseline.map_or(height, |b| top + b);
+        let margin = style.margin.map(crate::element::margin_px);
+        style.position = taffy::style::Position::Absolute;
+        style.box_sizing = taffy::style::BoxSizing::BorderBox;
+        style.size = taffy::geometry::Size {
+            width: taffy::prelude::length(width),
+            height: taffy::prelude::length(height),
+        };
+        style.inset = taffy::geometry::Rect::auto();
+        element.set_layout_style(style.clone());
+        element.paint.box_node.style = style.clone();
+        element.base_paint.box_node.style = style;
+        Ok(director_scene::html::InlinePlaceholder {
+            width: width + margin.left + margin.right,
+            height: height + margin.top + margin.bottom,
+            baseline: margin.top + baseline,
+        })
+    }
+
+    fn rich_text<'a>(
         &self,
-        el: ElementRef<'_>,
+        el: ElementRef<'a>,
         values: &ComputedStyle,
         paint: &PaintStyle,
         block: style::ContainingBlock,
         spans: &mut Vec<TextSpan>,
+        atomics: &mut Vec<(ElementRef<'a>, ComputedStyle)>,
     ) -> Result<(), CompileError> {
         for node in el.children() {
             if let Some(text) = node.value().as_text() {
@@ -1848,6 +2083,21 @@ impl Builder {
                     continue;
                 }
                 let mut child_values = self.css.cascade(child, values)?;
+                match self.level(child, &child_values) {
+                    Level::Skip => continue,
+                    Level::Atomic => {
+                        spans.push(span(OBJECT.into(), paint));
+                        atomics.push((child, values.clone()));
+                        continue;
+                    }
+                    Level::Block => {
+                        return Err(CompileError::Input(format!(
+                            "{}: mixed block and inline content requires extraction",
+                            label(child)
+                        )))
+                    }
+                    Level::Inline => {}
+                }
                 child_values.remove("display");
                 if child_values.iter().any(|(k, v)| {
                     !crate::css::inherited(k) && !k.starts_with("font-") && !inert_on_inline(k, v)
@@ -1869,7 +2119,7 @@ impl Builder {
                 )
                 .map_err(|e| CompileError::Input(e.join("; ")))?;
                 let before = spans.len();
-                self.rich_text(child, &child_values, &child_paint, block, spans)?;
+                self.rich_text(child, &child_values, &child_paint, block, spans, atomics)?;
                 if self.css.has_local_property(child, "color") {
                     for span in &mut spans[before..] {
                         if span.color.is_none() {
@@ -1891,6 +2141,7 @@ const HARD_BREAK: char = '\0';
 /// box-sizing: border-box }` reset that every span matches.
 fn inert_on_inline(name: &str, value: &str) -> bool {
     name == "box-sizing"
+        || (name == "position" && matches!(value.trim(), "static" | "relative"))
         || ((name.starts_with("margin-") || name.starts_with("padding-"))
             && matches!(value.trim(), "0" | "0px"))
 }

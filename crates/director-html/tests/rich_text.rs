@@ -117,3 +117,45 @@ fn a_span_with_its_own_box_still_requires_extraction() {
         "{error:?}"
     );
 }
+
+/// The bounds `[left, top, right, bottom]` of the pixels that pass `test`.
+fn bounds(pixels: &[u8], test: impl Fn(&[u8]) -> bool) -> [usize; 4] {
+    let mut b = [usize::MAX, usize::MAX, 0, 0];
+    for (i, _) in pixels.chunks(4).enumerate().filter(|(_, p)| test(p)) {
+        let (x, y) = (i % 64, i / 64);
+        b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
+    }
+    b
+}
+
+fn inline_block_page(div_css: &str, body: &str) -> String {
+    format!(
+        "<style>body{{margin:0}}div{{width:64px;height:64px;color:white;font-size:16px;line-height:20px;{div_css}}}\
+         b{{display:inline-block;padding:2px;background:#ff0000}}</style><div>{body}</div>"
+    )
+}
+
+#[test]
+fn an_inline_block_paints_its_box_on_the_line() {
+    let pixels = frame(&inline_block_page("", "a<b>b</b>c"));
+    let [left, top, right, bottom] = bounds(&pixels, red);
+    assert!(left > 4 && right < 40, "after the a: {left}..{right}");
+    // A 20px line plus 2px padding above and below, on the text baseline.
+    assert!(top < 2 && (20..26).contains(&bottom), "{top}..{bottom}");
+    let [.., c_right, _] = bounds(&pixels, white);
+    assert!(c_right > right, "the c follows the box");
+}
+
+#[test]
+fn an_inline_block_wraps_to_the_next_line() {
+    let pixels = frame(&inline_block_page("width:44px", "aaaa <b>bb</b>"));
+    let [left, top, ..] = bounds(&pixels, red);
+    assert!(left < 4 && top >= 18, "the box starts the second line at {left},{top}");
+}
+
+#[test]
+fn a_hidden_inline_child_takes_no_space() {
+    let shown = frame(&inline_block_page("", "a<i>zzzz</i>"));
+    let hidden = frame(&inline_block_page("", "a<i style='display:none'>zzzz</i>"));
+    assert!(count(&hidden, white) * 3 < count(&shown, white));
+}

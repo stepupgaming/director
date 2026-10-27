@@ -1033,6 +1033,14 @@ impl Director {
                 node.element.post_layout(node.layout_rect);
             }
         }
+        for node in self.scene.nodes.iter_mut().flatten() {
+            if (node.last_visit_time - global_time).abs() < 0.0001 {
+                if let Some((x, y)) = node.element.layout_origin() {
+                    let rect = node.layout_rect;
+                    node.layout_rect = skia_safe::Rect::from_xywh(x, y, rect.width(), rect.height());
+                }
+            }
+        }
     }
 
     /// Build the dependency graph for the current scene graph and run the

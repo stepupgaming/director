@@ -145,6 +145,13 @@ pub trait Element: std::fmt::Debug + ElementClone {
     /// Useful for elements that need to adjust their state based on their final size (e.g. `TextFit`).
     fn post_layout(&mut self, _rect: Rect) {}
 
+    /// Where this box sits in its parent once every `post_layout` has run,
+    /// replacing the layout origin. An atomic inline box takes the position its
+    /// sibling text paragraph laid out for it.
+    fn layout_origin(&self) -> Option<(f32, f32)> {
+        None
+    }
+
     /// Renders the element to the Skia canvas.
     ///
     /// # Arguments

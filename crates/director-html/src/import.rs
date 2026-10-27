@@ -9,7 +9,7 @@
 use crate::animation::Animation;
 use crate::background_box::AxisRepeat;
 use crate::box_edges::BoxEdge;
-use crate::element::HtmlElement;
+use crate::element::{HtmlElement, InlineFlow, InlineLink};
 use crate::gradient::NativeGradient;
 use crate::shader::PaperPaint;
 use crate::style::{
@@ -47,6 +47,9 @@ fn decode_html(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn El
         [still] => still.value,
         _ => return Err(ImportError::Invalid("html opacity animates through CSS animations".to_string())),
     };
+    if let Some(doc::InlineFlow::Text { boxes, .. }) = &body.inline {
+        paint.placeholders = boxes.clone();
+    }
     let content = match &body.content {
         None => None,
         Some(content) => Some(match &content.body {
@@ -78,6 +81,13 @@ fn decode_html(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn El
     element.playback_rate = body.playback_rate;
     element.hidden = body.hidden;
     element.paper = body.paper.as_ref().map(|paper| PaperPaint::from_doc(paper, cx)).transpose()?;
+    // The text and its boxes share one flow.
+    let mut flow = |id: u32| cx.shared(format!("html-inline-flow-{id}"), |_| Ok(InlineFlow::new(id)));
+    element.inline = match &body.inline {
+        None => None,
+        Some(doc::InlineFlow::Text { flow: id, .. }) => Some(InlineLink::Text(flow(*id)?)),
+        Some(doc::InlineFlow::Box { flow: id, slot }) => Some(InlineLink::Box(flow(*id)?, *slot as usize)),
+    };
     Ok(Box::new(element))
 }
 
@@ -217,6 +227,7 @@ fn paint(p: &doc::HtmlPaint, cx: &ImportContext) -> Result<PaintStyle, ImportErr
         text_stroke_color: p.text_stroke_color.map(color),
         stroke_over_fill: p.stroke_over_fill,
         text: None,
+        placeholders: Vec::new(),
     })
 }
 
