@@ -518,7 +518,6 @@ pub(crate) fn compile_with_assets(
                 let href=el.value().attr("href").ok_or_else(||CompileError::Input("stylesheet without href".into()))?;
                 let bytes=assets.read(href)?;let source=String::from_utf8(bytes).map_err(|e|CompileError::Input(e.to_string()))?;css.append(&source, options.width, options.height)?;
             },
-            "script" if !matches!(el.value().attr("type"),Some("application/json"|"application/ld+json"|crate::timeline::TIMELINE_SCRIPT))=>return Err(CompileError::Diagnostics(vec![diagnostic("script","executable JavaScript requires explicit compile-time extraction; run director-engine html capture")])),
             _=>{},
         }
     }
@@ -532,6 +531,10 @@ pub(crate) fn compile_with_assets(
     );
     load_fonts(&mut director, &css.fonts, &assets)?;
     let timeline = crate::timeline::collect(&dom)?;
+    let composition = root.value().attr("data-composition-id").unwrap_or_default();
+    let motion = crate::gsap::record(&dom, composition, options.width, options.height)
+        .map_err(|e| CompileError::Diagnostics(vec![diagnostic("script", e)]))?
+        .unwrap_or_default();
     let mut builder = Builder {
         director,
         css,
@@ -545,6 +548,9 @@ pub(crate) fn compile_with_assets(
         fixed: HashSet::new(),
         svg_fonts: None,
         timeline,
+        motion,
+        root_element: root.id(),
+        emitted: Vec::new(),
     };
     // Compute inherited values along the full ancestor chain, including body resets.
     let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
@@ -574,6 +580,20 @@ pub(crate) fn compile_with_assets(
             "timeline target '{target}' matches no animatable element"
         )));
     }
+    if let Some(el) = builder.motion.records.keys().find_map(|id| dom.tree.get(*id).and_then(ElementRef::wrap)) {
+        let name = match el.value().attr("id") {
+            Some(id) => format!("#{id}"),
+            None => format!("<{}>", el.value().name()),
+        };
+        return Err(CompileError::Diagnostics(vec![diagnostic(
+            "script",
+            format!("GSAP animates {name}, which is not an animatable box inside the composition"),
+        )]));
+    }
+    let timeline = (!builder.emitted.is_empty()).then(|| crate::Timeline {
+        format: crate::TIMELINE_FORMAT.into(),
+        tracks: std::mem::take(&mut builder.emitted),
+    });
     builder
         .director
         .push_scene_root(root_id, builder.options.duration);
@@ -586,6 +606,7 @@ pub(crate) fn compile_with_assets(
         node_count: builder.nodes,
         source_inspection: None,
         assets: builder.assets,
+        timeline,
     })
 }
 
@@ -600,6 +621,11 @@ struct Builder {
     assets: Arc<AssetStore>,
     root_id: Option<NodeId>,
     fixed: HashSet<NodeId>,
+    /// GSAP tweens recorded from the page scripts, by element.
+    motion: crate::gsap::Recording,
+    root_element: ego_tree::NodeId,
+    /// Every timeline track attached so far, in document order.
+    emitted: Vec<crate::TimelineTrack>,
     svg_fonts: Option<Arc<usvg::fontdb::Database>>,
     /// Timeline tracks not yet attached, by target id.
     timeline: BTreeMap<String, Vec<crate::timeline::TimelineTrack>>,
@@ -1342,19 +1368,45 @@ impl Builder {
         }
         element.animations = animation::compile(&values, &self.css, &paint, metrics)
             .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
-        if let Some(tracks) = el.value().attr("id").and_then(|id| self.timeline.remove(id)) {
-            for track in tracks {
-                if element.animations.iter().any(|a| a.properties().any(|p| p == track.property)) {
-                    return Err(CompileError::Diagnostics(vec![diagnostic(
-                        &context,
-                        format!("both @keyframes and the timeline animate '{}'", track.property),
-                    )]));
-                }
-                let animation = animation::from_track(&track, &paint, metrics)
-                    .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
-                element.animations.push(animation);
+        let path = crate::timeline::element_path(el, self.root_element);
+        let mut tracks = Vec::new();
+        for key in el.value().attr("id").into_iter().chain([path.as_str()]) {
+            tracks.extend(self.timeline.remove(key).unwrap_or_default());
+        }
+        if let Some(records) = self.motion.records.remove(&el.id()) {
+            let target = el.value().attr("id").map_or_else(|| path.clone(), str::to_string);
+            let base = |channel: &str| {
+                crate::gsap::base_value(channel, &element.base_style, &element.base_paint)
+            };
+            let fps = self.options.fps;
+            let duration = self.options.duration;
+            tracks.extend(
+                crate::gsap::tracks(&records, &target, &base, fps, duration)
+                    .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?,
+            );
+        }
+        for (i, track) in tracks.iter().enumerate() {
+            if tracks[..i].iter().any(|t| t.property == track.property) {
+                return Err(CompileError::Diagnostics(vec![diagnostic(
+                    &context,
+                    format!("the timeline animates '{}' twice on one element", track.property),
+                )]));
+            }
+            if element.animations.iter().any(|a| a.properties().any(|p| p == track.property)) {
+                return Err(CompileError::Diagnostics(vec![diagnostic(
+                    &context,
+                    format!("both @keyframes and the timeline animate '{}'", track.property),
+                )]));
             }
         }
+        for track in tracks {
+            let animation = animation::from_track(&track, &paint, metrics)
+                .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
+            element.animations.push(animation);
+            self.emitted.push(track);
+        }
+        animation::check_components(&element.animations, &element.base_paint.transform)
+            .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
         let id = self.director.scene.add_node(Box::new(element));
         if root {
             self.root_id = Some(id);

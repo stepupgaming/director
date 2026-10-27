@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html, body { margin:0; background:#1b1b2f; }
+  #stage { position:relative; width:640px; height:360px; overflow:hidden; background:#1b1b2f; }
+  #dot { position:absolute; left:40px; top:150px; width:60px; height:60px; border-radius:30px; background:#e84a5f; }
+  #bar { position:absolute; left:40px; top:60px; width:120px; height:20px; background:#2a9d8f; }
+  #blink { position:absolute; left:500px; top:260px; width:40px; height:40px; background:#ffffff; }
+</style></head><body>
+<div id="stage" data-composition-id="loop" data-width="640" data-height="360" data-fps="30" data-duration="5">
+  <div id="dot"></div>
+  <div id="bar"></div>
+  <div id="blink"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+  window.__timelines = window.__timelines || {};
+  gsap.set("#blink", { opacity: 0 });
+  const tl = gsap.timeline({ paused: true });
+  tl.to("#dot", { x: 480, duration: 1, ease: "power1.inOut", repeat: 3, yoyo: true }, 0)
+    .to("#bar", { backgroundColor: "#e9c46a", width: 360, duration: 1.5, ease: "power2.out" }, 0.5)
+    .set("#blink", { opacity: 1 }, 1)
+    .to("#blink", { rotation: 90, duration: 1, ease: "steps(3)", repeat: -1, repeatDelay: 0.5 }, 1.5);
+  window.__timelines["loop"] = tl;
+</script>
+</body></html>

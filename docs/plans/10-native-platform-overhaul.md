@@ -73,9 +73,9 @@ Gate: an agent can open, patch, inspect and export a project through MCP alone. 
 
 - Typed `ComputedStyle` plus a property table in `director-html`; split element paint. Landed: the property table, `ComputedStyle`, element paint split into `element/{mod,background,borders,text}.rs`, a cascade that carries typed values and reparses only `var()` values, and typed layout, background, border, box, effect, transform and text groups in `style/`.
 - Timeline JSON for motion over HTML visuals. Landed: `director-timeline/1` keyframe tracks in a `<script type="application/director-timeline+json">` compile to native animations on elements by id, with CSS easing per segment, and export as scene `CssAnimation`s; `examples/html/timeline-motion.html` exercises it.
-- GSAP to native keyframe tracks.
+- GSAP to native keyframe tracks. Landed: inline GSAP scripts run at compile time in Boa against a recording shim, and each registered timeline becomes `director-timeline/1` tracks with GSAP seek semantics, GSAP eases and transform component channels; `director-engine html timeline` prints them; `examples/html/gsap-motion.html` exercises it.
 
-Gate: the Hyper CN corpus compiles through the typed style path with no new refusals, and a GSAP fixture set renders as native tracks. The corpus half was met 2026-10-26.
+Gate: the Hyper CN corpus compiles through the typed style path with no new refusals, and a GSAP fixture set renders as native tracks. **Met 2026-10-27**: the corpus half on 2026-10-26, and the `tests/fixtures/gsap` set renders as native tracks in `tests/gsap.rs`.
 
 ### Phase 6: Proof and media quality
 
@@ -90,21 +90,22 @@ One row per check, holding the most recent passing count. Replace the row when a
 
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
-| workspace clippy | pass | 2026-10-26 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
+| workspace clippy | pass | 2026-10-27 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
 | director-core release tests | 432 | 2026-10-26 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 1029, 2 ignored | 2026-10-26 | `cargo test --workspace --release --no-fail-fast` |
+| workspace release tests | 1042, 2 ignored | 2026-10-27 | `cargo test --workspace --exclude director-cli --release --no-fail-fast` plus `cargo test -p director-cli --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 22 | 2026-10-26 | `cargo test -p director-render --release` |
 | director-host | 25 | 2026-10-26 | `cargo test -p director-host --release` |
-| director-cli | 52 | 2026-10-26 | `cargo test -p director-cli --release` |
+| director-cli | 52 | 2026-10-27 | `cargo test -p director-cli --release` |
 | 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | 1080p HTML export on Vulkan, CLI `html render --gpu` serial `render_export_at_scale` vs pipelined `export_on` (one session, four frames in flight; 90 frames, x264, median of 3; CPU pool export for reference) | native-motion 565 vs 505 ms (CPU 546), image-background 483 vs 415 ms (CPU 396), nested-rule 474 vs 421 ms (CPU 371), text-decoration 485 vs 417 ms (CPU 379); GPU outputs frame-identical to the serial GPU export (framemd5) | 2026-10-25 | `director-engine html render examples/html/<name>.html -o <out>.mp4 --gpu` from `cargo build -p director-cli --release --features vulkan` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
-| HTML scene_document | 7 | 2026-10-26 | `cargo test -p director-html --release --test scene_document` |
+| HTML scene_document | 7 | 2026-10-27 | `cargo test -p director-html --release --test scene_document` |
 | HTML timeline | 7 | 2026-10-26 | `cargo test -p director-html --release --test timeline` |
+| HTML gsap (phase 5 GSAP gate) | 11 | 2026-10-27 | `cargo test -p director-html --release --test gsap` |
 | Vulkan engine clippy | pass | 2026-10-25 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
@@ -115,7 +116,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | motion_policy | 3 | 2026-10-21 | `cargo test -p director-html --release --test motion_policy` |
 | transform_angles | 3 | 2026-10-22 | `cargo test -p director-html --release --test transform_angles` |
 | director-core doctest | 1 | 2026-10-22 | `cargo test -p director-core --doc --release` |
-| director-html lib | 115 | 2026-10-26 | `cargo test -p director-html --release --lib` |
+| director-html lib | 118 | 2026-10-27 | `cargo test -p director-html --release --lib` |
 | Hyper CN registry smoke, typed style path | original 238/239, portrait 238/239; `github-stars` has no input file in the local checkout | 2026-10-26 | `node crates/director-html/tools/registry-audit.mjs --registry C:/Projects/hypercn/registry --output F:/hypercn-smoke-typed2-<profile> --director <engine> --chrome <chromium_headless_shell-1248> --fps 2 [--portrait]` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
 | object_position_css, gradient_hints, project, shader | 9, 8, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |
@@ -138,7 +139,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Continue phase 5: GSAP to native keyframe tracks, emitting `director-timeline/1`, plus a GSAP fixture set for the gate. Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes), or widen GSAP: a Chromium parity run of the GSAP fixtures (browser work, ask first), `transformOrigin`, `keyframes` arrays, and GSAP over inline text spans. Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

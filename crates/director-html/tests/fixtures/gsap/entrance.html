@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html, body { margin:0; background:#101820; }
+  #stage { position:relative; width:640px; height:360px; overflow:hidden; background:#101820; }
+  #headline { position:absolute; left:320px; top:110px; width:400px; height:60px; transform:translate(-50%, -50%); background:#f2aa4c; }
+  .chip { position:absolute; top:200px; width:80px; height:40px; border-radius:8px; background:#4ca3f2; }
+  .chip.a { left:120px; }
+  .chip.b { left:280px; }
+  .chip.c { left:440px; }
+  #rule { position:absolute; left:120px; top:300px; width:0px; height:6px; background:#ffffff; }
+</style></head><body>
+<div id="stage" data-composition-id="entrance" data-width="640" data-height="360" data-fps="30" data-duration="4">
+  <div id="headline"></div>
+  <div class="chip a"></div>
+  <div class="chip b"></div>
+  <div class="chip c"></div>
+  <div id="rule"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+  window.__timelines = window.__timelines || {};
+  const tl = gsap.timeline({ paused: true, defaults: { duration: 0.6, ease: "power3.out" } });
+  tl.from("#headline", { y: 40, opacity: 0 }, 0.2)
+    .addLabel("chips", "+=0.1")
+    .from(".chip", { scale: 0.5, opacity: 0, stagger: 0.15, ease: "back.out(1.7)" }, "chips")
+    .fromTo("#rule", { width: 0 }, { width: 400, duration: 1, ease: "expo.inOut" }, "<0.2")
+    .to("#headline", { xPercent: -40, rotation: -4, duration: 0.8, ease: "sine.inOut" }, ">0.4");
+  window.__timelines["entrance"] = tl;
+</script>
+</body></html>

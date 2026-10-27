@@ -51,6 +51,8 @@ enum HtmlCommand {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Print the director-timeline/1 tracks the page compiles to, from timeline JSON and translated GSAP
+    Timeline(Input),
     /// Render a deterministic timestamp to PNG
     Still {
         #[command(flatten)]
@@ -133,6 +135,16 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
         println!("{}", output.display());
         return Ok(());
     }
+    if let HtmlCommand::Timeline(input) = command {
+        let compiled = input.load_html().map_err(|e| (1, e.to_string()))?;
+        let timeline = compiled.timeline.unwrap_or_else(|| director_html::Timeline {
+            format: director_html::TIMELINE_FORMAT.into(),
+            tracks: Vec::new(),
+        });
+        let json = serde_json::to_string_pretty(&timeline).map_err(|e| (1, e.to_string()))?;
+        println!("{json}");
+        return Ok(());
+    }
     let (input, output, time, rendering) = match command {
         HtmlCommand::Check(input) => (input, None, None, Rendering::default()),
         HtmlCommand::Render {
@@ -154,7 +166,9 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
                 ..Default::default()
             },
         ),
-        HtmlCommand::Capture { .. } | HtmlCommand::Benchmark { .. } => unreachable!(),
+        HtmlCommand::Capture { .. } | HtmlCommand::Benchmark { .. } | HtmlCommand::Timeline(_) => {
+            unreachable!()
+        }
     };
     let started = Instant::now();
     let mut compiled = input.load_html().map_err(|e| (1, e.to_string()))?;
@@ -345,6 +359,7 @@ mod tests {
     fn parses_native_and_capture_commands() {
         for args in [
             vec!["test", "check", "scene.html"],
+            vec!["test", "timeline", "scene.html"],
             vec!["test", "still", "scene.json", "-t", ".5", "-o", "frame.png"],
             vec!["test", "render", "scene.html", "-o", "movie.mp4"],
             vec![

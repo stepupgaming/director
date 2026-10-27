@@ -369,6 +369,8 @@ pub enum CssTiming {
     Curve(Easing),
     /// `steps(count, jump-start)` when `start`, else `jump-end`.
     Steps { count: u32, start: bool },
+    /// A GSAP 3 ease by name, such as `power3.out` or `back.out(1.7)`.
+    Gsap(String),
 }
 
 /// A Paper shader and its inputs.

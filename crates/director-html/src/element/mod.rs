@@ -266,8 +266,12 @@ impl Element for HtmlElement {
         let old_style = self.style.clone();
         self.style = self.base_style.clone();
         self.paint = self.base_paint.clone();
+        let mut parts = None;
         for animation in &self.animations {
-            animation.apply(time, &mut self.style, &mut self.paint);
+            animation.apply(time, &mut self.style, &mut self.paint, &mut parts);
+        }
+        if let Some(parts) = parts {
+            self.paint.transform = parts.compose();
         }
         if let Some(content) = &mut self.content {
             if let Some(text) = content

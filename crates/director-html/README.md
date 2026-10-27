@@ -7,6 +7,7 @@ cargo build --release -p director-cli --bin director-engine
 director-engine html check examples/html/native-motion.html
 director-engine html still examples/html/native-motion.html -t 1 -o target/native.png
 director-engine html render examples/html/native-motion.html -o target/native.mp4
+director-engine html timeline examples/html/gsap-motion.html
 ```
 
 `compile`, `compile_file`, `compile_capture` and `compile_capture_file` return `CompiledHtml` with a normal `Director`, static HTML ID mappings and metadata. Existing frame/export functions render it. Capture JSON is a separate interchange format; core project serialization does not serialize HTML adapters.
@@ -47,6 +48,7 @@ director-engine html benchmark examples/html/native-motion.html --gpu --export t
 | Transforms | 2D and 3D lists in authored order, origin including absolute z, percentage translation on X and Y, absolute px on Z and perspective. Parent perspective projects descendants. `preserve-3d` depth-sorts planes and occludes crossing planes per pixel. Backface hiding uses the element's own matrix |
 | SVG | usvg/resvg paint of attributes, inline/internal styles and inherited currentColor; extraction resolves colors and planar child transforms; external stylesheet presentation properties, markers, masks, text shaped with bundled fonts, authored `foreignObject`, and authored SMIL sampled at the frame time |
 | CSS animation | Opacity/color/background-color, matching translate/scale/rotate lists including rotateX/Y/Z, translateZ, translate3d and perspective, px width/height/left/top and uniform radius; cubic/steps easing, delay, fractional/infinite iterations, direction and fill |
+| GSAP | Registered paused timelines run at compile time and become native `director-timeline/1` tracks: positions and labels, nested timelines, stagger, repeat and yoyo, GSAP eases, transform components, opacity, color, size and radius |
 | HyperFrames | Numeric start/duration/end, composition-local timing, hidden clips, dimensions/FPS, `data-no-timeline`, source start and constant positive video rate. Track indexes do not set paint order |
 
 CSS animations evaluate immutable tracks at arbitrary times. Paint-only animation does not dirty Taffy. Paragraphs, decoded images and SVG rasters retain native caches. Compilation uses native adapters within the existing core pipeline. Native defaults use Roboto. Ship exact fonts and author a sized root with explicit backgrounds and body margin reset for Chromium comparisons.
@@ -71,7 +73,7 @@ Standalone/template blocks and one-level external template assembly with numeric
 
 Exact rules for each supported property live in [`AGENTS.md`](AGENTS.md). These still fail with a diagnostic:
 
-- Static JS, dynamic transitions, top-level `@media`, and unsupported properties. Explicit extraction covers them when its DOM subset holds the result.
+- JavaScript outside the GSAP subset in `AGENTS.md`, dynamic transitions, top-level `@media`, and unsupported properties. Explicit extraction covers them when its DOM subset holds the result.
 - Canvas without a captured Paper Shader fragment, and other WebGL or Three.js runtimes. A captured fragment compiles to SKSL, where `fwidth` is a constant screen-width estimate and `textureGrad` drops explicit derivatives. Extraction never stores screenshots as scene content.
 - Named grid areas, mixed inline/block formatting, interactive scrolling, general stacking-context escapes, and browser margin collapsing.
 - Mixed `calc()` without a definite basis, `calc()` with three terms on a gradient stop, and `round`/`rem`/`mod`/`abs`/`sign`/`hypot`.

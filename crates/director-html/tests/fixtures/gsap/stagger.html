@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html, body { margin:0; background:#0b132b; }
+  #stage { position:relative; width:640px; height:360px; overflow:hidden; background:#0b132b; }
+  .bar { position:absolute; top:80px; width:60px; height:200px; border-radius:0px; background:#5bc0be; }
+  .bar:nth-child(1) { left:70px; }
+  .bar:nth-child(2) { left:180px; }
+  .bar:nth-child(3) { left:290px; }
+  .bar:nth-child(4) { left:400px; }
+  .bar:nth-child(5) { left:510px; }
+</style></head><body>
+<div id="stage" data-composition-id="bars" data-width="640" data-height="360" data-fps="30" data-duration="4">
+  <div class="bar"></div>
+  <div class="bar"></div>
+  <div class="bar"></div>
+  <div class="bar"></div>
+  <div class="bar"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+  window.__timelines = window.__timelines || {};
+  document.addEventListener("DOMContentLoaded", () => {
+    const bars = document.querySelectorAll("#stage .bar");
+    const intro = gsap.timeline();
+    intro.from(bars, { height: 0, duration: 0.5, stagger: { each: 0.1, from: "center" }, ease: "circ.out" });
+    const tl = gsap.timeline({ paused: true });
+    tl.add(intro, 0.25)
+      .addLabel("swing")
+      .to(bars, { skewX: (i) => (i - 2) * 5, duration: 0.6, ease: "elastic.out(1, 0.4)" }, "swing+=0.2")
+      .to(bars, { borderRadius: 30, backgroundColor: "rgb(255, 107, 107)", duration: 0.5, ease: "none" }, "-=0.2")
+      .to(bars, { autoAlpha: 0.25, duration: 0.4, stagger: { amount: 0.4, from: "end" } }, "+=0.5");
+    window.__timelines["bars"] = tl;
+  });
+</script>
+</body></html>

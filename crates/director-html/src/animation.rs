@@ -1,5 +1,6 @@
 use crate::{
     css::{split, Css, Values},
+    gsap::ease::GsapEase,
     style::{color, number, px, Metrics, PaintStyle},
 };
 use director_core::scene_export::{export_easing, rgba, ExportError};
@@ -21,9 +22,15 @@ use lightningcss::{
 enum Ease {
     Curve(EasingType),
     Steps(u32, bool),
+    /// A GSAP 3 ease such as `power3.out`, kept by name for export.
+    Gsap(GsapEase),
 }
 impl Ease {
+    /// A CSS timing function, else a GSAP ease name.
     fn parse(s: &str) -> Result<Self, String> {
+        Self::parse_css(s).or_else(|css| GsapEase::parse(s).map(Self::Gsap).map_err(|_| css))
+    }
+    fn parse_css(s: &str) -> Result<Self, String> {
         let curve = |x1, y1, x2, y2| Self::Curve(EasingType::CubicBezier { x1, y1, x2, y2 });
         Ok(match s {
             "linear" => Self::Curve(EasingType::Linear),
@@ -76,6 +83,7 @@ impl Ease {
                 let steps = (t * (*n as f32)).floor() + if *start && t < 1.0 { 1.0 } else { 0.0 };
                 (steps / (*n as f32)).clamp(0.0, 1.0)
             }
+            Self::Gsap(e) => e.eval(t as f64) as f32,
         }
     }
 }
@@ -115,8 +123,50 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
             TransformList::parse_string(s).map_err(|e| format!("animation transform: {e:?}"))?,
         ),
         "width" | "height" | "left" | "top" | "border-top-left-radius" => Value::Scalar(px(s, m)?),
+        name if is_component(name) => Value::Scalar(component(name, s)?),
         _ => return Err(format!("unsupported animated property '{name}'")),
     })
+}
+
+/// Transform components a timeline drives one number at a time. They compose
+/// in GSAP order over the element's own decomposed transform.
+pub(crate) const COMPONENTS: [&str; 12] = [
+    "translate-x",
+    "translate-y",
+    "translate-z",
+    "translate-x-percent",
+    "translate-y-percent",
+    "rotate-z",
+    "rotate-x",
+    "rotate-y",
+    "skew-x",
+    "skew-y",
+    "scale-x",
+    "scale-y",
+];
+pub(crate) fn is_component(name: &str) -> bool {
+    COMPONENTS.contains(&name)
+}
+/// A component in its track unit: px, percent, degrees or a scale factor.
+fn component(name: &str, s: &str) -> Result<f32, String> {
+    let s = s.trim();
+    let (n, unit) = match name {
+        "translate-x" | "translate-y" | "translate-z" => (s.strip_suffix("px").unwrap_or(s), 1.0),
+        "translate-x-percent" | "translate-y-percent" => (s.strip_suffix('%').unwrap_or(s), 1.0),
+        "scale-x" | "scale-y" => (s, 1.0),
+        _ => {
+            if let Some(n) = s.strip_suffix("deg") {
+                (n, 1.0)
+            } else if let Some(n) = s.strip_suffix("turn") {
+                (n, 360.0)
+            } else if let Some(n) = s.strip_suffix("rad") {
+                (n, 180.0 / std::f32::consts::PI)
+            } else {
+                (s, 1.0)
+            }
+        }
+    };
+    Ok(number(n.trim())? * unit)
 }
 fn base_value(name: &str, base: &Values, paint: &PaintStyle, m: Metrics) -> Result<Value, String> {
     if let Some(s) = base.get(name) {
@@ -326,6 +376,7 @@ pub(crate) fn from_track(
             TimelineValue::Number(n) => match property {
                 "opacity" => n.to_string(),
                 "width" | "height" | "left" | "top" | "border-top-left-radius" => format!("{n}px"),
+                name if is_component(name) => n.to_string(),
                 "color" | "background-color" | "transform" => {
                     return Err(format!("timeline '{property}' takes CSS text"))
                 }
@@ -497,7 +548,15 @@ fn interpolate(a: &Value, b: &Value, t: f32) -> Result<Value, String> {
 }
 
 impl Animation {
-    pub fn apply(&self, time: f64, style: &mut taffy::Style, paint: &mut PaintStyle) -> bool {
+    /// Apply this animation at `time`. Component channels write into `parts`,
+    /// which the caller composes into the transform after every animation.
+    pub fn apply(
+        &self,
+        time: f64,
+        style: &mut taffy::Style,
+        paint: &mut PaintStyle,
+        parts: &mut Option<Parts>,
+    ) -> bool {
         let elapsed = time - self.delay;
         let end = self.duration * self.count;
         if (elapsed < 0.0 && !matches!(self.fill.as_str(), "both" | "backwards"))
@@ -563,6 +622,9 @@ impl Animation {
                         taffy::LengthPercentage::length(v.max(0.0)),
                     ); 4];
                 }
+                (name, Value::Scalar(v)) if is_component(name) => parts
+                    .get_or_insert_with(|| Parts::decompose(&paint.transform).unwrap_or_default())
+                    .set(name, v),
                 (name, Value::Scalar(v)) => {
                     match name {
                         "width" => style.size.width = taffy::prelude::length(v),
@@ -607,6 +669,7 @@ impl Animation {
                                     count: *count,
                                     start: *start,
                                 },
+                                Ease::Gsap(ease) => doc::CssTiming::Gsap(ease.text()),
                             },
                         })
                     })
@@ -652,6 +715,9 @@ impl Animation {
                             ease: match &keyframe.timing {
                                 doc::CssTiming::Curve(easing) => Ease::Curve(import_easing(easing)),
                                 doc::CssTiming::Steps { count, start } => Ease::Steps(*count, *start),
+                                doc::CssTiming::Gsap(text) => {
+                                    Ease::Gsap(GsapEase::parse(text).map_err(ImportError::Invalid)?)
+                                }
                             },
                         })
                     })
@@ -671,4 +737,236 @@ impl Animation {
             channels,
         })
     }
+}
+
+/// A transform split into GSAP components: px and percent translation,
+/// rotations and skews in degrees, and scale factors.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Parts {
+    tx: f32,
+    ty: f32,
+    tz: f32,
+    xp: f32,
+    yp: f32,
+    rz: f32,
+    rx: f32,
+    ry: f32,
+    skx: f32,
+    sky: f32,
+    sx: f32,
+    sy: f32,
+}
+impl Default for Parts {
+    fn default() -> Self {
+        Self {
+            tx: 0.0,
+            ty: 0.0,
+            tz: 0.0,
+            xp: 0.0,
+            yp: 0.0,
+            rz: 0.0,
+            rx: 0.0,
+            ry: 0.0,
+            skx: 0.0,
+            sky: 0.0,
+            sx: 1.0,
+            sy: 1.0,
+        }
+    }
+}
+impl Parts {
+    /// Split a transform written as translations, then rotate, rotateY,
+    /// rotateX, one skew and scales, in that order. Anything else has no
+    /// component form.
+    pub(crate) fn decompose(list: &TransformList) -> Option<Self> {
+        let mut parts = Self::default();
+        let mut rank = 0;
+        let mut skewed = false;
+        let translate = |parts: &mut Self, x: &LengthPercentage, y: &LengthPercentage| {
+            for (v, axis) in [(x, 0), (y, 1)] {
+                match v {
+                    LengthPercentage::Percentage(p) => {
+                        *[&mut parts.xp, &mut parts.yp][axis] += p.0 * 100.0
+                    }
+                    LengthPercentage::Dimension(d) => {
+                        *[&mut parts.tx, &mut parts.ty][axis] += d.to_px()?
+                    }
+                    _ => return None,
+                }
+            }
+            Some(())
+        };
+        let zero = LengthPercentage::px(0.0);
+        for t in &list.0 {
+            let next = match t {
+                Transform::Translate(x, y) => {
+                    translate(&mut parts, x, y)?;
+                    0
+                }
+                Transform::TranslateX(x) => {
+                    translate(&mut parts, x, &zero)?;
+                    0
+                }
+                Transform::TranslateY(y) => {
+                    translate(&mut parts, &zero, y)?;
+                    0
+                }
+                Transform::TranslateZ(z) => {
+                    parts.tz += z.to_px()?;
+                    0
+                }
+                Transform::Translate3d(x, y, z) => {
+                    translate(&mut parts, x, y)?;
+                    parts.tz += z.to_px()?;
+                    0
+                }
+                Transform::Rotate(a) | Transform::RotateZ(a) => {
+                    parts.rz += a.to_degrees();
+                    1
+                }
+                Transform::RotateY(a) => {
+                    parts.ry += a.to_degrees();
+                    2
+                }
+                Transform::RotateX(a) => {
+                    parts.rx += a.to_degrees();
+                    3
+                }
+                Transform::Skew(..) | Transform::SkewX(_) | Transform::SkewY(_) if !skewed => {
+                    skewed = true;
+                    match t {
+                        Transform::Skew(x, y) => (parts.skx, parts.sky) = (x.to_degrees(), y.to_degrees()),
+                        Transform::SkewX(x) => parts.skx = x.to_degrees(),
+                        Transform::SkewY(y) => parts.sky = y.to_degrees(),
+                        _ => unreachable!(),
+                    }
+                    4
+                }
+                Transform::Scale(x, y) => {
+                    parts.sx *= factor(x);
+                    parts.sy *= factor(y);
+                    5
+                }
+                Transform::ScaleX(x) => {
+                    parts.sx *= factor(x);
+                    5
+                }
+                Transform::ScaleY(y) => {
+                    parts.sy *= factor(y);
+                    5
+                }
+                _ => return None,
+            };
+            if next < rank {
+                return None;
+            }
+            rank = next;
+        }
+        Some(parts)
+    }
+
+    pub(crate) fn set(&mut self, name: &str, v: f32) {
+        let slot = match name {
+            "translate-x" => &mut self.tx,
+            "translate-y" => &mut self.ty,
+            "translate-z" => &mut self.tz,
+            "translate-x-percent" => &mut self.xp,
+            "translate-y-percent" => &mut self.yp,
+            "rotate-z" => &mut self.rz,
+            "rotate-x" => &mut self.rx,
+            "rotate-y" => &mut self.ry,
+            "skew-x" => &mut self.skx,
+            "skew-y" => &mut self.sky,
+            "scale-x" => &mut self.sx,
+            "scale-y" => &mut self.sy,
+            _ => return,
+        };
+        *slot = v;
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Option<f32> {
+        Some(match name {
+            "translate-x" => self.tx,
+            "translate-y" => self.ty,
+            "translate-z" => self.tz,
+            "translate-x-percent" => self.xp,
+            "translate-y-percent" => self.yp,
+            "rotate-z" => self.rz,
+            "rotate-x" => self.rx,
+            "rotate-y" => self.ry,
+            "skew-x" => self.skx,
+            "skew-y" => self.sky,
+            "scale-x" => self.sx,
+            "scale-y" => self.sy,
+            _ => return None,
+        })
+    }
+
+    /// GSAP's CSS transform order, leaving out identity functions.
+    pub(crate) fn compose(&self) -> TransformList {
+        use lightningcss::values::percentage::Percentage;
+        let mut list = Vec::new();
+        if self.xp != 0.0 || self.yp != 0.0 {
+            list.push(Transform::Translate(
+                LengthPercentage::Percentage(Percentage(self.xp / 100.0)),
+                LengthPercentage::Percentage(Percentage(self.yp / 100.0)),
+            ));
+        }
+        if self.tz != 0.0 {
+            list.push(Transform::Translate3d(
+                LengthPercentage::px(self.tx),
+                LengthPercentage::px(self.ty),
+                Length::px(self.tz),
+            ));
+        } else if self.tx != 0.0 || self.ty != 0.0 {
+            list.push(Transform::Translate(
+                LengthPercentage::px(self.tx),
+                LengthPercentage::px(self.ty),
+            ));
+        }
+        if self.rz != 0.0 {
+            list.push(Transform::Rotate(Angle::Deg(self.rz)));
+        }
+        if self.ry != 0.0 {
+            list.push(Transform::RotateY(Angle::Deg(self.ry)));
+        }
+        if self.rx != 0.0 {
+            list.push(Transform::RotateX(Angle::Deg(self.rx)));
+        }
+        if self.skx != 0.0 || self.sky != 0.0 {
+            list.push(Transform::Skew(Angle::Deg(self.skx), Angle::Deg(self.sky)));
+        }
+        if self.sx != 1.0 || self.sy != 1.0 {
+            list.push(Transform::Scale(
+                NumberOrPercentage::Number(self.sx),
+                NumberOrPercentage::Number(self.sy),
+            ));
+        }
+        TransformList(list)
+    }
+}
+fn factor(n: &NumberOrPercentage) -> f32 {
+    match n {
+        NumberOrPercentage::Number(n) => *n,
+        NumberOrPercentage::Percentage(p) => p.0,
+    }
+}
+
+/// Component channels compose over a decomposable base transform and never
+/// share an element with a whole `transform` channel.
+pub(crate) fn check_components(animations: &[Animation], base: &TransformList) -> Result<(), String> {
+    let properties = || animations.iter().flat_map(Animation::properties);
+    if !properties().any(is_component) {
+        return Ok(());
+    }
+    if properties().any(|p| p == "transform") {
+        return Err("a transform track cannot share an element with transform component tracks".into());
+    }
+    if Parts::decompose(base).is_none() {
+        return Err(
+            "transform component tracks need a base transform of translations, rotations, one skew and scales in GSAP order"
+                .into(),
+        );
+    }
+    Ok(())
 }

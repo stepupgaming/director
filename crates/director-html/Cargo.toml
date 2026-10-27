@@ -23,6 +23,8 @@ usvg = "0.44"
 wuff = "0.2.9"
 sha2 = "0.10"
 tempfile = "3.23"
+boa_engine = { version = "0.22", default-features = false }
+ego-tree = "0.10"
 
 [dev-dependencies]
 criterion = "0.5"

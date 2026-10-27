@@ -16,6 +16,7 @@ mod decoration_value;
 mod element;
 mod export;
 mod gradient;
+mod gsap;
 mod import;
 mod grid_template;
 mod object_pos;
@@ -45,6 +46,9 @@ pub struct CompiledHtml {
     pub node_count: usize,
     pub(crate) source_inspection: Option<std::sync::Arc<SourceInspection>>,
     pub(crate) assets: std::sync::Arc<assets::AssetStore>,
+    /// The `director-timeline/1` tracks this compile attached, from timeline
+    /// JSON and translated GSAP. `None` when nothing is animated by a timeline.
+    pub timeline: Option<Timeline>,
 }
 
 #[derive(Debug, Clone, Serialize)]

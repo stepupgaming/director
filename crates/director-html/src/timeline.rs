@@ -83,7 +83,30 @@ impl Timeline {
     }
 }
 
-/// Every timeline track in the document, grouped by target id.
+/// The structural path of `el` below the composition root: `/` for the
+/// root, else `/i/j` with zero-based element child indices.
+pub(crate) fn element_path(el: scraper::ElementRef<'_>, root: ego_tree::NodeId) -> String {
+    let mut indices = Vec::new();
+    let mut node = el;
+    while node.id() != root {
+        let Some(parent) = node.parent().and_then(scraper::ElementRef::wrap) else {
+            break;
+        };
+        let index = parent
+            .children()
+            .filter_map(scraper::ElementRef::wrap)
+            .position(|c| c.id() == node.id())
+            .unwrap_or(0);
+        indices.push(index);
+        node = parent;
+    }
+    if indices.is_empty() {
+        return "/".into();
+    }
+    indices.iter().rev().map(|i| format!("/{i}")).collect()
+}
+
+/// Every timeline track in the document, grouped by target id or path.
 pub(crate) fn collect(dom: &Html) -> Result<BTreeMap<String, Vec<TimelineTrack>>, CompileError> {
     let mut tracks: BTreeMap<String, Vec<TimelineTrack>> = BTreeMap::new();
     let mut timeline = Timeline {

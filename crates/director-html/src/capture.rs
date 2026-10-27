@@ -306,6 +306,7 @@ pub(crate) fn compile_capture_with_assets(
         node_count,
         source_inspection: Some(Arc::new(source_inspection)),
         assets,
+        timeline: None,
     })
 }
 
