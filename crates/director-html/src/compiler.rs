@@ -1070,6 +1070,24 @@ pub fn span(text: String, paint: &PaintStyle) -> TextSpan {
 }
 
 impl Builder {
+    /// Whether GSAP or the timeline sets the text of `el`.
+    fn text_tracked(&self, el: ElementRef<'_>) -> bool {
+        let path = crate::timeline::element_path(el, self.root_element);
+        self.motion.series.get(&el.id()).is_some_and(|s| s.contains_key("#text"))
+            || el.value().attr("id").into_iter().chain([path.as_str()]).any(|key| {
+                self.timeline.get(key).is_some_and(|tracks| tracks.iter().any(|t| t.property == "text"))
+            })
+    }
+}
+
+/// The spans of `text` set as an element's whole text content.
+pub(crate) fn text_spans(text: &str, paint: &PaintStyle) -> Vec<TextSpan> {
+    let mut spans = vec![span(text.to_string(), paint)];
+    normalize(&mut spans, paint.preserve_space);
+    spans
+}
+
+impl Builder {
     fn ensure_svg_fonts(&mut self) -> Result<Arc<usvg::fontdb::Database>, CompileError> {
         cached_svg_fonts(&mut self.svg_fonts, &self.assets, &self.css.fonts)
     }
@@ -1250,7 +1268,8 @@ impl Builder {
             }
             "svg" => {
                 validate_svg(&el.html())?;
-                let plan = crate::smil::collect(el)?;
+                let clock = (start, numeric("data-media-start", 0.0)?, numeric("data-playback-rate", 1.0)?);
+                let plan = crate::smil::collect(el, clock)?;
                 for child in el
                     .descendants()
                     .filter_map(ElementRef::wrap)
@@ -1412,7 +1431,7 @@ impl Builder {
                     let mut spans = Vec::new();
                     self.rich_text(el, &values, &paint, style_block, &mut spans)?;
                     normalize(&mut spans, paint.preserve_space);
-                    if spans.is_empty() {
+                    if spans.is_empty() && !self.text_tracked(el) {
                         None
                     } else {
                         Some(Box::new(text_content(spans, &paint, &self.director)))

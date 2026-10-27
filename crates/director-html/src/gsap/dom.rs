@@ -223,6 +223,60 @@ impl Doc {
         })
     }
 
+    /// The element whose whole text a text node `i` is, or `None` when `i`
+    /// is no text node.
+    pub(crate) fn text_owner(&self, i: usize) -> Result<Option<usize>, String> {
+        let node = self.node(i)?;
+        if node.value().as_text().is_none() {
+            return Ok(None);
+        }
+        let parent = node.parent().ok_or("GSAP writes a detached text node")?;
+        if parent.children().count() != 1 {
+            let owner = self.index_of(parent.id()).map_or_else(|| "an element".into(), |p| self.label(p));
+            return Err(format!(
+                "GSAP writes one text node of {owner}, which has other children; animate the element's textContent"
+            ));
+        }
+        self.index_of(parent.id()).map(Some).ok_or_else(|| "GSAP writes an unregistered text node".into())
+    }
+
+    /// The nearest `<svg>` above element `i`, when `i` draws inside it.
+    pub(crate) fn svg_owner(&self, i: usize) -> Result<Option<usize>, String> {
+        let node = self.node(i)?;
+        if node.value().as_element().is_none_or(|el| el.name.ns != ns!(svg)) {
+            return Ok(None);
+        }
+        for above in node.ancestors() {
+            let Some(el) = above.value().as_element() else { break };
+            if el.name.ns != ns!(svg) || &*el.name.local == "foreignObject" {
+                break;
+            }
+            if &*el.name.local == "svg" {
+                return Ok(self.index_of(above.id()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Whether element `i` is an `<svg>`.
+    pub(crate) fn is_svg(&self, i: usize) -> Result<bool, String> {
+        Ok(self.node(i)?.value().as_element().is_some_and(|el| el.name.ns == ns!(svg) && &*el.name.local == "svg"))
+    }
+
+    /// Append an SVG element `tag` with `attrs` as the last child of `i`.
+    pub(crate) fn append_svg(&mut self, i: usize, tag: &str, attrs: Vec<(String, String)>) -> Result<(), String> {
+        let id = self.id(i)?;
+        let attrs = attrs
+            .into_iter()
+            .map(|(name, value)| Attribute { name: QualName::new(None, ns!(), LocalName::from(name)), value: value.into() })
+            .collect();
+        let element = Element::new(QualName::new(None, ns!(svg), LocalName::from(tag)), attrs);
+        let child = self.html.tree.get_mut(id).ok_or("unknown node")?.append(Node::Element(element)).id();
+        self.register(child);
+        self.touch();
+        Ok(())
+    }
+
     /// Replace the text content of node `i`.
     pub(crate) fn write_text(&mut self, i: usize, value: &str) -> Result<(), String> {
         let id = self.id(i)?;
@@ -719,6 +773,11 @@ fn initial(tag: &str, prop: &str) -> &'static str {
         "transform" | "perspective" => "none",
         "transform-origin" => "0px 0px",
         "transform-style" => "flat",
+        "stroke-dasharray" | "stroke" => "none",
+        "stroke-dashoffset" => "0px",
+        "stroke-width" => "1px",
+        "fill" => "rgb(0, 0, 0)",
+        "fill-opacity" | "stroke-opacity" => "1",
         "backface-visibility" => "visible",
         p if p.starts_with("margin") || p.starts_with("padding") || p.ends_with("radius") || p.ends_with("width") => "0px",
         _ => "",
@@ -732,6 +791,34 @@ fn matrix(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> 
         let size = d.probed(i)?.map_or((0.0, 0.0), |p| (p.rect[2], p.rect[3]));
         Ok(text(&matrix_text(&value, size)))
     })
+}
+
+/// `__dPath(d)` is the length of path data `d` over every contour.
+/// `__dPath(d, at)` is the `[x, y]` point at distance `at` along it.
+fn path(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let d = arg_text(args, 0, cx)?;
+    let at = match args.get(1) {
+        Some(v) if !v.is_undefined() => Some(v.to_number(cx)? as f32),
+        _ => None,
+    };
+    let Some(path) = skia_safe::Path::from_svg(&d) else {
+        return Err(JsNativeError::error().with_message(format!("SVG path data '{d}' does not parse")).into());
+    };
+    // A fine resolution keeps curve lengths within a thousandth of a unit.
+    let contours: Vec<_> = skia_safe::ContourMeasureIter::new(&path, false, 64.0).collect();
+    let total: f32 = contours.iter().map(|c| c.length()).sum();
+    let Some(at) = at else {
+        return Ok(JsValue::from(total as f64));
+    };
+    let mut left = at.clamp(0.0, total);
+    for (n, contour) in contours.iter().enumerate() {
+        if left <= contour.length() || n + 1 == contours.len() {
+            let point = contour.pos_tan(left.min(contour.length())).map_or((0.0, 0.0), |(p, _)| (p.x, p.y));
+            return Ok(numbers(&[point.0, point.1], cx));
+        }
+        left -= contour.length();
+    }
+    Ok(numbers(&[0.0, 0.0], cx))
 }
 
 /// The computed matrix text of a CSS transform at a box size.
@@ -771,7 +858,7 @@ pub(crate) fn matrix_text(value: &str, size: (f32, f32)) -> String {
 /// Register the DOM natives as globals.
 pub(crate) fn register(cx: &mut Context) -> JsResult<()> {
     type Native = fn(&JsValue, &[JsValue], &mut Context) -> JsResult<JsValue>;
-    let natives: [(&str, usize, Native); 26] = [
+    let natives: [(&str, usize, Native); 27] = [
         ("__dKind", 1, kind),
         ("__dTag", 1, tag),
         ("__dNs", 1, namespace),
@@ -798,6 +885,7 @@ pub(crate) fn register(cx: &mut Context) -> JsResult<()> {
         ("__dMatrix", 2, matrix),
         ("__dGeneration", 0, generation),
         ("__dMedia", 1, media),
+        ("__dPath", 2, path),
     ];
     for (name, length, f) in natives {
         cx.register_global_callable(JsString::from(name), length, NativeFunction::from_fn_ptr(f))?;

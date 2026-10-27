@@ -109,18 +109,22 @@ pub(crate) fn child_path(parent: &str, index: usize) -> String {
     }
 }
 
-pub(crate) fn collect(svg: ElementRef<'_>) -> Result<SmilPlan, CompileError> {
+/// The composition clock as the SVG sees it: `(start, media_start, rate)`
+/// maps composition time `t` to `media_start + (t - start) * rate`.
+pub(crate) type Clock = (f64, f64, f64);
+
+pub(crate) fn collect(svg: ElementRef<'_>, clock: Clock) -> Result<SmilPlan, CompileError> {
     let mut plan = SmilPlan {
         anims: Vec::new(),
         targets: HashMap::new(),
         next_target: 1,
     };
-    walk(svg, "", &mut plan)?;
+    walk(svg, "", &mut plan, clock)?;
     check_unique(&plan)?;
     Ok(plan)
 }
 
-fn walk(el: ElementRef<'_>, path: &str, plan: &mut SmilPlan) -> Result<(), CompileError> {
+fn walk(el: ElementRef<'_>, path: &str, plan: &mut SmilPlan, clock: Clock) -> Result<(), CompileError> {
     if el.value().name().eq_ignore_ascii_case("foreignobject") {
         return Ok(());
     }
@@ -136,9 +140,9 @@ fn walk(el: ElementRef<'_>, path: &str, plan: &mut SmilPlan) -> Result<(), Compi
                 return smil_err("SMIL nested animation requires extraction");
             }
             let target = target_id(plan, path);
-            plan.anims.push(parse_anim(child, target)?);
+            plan.anims.push(parse_anim(child, target, clock)?);
         } else {
-            walk(child, &child_path, plan)?;
+            walk(child, &child_path, plan, clock)?;
         }
     }
     Ok(())
@@ -161,7 +165,7 @@ fn smil_tag(name: &str) -> bool {
     )
 }
 
-fn parse_anim(el: ElementRef<'_>, target: u32) -> Result<SmilAnim, CompileError> {
+fn parse_anim(el: ElementRef<'_>, target: u32, clock: Clock) -> Result<SmilAnim, CompileError> {
     if el.value().attrs().any(|(name, _)| {
         let name = name.to_ascii_lowercase();
         name == "href" || name.ends_with(":href")
@@ -177,7 +181,19 @@ fn parse_anim(el: ElementRef<'_>, target: u32) -> Result<SmilAnim, CompileError>
         }
     }
     reject_unknown(el)?;
-    let timing = parse_timing(el)?;
+    let mut timing = parse_timing(el)?;
+    // Compiled GSAP motion keeps composition times.
+    match attr(el, "director-clock").map(str::trim) {
+        None => {}
+        Some("composition") => {
+            let (start, media_start, rate) = clock;
+            timing.begin = media_start + (timing.begin - start) * rate;
+            timing.end = timing.end.map(|t| media_start + (t - start) * rate);
+            timing.dur *= rate;
+            timing.repeat_dur = timing.repeat_dur.map(|d| d * rate);
+        }
+        Some(_) => return smil_err("SMIL director-clock requires composition"),
+    }
     let tag = el.value().name().to_ascii_lowercase();
     let effect = match tag.as_str() {
         "animate" => parse_attr(el, false)?,
@@ -217,6 +233,7 @@ fn reject_unknown(el: ElementRef<'_>) -> Result<(), CompileError> {
                 | "accumulate"
                 | "restart"
                 | "class"
+                | "director-clock"
         ) {
             continue;
         }
@@ -606,7 +623,14 @@ fn same_numeric_family(values: &[SmilValue]) -> bool {
         SmilValue::Number { unit, .. } => values.iter().all(|value| {
             matches!(value, SmilValue::Number { unit: other, .. } if other == unit)
         }),
-        SmilValue::Raw(_) => false,
+        // Text with the same numbers in the same places, such as two matrices.
+        SmilValue::Raw(first) => {
+            let (shape, nums) = crate::gsap::skeleton(first);
+            !nums.is_empty()
+                && values.iter().all(|value| {
+                    matches!(value, SmilValue::Raw(other) if crate::gsap::skeleton(other).0 == shape)
+                })
+        }
     }
 }
 
@@ -1097,6 +1121,10 @@ fn distance(left: &SmilValue, right: &SmilValue) -> f64 {
             let da = f64::from(aa - ba);
             (dr * dr + dg * dg + db * db + da * da).sqrt()
         }
+        (SmilValue::Raw(a), SmilValue::Raw(b)) => {
+            let (a, b) = (crate::gsap::skeleton(a).1, crate::gsap::skeleton(b).1);
+            a.iter().zip(&b).map(|(a, b)| (a - b) * (a - b)).sum::<f64>().sqrt()
+        }
         _ => 0.0,
     }
 }
@@ -1132,6 +1160,15 @@ fn lerp_value(left: &SmilValue, right: &SmilValue, span: f64) -> String {
         ) => {
             let mix = |a: f32, b: f32| a + (b - a) * span as f32;
             fmt_color(mix(*ar, *br), mix(*ag, *bg), mix(*ab, *bb), mix(*aa, *ba))
+        }
+        (SmilValue::Raw(a), SmilValue::Raw(b)) => {
+            let ((shape, a), (_, b)) = (crate::gsap::skeleton(a), crate::gsap::skeleton(b));
+            let mut nums = a.iter().zip(&b).map(|(a, b)| fmt_num(a + (b - a) * span));
+            shape
+                .split(crate::gsap::SLOT)
+                .enumerate()
+                .map(|(i, part)| if i == 0 { part.to_string() } else { nums.next().unwrap_or_default() + part })
+                .collect()
         }
         _ => right.format(),
     }

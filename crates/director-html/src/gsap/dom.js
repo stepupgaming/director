@@ -11,12 +11,12 @@ const N = {
   insert: __dInsert, remove: __dRemove, clone: __dClone, setInner: __dSetInner,
   markup: __dMarkup, select: __dSelect, matches: __dMatches, layout: __dLayout,
   viewport: __dViewport, computed: __dComputed, matrix: __dMatrix,
-  generation: __dGeneration, media: __dMedia,
+  generation: __dGeneration, media: __dMedia, path: __dPath,
 };
 for (const name of ["__dKind", "__dTag", "__dNs", "__dParent", "__dChildren", "__dConnected", "__dAttr",
   "__dAttrs", "__dSetAttr", "__dText", "__dSetText", "__dCreate", "__dCreateText", "__dInsert", "__dRemove",
   "__dClone", "__dSetInner", "__dMarkup", "__dSelect", "__dMatches", "__dLayout", "__dViewport",
-  "__dComputed", "__dMatrix", "__dGeneration", "__dMedia"]) delete G[name];
+  "__dComputed", "__dMatrix", "__dGeneration", "__dMedia", "__dPath"]) delete G[name];
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -140,10 +140,19 @@ function makeStyle(i) {
       styleWrite(i, kebab(key), value);
       return true;
     },
-    has(_, key) { return typeof key === "string"; },
+    // GSAP tweens a key the style lacks as a property of the element itself.
+    // Every property has its unprefixed name, so GSAP's prefix probes miss.
+    has(_, key) {
+      return typeof key === "string" && !DOM_ONLY.has(key) && !/^(Webkit|Moz|ms|Ms|O)[A-Z]/.test(key)
+        && !Object.prototype.hasOwnProperty.call(wrap(i), key);
+    },
     deleteProperty(_, key) { if (typeof key === "string") styleWrite(i, kebab(key), ""); return true; },
   });
 }
+const DOM_ONLY = new Set([
+  "textContent", "innerHTML", "innerText", "outerHTML", "nodeValue", "data", "value",
+  "scrollTop", "scrollLeft", "className", "id", "src", "href", "title", "currentTime", "volume",
+]);
 
 // ---- computed style ----
 const PLAIN = /^-?[\d.]+(e-?\d+)?(px|deg|rad|turn|s|ms)?$|^[a-z-]+$|^#[0-9a-f]+$|^(rgb|rgba|hsl|hsla)\(/i;
@@ -154,6 +163,12 @@ function computedValue(el, name) {
   if (inline !== undefined && inline !== "") {
     if (name === "transform") return N.matrix(i, inline);
     if (PLAIN.test(inline) && !/^(inherit|initial|unset|revert|auto|currentcolor)$/i.test(inline)) return inline;
+  }
+  // SVG content has no layout box: its inline style, then its presentation attribute.
+  if (el.namespaceURI === SVG_NS && el.ownerSVGElement) {
+    if (inline !== undefined && inline !== "") return inline;
+    const attr = el.getAttribute(name);
+    if (attr !== null) return attr;
   }
   layoutReady();
   return N.computed(i, name);
@@ -293,6 +308,36 @@ function pathPoints(d) {
     if (lower === "m") { sx = x; sy = y; cmd = rel ? "l" : "L"; }
   }
   return pts;
+}
+// A basic shape as path data, starting and turning where browsers do.
+function shapePath(el) {
+  const a = (n) => parseFloat(el.getAttribute(n)) || 0;
+  switch (el.localName) {
+    case "path": return el.getAttribute("d") || "";
+    case "line": return `M${a("x1")},${a("y1")}L${a("x2")},${a("y2")}`;
+    case "polyline": case "polygon": {
+      const v = (el.getAttribute("points") || "").split(/[\s,]+/).filter(Boolean).map(Number);
+      let d = "";
+      for (let k = 0; k + 1 < v.length; k += 2) d += (k ? "L" : "M") + v[k] + "," + v[k + 1];
+      return el.localName === "polygon" && d ? d + "Z" : d;
+    }
+    case "circle": case "ellipse": {
+      const cx = a("cx"), cy = a("cy");
+      const rx = el.localName === "circle" ? a("r") : a("rx"), ry = el.localName === "circle" ? a("r") : a("ry");
+      return `M${cx + rx},${cy}A${rx},${ry} 0 0 1 ${cx},${cy + ry}A${rx},${ry} 0 0 1 ${cx - rx},${cy}` +
+        `A${rx},${ry} 0 0 1 ${cx},${cy - ry}A${rx},${ry} 0 0 1 ${cx + rx},${cy}Z`;
+    }
+    case "rect": {
+      const x = a("x"), y = a("y"), w = a("width"), h = a("height");
+      let rx = el.hasAttribute("rx") ? a("rx") : a("ry"), ry = el.hasAttribute("ry") ? a("ry") : rx;
+      rx = Math.min(rx, w / 2); ry = Math.min(ry, h / 2);
+      if (!rx || !ry) return `M${x},${y}H${x + w}V${y + h}H${x}Z`;
+      return `M${x + rx},${y}H${x + w - rx}A${rx},${ry} 0 0 1 ${x + w},${y + ry}V${y + h - ry}` +
+        `A${rx},${ry} 0 0 1 ${x + w - rx},${y + h}H${x + rx}A${rx},${ry} 0 0 1 ${x},${y + h - ry}` +
+        `V${y + ry}A${rx},${ry} 0 0 1 ${x + rx},${y}Z`;
+    }
+  }
+  fail(`SVG <${el.localName}> has no path length`);
 }
 function bboxOf(el) {
   const a = (n) => parseFloat(el.getAttribute(n)) || 0;
@@ -714,8 +759,11 @@ class SVGElement extends Element {
       consolidate() { return el.getAttribute("transform") ? { matrix: svgMatrix(el.getAttribute("transform")) } : null; },
     } };
   }
-  getTotalLength() { fail("SVG path length is not supported at compile time yet"); }
-  getPointAtLength() { fail("SVG path sampling is not supported at compile time yet"); }
+  getTotalLength() { return N.path(shapePath(this)); }
+  getPointAtLength(at) {
+    const [x, y] = N.path(shapePath(this), Number(at) || 0);
+    return { x, y, matrixTransform(m) { return { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f }; } };
+  }
 }
 
 class Document extends ParentNode {

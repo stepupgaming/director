@@ -36,6 +36,9 @@ pub struct HtmlElement {
     pub paper: Option<PaperPaint>,
     time: f64,
     baseline_offset: f32,
+    /// The text a `text` track replaced, and the track text on screen.
+    own_spans: Option<Vec<director_core::element::TextSpan>>,
+    shown_text: Option<String>,
 }
 impl HtmlElement {
     pub fn new(
@@ -60,6 +63,8 @@ impl HtmlElement {
             paper: None,
             time: 0.0,
             baseline_offset: 0.0,
+            own_spans: None,
+            shown_text: None,
         }
     }
     fn ellipsizes(&self) -> bool {
@@ -273,19 +278,32 @@ impl Element for HtmlElement {
         if let Some(parts) = parts {
             self.paint.transform = parts.compose();
         }
+        let mut relayout = false;
         if let Some(content) = &mut self.content {
             if let Some(text) = content
                 .as_any_mut()
                 .downcast_mut::<director_core::node::TextNode>()
             {
-                if text.default_color.current_value != self.paint.color {
+                let recolor = text.default_color.current_value != self.paint.color;
+                if recolor {
                     text.default_color = director_core::animation::Animated::new(self.paint.color);
+                }
+                if self.paint.text != self.shown_text {
+                    let own = self.own_spans.get_or_insert_with(|| text.spans.clone());
+                    text.spans = match &self.paint.text {
+                        Some(shown) => crate::compiler::text_spans(shown, &self.paint),
+                        None => own.clone(),
+                    };
+                    self.shown_text = self.paint.text.clone();
+                    relayout = true;
+                }
+                if recolor || relayout {
                     crate::compiler::prepare_paragraph(text, &self.paint);
                 }
             }
             content.update(self.media_start + (time - self.start).max(0.0) * self.playback_rate);
         }
-        self.style != old_style
+        relayout || self.style != old_style
     }
     fn shares_3d(&self) -> bool {
         self.paint.preserve_3d

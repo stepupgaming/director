@@ -361,6 +361,8 @@ pub enum CssValue {
     Color(Rgba),
     /// CSS `transform` text.
     Transform(String),
+    /// Text content for the `text` property. It changes at each keyframe.
+    Text(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

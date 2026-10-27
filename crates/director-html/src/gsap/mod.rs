@@ -173,7 +173,7 @@ pub(crate) fn run(dom: &mut Html, options: &CompileOptions, assets: &Arc<AssetSt
     let doc = dom::Doc::new(html, prober, (options.width as f32, options.height as f32));
     let frames = (options.duration * options.fps).ceil() as usize + 1;
     let (recorded, mut doc) = dom::with_installed(doc, || execute(&scripts, frames, options.fps));
-    let series = recorded.and_then(|frames| collect(&mut doc, &frames));
+    let series = recorded.and_then(|frames| collect(&mut doc, &frames, options.fps));
     let (html, map) = dom::compact(&doc.html);
     *dom = html;
     let series = series?
@@ -283,7 +283,7 @@ fn invisible(name: &str, values: &[Option<String>]) -> bool {
 /// Turn the frame records into series, bake constant results into the
 /// document and refuse varying ones without a native track. Keys are style
 /// properties, `@name` attributes and `#text`.
-fn collect(doc: &mut dom::Doc, frames: &[String]) -> Result<HashMap<usize, Series>, String> {
+fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<HashMap<usize, Series>, String> {
     // Inline styles hold the setup state flushed when play began.
     let mut setup: HashMap<usize, Vec<(String, String)>> = HashMap::new();
     let mut series: HashMap<usize, Series> = HashMap::new();
@@ -321,6 +321,20 @@ fn collect(doc: &mut dom::Doc, frames: &[String]) -> Result<HashMap<usize, Serie
         for ((i, key), value) in &current {
             series.get_mut(i).and_then(|s| s.get_mut(key)).ok_or_else(malformed)?.push(value.clone());
         }
+    }
+
+    // A write to an element's only text node is a write to its text.
+    let mut nodes: Vec<usize> = series.keys().copied().collect();
+    nodes.sort_unstable();
+    for i in nodes {
+        let Some(owner) = doc.text_owner(i)? else { continue };
+        let mut node = series.remove(&i).ok_or_else(malformed)?;
+        let values = node.remove("#text").ok_or_else(malformed)?;
+        let entry = series.entry(owner).or_default();
+        if entry.contains_key("#text") {
+            return Err(format!("GSAP writes the text of {} twice in one frame", doc.label(owner)));
+        }
+        entry.insert("#text".into(), values);
     }
 
     // GSAP clears independent transforms and hints on every target it parses.
@@ -397,23 +411,43 @@ fn collect(doc: &mut dom::Doc, frames: &[String]) -> Result<HashMap<usize, Serie
             }
         }
         let mut kept = Series::new();
+        // Values that vary inside an SVG become SMIL on the element.
+        let in_svg = doc.svg_owner(i)?.is_some();
+        let svg_root = doc.is_svg(i)?;
+        let mut smil = Vec::new();
         for (key, values) in props {
             let first = values[0].clone();
             let constant = values.iter().all(|v| *v == first);
             if let Some(name) = key.strip_prefix('@') {
-                if !constant {
-                    return Err(format!(
-                        "GSAP animates the '{name}' attribute of {label}; attribute tracks are not native yet"
-                    ));
+                if constant {
+                    doc.write_attr(i, name, first)?;
+                } else if in_svg || (svg_root && name == "viewBox") {
+                    let (base, animate) = svg_animation(name, &values, fps)?;
+                    doc.write_attr(i, name, Some(base))?;
+                    smil.extend(animate);
+                } else {
+                    return Err(format!("GSAP animates the '{name}' attribute of {label}, which only SVG content animates"));
                 }
-                doc.write_attr(i, name, first)?;
+                continue;
+            }
+            if in_svg && !constant && key != "#text" {
+                let (base, animate) = svg_animation(&key, &values, fps)?;
+                put(&mut decls, &key, Some(base));
+                smil.extend(animate);
                 continue;
             }
             if key == "#text" {
-                if !constant {
-                    return Err(format!("GSAP animates the text of {label}; text tracks are not native yet"));
+                if in_svg && !constant {
+                    return Err(format!("GSAP animates the text of SVG {label}; SVG text keeps its markup"));
                 }
-                doc.write_text(i, first.as_deref().unwrap_or(""))?;
+                // The first frame's text becomes the element's own text.
+                let first = first.unwrap_or_default();
+                if doc.text(i)? != first {
+                    doc.write_text(i, &first)?;
+                }
+                if !constant {
+                    kept.insert(key, values);
+                }
                 continue;
             }
             if constant {
@@ -445,11 +479,197 @@ fn collect(doc: &mut dom::Doc, frames: &[String]) -> Result<HashMap<usize, Serie
             kept.insert(key, values);
         }
         doc.write_attr(i, "style", serialize(&decls))?;
+        for animate in smil {
+            doc.append_svg(i, "animate", animate)?;
+        }
         if !kept.is_empty() {
             out.insert(i, kept);
         }
     }
     Ok(out)
+}
+
+/// Element attributes in order.
+type Attrs = Vec<(String, String)>;
+
+/// Properties whose SVG values are colors.
+const SVG_COLORS: &[&str] = &["fill", "stroke", "stop-color", "flood-color", "lighting-color", "color"];
+
+/// The base value and the `<animate>` attributes that replay one value GSAP
+/// varies on an SVG element. A value that only fills in from unset needs none. Times are on the composition clock, which
+/// `director-clock` tells the SMIL compiler. Frames whose values share one
+/// numeric skeleton interpolate linearly between swing-door keys; other values
+/// change on their frames.
+fn svg_animation(
+    name: &str,
+    values: &[Option<String>],
+    fps: f64,
+) -> Result<(String, Option<Attrs>), String> {
+    let identity = (name == "transform").then(|| "matrix(1,0,0,1,0,0)".to_string());
+    let mut last = values.iter().flatten().next().cloned();
+    let mut texts = Vec::with_capacity(values.len());
+    for v in values {
+        if v.is_some() {
+            last = v.clone();
+        }
+        texts.push(match v {
+            // `0px, 9px` and `2px,7px` share one skeleton.
+            Some(v) => v.split(',').map(|p| p.split_whitespace().collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join(","),
+            None => identity.clone().or_else(|| last.clone()).unwrap_or_default(),
+        });
+    }
+    if name == "transform" {
+        for t in texts.iter_mut() {
+            if let Some(m) = svg_matrix(t) {
+                *t = format!("matrix({})", m.map(|v| short(round(v))).join(","));
+            }
+        }
+    }
+    let black = Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
+    if SVG_COLORS.contains(&name) && texts.iter().all(|t| color(t, black).is_ok()) {
+        for t in texts.iter_mut() {
+            let c = color(t, black)?;
+            let byte = |v: f32| short((v as f64 * 255.0).round());
+            *t = format!("rgba({},{},{},{})", byte(c.r), byte(c.g), byte(c.b), short(round(c.a as f64)));
+        }
+    }
+    if texts.iter().any(|t| t.contains(';')) {
+        return Err(format!("GSAP sets SVG '{name}' to a value with ';'"));
+    }
+    let base = texts[0].clone();
+    if texts.iter().all(|t| *t == base) {
+        return Ok((base, None));
+    }
+    let lists: Vec<(String, Vec<f64>)> = texts.iter().map(|t| skeleton(t)).collect();
+    let linear = !lists[0].1.is_empty() && lists.iter().all(|(s, _)| *s == lists[0].0);
+    let mut attrs = vec![("attributeName".to_string(), name.to_string())];
+    let (frames, span) = if linear {
+        let samples: Vec<&[f64]> = lists.iter().map(|(_, n)| n.as_slice()).collect();
+        let frames = keep(&samples, 5e-4);
+        let span = frames[frames.len() - 1] - frames[0];
+        (frames, span)
+    } else {
+        let frames: Vec<usize> = (1..texts.len()).filter(|&f| texts[f] != texts[f - 1]).collect();
+        let span = (texts.len() - 1 - frames[0]).max(1);
+        attrs.push(("calcMode".into(), "discrete".into()));
+        (frames, span)
+    };
+    let start = frames[0];
+    let values: Vec<&str> = frames.iter().map(|&k| texts[k].as_str()).collect();
+    let times: Vec<String> = frames.iter().map(|&k| short(round((k - start) as f64 / span as f64))).collect();
+    attrs.push(("values".into(), values.join(";")));
+    attrs.push(("keyTimes".into(), times.join(";")));
+    attrs.push(("begin".into(), format!("{}s", short(start as f64 / fps))));
+    attrs.push(("dur".into(), format!("{}s", short(span as f64 / fps))));
+    attrs.push(("fill".into(), "freeze".into()));
+    attrs.push(("director-clock".into(), "composition".into()));
+    Ok((base, Some(attrs)))
+}
+
+/// Marks a number's place in a [`skeleton`].
+pub(crate) const SLOT: char = '\u{1}';
+
+/// `text` with each number replaced by [`SLOT`], and the numbers in order. Digits
+/// inside a word such as `grad1` stay text; a one-letter path command does not.
+pub(crate) fn skeleton(text: &str) -> (String, Vec<f64>) {
+    let b = text.as_bytes();
+    let (mut out, mut nums, mut i) = (String::new(), Vec::new(), 0);
+    let digit = |j: usize| b.get(j).is_some_and(u8::is_ascii_digit);
+    let alpha = |j: Option<usize>| j.and_then(|j| b.get(j)).is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_');
+    while i < b.len() {
+        let c = b[i];
+        let sign = matches!(c, b'-' | b'+') && (digit(i + 1) || (b.get(i + 1) == Some(&b'.') && digit(i + 2)));
+        let starts = c.is_ascii_digit() || (c == b'.' && digit(i + 1)) || sign;
+        let in_word = alpha(i.checked_sub(1)) && alpha(i.checked_sub(2));
+        if !starts || in_word {
+            let end = i + text[i..].chars().next().map_or(1, char::len_utf8);
+            out.push_str(&text[i..end]);
+            i = end;
+            continue;
+        }
+        let mut j = i + usize::from(sign);
+        while digit(j) {
+            j += 1;
+        }
+        if b.get(j) == Some(&b'.') && digit(j + 1) {
+            j += 1;
+            while digit(j) {
+                j += 1;
+            }
+        }
+        if matches!(b.get(j), Some(b'e' | b'E')) {
+            let k = j + 1 + usize::from(matches!(b.get(j + 1), Some(b'-' | b'+')));
+            if digit(k) {
+                j = k;
+                while digit(j) {
+                    j += 1;
+                }
+            }
+        }
+        match text[i..j].parse() {
+            Ok(n) => {
+                nums.push(n);
+                out.push(SLOT);
+            }
+            Err(_) => out.push_str(&text[i..j]),
+        }
+        i = j;
+    }
+    (out, nums)
+}
+
+/// A number as short decimal text.
+fn short(v: f64) -> String {
+    let s = format!("{v:.6}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" { "0".into() } else { s.into() }
+}
+
+/// An SVG `transform` list as its matrix `[a, b, c, d, e, f]`.
+fn svg_matrix(text: &str) -> Option<[f64; 6]> {
+    let mul = |a: [f64; 6], b: [f64; 6]| {
+        [
+            a[0] * b[0] + a[2] * b[1],
+            a[1] * b[0] + a[3] * b[1],
+            a[0] * b[2] + a[2] * b[3],
+            a[1] * b[2] + a[3] * b[3],
+            a[0] * b[4] + a[2] * b[5] + a[4],
+            a[1] * b[4] + a[3] * b[5] + a[5],
+        ]
+    };
+    let mut m = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let mut rest = text.trim();
+    while !rest.is_empty() {
+        let open = rest.find('(')?;
+        let close = rest.find(')')?;
+        let name = rest[..open].trim();
+        let v: Vec<f64> = rest[open + 1..close]
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse().ok())
+            .collect::<Option<_>>()?;
+        let y = v.get(1).copied();
+        let t = match (name, v.len()) {
+            ("matrix", 6) => [v[0], v[1], v[2], v[3], v[4], v[5]],
+            ("translate", 1 | 2) => [1.0, 0.0, 0.0, 1.0, v[0], y.unwrap_or(0.0)],
+            ("scale", 1 | 2) => [v[0], 0.0, 0.0, y.unwrap_or(v[0]), 0.0, 0.0],
+            ("rotate", 1 | 3) => {
+                let (s, c) = v[0].to_radians().sin_cos();
+                let r = [c, s, -s, c, 0.0, 0.0];
+                if v.len() == 3 {
+                    mul(mul([1.0, 0.0, 0.0, 1.0, v[1], v[2]], r), [1.0, 0.0, 0.0, 1.0, -v[1], -v[2]])
+                } else {
+                    r
+                }
+            }
+            ("skewX", 1) => [1.0, 0.0, v[0].to_radians().tan(), 1.0, 0.0, 0.0],
+            ("skewY", 1) => [1.0, v[0].to_radians().tan(), 0.0, 1.0, 0.0, 0.0],
+            _ => return None,
+        };
+        m = mul(m, t);
+        rest = rest[close + 1..].trim_start_matches(|c: char| c == ',' || c.is_whitespace());
+    }
+    Some(m)
 }
 
 /// A channel value: a number in the track unit, or straight RGBA in 0..1.
@@ -479,6 +699,11 @@ impl Val {
                 round(a)
             )),
         }
+    }
+}
+impl AsRef<[f64]> for Val {
+    fn as_ref(&self) -> &[f64] {
+        self.dims()
     }
 }
 fn round(v: f64) -> f64 {
@@ -539,9 +764,9 @@ fn tolerance(channel: &str) -> f64 {
 
 /// The samples a piecewise-linear line through them keeps, each within
 /// `eps` of the line on every dimension (swing door from each anchor).
-fn keep(samples: &[Val], eps: f64) -> Vec<usize> {
+fn keep<T: AsRef<[f64]> + PartialEq>(samples: &[T], eps: f64) -> Vec<usize> {
     let n = samples.len();
-    let dims = samples[0].dims().len();
+    let dims = samples[0].as_ref().len();
     let mut kept = vec![0];
     let mut anchor = 0;
     let mut lo = vec![f64::NEG_INFINITY; dims];
@@ -549,7 +774,7 @@ fn keep(samples: &[Val], eps: f64) -> Vec<usize> {
     let mut j = 1;
     while j < n {
         let dt = (j - anchor) as f64;
-        let (a, b) = (samples[anchor].dims(), samples[j].dims());
+        let (a, b) = (samples[anchor].as_ref(), samples[j].as_ref());
         let fits = (0..dims).all(|d| {
             let slope = (b[d] - a[d]) / dt;
             slope >= lo[d] - 1e-12 && slope <= hi[d] + 1e-12
@@ -636,7 +861,12 @@ pub(crate) fn tracks(
     fps: f64,
 ) -> Result<Vec<TimelineTrack>, String> {
     let mut channels: Vec<(&str, Vec<Val>)> = Vec::new();
+    let mut out = Vec::new();
     for (property, values) in series {
+        if property == "#text" {
+            out.push(text_track(values, target, fps));
+            continue;
+        }
         if property == "transform" {
             let parts = values
                 .iter()
@@ -663,7 +893,6 @@ pub(crate) fn tracks(
             .collect::<Result<Vec<_>, _>>()?;
         channels.push((channel, samples));
     }
-    let mut out = Vec::new();
     for (channel, samples) in channels {
         let eps = tolerance(channel);
         let base = base(channel)?;
@@ -688,6 +917,25 @@ pub(crate) fn tracks(
         });
     }
     Ok(out)
+}
+
+/// A `text` track keyed on each frame whose text differs from the frame
+/// before. The element shows its own text, the first frame's, until then.
+fn text_track(values: &[Option<String>], target: &str, fps: f64) -> TimelineTrack {
+    let text = |f: usize| values[f].clone().unwrap_or_default();
+    let keyframes = (1..values.len())
+        .filter(|&f| text(f) != text(f - 1))
+        .map(|f| TimelineKeyframe {
+            time: f as f64 / fps,
+            value: TimelineValue::Text(text(f)),
+            ease: None,
+        })
+        .collect();
+    TimelineTrack {
+        target: target.to_string(),
+        property: "text".into(),
+        keyframes,
+    }
 }
 
 #[cfg(test)]

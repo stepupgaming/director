@@ -258,8 +258,8 @@ fn page_scripts_fail_with_context() {
         (page("setTimeout(() => {}, 100)"), "setTimeout of 100 ms"),
         (page("fetch('data.json')"), "fetch is not available"),
         (
-            format!("<div data-composition-id='main'><svg><path id='p' d='M0 0L9 9'/></svg></div>{GSAP}<script>document.querySelector('#p').getTotalLength()</script>"),
-            "SVG path length",
+            format!("<div data-composition-id='main'><svg><path id='p' d='Q'/></svg></div>{GSAP}<script>document.querySelector('#p').getTotalLength()</script>"),
+            "SVG path data 'Q' does not parse",
         ),
         ("<div></div><script type='module'>gsap</script>".into(), "module scripts"),
         ("<div></div><script src='https://example.com/app.js'></script>".into(), "must be downloaded"),
@@ -402,4 +402,145 @@ fn boa_reads_left_operands_before_the_right_assigns() {
     // copies the left local first, matching Node.
     let source = "<div data-composition-id='main'></div><script>        function a() { let k = -1; return k < (k = 5); } function c() { var k = 3; return k - (k = 5); }         function e() { var k = 3; return k + k++; } function g() { var k = 3; return k === (k = 5); }         function i() { var k = 3; k += (k = 5); return k; } function j() { var k = 3; return k * (k++, k); }         function l() { let k = -1, n = 0; while (k < (k = n++) && n < 4) {} return n; }         throw new Error(JSON.stringify([a(), c(), e(), g(), i(), j(), l()]));</script>";
     assert!(refused(source).contains("[true,-2,6,false,8,12,4]"));
+}
+
+fn text_at(t: &TimelineTrack, time: f64) -> Option<String> {
+    let i = t.keyframes.partition_point(|k| k.time <= time);
+    (i > 0).then(|| match &t.keyframes[i - 1].value {
+        TimelineValue::Text(s) => s.clone(),
+        TimelineValue::Number(n) => n.to_string(),
+    })
+}
+
+/// Columns of `p` with dark ink in rows 30..60.
+fn ink_columns(p: &[u8], width: i32) -> usize {
+    (0..width)
+        .filter(|&x| (30..60).any(|y| pixel(p, width, x, y)[0] < 128))
+        .count()
+}
+
+fn counter(script: &str) -> CompiledHtml {
+    let source = format!(
+        "<style>body{{margin:0;background:white}}#n{{position:absolute;left:0;top:30px;font-size:20px;color:black}}</style>\
+         <div data-composition-id='main' style='background:white' data-width='96' data-height='64' data-duration='2'><div id='n'>0</div></div>\
+         {GSAP}<script>{script}</script>"
+    );
+    compile(&source, opts()).unwrap_or_else(|e| panic!("{script}: {e}"))
+}
+
+#[test]
+fn text_content_snaps_into_a_text_track() {
+    let mut c = counter("gsap.to('#n', {textContent: 100, snap: {textContent: 1}, duration: 1, ease: 'none'})");
+    let t = track(&c, "n", "text");
+    assert_eq!(text_at(t, 0.0), None);
+    assert_eq!(text_at(t, 0.5).as_deref(), Some("50"));
+    assert_eq!(text_at(t, 1.5).as_deref(), Some("100"));
+    assert!(t.keyframes.iter().all(|k| matches!(&k.value, TimelineValue::Text(s) if s.parse::<u32>().is_ok())));
+    let w = c.director.width;
+    let start = ink_columns(&frame(&mut c, 0.0), w);
+    let end = ink_columns(&frame(&mut c, 1.5), w);
+    assert!(start > 0 && end > start * 2, "{start} {end}");
+    // The scene document keeps the text channel.
+    let doc = export_scene(&c.director).unwrap();
+    let text = doc
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.body {
+            NodeBody::Html(html) => Some(html),
+            _ => None,
+        })
+        .flat_map(|h| &h.animations)
+        .flat_map(|a| &a.channels)
+        .any(|c| c.property == "text");
+    assert!(text);
+}
+
+#[test]
+fn text_node_writes_and_empty_boxes_take_text() {
+    let c = counter(
+        "const n = document.querySelector('#n'); \
+         gsap.to({v: 0}, {v: 3, duration: 1, ease: 'none', onUpdate() { n.firstChild.nodeValue = 'x' + Math.round(this.targets()[0].v); }})",
+    );
+    let t = track(&c, "n", "text");
+    assert_eq!(text_at(t, 0.9).as_deref(), Some("x3"));
+    let mut c = counter(
+        "const n = document.querySelector('#n'); n.textContent = ''; \
+         gsap.to(n, {textContent: 9, snap: {textContent: 1}, duration: 1, ease: 'none'})",
+    );
+    let w = c.director.width;
+    assert_eq!(ink_columns(&frame(&mut c, 0.0), w), 0);
+    assert!(ink_columns(&frame(&mut c, 1.5), w) > 0);
+}
+
+/// A white 64x64 page holding `svg` in a 64-unit viewBox at the origin.
+fn svg_page(svg_attrs: &str, svg: &str, scripts: &str) -> CompiledHtml {
+    let source = format!(
+        "<style>body{{margin:0;background:white}}</style>\
+         <div data-composition-id='main' style='background:white' data-width='64' data-height='64' data-duration='2'>\
+         <svg {svg_attrs} width='64' height='64' viewBox='0 0 64 64' style='position:absolute;left:0;top:0'>{svg}</svg></div>\
+         {GSAP}{scripts}"
+    );
+    compile(&source, opts()).unwrap_or_else(|e| panic!("{scripts}: {e}"))
+}
+
+fn blue(p: [u8; 4]) -> bool {
+    p[2] > 200 && p[0] < 80 && p[1] < 80
+}
+
+fn dark(p: [u8; 4]) -> bool {
+    p[0] < 80 && p[1] < 80 && p[2] < 80
+}
+
+const DOT: &str = "<circle id='c' cx='10' cy='32' r='6' fill='blue'/>";
+
+#[test]
+fn svg_attributes_play_as_smil() {
+    let mut c = svg_page("", DOT, "<script>gsap.to('#c', {attr: {cx: 50}, duration: 1, ease: 'none'})</script>");
+    let at = |c: &mut CompiledHtml, t: f64, x: i32| blue(pixel(&frame(c, t), 64, x, 32));
+    assert!(at(&mut c, 0.0, 10) && !at(&mut c, 0.0, 30));
+    assert!(at(&mut c, 0.5, 30) && !at(&mut c, 0.5, 10));
+    assert!(at(&mut c, 1.5, 50) && !at(&mut c, 1.5, 30));
+    // The svg starts half a second in, and the tween keeps composition time.
+    let mut c = svg_page("data-start='0.5'", DOT, "<script>gsap.to('#c', {attr: {cx: 50}, duration: 1, ease: 'none'})</script>");
+    assert!(at(&mut c, 0.75, 40) && !at(&mut c, 0.75, 20));
+}
+
+#[test]
+fn svg_transforms_and_fills_play_as_smil() {
+    let mut c = svg_page(
+        "",
+        "<rect id='r' x='0' y='24' width='16' height='16' fill='blue'/>",
+        "<script>gsap.to('#r', {x: 40, rotation: 90, transformOrigin: '50% 50%', fill: 'rgb(255,0,0)', duration: 1, ease: 'none'})</script>",
+    );
+    let p = frame(&mut c, 0.0);
+    assert!(blue(pixel(&p, 64, 8, 32)));
+    let p = frame(&mut c, 1.5);
+    assert!(close(pixel(&p, 64, 48, 32), [255, 0, 0, 255]), "{:?}", pixel(&p, 64, 48, 32));
+    assert!(close(pixel(&p, 64, 8, 32), [255, 255, 255, 255]));
+    // Halfway the color is a mix and the square has turned 45 degrees about its center.
+    let p = frame(&mut c, 0.5);
+    let mid = pixel(&p, 64, 28, 32);
+    assert!(mid[0] > 80 && mid[2] > 80, "{mid:?}");
+    assert!(pixel(&p, 64, 28, 23)[1] < 200, "the turned corner reaches up");
+}
+
+#[test]
+fn draw_svg_and_path_geometry() {
+    let draw = "<script src='https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/DrawSVGPlugin.min.js'></script>\
+        <script>gsap.registerPlugin(DrawSVGPlugin); gsap.fromTo('#p', {drawSVG: '0%'}, {drawSVG: '100%', duration: 1, ease: 'none'})</script>";
+    let mut c = svg_page("", "<path id='p' d='M0 32H64' stroke='black' stroke-width='8' fill='none'/>", draw);
+    let at = |c: &mut CompiledHtml, t: f64, x: i32| dark(pixel(&frame(c, t), 64, x, 32));
+    assert!(!at(&mut c, 0.0, 16));
+    assert!(at(&mut c, 0.5, 16) && !at(&mut c, 0.5, 48));
+    assert!(at(&mut c, 1.5, 48));
+    // Path points follow the curve, and a circle's length is its circumference.
+    let mut c = svg_page(
+        "",
+        &format!("<path id='p' d='M0 0C0 64 64 64 64 0'/>{DOT}"),
+        "<script>const p = document.querySelector('#p'); const pt = p.getPointAtLength(p.getTotalLength() / 2); \
+         gsap.set('#c', {attr: {cx: pt.x, cy: pt.y}}); \
+         if (Math.abs(document.querySelector('#c').getTotalLength() - 12 * Math.PI) > 0.05) throw new Error('circle length');</script>",
+    );
+    let p = frame(&mut c, 0.0);
+    assert!(blue(pixel(&p, 64, 32, 48)), "{:?}", pixel(&p, 64, 32, 48));
 }

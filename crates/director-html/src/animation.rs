@@ -93,6 +93,8 @@ enum Value {
     Scalar(f32),
     Color(Color),
     Transform(TransformList),
+    /// Discrete text content. A segment holds its left value.
+    Text(String),
 }
 #[derive(Debug, Clone)]
 struct Point {
@@ -124,6 +126,7 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
         ),
         "width" | "height" | "left" | "top" | "border-top-left-radius" => Value::Scalar(px(s, m)?),
         name if is_component(name) => Value::Scalar(component(name, s)?),
+        "text" => Value::Text(s.to_string()),
         _ => return Err(format!("unsupported animated property '{name}'")),
     })
 }
@@ -355,7 +358,8 @@ pub fn compile(
 }
 
 /// One timeline track as a single-iteration animation that holds its first
-/// value before the first keyframe and its last value after the last.
+/// value before the first keyframe and its last value after the last. A
+/// `text` track shows the element's own text before its first keyframe.
 pub(crate) fn from_track(
     track: &crate::timeline::TimelineTrack,
     paint: &PaintStyle,
@@ -377,6 +381,7 @@ pub(crate) fn from_track(
                 "opacity" => n.to_string(),
                 "width" | "height" | "left" | "top" | "border-top-left-radius" => format!("{n}px"),
                 name if is_component(name) => n.to_string(),
+                "text" => n.to_string(),
                 "color" | "background-color" | "transform" => {
                     return Err(format!("timeline '{property}' takes CSS text"))
                 }
@@ -406,7 +411,8 @@ pub(crate) fn from_track(
         duration,
         count: 1.0,
         direction: "normal".into(),
-        fill: "both".into(),
+        // Before its first key a text track leaves the element's own text.
+        fill: if property == "text" { "forwards" } else { "both" }.into(),
         channels: vec![Channel {
             name: track.property.clone(),
             points,
@@ -543,6 +549,7 @@ fn interpolate(a: &Value, b: &Value, t: f32) -> Result<Value, String> {
             }
             Value::Transform(TransformList(list))
         }
+        (Value::Text(a), Value::Text(b)) => Value::Text(if t < 1.0 { a } else { b }.clone()),
         _ => return Err("animation value type mismatch".into()),
     })
 }
@@ -616,6 +623,7 @@ impl Animation {
                     paint.box_node.bg_color = Some(director_core::animation::Animated::new(v))
                 }
                 ("transform", Value::Transform(v)) => paint.transform = v,
+                ("text", Value::Text(v)) => paint.text = Some(v),
                 ("border-top-left-radius", Value::Scalar(v)) => {
                     paint.corners = [(
                         taffy::LengthPercentage::length(v.max(0.0)),
@@ -662,6 +670,7 @@ impl Animation {
                                     list.to_css_string(Default::default())
                                         .map_err(|e| ExportError::Unrepresentable(format!("animation transform: {e}")))?,
                                 ),
+                                Value::Text(text) => doc::CssValue::Text(text.clone()),
                             },
                             timing: match &point.ease {
                                 Ease::Curve(easing) => doc::CssTiming::Curve(export_easing(easing)),
@@ -711,6 +720,7 @@ impl Animation {
                                     TransformList::parse_string(css)
                                         .map_err(|e| ImportError::Invalid(format!("animation transform `{css}`: {e:?}")))?,
                                 ),
+                                doc::CssValue::Text(text) => Value::Text(text.clone()),
                             },
                             ease: match &keyframe.timing {
                                 doc::CssTiming::Curve(easing) => Ease::Curve(import_easing(easing)),

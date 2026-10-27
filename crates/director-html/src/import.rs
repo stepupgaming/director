@@ -216,6 +216,7 @@ fn paint(p: &doc::HtmlPaint, cx: &ImportContext) -> Result<PaintStyle, ImportErr
         text_stroke_width: p.text_stroke_width,
         text_stroke_color: p.text_stroke_color.map(color),
         stroke_over_fill: p.stroke_over_fill,
+        text: None,
     })
 }
 

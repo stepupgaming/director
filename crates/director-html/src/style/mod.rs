@@ -172,6 +172,8 @@ pub struct PaintStyle {
     pub text_stroke_color: Option<Color>,
     /// Text `paint-order`. `true` paints the stroke over the fill, the CSS `normal` order.
     pub stroke_over_fill: bool,
+    /// Text a `text` track shows in place of the element's own text. `None` keeps it.
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -935,6 +937,7 @@ pub fn translate(
         text_stroke_width: 0.0,
         text_stroke_color: None,
         stroke_over_fill: true,
+        text: None,
     };
     if let Some(s) = values.get("font-size") {
         match px(s, m) {
