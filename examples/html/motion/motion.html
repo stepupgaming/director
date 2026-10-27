@@ -1,330 +1,986 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><style>
-  /* Director motion-graphics showcase. One HTML file, no browser at render time.
-     Bars are 1.904 s (4 beats of assets/music.wav, ~126 BPM). Animation delays are absolute reel times. */
+  /* Director showcase reel. One HTML file, no browser at render time. build.py fills the
+     {{...}} blocks and writes motion.html. Bars are 1.904 s (4 beats of assets/music.wav,
+     ~126 BPM). Every time below, in CSS, SMIL and the GSAP timeline, is absolute reel time. */
+  @font-face { font-family:"Archivo Expanded"; src:url("../../assets/fonts/Archivo-ExpandedBlack.ttf"); font-weight:900; }
+  @font-face { font-family:"Archivo Expanded"; src:url("../../assets/fonts/Archivo-ExpandedBold.ttf"); font-weight:700; }
+  @font-face { font-family:"Archivo Condensed"; src:url("../../assets/fonts/Archivo-CondensedBlack.ttf"); font-weight:900; }
   @font-face { font-family:"Instrument Serif"; src:url("../../assets/fonts/InstrumentSerif-Italic.ttf"); font-weight:400; font-style:italic; }
   @font-face { font-family:"JetBrains Mono"; src:url("../../assets/fonts/JetBrainsMono-Regular.ttf"); font-weight:400; }
   html, body { margin:0; background:#0b0b0d; }
   * { box-sizing:border-box; margin:0; padding:0; }
   #reel { position:relative; width:1920px; height:1080px; overflow:hidden; background:#0b0b0d; font-family:Inter; color:#f2eee6; }
   .scene { position:absolute; left:0; top:0; width:1920px; height:1080px; overflow:hidden; background:#0b0b0d; }
+  .full { position:absolute; left:0; top:0; width:1920px; height:1080px; }
   .paper { background:#f2eee6; color:#141311; }
-  .blue { background:#2c46cf; }
   .serif { font-family:"Instrument Serif"; font-style:italic; font-weight:400; }
   .mono { font-family:"JetBrains Mono"; }
-
-  /* Chapter label, top left, on every scene */
-  .label { position:absolute; left:120px; top:96px; font-family:"JetBrains Mono"; font-size:30px; letter-spacing:4px; text-transform:uppercase; opacity:.7; }
-  .label-in { animation:fadein .4s ease-out both; }
-
-  /* Generic motion */
+  .xb { font-family:"Archivo Expanded"; font-weight:900; }
+  .mask { position:absolute; overflow:hidden; display:flex; }
+  .L { flex:none; }
   @keyframes fadein { from { opacity:0; } to { opacity:1; } }
   @keyframes fadeout { from { opacity:1; } to { opacity:0; } }
-  @keyframes rise { from { opacity:0; transform:translateY(140px); } to { opacity:1; transform:translateY(0px); } }
-  @keyframes drop { from { opacity:0; transform:translateY(-120px) rotate(-6deg); } to { opacity:1; transform:translateY(0px) rotate(0deg); } }
-  @keyframes pop { 0% { opacity:0; transform:scale(.4); } 70% { opacity:1; transform:scale(1.08); } 100% { opacity:1; transform:scale(1); } }
   @keyframes slideL { from { transform:translateX(-1920px); } to { transform:translateX(0px); } }
-  @keyframes slideR { from { transform:translateX(1920px); } to { transform:translateX(0px); } }
-  @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
 
-  /* ---------- A. Kinetic type (0 - 3.808) ---------- */
-  #a .stack { position:absolute; left:120px; top:250px; }
-  #a .row { display:flex; gap:36px; height:220px; overflow:hidden; }
-  #a .w { font-size:200px; line-height:220px; font-weight:800; letter-spacing:-8px; }
-  #a .w.s { font-family:"Instrument Serif"; font-style:italic; font-weight:400; letter-spacing:-4px; color:#2c46cf; }
-  #a .w1 { animation:rise .55s cubic-bezier(.2,.9,.2,1) .15s both; }
-  #a .w2 { animation:rise .55s cubic-bezier(.2,.9,.2,1) .39s both; }
-  #a .w3 { animation:rise .55s cubic-bezier(.2,.9,.2,1) .63s both; }
-  #a .w4 { animation:rise .55s cubic-bezier(.2,.9,.2,1) .87s both; }
-  #a .strike { position:absolute; left:120px; top:812px; height:150px; width:0px; background:#2c46cf; animation:grow1 .5s cubic-bezier(.7,0,.2,1) 1.9s both; }
-  @keyframes grow1 { from { width:0px; } to { width:1060px; } }
-  #a .nob { position:absolute; left:150px; top:820px; font-size:116px; line-height:134px; font-weight:800; letter-spacing:-4px; color:#f2eee6; animation:fadein .2s linear 2.15s both; }
-  #a .flash { position:absolute; left:0; top:0; width:1920px; height:1080px; background:#2c46cf; animation:wipe .45s cubic-bezier(.7,0,.3,1) 3.36s both; }
-  @keyframes wipe { from { transform:translateX(-1920px); } to { transform:translateX(0px); } }
+  /* ---------- HUD, over every chapter ---------- */
+  #hud { position:absolute; left:0; top:0; width:1920px; height:1080px; mix-blend-mode:difference; color:#f2eee6; font-family:"JetBrains Mono"; font-size:22px; letter-spacing:3px; }
+  .br { position:absolute; width:44px; height:44px; border-color:#f2eee6; border-style:solid; border-width:0px; }
+  .br.tl { left:40px; top:40px; border-left-width:3px; border-top-width:3px; }
+  .br.tr { left:1836px; top:40px; border-right-width:3px; border-top-width:3px; }
+  .br.bl { left:40px; top:996px; border-left-width:3px; border-bottom-width:3px; }
+  .br.brr { left:1836px; top:996px; border-right-width:3px; border-bottom-width:3px; }
+  .hud-id { position:absolute; left:104px; top:58px; height:28px; line-height:28px; display:flex; align-items:center; gap:14px; }
+  .hud-dot { width:14px; height:14px; border-radius:7px; background:#ff7a33; }
+  .tc { position:absolute; left:1546px; top:58px; height:28px; line-height:28px; display:flex; }
+  .col { width:13.2px; height:28px; overflow:hidden; }
+  .digits { display:flex; flex-direction:column; }
+  .digits div { height:28px; line-height:28px; }
+  /* Steps flip half a frame early, so the motion-blur shutter never straddles a flip. */
+  .f1 { animation:tc10 .333333s steps(10) -.016667s infinite; }
+  .f10 { animation:tc3 1s steps(3) -.016667s infinite; }
+  .s1 { animation:tc10 10s steps(10) -.016667s infinite; }
+  .s10 { animation:tc10 100s steps(10) -.016667s infinite; }
+  @keyframes tc10 { from { transform:translateY(0px); } to { transform:translateY(-280px); } }
+  @keyframes tc3 { from { transform:translateY(0px); } to { transform:translateY(-84px); } }
+  .chap { position:absolute; left:104px; top:1002px; width:900px; height:28px; overflow:hidden; }
+  .cr { display:flex; gap:14px; height:28px; line-height:28px; white-space:nowrap; }
+  .ct { opacity:.55; }
+  .spec { position:absolute; left:1016px; top:1002px; width:800px; height:28px; line-height:28px; text-align:right; }
+  .prog { position:absolute; left:104px; top:972px; width:1712px; height:2px; background:rgba(242,238,230,.25); }
+  #prog-fill { position:absolute; left:0px; top:0px; width:0px; height:2px; background:#f2eee6; }
+  .pm { position:absolute; top:-5px; width:2px; height:12px; background:rgba(242,238,230,.5); }
+  #playhead { position:absolute; left:-1px; top:-9px; width:4px; height:20px; background:#ff7a33; }
 
-  /* ---------- B. SVG + SMIL (3.808 - 7.616) ---------- */
-  #b .svg { position:absolute; left:0; top:0; }
-  #b .cap { position:absolute; right:120px; bottom:110px; font-size:120px; line-height:1; letter-spacing:-2px; text-align:right; }
-  #b .cap1 { animation:rise .6s cubic-bezier(.2,.9,.2,1) 5.0s both; }
+  /* ---------- A. Playhead (0 - 1.904) ---------- */
+  #a-dot { position:absolute; left:900px; top:480px; width:120px; height:120px; border-radius:60px; background:#ff7a33; }
+  .tk { position:absolute; width:2px; background:rgba(242,238,230,.6); }
+  #a-svg { position:absolute; left:0; top:0; }
 
-  /* ---------- C. Data (7.616 - 11.424) ---------- */
-  #c .chart { position:absolute; left:120px; top:230px; width:820px; height:620px; display:flex; align-items:flex-end; gap:34px; border-bottom:4px solid #141311; }
-  #c .bar { width:100px; height:0px; background:#141311; }
-  #c .bar.hi { background:#2c46cf; }
-  #c .b1 { animation:h1 .7s cubic-bezier(.2,.9,.2,1) 7.75s both; }
-  #c .b2 { animation:h2 .7s cubic-bezier(.2,.9,.2,1) 7.87s both; }
-  #c .b3 { animation:h3 .7s cubic-bezier(.2,.9,.2,1) 7.99s both; }
-  #c .b4 { animation:h4 .7s cubic-bezier(.2,.9,.2,1) 8.11s both; }
-  #c .b5 { animation:h5 .7s cubic-bezier(.2,.9,.2,1) 8.23s both; }
-  #c .b6 { animation:h6 .7s cubic-bezier(.2,.9,.2,1) 8.35s both; }
-  @keyframes h1 { from { height:0px; } to { height:180px; } }
-  @keyframes h2 { from { height:0px; } to { height:290px; } }
-  @keyframes h3 { from { height:0px; } to { height:240px; } }
-  @keyframes h4 { from { height:0px; } to { height:390px; } }
-  @keyframes h5 { from { height:0px; } to { height:460px; } }
-  @keyframes h6 { from { height:0px; } to { height:600px; } }
+  /* ---------- B. Kinetic type (1.904 - 5.712) ---------- */
+  #b-orange { background:#ff7a33; }
+  .b-code { position:absolute; left:128px; top:236px; font-size:34px; color:#141311; }
+  .b-html { left:120px; top:300px; height:330px; }
+  .b-html .L { font-family:"Archivo Expanded"; font-weight:900; font-size:300px; line-height:330px; color:#141311; }
+  #b-in { position:absolute; left:1330px; top:286px; font-size:330px; line-height:330px; color:#141311; }
+  .b-spec { position:absolute; left:128px; top:660px; font-size:28px; line-height:44px; color:#141311; }
+  #b-blue { position:absolute; left:0px; top:1080px; width:1920px; height:1080px; background:#2c46cf; }
+  .echo { position:absolute; left:0; top:380px; width:1920px; text-align:center; font-family:"Archivo Expanded"; font-weight:900; font-size:300px; line-height:330px; color:transparent; -webkit-text-stroke:3px #f2eee6; opacity:0; }
+  .b-motion { left:0; top:380px; width:1920px; height:330px; justify-content:center; }
+  .b-motion .L { font-family:"Archivo Expanded"; font-weight:900; font-size:300px; line-height:330px; color:#f2eee6; }
+  #b-out { position:absolute; left:1320px; top:650px; font-size:260px; line-height:280px; color:#ff7a33; }
 
-  #c .vs { position:absolute; left:1060px; top:250px; width:740px; }
-  #c .vs-x { position:absolute; left:1600px; top:860px; font-size:40px; font-weight:700; color:#2c46cf; animation:fadein .3s linear 10.6s both; }
-  #c .vs-t { font-family:"JetBrains Mono"; font-size:30px; letter-spacing:3px; text-transform:uppercase; opacity:.7; animation:fadein .4s ease-out 8.6s both; }
-  #c .row { margin-top:44px; }
-  #c .name { font-size:44px; font-weight:700; }
-  #c .track { margin-top:14px; height:56px; width:740px; background:rgba(20,19,17,.1); }
-  #c .fill { height:56px; width:0px; }
-  #c .f-d { background:#2c46cf; animation:wd .5s cubic-bezier(.2,.9,.2,1) 9.0s both; }
-  #c .f-h { background:#141311; animation:wh 1.6s cubic-bezier(.4,0,.2,1) 9.0s both; }
-  @keyframes wd { from { width:0px; } to { width:165px; } }
-  @keyframes wh { from { width:0px; } to { width:740px; } }
-  #c .t { font-family:"JetBrains Mono"; font-size:34px; margin-top:12px; }
-  #c .t-d { animation:fadein .2s linear 9.5s both; }
-  #c .t-h { animation:fadein .2s linear 10.6s both; }
-  #c .big { position:absolute; left:1060px; top:730px; display:flex; align-items:flex-start; height:200px; }
-  #c .odo { height:200px; overflow:hidden; }
-  #c .digits { font-size:170px; line-height:200px; font-weight:800; letter-spacing:-6px; }
-  #c .d1 { animation:roll1 1.2s cubic-bezier(.2,.8,.2,1) 9.6s both; }
-  #c .d2 { animation:roll2 1.4s cubic-bezier(.2,.8,.2,1) 9.6s both; }
-  @keyframes roll1 { from { transform:translateY(0px); } to { transform:translateY(-800px); } }
-  @keyframes roll2 { from { transform:translateY(0px); } to { transform:translateY(-1000px); } }
-  #c .dot, #c .x { font-size:170px; line-height:200px; font-weight:800; }
-  #c .x { color:#2c46cf; }
-  #c .note { position:absolute; left:1060px; top:940px; font-family:"JetBrains Mono"; font-size:24px; opacity:.6; animation:fadein .4s linear 10.4s both; }
+  /* ---------- C. Pipeline (5.712 - 7.616) ---------- */
+  .c-head { left:0; top:200px; width:1920px; height:170px; justify-content:center; }
+  .c-head div { font-size:130px; line-height:170px; }
+  .chip { position:absolute; top:474px; width:320px; height:132px; border-radius:66px; border:3px solid rgba(242,238,230,.5); overflow:hidden; }
+  .chip-fill { position:absolute; left:0px; top:0px; width:0px; height:132px; border-radius:66px; background:#2c46cf; }
+  .chip-t { position:absolute; left:0; top:28px; width:314px; text-align:center; font-family:"Archivo Expanded"; font-weight:900; font-size:40px; line-height:48px; }
+  .chip-s { position:absolute; left:0; top:78px; width:314px; text-align:center; font-family:"JetBrains Mono"; font-size:22px; opacity:.7; }
+  #c1 { left:110px; } #c2 { left:570px; } #c3 { left:1030px; } #c4 { left:1490px; }
+  #c1 .chip-fill { width:320px; }
+  .wire { position:absolute; top:539px; width:140px; height:2px; background:rgba(242,238,230,.6); transform-origin:0px 1px; }
+  #c-dot { position:absolute; left:252px; top:420px; width:36px; height:36px; border-radius:18px; background:#ff7a33; }
+  .c-foot { position:absolute; left:0; top:690px; width:1920px; text-align:center; font-size:26px; letter-spacing:2px; opacity:.75; }
 
-  /* ---------- D. 3D (11.424 - 15.232) ---------- */
-  #d .stage { position:absolute; left:0; top:0; width:1920px; height:1080px; perspective:1800px; perspective-origin:50% 45%; }
-  #d .ring { position:absolute; left:760px; top:300px; width:400px; height:520px; transform-style:preserve-3d; animation:orbit 3.8s cubic-bezier(.45,0,.2,1) 11.424s both; }
-  @keyframes orbit { from { transform:translateZ(-700px) rotateX(-8deg) rotateY(0deg); } to { transform:translateZ(-700px) rotateX(-8deg) rotateY(-270deg); } }
-  #d .card { backface-visibility:hidden; position:absolute; left:0; top:0; width:400px; height:520px; border-radius:28px; display:flex; align-items:flex-end; padding:34px; font-size:120px; font-weight:800; color:#fff; letter-spacing:-4px; }
-  #d .c0 { transform:rotateY(0deg) translateZ(640px); background:conic-gradient(from 210deg, #2c46cf, #7d8cff, #2c46cf); }
-  #d .c1 { transform:rotateY(45deg) translateZ(640px); background:linear-gradient(160deg, #ff7a33, #b3261e); }
-  #d .c2 { transform:rotateY(90deg) translateZ(640px); background:radial-gradient(circle at 30% 20%, #f2eee6, #9a9384); color:#141311; }
-  #d .c3 { transform:rotateY(135deg) translateZ(640px); background:repeating-linear-gradient(45deg, #141311 0px, #141311 24px, #2c46cf 24px, #2c46cf 48px); }
-  #d .c4 { transform:rotateY(180deg) translateZ(640px); background:conic-gradient(#ff7a33, #f2eee6, #2c46cf, #ff7a33); }
-  #d .c5 { transform:rotateY(225deg) translateZ(640px); background:linear-gradient(20deg, #0b0b0d, #3a3f55); }
-  #d .c6 { transform:rotateY(270deg) translateZ(640px); background:radial-gradient(circle at 70% 80%, #7d8cff, #141311); }
-  #d .c7 { transform:rotateY(315deg) translateZ(640px); background:linear-gradient(200deg, #f2eee6, #ff7a33); color:#141311; }
-  #d .cap { position:absolute; left:120px; bottom:110px; font-size:96px; line-height:1; }
-  #d .cap1 { animation:rise .6s cubic-bezier(.2,.9,.2,1) 12.2s both; }
+  /* ---------- D. Systems (7.616 - 11.424) ---------- */
+  .d { position:absolute; width:12px; height:12px; border-radius:6px; background:#f2eee6; }
+  #d-card { position:absolute; left:440px; top:446px; width:1040px; height:188px; background:#0b0b0d; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .d-big { font-family:"Archivo Expanded"; font-weight:900; font-size:64px; line-height:76px; }
+  .d-sub { font-size:56px; line-height:64px; color:#ff7a33; }
 
-  /* ---------- E. Clip, mask, blend (15.232 - 19.04) ---------- */
-  /* 1. Three skewed photo panes slam in (overflow clips, counter-skewed images). */
-  #e .pane { position:absolute; top:-80px; width:760px; height:1240px; overflow:hidden; transform:skewX(-14deg); }
-  #e .pane img { position:absolute; left:-260px; top:0px; width:1280px; height:1400px; object-fit:cover; transform:skewX(14deg); }
-  #e .p0 { left:-200px; animation:drop-in .55s cubic-bezier(.2,.9,.2,1) 15.232s both, fadeout .35s linear 16.75s both; }
-  #e .p1 { left:560px; animation:drop-in .55s cubic-bezier(.2,.9,.2,1) 15.36s both, fadeout .35s linear 16.75s both; }
-  #e .p2 { left:1320px; animation:drop-in .55s cubic-bezier(.2,.9,.2,1) 15.49s both, fadeout .35s linear 16.75s both; }
-  @keyframes drop-in { from { top:-1400px; } to { top:-80px; } }
-  #e .p1 img { animation:drift 1.6s linear 15.36s both; }
-  @keyframes drift { from { top:-160px; } to { top:0px; } }
-  /* 2. Frosted glass over the photos: backdrop blur, live. */
-  #e .glass { position:absolute; left:510px; top:330px; width:900px; height:420px; border-radius:36px; background:rgba(242,238,230,.16); border:2px solid rgba(242,238,230,.45); backdrop-filter:blur(34px);
-    display:flex; flex-direction:column; justify-content:center; padding:0 64px; animation:pop .5s cubic-bezier(.2,.9,.2,1) 15.95s both, fadeout .35s linear 16.75s both; }
-  #e .glass-k { font-family:"JetBrains Mono"; font-size:28px; letter-spacing:4px; opacity:.85; }
-  #e .glass-t { font-size:130px; font-weight:900; letter-spacing:-5px; line-height:1.05; }
-  /* 3. A masked photo bleeds in behind photo-filled type; a difference band inverts it all. */
-  #e .bleed { position:absolute; left:0; top:0; width:1920px; height:1080px; object-fit:cover; opacity:.4;
-    mask-image:linear-gradient(90deg, rgba(0,0,0,0) 20%, rgba(0,0,0,1) 85%); animation:fadein .6s linear 16.9s both; }
-  #e .fill { position:absolute; left:100px; top:250px; font-size:420px; line-height:1; font-weight:900; letter-spacing:-22px;
-    background-image:url("../reel/assets/street.jpg"); background-size:cover; background-position:center; background-clip:text; -webkit-background-clip:text; color:transparent;
-    animation:fill-in .8s cubic-bezier(.2,.9,.2,1) 16.85s both; }
-  @keyframes fill-in { from { opacity:0; transform:scale(1.25); } to { opacity:1; transform:scale(1); } }
-  #e .band { position:absolute; left:-700px; top:-100px; width:420px; height:1300px; background:#f2eee6; mix-blend-mode:difference; transform:skewX(-18deg); animation:sweep 1.1s cubic-bezier(.6,0,.3,1) 17.55s both; }
-  @keyframes sweep { from { left:-700px; } to { left:2200px; } }
-  #e .kick { position:absolute; left:126px; top:860px; font-family:"JetBrains Mono"; font-size:32px; letter-spacing:3px; animation:fadein .4s linear 17.2s both; }
-  #e .shutter { position:absolute; left:0; top:0; width:1920px; height:1080px; background:#f2eee6; animation:fadein .25s linear 18.8s both; }
+  /* ---------- E. Dimension (11.424 - 15.232) ---------- */
+  .e-glow { background:radial-gradient(circle at 50% 50%, rgba(44,70,207,.55) 0%, rgba(44,70,207,0) 55%); }
+  #e-stage { position:absolute; left:0; top:0; width:1920px; height:1080px; perspective:1500px; transform-style:preserve-3d; }
+  .e-spin { position:absolute; left:960px; top:540px; width:0px; height:0px; transform-style:preserve-3d; animation:globe 9s linear 11.424s both; }
+  @keyframes globe { from { transform:rotateX(-16deg) rotateY(0deg); } to { transform:rotateX(-16deg) rotateY(-360deg); } }
+  .e-orbit { position:absolute; left:960px; top:540px; width:0px; height:0px; transform-style:preserve-3d; animation:orbit 5s linear 11.424s both; }
+  @keyframes orbit { from { transform:rotateX(-12deg) rotateZ(-6deg) rotateY(0deg); } to { transform:rotateX(-12deg) rotateZ(-6deg) rotateY(360deg); } }
+  .mer { position:absolute; left:-300px; top:-300px; width:600px; height:600px; border-radius:300px; border:2px solid rgba(242,238,230,.3); }
+  .lat { position:absolute; border:2px dashed rgba(242,238,230,.28); }
+  .lat.eq { border:3px solid rgba(255,122,51,.8); }
+  .sd { position:absolute; left:-5px; top:-5px; width:10px; height:10px; border-radius:5px; background:#f2eee6; backface-visibility:hidden; }
+  .sd.hot { left:-8px; top:-8px; width:16px; height:16px; border-radius:8px; background:#ff7a33; }
+  .ol { position:absolute; left:-60px; top:-60px; width:120px; height:120px; text-align:center; font-family:"Archivo Expanded"; font-weight:900; font-size:96px; line-height:120px; color:#ff7a33; backface-visibility:hidden; }
+  .ol.back { color:#7d8cff; }
+  .e-head { left:120px; top:150px; height:130px; }
+  .e-head div { font-size:110px; line-height:130px; }
+  .e-foot { position:absolute; left:0; top:900px; width:1920px; text-align:center; font-size:26px; letter-spacing:3px; opacity:.75; }
+  #e-iris { position:absolute; left:960px; top:540px; width:0px; height:0px; border-radius:0px; background:#f2eee6; }
 
-  /* ---------- F. Captions (19.04 - 22.848) ---------- */
-  #f .plate { position:absolute; left:0; top:0; width:1920px; height:1080px; object-fit:cover; animation:push 3.808s linear 19.04s both; }
+  /* ---------- F. Timing (15.232 - 19.04) ---------- */
+  #f-svg { position:absolute; left:140px; top:200px; }
+  #f-dot { position:absolute; left:186px; top:686px; width:28px; height:28px; border-radius:14px; background:#ff7a33; }
+  .f-rail { position:absolute; left:765px; top:360px; width:2px; height:340px; background:rgba(20,19,17,.2); }
+  #f-val { position:absolute; left:752px; top:686px; width:28px; height:28px; border-radius:14px; background:#141311; }
+  .f-ease { position:absolute; left:200px; top:196px; width:560px; height:36px; overflow:hidden; font-size:28px; letter-spacing:1px; }
+  .f-ease div { height:36px; line-height:36px; }
+  .f-head { left:900px; top:150px; height:120px; }
+  .f-head div { font-size:100px; line-height:120px; }
+  .race { position:absolute; left:900px; width:900px; height:60px; }
+  .race-l { position:absolute; left:0; top:12px; font-size:26px; line-height:36px; }
+  .race-t { position:absolute; left:330px; top:29px; width:560px; height:2px; background:rgba(20,19,17,.25); }
+  .pill { position:absolute; left:330px; top:12px; width:64px; height:36px; border-radius:18px; background:#141311; }
+  .pill.o { background:#ff7a33; } .pill.b { background:#2c46cf; }
+  .f-foot { position:absolute; left:200px; top:860px; font-size:26px; letter-spacing:1px; opacity:.7; }
+  #f-wipe { position:absolute; left:0px; top:1080px; width:1920px; height:1080px; background:#0b0b0d; }
+
+  /* ---------- G. Layers (19.04 - 20.944) ---------- */
+  .pane { position:absolute; top:-1400px; width:760px; height:1240px; overflow:hidden; transform:skewX(-14deg); }
+  .pane img { position:absolute; left:-260px; top:0px; width:1280px; height:1400px; object-fit:cover; transform:skewX(14deg); }
+  #g0 { left:-200px; } #g1 { left:560px; } #g2 { left:1320px; }
+  #g-glass { position:absolute; left:510px; top:330px; width:900px; height:420px; border-radius:36px; background:rgba(242,238,230,.16); border:2px solid rgba(242,238,230,.45); backdrop-filter:blur(34px);
+    display:flex; flex-direction:column; justify-content:center; padding:0 64px; }
+  .glass-k { font-family:"JetBrains Mono"; font-size:26px; letter-spacing:4px; opacity:.85; }
+  .glass-t { font-family:"Archivo Expanded"; font-weight:900; font-size:104px; letter-spacing:-2px; line-height:1.15; }
+  #g-band { position:absolute; left:-700px; top:-100px; width:420px; height:1300px; background:#f2eee6; mix-blend-mode:difference; transform:skewX(-18deg); }
+
+  /* ---------- H. Captions (20.944 - 24.752) ---------- */
+  #h .plate { position:absolute; left:0; top:0; width:1920px; height:1080px; object-fit:cover; animation:push 3.808s linear 20.944s both; }
   @keyframes push { from { transform:scale(1.0); } to { transform:scale(1.09); } }
-  #f .vig { position:absolute; left:0; top:0; width:1920px; height:1080px; background:linear-gradient(180deg, rgba(11,11,13,.55) 0%, rgba(11,11,13,0) 30%, rgba(11,11,13,0) 55%, rgba(11,11,13,.8) 100%); }
-  #f .lt { position:absolute; left:120px; top:170px; display:flex; height:120px; overflow:hidden; animation:fadeout .3s linear 20.85s both; }
-  #f .lt-bar { width:14px; height:120px; background:#ff7a33; }
-  #f .lt-box { padding:14px 36px; background:rgba(20,19,17,.85); color:#f2eee6; animation:slideL .55s cubic-bezier(.2,.9,.2,1) 19.15s both; }
-  #f .lt-n { font-size:44px; font-weight:700; line-height:52px; }
-  #f .lt-r { font-family:"JetBrains Mono"; font-size:24px; letter-spacing:3px; text-transform:uppercase; opacity:.7; }
-  #f .tag { position:absolute; right:120px; top:96px; font-family:"JetBrains Mono"; font-size:26px; letter-spacing:4px; padding:8px 18px; border:2px solid rgba(242,238,230,.6); border-radius:999px; }
-  #f .tag1 { animation:fadein .3s linear 19.2s both, fadeout .2s linear 20.85s both; }
-  #f .tag2 { animation:fadein .3s linear 20.95s both; }
-  /* Style 1: social pop, one word per beat, the live word in a pill. */
-  #f .pop { position:absolute; left:0; top:640px; width:1920px; display:flex; justify-content:center; gap:22px; }
-  #f .pg1 { animation:fadeout .1s linear 19.95s both; }
-  #f .pg2 { animation:fadeout .2s linear 20.85s both; }
-  #f .pw { font-size:132px; font-weight:900; letter-spacing:-4px; text-transform:uppercase; color:#f2eee6; padding:0 22px; border-radius:22px; background-color:rgba(255,122,51,0); }
-  /* Style 2: subtitle bar with a karaoke sweep, two words per beat. */
-  #f .sub { position:absolute; left:360px; top:880px; width:1200px; height:96px; border-radius:18px; background:rgba(11,11,13,.72); display:flex; justify-content:center; align-items:center; gap:16px; animation:fadein .2s linear 20.944s both; }
-  #f .sw { font-size:50px; font-weight:700; color:rgba(242,238,230,.45); }
-  #f .p0 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 19.040s both, pw-live 0.476s linear 19.040s both; }
-  #f .p1 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 19.516s both, pw-live 0.476s linear 19.516s both; }
-  #f .p2 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 19.992s both, pw-live 0.476s linear 19.992s both; }
-  #f .p3 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 20.468s both, pw-live 0.476s linear 20.468s both; }
+  #h .vig { position:absolute; left:0; top:0; width:1920px; height:1080px; background:linear-gradient(180deg, rgba(11,11,13,.55) 0%, rgba(11,11,13,0) 30%, rgba(11,11,13,0) 55%, rgba(11,11,13,.8) 100%); }
+  #h .lt { position:absolute; left:120px; top:170px; display:flex; height:120px; overflow:hidden; animation:fadeout .3s linear 22.754s both; }
+  #h .lt-bar { width:14px; height:120px; background:#ff7a33; }
+  #h .lt-box { padding:14px 36px; background:rgba(20,19,17,.85); color:#f2eee6; animation:slideL .55s cubic-bezier(.2,.9,.2,1) 21.054s both; }
+  #h .lt-n { font-size:44px; font-weight:700; line-height:52px; }
+  #h .lt-r { font-family:"JetBrains Mono"; font-size:24px; letter-spacing:3px; text-transform:uppercase; opacity:.7; }
+  #h .tag { position:absolute; left:1450px; top:130px; width:350px; text-align:center; font-family:"JetBrains Mono"; font-size:24px; letter-spacing:4px; padding:8px 0px; border:2px solid rgba(242,238,230,.6); border-radius:999px; }
+  #h .tag1 { animation:fadein .3s linear 21.104s both, fadeout .2s linear 22.754s both; }
+  #h .tag2 { animation:fadein .3s linear 22.854s both; }
+  #h .pop { position:absolute; left:0; top:640px; width:1920px; display:flex; justify-content:center; gap:22px; }
+  #h .pg1 { animation:fadeout .1s linear 21.854s both; }
+  #h .pg2 { animation:fadeout .2s linear 22.754s both; }
+  #h .pw { font-size:132px; font-weight:900; letter-spacing:-4px; text-transform:uppercase; color:#f2eee6; padding:0 22px; border-radius:22px; background-color:rgba(255,122,51,0); }
+  #h .p0 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 20.944s both, pw-live 0.476s linear 20.944s both; }
+  #h .p1 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 21.420s both, pw-live 0.476s linear 21.420s both; }
+  #h .p2 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 21.896s both, pw-live 0.476s linear 21.896s both; }
+  #h .p3 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 22.372s both, pw-live 0.476s linear 22.372s both; }
   @keyframes pw-in { from { opacity:0; transform:translateY(40px) scale(.6); } to { opacity:1; transform:translateY(0px) scale(1); } }
   @keyframes pw-live { 0% { background-color:rgba(255,122,51,1); color:#141311; } 85% { background-color:rgba(255,122,51,1); color:#141311; } 100% { background-color:rgba(255,122,51,0); color:#f2eee6; } }
-  #f .s0 { animation:sw-on .12s linear 20.944s both; }
-  #f .s1 { animation:sw-on .12s linear 21.182s both; }
-  #f .s2 { animation:sw-on .12s linear 21.420s both; }
-  #f .s3 { animation:sw-on .12s linear 21.658s both; }
-  #f .s4 { animation:sw-on .12s linear 21.896s both; }
-  #f .s5 { animation:sw-on .12s linear 22.134s both; }
-  #f .s6 { animation:sw-on .12s linear 22.372s both; }
-  #f .s7 { animation:sw-end .12s linear 22.610s both; }
+  #h-dim { background:#0b0b0d; opacity:0; }
+  #h-sub { position:absolute; left:360px; top:880px; width:1200px; height:96px; border-radius:18px; background-color:rgba(11,11,13,.72); animation:fadein .2s linear 22.848s both; }
+  #h-words { position:absolute; left:0; top:0; width:1200px; height:96px; display:flex; justify-content:center; align-items:center; gap:16px; }
+  #h .sw { font-size:50px; font-weight:700; color:rgba(242,238,230,.45); }
+  #h .s0 { animation:sw-on .12s linear 22.848s both; }
+  #h .s1 { animation:sw-on .12s linear 23.086s both; }
+  #h .s2 { animation:sw-on .12s linear 23.324s both; }
+  #h .s3 { animation:sw-on .12s linear 23.562s both; }
+  #h .s4 { animation:sw-on .12s linear 23.800s both; }
+  #h .s5 { animation:sw-on .12s linear 24.038s both; }
+  #h .s6 { animation:sw-on .12s linear 24.276s both; }
+  #h .s7 { animation:sw-end .12s linear 24.514s both; }
   @keyframes sw-on { from { color:rgba(242,238,230,.45); } to { color:#f2eee6; } }
   @keyframes sw-end { from { color:rgba(242,238,230,.45); } to { color:#ff7a33; } }
 
-  /* ---------- G. Why Director (22.848 - 26.656) ---------- */
-  #g .grid { position:absolute; left:120px; top:200px; width:1680px; display:grid; grid-template-columns:repeat(3, 1fr); gap:28px; }
-  #g .cell { height:330px; padding:36px; background:#16161a; border:2px solid #2a2a31; display:flex; flex-direction:column; justify-content:space-between; }
-  #g .cell.hl { background:#2c46cf; border-color:#2c46cf; }
-  #g .n { font-size:120px; line-height:1; font-weight:800; letter-spacing:-5px; }
-  #g .n.s { font-family:"Instrument Serif"; font-style:italic; font-weight:400; letter-spacing:-2px; font-size:96px; }
-  #g .d { font-family:"JetBrains Mono"; font-size:28px; line-height:38px; opacity:.85; }
-  #g .g1 { animation:pop .45s cubic-bezier(.2,.9,.2,1) 22.95s both; }
-  #g .g2 { animation:pop .45s cubic-bezier(.2,.9,.2,1) 23.19s both; }
-  #g .g3 { animation:pop .45s cubic-bezier(.2,.9,.2,1) 23.43s both; }
-  #g .g4 { animation:pop .45s cubic-bezier(.2,.9,.2,1) 23.90s both; }
-  #g .g5 { animation:pop .45s cubic-bezier(.2,.9,.2,1) 24.14s both; }
-  #g .g6 { animation:pop .45s cubic-bezier(.2,.9,.2,1) 24.38s both; }
-  #g .foot { position:absolute; left:120px; top:930px; font-family:"JetBrains Mono"; font-size:26px; opacity:.55; animation:fadein .4s linear 24.8s both; }
+  /* ---------- I. Speed (24.752 - 26.656) ---------- */
+  .i-k { position:absolute; left:120px; top:180px; font-size:26px; letter-spacing:4px; opacity:.7; }
+  .i-name { position:absolute; left:120px; font-family:"Archivo Expanded"; font-weight:700; font-size:34px; line-height:44px; }
+  .i-time { position:absolute; left:1400px; width:400px; text-align:right; font-size:34px; line-height:44px; }
+  .i-track { position:absolute; left:120px; width:1680px; height:64px; border-radius:32px; background:rgba(242,238,230,.1); }
+  .i-fill { position:absolute; left:0px; top:0px; width:64px; height:64px; border-radius:32px; }
+  #i-fd { background:#2c46cf; } #i-fh { background:#8a857c; }
+  .i-big { position:absolute; left:120px; top:730px; height:190px; display:flex; }
+  .odo { height:190px; overflow:hidden; }
+  .odo-d, .i-big .ch { font-family:"Archivo Expanded"; font-weight:900; font-size:170px; line-height:190px; }
+  .odo-d div { height:190px; }
+  .i-big .x { color:#ff7a33; }
+  .i-say { position:absolute; left:860px; top:750px; font-size:72px; line-height:84px; }
+  .i-note { position:absolute; left:864px; top:850px; font-size:22px; opacity:.6; }
 
-  /* ---------- H. End (26.656 - 28.6) ---------- */
-  #h .logo { position:absolute; left:0; top:330px; width:1920px; text-align:center; font-size:260px; line-height:1; letter-spacing:-6px; animation:pop .7s cubic-bezier(.2,.9,.2,1) 26.75s both; }
-  #h .sub { position:absolute; left:0; top:640px; width:1920px; text-align:center; font-family:"JetBrains Mono"; font-size:40px; letter-spacing:10px; text-transform:uppercase; animation:fadein .5s linear 27.2s both; }
-  #h .url { position:absolute; left:0; top:740px; width:1920px; text-align:center; font-family:"JetBrains Mono"; font-size:30px; letter-spacing:2px; color:#7d8cff; animation:fadein .5s linear 27.5s both; }
-  #h .spinner { position:absolute; left:860px; top:850px; width:200px; height:200px; }
+  /* ---------- J. End (26.656 - 28.6) ---------- */
+  .j-word { left:172px; top:300px; height:250px; }
+  .j-word .L { font-family:"Archivo Expanded"; font-weight:900; font-size:220px; line-height:250px; }
+  #j-dot { position:absolute; left:1700px; top:446px; width:56px; height:56px; border-radius:28px; background:#ff7a33; }
+  .j-sub { position:absolute; left:0; top:590px; width:1920px; text-align:center; font-size:84px; line-height:100px; }
+  .j-stats { position:absolute; left:0; top:730px; width:1920px; text-align:center; font-size:26px; letter-spacing:3px; opacity:.7; }
+  .j-url { position:absolute; left:0; top:790px; width:1920px; text-align:center; font-size:32px; letter-spacing:2px; color:#7d8cff; }
 </style></head>
 <body>
-<div id="reel" data-composition-id="motion" data-width="1920" data-height="1080" data-duration="28.6">
+<div id="reel" data-composition-id="motion" data-width="1920" data-height="1080" data-fps="30" data-duration="28.6" data-motion-blur="16" data-shutter-angle="180">
   <audio src="assets/music.wav" data-start="0" data-duration="28.6"></audio>
 
-  <!-- A. Kinetic type -->
-  <div id="a" class="scene" data-start="0" data-duration="3.808">
-    <div class="label label-in">01 / Kinetic type</div>
-    <div class="stack">
-      <div class="row"><div class="w w1">Motion</div><div class="w s w2">graphics,</div></div>
-      <div class="row"><div class="w w3">rendered</div><div class="w s w4">natively.</div></div>
-    </div>
-    <div class="strike"></div>
-    <div class="nob">No browser.</div>
-    <div class="flash"></div>
-  </div>
-
-  <!-- B. SVG + SMIL -->
-  <div id="b" class="scene blue" data-start="3.808" data-duration="3.808">
-    <div class="label">02 / SVG + SMIL</div>
-    <svg class="svg" width="1920" height="1080" viewBox="0 0 1920 1080">
-      <g fill="none" stroke="#f2eee6" stroke-linecap="round">
-        <circle cx="560" cy="560" r="300" stroke-width="10" stroke-dasharray="1885" stroke-dashoffset="1885">
-          <animate attributeName="stroke-dashoffset" from="1885" to="0" begin="3.908s" dur="1.2s" fill="freeze"/>
-        </circle>
-        <circle cx="560" cy="560" r="220" stroke-width="3" stroke-opacity="0.6" stroke-dasharray="1383" stroke-dashoffset="1383">
-          <animate attributeName="stroke-dashoffset" from="1383" to="0" begin="4.158s" dur="1.2s" fill="freeze"/>
-        </circle>
-        <path d="M 120 560 C 260 300, 400 300, 560 560 S 860 820, 1000 560 S 1300 300, 1440 560 S 1700 820, 1800 560" stroke-width="8" stroke="#ff7a33" stroke-dasharray="2600" stroke-dashoffset="2600">
-          <animate attributeName="stroke-dashoffset" from="2600" to="0" begin="4.408s" dur="1.6s" fill="freeze"/>
-        </path>
-        <g stroke-width="2" stroke-opacity="0.35">
-          <line x1="120" y1="260" x2="1800" y2="260" stroke-dasharray="1680" stroke-dashoffset="1680"><animate attributeName="stroke-dashoffset" from="1680" to="0" begin="4.008s" dur="0.9s" fill="freeze"/></line>
-          <line x1="120" y1="860" x2="1800" y2="860" stroke-dasharray="1680" stroke-dashoffset="1680"><animate attributeName="stroke-dashoffset" from="1680" to="0" begin="4.208s" dur="0.9s" fill="freeze"/></line>
-          <line x1="560" y1="180" x2="560" y2="940" stroke-dasharray="760" stroke-dashoffset="760"><animate attributeName="stroke-dashoffset" from="760" to="0" begin="4.308s" dur="0.9s" fill="freeze"/></line>
+  <!-- A. Playhead: a dot springs in, becomes the timeline, then floods the frame. -->
+  <div id="a" class="scene" data-start="0" data-duration="1.904">
+    <svg id="a-svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+      <g fill="none" stroke="#f2eee6" stroke-opacity="0.5">
+        <animate attributeName="opacity" from="1" to="0" begin="0.85s" dur="0.2s" fill="freeze"/>
+        <g>
+          <animateTransform attributeName="transform" type="rotate" from="0 960 540" to="120 960 540" begin="0s" dur="1.9s" fill="freeze"/>
+          <circle cx="960" cy="540" r="130" stroke-width="3" stroke-dasharray="12 10"/>
         </g>
+        <circle cx="960" cy="540" r="210" stroke-width="2" stroke-dasharray="1320" stroke-dashoffset="1320">
+          <animate attributeName="stroke-dashoffset" from="1320" to="0" begin="0.2s" dur="0.6s" fill="freeze"/>
+        </circle>
       </g>
-      <g opacity="0">
-        <set attributeName="opacity" to="1" begin="4.808s" dur="3s" fill="freeze"/>
-        <rect x="-40" y="-40" width="80" height="80" fill="#f2eee6">
-          <animateTransform attributeName="transform" type="rotate" from="0" to="360" begin="3.808s" dur="3.8s" fill="freeze"/>
-        </rect>
-        <animateMotion path="M 120 560 L 560 260 L 1000 560 L 1440 860 L 1800 560" begin="4.808s" dur="2.4s" fill="freeze"/>
-      </g>
-      <circle cx="560" cy="560" r="0" fill="#ff7a33">
-        <animate attributeName="r" from="0" to="60" begin="5.108s" dur="0.4s" fill="freeze"/>
-      </circle>
     </svg>
-    <div class="cap serif cap1">Drawn, not<br>screenshotted.</div>
+    <div id="a-ticks">
+<div class="tk" style="left:119px;top:525px;height:30px"></div>
+<div class="tk" style="left:149px;top:533px;height:14px"></div>
+<div class="tk" style="left:179px;top:533px;height:14px"></div>
+<div class="tk" style="left:209px;top:533px;height:14px"></div>
+<div class="tk" style="left:239px;top:525px;height:30px"></div>
+<div class="tk" style="left:269px;top:533px;height:14px"></div>
+<div class="tk" style="left:299px;top:533px;height:14px"></div>
+<div class="tk" style="left:329px;top:533px;height:14px"></div>
+<div class="tk" style="left:359px;top:525px;height:30px"></div>
+<div class="tk" style="left:389px;top:533px;height:14px"></div>
+<div class="tk" style="left:419px;top:533px;height:14px"></div>
+<div class="tk" style="left:449px;top:533px;height:14px"></div>
+<div class="tk" style="left:479px;top:525px;height:30px"></div>
+<div class="tk" style="left:509px;top:533px;height:14px"></div>
+<div class="tk" style="left:539px;top:533px;height:14px"></div>
+<div class="tk" style="left:569px;top:533px;height:14px"></div>
+<div class="tk" style="left:599px;top:525px;height:30px"></div>
+<div class="tk" style="left:629px;top:533px;height:14px"></div>
+<div class="tk" style="left:659px;top:533px;height:14px"></div>
+<div class="tk" style="left:689px;top:533px;height:14px"></div>
+<div class="tk" style="left:719px;top:525px;height:30px"></div>
+<div class="tk" style="left:749px;top:533px;height:14px"></div>
+<div class="tk" style="left:779px;top:533px;height:14px"></div>
+<div class="tk" style="left:809px;top:533px;height:14px"></div>
+<div class="tk" style="left:839px;top:525px;height:30px"></div>
+<div class="tk" style="left:869px;top:533px;height:14px"></div>
+<div class="tk" style="left:899px;top:533px;height:14px"></div>
+<div class="tk" style="left:929px;top:533px;height:14px"></div>
+<div class="tk" style="left:959px;top:525px;height:30px"></div>
+<div class="tk" style="left:989px;top:533px;height:14px"></div>
+<div class="tk" style="left:1019px;top:533px;height:14px"></div>
+<div class="tk" style="left:1049px;top:533px;height:14px"></div>
+<div class="tk" style="left:1079px;top:525px;height:30px"></div>
+<div class="tk" style="left:1109px;top:533px;height:14px"></div>
+<div class="tk" style="left:1139px;top:533px;height:14px"></div>
+<div class="tk" style="left:1169px;top:533px;height:14px"></div>
+<div class="tk" style="left:1199px;top:525px;height:30px"></div>
+<div class="tk" style="left:1229px;top:533px;height:14px"></div>
+<div class="tk" style="left:1259px;top:533px;height:14px"></div>
+<div class="tk" style="left:1289px;top:533px;height:14px"></div>
+<div class="tk" style="left:1319px;top:525px;height:30px"></div>
+<div class="tk" style="left:1349px;top:533px;height:14px"></div>
+<div class="tk" style="left:1379px;top:533px;height:14px"></div>
+<div class="tk" style="left:1409px;top:533px;height:14px"></div>
+<div class="tk" style="left:1439px;top:525px;height:30px"></div>
+<div class="tk" style="left:1469px;top:533px;height:14px"></div>
+<div class="tk" style="left:1499px;top:533px;height:14px"></div>
+<div class="tk" style="left:1529px;top:533px;height:14px"></div>
+<div class="tk" style="left:1559px;top:525px;height:30px"></div>
+<div class="tk" style="left:1589px;top:533px;height:14px"></div>
+<div class="tk" style="left:1619px;top:533px;height:14px"></div>
+<div class="tk" style="left:1649px;top:533px;height:14px"></div>
+<div class="tk" style="left:1679px;top:525px;height:30px"></div>
+<div class="tk" style="left:1709px;top:533px;height:14px"></div>
+<div class="tk" style="left:1739px;top:533px;height:14px"></div>
+<div class="tk" style="left:1769px;top:533px;height:14px"></div>
+<div class="tk" style="left:1799px;top:525px;height:30px"></div>
+    </div>
+    <div id="a-dot"></div>
   </div>
 
-  <!-- C. Data -->
-  <div id="c" class="scene paper" data-start="7.616" data-duration="3.808">
-    <div class="label">03 / Data</div>
-    <div class="chart">
-      <div class="bar b1"></div><div class="bar b2"></div><div class="bar b3"></div>
-      <div class="bar b4"></div><div class="bar b5"></div><div class="bar hi b6"></div>
-    </div>
-    <div class="vs">
-      <div class="vs-t">3 s 1080p export, warm run</div>
-      <div class="row"><div class="name">Director</div><div class="track"><div class="fill f-d"></div></div><div class="t t-d">1.67 s</div></div>
-      <div class="row"><div class="name">HyperFrames</div><div class="track"><div class="fill f-h"></div></div><div class="t t-h">7.46 s</div></div>
-    </div>
-    <div class="big">
-      <div class="odo"><div class="digits d1">0<br>1<br>2<br>3<br>4</div></div>
-      <div class="dot">.</div>
-      <div class="odo"><div class="digits d2">0<br>1<br>2<br>3<br>4<br>5</div></div>
-      <div class="x">&#215;</div>
-    </div>
-    <div class="vs-x">faster</div>
-    <div class="note">Measured in the Director repo: director-html/README.md</div>
+  <!-- B. Kinetic type -->
+  <div id="b" class="scene" data-start="1.904" data-duration="3.808">
+    <div id="b-orange" class="full"></div>
+    <div class="b-code mono" id="b-code">&lt;h1&gt;</div>
+    <div class="mask b-html"><div class="L">H</div><div class="L">T</div><div class="L">M</div><div class="L">L</div></div>
+    <div id="b-in" class="serif">in.</div>
+    <div class="b-spec mono" id="b-spec">font: 900 300px "Archivo Expanded";<br>real glyphs, shaped and painted per frame</div>
+    <div id="b-blue"></div>
+    <div class="echo">MOTION</div><div class="echo">MOTION</div><div class="echo">MOTION</div>
+    <div class="echo">MOTION</div><div class="echo">MOTION</div><div class="echo">MOTION</div>
+    <div class="mask b-motion"><div class="L">M</div><div class="L">O</div><div class="L">T</div><div class="L">I</div><div class="L">O</div><div class="L">N</div></div>
+    <div id="b-out" class="serif">out.</div>
   </div>
 
-  <!-- D. 3D -->
-  <div id="d" class="scene" data-start="11.424" data-duration="3.808">
-    <div class="label">04 / 3D, depth-sorted</div>
-    <div class="stage">
-      <div class="ring">
-        <div class="card c0">01</div><div class="card c1">02</div><div class="card c2">03</div><div class="card c3">04</div>
-        <div class="card c4">05</div><div class="card c5">06</div><div class="card c6">07</div><div class="card c7">08</div>
+  <!-- C. Pipeline -->
+  <div id="c" class="scene" data-start="5.712" data-duration="1.904">
+    <div class="mask c-head"><div class="serif" id="c-head">No browser in the loop.</div></div>
+    <div class="wire" style="left:430px"></div><div class="wire" style="left:890px"></div><div class="wire" style="left:1350px"></div>
+    <div class="chip" id="c1"><div class="chip-fill"></div><div class="chip-t">HTML</div><div class="chip-s">html5ever</div></div>
+    <div class="chip" id="c2"><div class="chip-fill"></div><div class="chip-t">LAYOUT</div><div class="chip-s">taffy</div></div>
+    <div class="chip" id="c3"><div class="chip-fill"></div><div class="chip-t">PAINT</div><div class="chip-s">skia · vulkan</div></div>
+    <div class="chip" id="c4"><div class="chip-fill"></div><div class="chip-t">MP4</div><div class="chip-s">ffmpeg</div></div>
+    <div id="c-dot"></div>
+    <div class="c-foot mono" id="c-foot">ONE RUST PROCESS · NO CHROMIUM · NO SCREENSHOTS</div>
+  </div>
+
+  <!-- D. Systems -->
+  <div id="d" class="scene" data-start="7.616" data-duration="3.808">
+<div class="d" style="left:90px;top:174px"></div>
+<div class="d" style="left:162px;top:174px"></div>
+<div class="d" style="left:234px;top:174px"></div>
+<div class="d" style="left:306px;top:174px"></div>
+<div class="d" style="left:378px;top:174px"></div>
+<div class="d" style="left:450px;top:174px"></div>
+<div class="d" style="left:522px;top:174px"></div>
+<div class="d" style="left:594px;top:174px"></div>
+<div class="d" style="left:666px;top:174px"></div>
+<div class="d" style="left:738px;top:174px"></div>
+<div class="d" style="left:810px;top:174px"></div>
+<div class="d" style="left:882px;top:174px"></div>
+<div class="d" style="left:954px;top:174px"></div>
+<div class="d" style="left:1026px;top:174px"></div>
+<div class="d" style="left:1098px;top:174px"></div>
+<div class="d" style="left:1170px;top:174px"></div>
+<div class="d" style="left:1242px;top:174px"></div>
+<div class="d" style="left:1314px;top:174px"></div>
+<div class="d" style="left:1386px;top:174px"></div>
+<div class="d" style="left:1458px;top:174px"></div>
+<div class="d" style="left:1530px;top:174px"></div>
+<div class="d" style="left:1602px;top:174px"></div>
+<div class="d" style="left:1674px;top:174px"></div>
+<div class="d" style="left:1746px;top:174px"></div>
+<div class="d" style="left:1818px;top:174px"></div>
+<div class="d" style="left:90px;top:246px"></div>
+<div class="d" style="left:162px;top:246px"></div>
+<div class="d" style="left:234px;top:246px"></div>
+<div class="d" style="left:306px;top:246px"></div>
+<div class="d" style="left:378px;top:246px"></div>
+<div class="d" style="left:450px;top:246px"></div>
+<div class="d" style="left:522px;top:246px"></div>
+<div class="d" style="left:594px;top:246px"></div>
+<div class="d" style="left:666px;top:246px"></div>
+<div class="d" style="left:738px;top:246px"></div>
+<div class="d" style="left:810px;top:246px"></div>
+<div class="d" style="left:882px;top:246px"></div>
+<div class="d" style="left:954px;top:246px"></div>
+<div class="d" style="left:1026px;top:246px"></div>
+<div class="d" style="left:1098px;top:246px"></div>
+<div class="d" style="left:1170px;top:246px"></div>
+<div class="d" style="left:1242px;top:246px"></div>
+<div class="d" style="left:1314px;top:246px"></div>
+<div class="d" style="left:1386px;top:246px"></div>
+<div class="d" style="left:1458px;top:246px"></div>
+<div class="d" style="left:1530px;top:246px"></div>
+<div class="d" style="left:1602px;top:246px"></div>
+<div class="d" style="left:1674px;top:246px"></div>
+<div class="d" style="left:1746px;top:246px"></div>
+<div class="d" style="left:1818px;top:246px"></div>
+<div class="d" style="left:90px;top:318px"></div>
+<div class="d" style="left:162px;top:318px"></div>
+<div class="d" style="left:234px;top:318px"></div>
+<div class="d" style="left:306px;top:318px"></div>
+<div class="d" style="left:378px;top:318px"></div>
+<div class="d" style="left:450px;top:318px"></div>
+<div class="d" style="left:522px;top:318px"></div>
+<div class="d" style="left:594px;top:318px"></div>
+<div class="d" style="left:666px;top:318px"></div>
+<div class="d" style="left:738px;top:318px"></div>
+<div class="d" style="left:810px;top:318px"></div>
+<div class="d" style="left:882px;top:318px"></div>
+<div class="d" style="left:954px;top:318px"></div>
+<div class="d" style="left:1026px;top:318px"></div>
+<div class="d" style="left:1098px;top:318px"></div>
+<div class="d" style="left:1170px;top:318px"></div>
+<div class="d" style="left:1242px;top:318px"></div>
+<div class="d" style="left:1314px;top:318px"></div>
+<div class="d" style="left:1386px;top:318px"></div>
+<div class="d" style="left:1458px;top:318px"></div>
+<div class="d" style="left:1530px;top:318px"></div>
+<div class="d" style="left:1602px;top:318px"></div>
+<div class="d" style="left:1674px;top:318px"></div>
+<div class="d" style="left:1746px;top:318px"></div>
+<div class="d" style="left:1818px;top:318px"></div>
+<div class="d" style="left:90px;top:390px"></div>
+<div class="d" style="left:162px;top:390px"></div>
+<div class="d" style="left:234px;top:390px"></div>
+<div class="d" style="left:306px;top:390px"></div>
+<div class="d" style="left:378px;top:390px"></div>
+<div class="d" style="left:450px;top:390px"></div>
+<div class="d" style="left:522px;top:390px"></div>
+<div class="d" style="left:594px;top:390px"></div>
+<div class="d" style="left:666px;top:390px"></div>
+<div class="d" style="left:738px;top:390px"></div>
+<div class="d" style="left:810px;top:390px"></div>
+<div class="d" style="left:882px;top:390px"></div>
+<div class="d" style="left:954px;top:390px"></div>
+<div class="d" style="left:1026px;top:390px"></div>
+<div class="d" style="left:1098px;top:390px"></div>
+<div class="d" style="left:1170px;top:390px"></div>
+<div class="d" style="left:1242px;top:390px"></div>
+<div class="d" style="left:1314px;top:390px"></div>
+<div class="d" style="left:1386px;top:390px"></div>
+<div class="d" style="left:1458px;top:390px"></div>
+<div class="d" style="left:1530px;top:390px"></div>
+<div class="d" style="left:1602px;top:390px"></div>
+<div class="d" style="left:1674px;top:390px"></div>
+<div class="d" style="left:1746px;top:390px"></div>
+<div class="d" style="left:1818px;top:390px"></div>
+<div class="d" style="left:90px;top:462px"></div>
+<div class="d" style="left:162px;top:462px"></div>
+<div class="d" style="left:234px;top:462px"></div>
+<div class="d" style="left:306px;top:462px"></div>
+<div class="d" style="left:378px;top:462px"></div>
+<div class="d" style="left:450px;top:462px"></div>
+<div class="d" style="left:522px;top:462px"></div>
+<div class="d" style="left:594px;top:462px"></div>
+<div class="d" style="left:666px;top:462px"></div>
+<div class="d" style="left:738px;top:462px"></div>
+<div class="d" style="left:810px;top:462px"></div>
+<div class="d" style="left:882px;top:462px"></div>
+<div class="d" style="left:954px;top:462px"></div>
+<div class="d" style="left:1026px;top:462px"></div>
+<div class="d" style="left:1098px;top:462px"></div>
+<div class="d" style="left:1170px;top:462px"></div>
+<div class="d" style="left:1242px;top:462px"></div>
+<div class="d" style="left:1314px;top:462px"></div>
+<div class="d" style="left:1386px;top:462px"></div>
+<div class="d" style="left:1458px;top:462px"></div>
+<div class="d" style="left:1530px;top:462px"></div>
+<div class="d" style="left:1602px;top:462px"></div>
+<div class="d" style="left:1674px;top:462px"></div>
+<div class="d" style="left:1746px;top:462px"></div>
+<div class="d" style="left:1818px;top:462px"></div>
+<div class="d" style="left:90px;top:534px"></div>
+<div class="d" style="left:162px;top:534px"></div>
+<div class="d" style="left:234px;top:534px"></div>
+<div class="d" style="left:306px;top:534px"></div>
+<div class="d" style="left:378px;top:534px"></div>
+<div class="d" style="left:450px;top:534px"></div>
+<div class="d" style="left:522px;top:534px"></div>
+<div class="d" style="left:594px;top:534px"></div>
+<div class="d" style="left:666px;top:534px"></div>
+<div class="d" style="left:738px;top:534px"></div>
+<div class="d" style="left:810px;top:534px"></div>
+<div class="d" style="left:882px;top:534px"></div>
+<div class="d" style="left:954px;top:534px"></div>
+<div class="d" style="left:1026px;top:534px"></div>
+<div class="d" style="left:1098px;top:534px"></div>
+<div class="d" style="left:1170px;top:534px"></div>
+<div class="d" style="left:1242px;top:534px"></div>
+<div class="d" style="left:1314px;top:534px"></div>
+<div class="d" style="left:1386px;top:534px"></div>
+<div class="d" style="left:1458px;top:534px"></div>
+<div class="d" style="left:1530px;top:534px"></div>
+<div class="d" style="left:1602px;top:534px"></div>
+<div class="d" style="left:1674px;top:534px"></div>
+<div class="d" style="left:1746px;top:534px"></div>
+<div class="d" style="left:1818px;top:534px"></div>
+<div class="d" style="left:90px;top:606px"></div>
+<div class="d" style="left:162px;top:606px"></div>
+<div class="d" style="left:234px;top:606px"></div>
+<div class="d" style="left:306px;top:606px"></div>
+<div class="d" style="left:378px;top:606px"></div>
+<div class="d" style="left:450px;top:606px"></div>
+<div class="d" style="left:522px;top:606px"></div>
+<div class="d" style="left:594px;top:606px"></div>
+<div class="d" style="left:666px;top:606px"></div>
+<div class="d" style="left:738px;top:606px"></div>
+<div class="d" style="left:810px;top:606px"></div>
+<div class="d" style="left:882px;top:606px"></div>
+<div class="d" style="left:954px;top:606px"></div>
+<div class="d" style="left:1026px;top:606px"></div>
+<div class="d" style="left:1098px;top:606px"></div>
+<div class="d" style="left:1170px;top:606px"></div>
+<div class="d" style="left:1242px;top:606px"></div>
+<div class="d" style="left:1314px;top:606px"></div>
+<div class="d" style="left:1386px;top:606px"></div>
+<div class="d" style="left:1458px;top:606px"></div>
+<div class="d" style="left:1530px;top:606px"></div>
+<div class="d" style="left:1602px;top:606px"></div>
+<div class="d" style="left:1674px;top:606px"></div>
+<div class="d" style="left:1746px;top:606px"></div>
+<div class="d" style="left:1818px;top:606px"></div>
+<div class="d" style="left:90px;top:678px"></div>
+<div class="d" style="left:162px;top:678px"></div>
+<div class="d" style="left:234px;top:678px"></div>
+<div class="d" style="left:306px;top:678px"></div>
+<div class="d" style="left:378px;top:678px"></div>
+<div class="d" style="left:450px;top:678px"></div>
+<div class="d" style="left:522px;top:678px"></div>
+<div class="d" style="left:594px;top:678px"></div>
+<div class="d" style="left:666px;top:678px"></div>
+<div class="d" style="left:738px;top:678px"></div>
+<div class="d" style="left:810px;top:678px"></div>
+<div class="d" style="left:882px;top:678px"></div>
+<div class="d" style="left:954px;top:678px"></div>
+<div class="d" style="left:1026px;top:678px"></div>
+<div class="d" style="left:1098px;top:678px"></div>
+<div class="d" style="left:1170px;top:678px"></div>
+<div class="d" style="left:1242px;top:678px"></div>
+<div class="d" style="left:1314px;top:678px"></div>
+<div class="d" style="left:1386px;top:678px"></div>
+<div class="d" style="left:1458px;top:678px"></div>
+<div class="d" style="left:1530px;top:678px"></div>
+<div class="d" style="left:1602px;top:678px"></div>
+<div class="d" style="left:1674px;top:678px"></div>
+<div class="d" style="left:1746px;top:678px"></div>
+<div class="d" style="left:1818px;top:678px"></div>
+<div class="d" style="left:90px;top:750px"></div>
+<div class="d" style="left:162px;top:750px"></div>
+<div class="d" style="left:234px;top:750px"></div>
+<div class="d" style="left:306px;top:750px"></div>
+<div class="d" style="left:378px;top:750px"></div>
+<div class="d" style="left:450px;top:750px"></div>
+<div class="d" style="left:522px;top:750px"></div>
+<div class="d" style="left:594px;top:750px"></div>
+<div class="d" style="left:666px;top:750px"></div>
+<div class="d" style="left:738px;top:750px"></div>
+<div class="d" style="left:810px;top:750px"></div>
+<div class="d" style="left:882px;top:750px"></div>
+<div class="d" style="left:954px;top:750px"></div>
+<div class="d" style="left:1026px;top:750px"></div>
+<div class="d" style="left:1098px;top:750px"></div>
+<div class="d" style="left:1170px;top:750px"></div>
+<div class="d" style="left:1242px;top:750px"></div>
+<div class="d" style="left:1314px;top:750px"></div>
+<div class="d" style="left:1386px;top:750px"></div>
+<div class="d" style="left:1458px;top:750px"></div>
+<div class="d" style="left:1530px;top:750px"></div>
+<div class="d" style="left:1602px;top:750px"></div>
+<div class="d" style="left:1674px;top:750px"></div>
+<div class="d" style="left:1746px;top:750px"></div>
+<div class="d" style="left:1818px;top:750px"></div>
+<div class="d" style="left:90px;top:822px"></div>
+<div class="d" style="left:162px;top:822px"></div>
+<div class="d" style="left:234px;top:822px"></div>
+<div class="d" style="left:306px;top:822px"></div>
+<div class="d" style="left:378px;top:822px"></div>
+<div class="d" style="left:450px;top:822px"></div>
+<div class="d" style="left:522px;top:822px"></div>
+<div class="d" style="left:594px;top:822px"></div>
+<div class="d" style="left:666px;top:822px"></div>
+<div class="d" style="left:738px;top:822px"></div>
+<div class="d" style="left:810px;top:822px"></div>
+<div class="d" style="left:882px;top:822px"></div>
+<div class="d" style="left:954px;top:822px"></div>
+<div class="d" style="left:1026px;top:822px"></div>
+<div class="d" style="left:1098px;top:822px"></div>
+<div class="d" style="left:1170px;top:822px"></div>
+<div class="d" style="left:1242px;top:822px"></div>
+<div class="d" style="left:1314px;top:822px"></div>
+<div class="d" style="left:1386px;top:822px"></div>
+<div class="d" style="left:1458px;top:822px"></div>
+<div class="d" style="left:1530px;top:822px"></div>
+<div class="d" style="left:1602px;top:822px"></div>
+<div class="d" style="left:1674px;top:822px"></div>
+<div class="d" style="left:1746px;top:822px"></div>
+<div class="d" style="left:1818px;top:822px"></div>
+<div class="d" style="left:90px;top:894px"></div>
+<div class="d" style="left:162px;top:894px"></div>
+<div class="d" style="left:234px;top:894px"></div>
+<div class="d" style="left:306px;top:894px"></div>
+<div class="d" style="left:378px;top:894px"></div>
+<div class="d" style="left:450px;top:894px"></div>
+<div class="d" style="left:522px;top:894px"></div>
+<div class="d" style="left:594px;top:894px"></div>
+<div class="d" style="left:666px;top:894px"></div>
+<div class="d" style="left:738px;top:894px"></div>
+<div class="d" style="left:810px;top:894px"></div>
+<div class="d" style="left:882px;top:894px"></div>
+<div class="d" style="left:954px;top:894px"></div>
+<div class="d" style="left:1026px;top:894px"></div>
+<div class="d" style="left:1098px;top:894px"></div>
+<div class="d" style="left:1170px;top:894px"></div>
+<div class="d" style="left:1242px;top:894px"></div>
+<div class="d" style="left:1314px;top:894px"></div>
+<div class="d" style="left:1386px;top:894px"></div>
+<div class="d" style="left:1458px;top:894px"></div>
+<div class="d" style="left:1530px;top:894px"></div>
+<div class="d" style="left:1602px;top:894px"></div>
+<div class="d" style="left:1674px;top:894px"></div>
+<div class="d" style="left:1746px;top:894px"></div>
+<div class="d" style="left:1818px;top:894px"></div>
+    <div id="d-card"><div class="d-big">275 ELEMENTS.</div><div class="d-sub serif">one timeline, every frame exact.</div></div>
+  </div>
+
+  <!-- E. Dimension -->
+  <div id="e" class="scene" data-start="11.424" data-duration="3.808">
+    <div class="full e-glow"></div>
+    <div id="e-stage">
+      <div class="e-spin">
+<div class="mer" style="transform:rotateY(0deg)"></div>
+<div class="mer" style="transform:rotateY(30deg)"></div>
+<div class="mer" style="transform:rotateY(60deg)"></div>
+<div class="mer" style="transform:rotateY(90deg)"></div>
+<div class="mer" style="transform:rotateY(120deg)"></div>
+<div class="mer" style="transform:rotateY(150deg)"></div>
+<div class="lat" style="left:-223.6px;top:-223.6px;width:447.2px;height:447.2px;border-radius:223.6px;transform:translateY(-200px) rotateX(90deg)"></div>
+<div class="lat" style="left:-282.8px;top:-282.8px;width:565.7px;height:565.7px;border-radius:282.8px;transform:translateY(-100px) rotateX(90deg)"></div>
+<div class="lat eq" style="left:-300.0px;top:-300.0px;width:600.0px;height:600.0px;border-radius:300.0px;transform:translateY(0px) rotateX(90deg)"></div>
+<div class="lat" style="left:-282.8px;top:-282.8px;width:565.7px;height:565.7px;border-radius:282.8px;transform:translateY(100px) rotateX(90deg)"></div>
+<div class="lat" style="left:-223.6px;top:-223.6px;width:447.2px;height:447.2px;border-radius:223.6px;transform:translateY(200px) rotateX(90deg)"></div>
+<div class="sd" style="transform:rotateY(0.0deg) rotateX(81.7deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(137.5deg) rotateX(75.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(275.0deg) rotateX(71.4deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(52.5deg) rotateX(68.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(190.0deg) rotateX(65.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(327.5deg) rotateX(62.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(105.0deg) rotateX(59.8deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(242.6deg) rotateX(57.5deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(20.1deg) rotateX(55.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(157.6deg) rotateX(53.3deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(295.1deg) rotateX(51.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(72.6deg) rotateX(49.5deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(210.1deg) rotateX(47.7deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(347.6deg) rotateX(46.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(125.1deg) rotateX(44.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(262.6deg) rotateX(42.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(40.1deg) rotateX(41.0deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(177.6deg) rotateX(39.5deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(315.1deg) rotateX(37.9deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(92.6deg) rotateX(36.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(230.2deg) rotateX(35.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(7.7deg) rotateX(33.5deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(145.2deg) rotateX(32.1deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(282.7deg) rotateX(30.7deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(60.2deg) rotateX(29.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(197.7deg) rotateX(28.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(335.2deg) rotateX(26.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(112.7deg) rotateX(25.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(250.2deg) rotateX(24.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(27.7deg) rotateX(22.7deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(165.2deg) rotateX(21.4deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(302.7deg) rotateX(20.1deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(80.2deg) rotateX(18.8deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(217.8deg) rotateX(17.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(355.3deg) rotateX(16.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(132.8deg) rotateX(15.1deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(270.3deg) rotateX(13.9deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(47.8deg) rotateX(12.6deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(185.3deg) rotateX(11.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(322.8deg) rotateX(10.2deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(100.3deg) rotateX(9.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(237.8deg) rotateX(7.8deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(15.3deg) rotateX(6.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(152.8deg) rotateX(5.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(290.3deg) rotateX(4.2deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(67.8deg) rotateX(3.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(205.4deg) rotateX(1.8deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(342.9deg) rotateX(0.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(120.4deg) rotateX(-0.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(257.9deg) rotateX(-1.8deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(35.4deg) rotateX(-3.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(172.9deg) rotateX(-4.2deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(310.4deg) rotateX(-5.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(87.9deg) rotateX(-6.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(225.4deg) rotateX(-7.8deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(2.9deg) rotateX(-9.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(140.4deg) rotateX(-10.2deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(277.9deg) rotateX(-11.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(55.5deg) rotateX(-12.6deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(193.0deg) rotateX(-13.9deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(330.5deg) rotateX(-15.1deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(108.0deg) rotateX(-16.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(245.5deg) rotateX(-17.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(23.0deg) rotateX(-18.8deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(160.5deg) rotateX(-20.1deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(298.0deg) rotateX(-21.4deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(75.5deg) rotateX(-22.7deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(213.0deg) rotateX(-24.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(350.5deg) rotateX(-25.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(128.0deg) rotateX(-26.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(265.5deg) rotateX(-28.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(43.1deg) rotateX(-29.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(180.6deg) rotateX(-30.7deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(318.1deg) rotateX(-32.1deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(95.6deg) rotateX(-33.5deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(233.1deg) rotateX(-35.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(10.6deg) rotateX(-36.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(148.1deg) rotateX(-37.9deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(285.6deg) rotateX(-39.5deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(63.1deg) rotateX(-41.0deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(200.6deg) rotateX(-42.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(338.1deg) rotateX(-44.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(115.6deg) rotateX(-46.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(253.1deg) rotateX(-47.7deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(30.7deg) rotateX(-49.5deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(168.2deg) rotateX(-51.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(305.7deg) rotateX(-53.3deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(83.2deg) rotateX(-55.4deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(220.7deg) rotateX(-57.5deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(358.2deg) rotateX(-59.8deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(135.7deg) rotateX(-62.3deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(273.2deg) rotateX(-65.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(50.7deg) rotateX(-68.0deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(188.2deg) rotateX(-71.4deg) translateZ(300px)"></div>
+<div class="sd hot" style="transform:rotateY(325.7deg) rotateX(-75.6deg) translateZ(300px)"></div>
+<div class="sd" style="transform:rotateY(103.2deg) rotateX(-81.7deg) translateZ(300px)"></div>
+      </div>
+      <div class="e-orbit">
+<div class="ol" style="transform:rotateY(0.0deg) translateZ(440px)">D</div>
+<div class="ol back" style="transform:rotateY(0.0deg) translateZ(440px) rotateY(180deg)">D</div>
+<div class="ol" style="transform:rotateY(15.0deg) translateZ(440px)">I</div>
+<div class="ol back" style="transform:rotateY(15.0deg) translateZ(440px) rotateY(180deg)">I</div>
+<div class="ol" style="transform:rotateY(30.0deg) translateZ(440px)">R</div>
+<div class="ol back" style="transform:rotateY(30.0deg) translateZ(440px) rotateY(180deg)">R</div>
+<div class="ol" style="transform:rotateY(45.0deg) translateZ(440px)">E</div>
+<div class="ol back" style="transform:rotateY(45.0deg) translateZ(440px) rotateY(180deg)">E</div>
+<div class="ol" style="transform:rotateY(60.0deg) translateZ(440px)">C</div>
+<div class="ol back" style="transform:rotateY(60.0deg) translateZ(440px) rotateY(180deg)">C</div>
+<div class="ol" style="transform:rotateY(75.0deg) translateZ(440px)">T</div>
+<div class="ol back" style="transform:rotateY(75.0deg) translateZ(440px) rotateY(180deg)">T</div>
+<div class="ol" style="transform:rotateY(90.0deg) translateZ(440px)">O</div>
+<div class="ol back" style="transform:rotateY(90.0deg) translateZ(440px) rotateY(180deg)">O</div>
+<div class="ol" style="transform:rotateY(105.0deg) translateZ(440px)">R</div>
+<div class="ol back" style="transform:rotateY(105.0deg) translateZ(440px) rotateY(180deg)">R</div>
+<div class="ol" style="transform:rotateY(135.0deg) translateZ(440px)">·</div>
+<div class="ol back" style="transform:rotateY(135.0deg) translateZ(440px) rotateY(180deg)">·</div>
+<div class="ol" style="transform:rotateY(165.0deg) translateZ(440px)">N</div>
+<div class="ol back" style="transform:rotateY(165.0deg) translateZ(440px) rotateY(180deg)">N</div>
+<div class="ol" style="transform:rotateY(180.0deg) translateZ(440px)">A</div>
+<div class="ol back" style="transform:rotateY(180.0deg) translateZ(440px) rotateY(180deg)">A</div>
+<div class="ol" style="transform:rotateY(195.0deg) translateZ(440px)">T</div>
+<div class="ol back" style="transform:rotateY(195.0deg) translateZ(440px) rotateY(180deg)">T</div>
+<div class="ol" style="transform:rotateY(210.0deg) translateZ(440px)">I</div>
+<div class="ol back" style="transform:rotateY(210.0deg) translateZ(440px) rotateY(180deg)">I</div>
+<div class="ol" style="transform:rotateY(225.0deg) translateZ(440px)">V</div>
+<div class="ol back" style="transform:rotateY(225.0deg) translateZ(440px) rotateY(180deg)">V</div>
+<div class="ol" style="transform:rotateY(240.0deg) translateZ(440px)">E</div>
+<div class="ol back" style="transform:rotateY(240.0deg) translateZ(440px) rotateY(180deg)">E</div>
+<div class="ol" style="transform:rotateY(270.0deg) translateZ(440px)">3</div>
+<div class="ol back" style="transform:rotateY(270.0deg) translateZ(440px) rotateY(180deg)">3</div>
+<div class="ol" style="transform:rotateY(285.0deg) translateZ(440px)">D</div>
+<div class="ol back" style="transform:rotateY(285.0deg) translateZ(440px) rotateY(180deg)">D</div>
+<div class="ol" style="transform:rotateY(315.0deg) translateZ(440px)">·</div>
+<div class="ol back" style="transform:rotateY(315.0deg) translateZ(440px) rotateY(180deg)">·</div>
       </div>
     </div>
-    <div class="cap serif cap1">preserve-3d, natively.</div>
+    <div class="mask e-head"><div class="serif" id="e-head">Real depth.</div></div>
+    <div class="e-foot mono" id="e-foot">PRESERVE-3D · DEPTH-SORTED · BACKFACE-VISIBILITY</div>
+    <div id="e-iris"></div>
   </div>
 
-  <!-- E. Clip, mask, blend -->
-  <div id="e" class="scene" data-start="15.232" data-duration="3.808">
-    <img class="bleed" src="../reel/assets/eye.jpg">
-    <div class="fill">Layers</div>
-    <div class="kick">backdrop-filter / mask-image / background-clip:text / mix-blend-mode</div>
-    <div class="pane p0"><img src="../reel/assets/corridor.jpg"></div>
-    <div class="pane p1"><img src="../reel/assets/monolith.jpg"></div>
-    <div class="pane p2"><img src="../reel/assets/street.jpg"></div>
-    <div class="glass"><div class="glass-k">BACKDROP BLUR, LIVE</div><div class="glass-t">Composite.</div></div>
-    <div class="band"></div>
-    <div class="label">05 / Compositing</div>
-    <div class="shutter"></div>
+  <!-- F. Timing -->
+  <div id="f" class="scene paper" data-start="15.232" data-duration="3.808">
+    <svg id="f-svg" width="640" height="600" viewBox="0 0 640 600">
+      <g transform="translate(60,40)">
+        <line x1="0" y1="460" x2="520" y2="460" stroke="#141311" stroke-width="2"/>
+        <line x1="0" y1="120" x2="0" y2="460" stroke="#141311" stroke-width="2"/>
+        <line x1="0" y1="120" x2="520" y2="120" stroke="#141311" stroke-opacity="0.35" stroke-width="2" stroke-dasharray="8 8"/>
+<g><animate attributeName="opacity" from="1" to="0" begin="16.50s" dur="0.15s" fill="freeze"/><path d="M 0.0 460.0 L 3.2 459.8 L 6.5 459.8 L 9.8 459.8 L 13.0 459.8 L 16.2 459.7 L 19.5 459.7 L 22.8 459.7 L 26.0 459.7 L 29.2 459.6 L 32.5 459.6 L 35.8 459.6 L 39.0 459.5 L 42.2 459.5 L 45.5 459.4 L 48.8 459.4 L 52.0 459.3 L 55.2 459.3 L 58.5 459.2 L 61.8 459.1 L 65.0 459.1 L 68.2 459.0 L 71.5 458.9 L 74.8 458.8 L 78.0 458.7 L 81.2 458.6 L 84.5 458.4 L 87.8 458.3 L 91.0 458.1 L 94.2 458.0 L 97.5 457.8 L 100.8 457.6 L 104.0 457.3 L 107.2 457.1 L 110.5 456.8 L 113.8 456.6 L 117.0 456.2 L 120.2 455.9 L 123.5 455.5 L 126.8 455.1 L 130.0 454.7 L 133.2 454.2 L 136.5 453.7 L 139.8 453.1 L 143.0 452.5 L 146.2 451.8 L 149.5 451.1 L 152.8 450.3 L 156.0 449.4 L 159.2 448.4 L 162.5 447.4 L 165.8 446.2 L 169.0 445.0 L 172.2 443.6 L 175.5 442.1 L 178.8 440.5 L 182.0 438.8 L 185.2 436.8 L 188.5 434.7 L 191.8 432.4 L 195.0 429.9 L 198.2 427.2 L 201.5 424.3 L 204.8 421.0 L 208.0 417.5 L 211.2 413.7 L 214.5 409.5 L 217.8 404.9 L 221.0 399.9 L 224.2 394.5 L 227.5 388.5 L 230.8 382.1 L 234.0 375.0 L 237.2 367.3 L 240.5 358.9 L 243.8 349.8 L 247.0 339.8 L 250.2 328.9 L 253.5 317.0 L 256.8 304.1 L 260.0 290.0 L 263.2 275.9 L 266.5 263.0 L 269.8 251.1 L 273.0 240.2 L 276.2 230.2 L 279.5 221.1 L 282.8 212.7 L 286.0 205.0 L 289.2 197.9 L 292.5 191.5 L 295.8 185.5 L 299.0 180.1 L 302.2 175.1 L 305.5 170.5 L 308.8 166.3 L 312.0 162.5 L 315.2 159.0 L 318.5 155.7 L 321.8 152.8 L 325.0 150.1 L 328.2 147.6 L 331.5 145.3 L 334.8 143.2 L 338.0 141.2 L 341.2 139.5 L 344.5 137.9 L 347.8 136.4 L 351.0 135.0 L 354.2 133.8 L 357.5 132.6 L 360.8 131.6 L 364.0 130.6 L 367.2 129.7 L 370.5 128.9 L 373.8 128.2 L 377.0 127.5 L 380.2 126.9 L 383.5 126.3 L 386.8 125.8 L 390.0 125.3 L 393.2 124.9 L 396.5 124.5 L 399.8 124.1 L 403.0 123.8 L 406.2 123.4 L 409.5 123.2 L 412.8 122.9 L 416.0 122.7 L 419.2 122.4 L 422.5 122.2 L 425.8 122.0 L 429.0 121.9 L 432.2 121.7 L 435.5 121.6 L 438.8 121.4 L 442.0 121.3 L 445.2 121.2 L 448.5 121.1 L 451.8 121.0 L 455.0 120.9 L 458.2 120.9 L 461.5 120.8 L 464.8 120.7 L 468.0 120.7 L 471.2 120.6 L 474.5 120.6 L 477.8 120.5 L 481.0 120.5 L 484.2 120.4 L 487.5 120.4 L 490.8 120.4 L 494.0 120.3 L 497.2 120.3 L 500.5 120.3 L 503.8 120.3 L 507.0 120.2 L 510.2 120.2 L 513.5 120.2 L 516.8 120.2 L 520.0 120.0" fill="none" stroke="#141311" stroke-width="6" stroke-linecap="round" stroke-dasharray="715.4" stroke-dashoffset="715.4"><animate attributeName="stroke-dashoffset" values="715.4;702.4;689.4;676.4;663.4;650.3;637.3;624.3;611.3;598.3;585.2;572.0;558.6;544.9;530.5;514.7;496.7;474.8;446.7;409.2;357.7;306.2;268.7;240.5;218.6;200.6;184.9;170.5;156.7;143.4;130.2;117.1;104.1;91.0;78.0;65.0;52.0;39.0;26.0;13.0;0.0" begin="15.40s" dur="0.55s" fill="freeze"/></path></g>
+<g><animate attributeName="opacity" from="1" to="0" begin="17.76s" dur="0.15s" fill="freeze"/><path d="M 0.0 460.0 L 3.2 449.5 L 6.5 439.1 L 9.8 429.0 L 13.0 419.0 L 16.2 409.2 L 19.5 399.5 L 22.8 390.1 L 26.0 380.8 L 29.2 371.7 L 32.5 362.8 L 35.8 354.0 L 39.0 345.5 L 42.2 337.0 L 45.5 328.8 L 48.8 320.7 L 52.0 312.8 L 55.2 305.0 L 58.5 297.4 L 61.8 290.0 L 65.0 282.7 L 68.2 275.6 L 71.5 268.6 L 74.8 261.8 L 78.0 255.1 L 81.2 248.6 L 84.5 242.2 L 87.8 236.0 L 91.0 229.9 L 94.2 224.0 L 97.5 218.2 L 100.8 212.5 L 104.0 207.0 L 107.2 201.7 L 110.5 196.4 L 113.8 191.3 L 117.0 186.4 L 120.2 181.5 L 123.5 176.8 L 126.8 172.3 L 130.0 167.8 L 133.2 163.5 L 136.5 159.3 L 139.8 155.2 L 143.0 151.3 L 146.2 147.4 L 149.5 143.7 L 152.8 140.1 L 156.0 136.7 L 159.2 133.3 L 162.5 130.0 L 165.8 126.9 L 169.0 123.9 L 172.2 121.0 L 175.5 118.1 L 178.8 115.4 L 182.0 112.8 L 185.2 110.3 L 188.5 107.9 L 191.8 105.6 L 195.0 103.4 L 198.2 101.3 L 201.5 99.3 L 204.8 97.4 L 208.0 95.5 L 211.2 93.8 L 214.5 92.1 L 217.8 90.6 L 221.0 89.1 L 224.2 87.7 L 227.5 86.4 L 230.8 85.2 L 234.0 84.0 L 237.2 82.9 L 240.5 81.9 L 243.8 81.0 L 247.0 80.2 L 250.2 79.4 L 253.5 78.7 L 256.8 78.1 L 260.0 77.5 L 263.2 77.0 L 266.5 76.6 L 269.8 76.2 L 273.0 75.9 L 276.2 75.6 L 279.5 75.5 L 282.8 75.3 L 286.0 75.2 L 289.2 75.2 L 292.5 75.3 L 295.8 75.3 L 299.0 75.5 L 302.2 75.7 L 305.5 75.9 L 308.8 76.2 L 312.0 76.5 L 315.2 76.8 L 318.5 77.2 L 321.8 77.7 L 325.0 78.2 L 328.2 78.7 L 331.5 79.2 L 334.8 79.8 L 338.0 80.4 L 341.2 81.1 L 344.5 81.8 L 347.8 82.5 L 351.0 83.2 L 354.2 83.9 L 357.5 84.7 L 360.8 85.5 L 364.0 86.3 L 367.2 87.2 L 370.5 88.0 L 373.8 88.9 L 377.0 89.8 L 380.2 90.7 L 383.5 91.6 L 386.8 92.5 L 390.0 93.4 L 393.2 94.4 L 396.5 95.3 L 399.8 96.2 L 403.0 97.2 L 406.2 98.1 L 409.5 99.1 L 412.8 100.0 L 416.0 101.0 L 419.2 101.9 L 422.5 102.8 L 425.8 103.7 L 429.0 104.6 L 432.2 105.5 L 435.5 106.4 L 438.8 107.3 L 442.0 108.1 L 445.2 109.0 L 448.5 109.8 L 451.8 110.6 L 455.0 111.4 L 458.2 112.1 L 461.5 112.8 L 464.8 113.5 L 468.0 114.2 L 471.2 114.9 L 474.5 115.5 L 477.8 116.1 L 481.0 116.6 L 484.2 117.1 L 487.5 117.6 L 490.8 118.0 L 494.0 118.4 L 497.2 118.8 L 500.5 119.1 L 503.8 119.4 L 507.0 119.6 L 510.2 119.8 L 513.5 119.9 L 516.8 120.0 L 520.0 120.0" fill="none" stroke="#141311" stroke-width="6" stroke-linecap="round" stroke-dasharray="748.9" stroke-dashoffset="748.9"><animate attributeName="stroke-dashoffset" values="748.9;705.9;665.6;627.9;592.7;560.0;529.5;501.1;474.8;450.4;427.7;406.7;387.1;368.9;351.8;335.8;320.5;306.0;292.1;278.5;265.2;252.1;239.1;226.1;213.1;200.0;186.8;173.5;160.1;146.7;133.2;119.6;106.1;92.6;79.1;65.7;52.4;39.2;26.1;13.0;0.0" begin="16.66s" dur="0.55s" fill="freeze"/></path></g>
+<g><path d="M 0.0 460.0 L 3.2 443.5 L 6.5 424.0 L 9.8 401.8 L 13.0 377.6 L 16.2 351.8 L 19.5 325.0 L 22.8 297.5 L 26.0 269.9 L 29.2 242.5 L 32.5 215.7 L 35.8 189.7 L 39.0 165.0 L 42.2 141.7 L 45.5 120.0 L 48.8 100.1 L 52.0 82.2 L 55.2 66.2 L 58.5 52.4 L 61.8 40.6 L 65.0 30.9 L 68.2 23.2 L 71.5 17.5 L 74.8 13.7 L 78.0 11.7 L 81.2 11.3 L 84.5 12.5 L 87.8 15.1 L 91.0 18.9 L 94.2 23.8 L 97.5 29.6 L 100.8 36.2 L 104.0 43.4 L 107.2 51.1 L 110.5 59.1 L 113.8 67.2 L 117.0 75.4 L 120.2 83.6 L 123.5 91.6 L 126.8 99.3 L 130.0 106.6 L 133.2 113.6 L 136.5 120.0 L 139.8 125.9 L 143.0 131.2 L 146.2 136.0 L 149.5 140.1 L 152.8 143.6 L 156.0 146.5 L 159.2 148.8 L 162.5 150.5 L 165.8 151.6 L 169.0 152.2 L 172.2 152.3 L 175.5 152.0 L 178.8 151.2 L 182.0 150.1 L 185.2 148.6 L 188.5 146.9 L 191.8 144.9 L 195.0 142.8 L 198.2 140.5 L 201.5 138.1 L 204.8 135.7 L 208.0 133.2 L 211.2 130.8 L 214.5 128.5 L 217.8 126.2 L 221.0 124.0 L 224.2 121.9 L 227.5 120.0 L 230.8 118.2 L 234.0 116.7 L 237.2 115.2 L 240.5 114.0 L 243.8 113.0 L 247.0 112.1 L 250.2 111.4 L 253.5 110.9 L 256.8 110.6 L 260.0 110.4 L 263.2 110.4 L 266.5 110.5 L 269.8 110.7 L 273.0 111.1 L 276.2 111.5 L 279.5 112.0 L 282.8 112.6 L 286.0 113.2 L 289.2 113.9 L 292.5 114.6 L 295.8 115.3 L 299.0 116.1 L 302.2 116.8 L 305.5 117.5 L 308.8 118.2 L 312.0 118.8 L 315.2 119.4 L 318.5 120.0 L 321.8 120.5 L 325.0 121.0 L 328.2 121.4 L 331.5 121.8 L 334.8 122.1 L 338.0 122.3 L 341.2 122.5 L 344.5 122.7 L 347.8 122.8 L 351.0 122.8 L 354.2 122.9 L 357.5 122.8 L 360.8 122.8 L 364.0 122.7 L 367.2 122.5 L 370.5 122.4 L 373.8 122.2 L 377.0 122.0 L 380.2 121.8 L 383.5 121.6 L 386.8 121.4 L 390.0 121.2 L 393.2 121.0 L 396.5 120.7 L 399.8 120.5 L 403.0 120.4 L 406.2 120.2 L 409.5 120.0 L 412.8 119.8 L 416.0 119.7 L 419.2 119.6 L 422.5 119.5 L 425.8 119.4 L 429.0 119.3 L 432.2 119.2 L 435.5 119.2 L 438.8 119.2 L 442.0 119.2 L 445.2 119.2 L 448.5 119.2 L 451.8 119.2 L 455.0 119.2 L 458.2 119.2 L 461.5 119.3 L 464.8 119.3 L 468.0 119.4 L 471.2 119.5 L 474.5 119.5 L 477.8 119.6 L 481.0 119.7 L 484.2 119.7 L 487.5 119.8 L 490.8 119.8 L 494.0 119.9 L 497.2 119.9 L 500.5 120.0 L 503.8 120.0 L 507.0 120.1 L 510.2 120.1 L 513.5 120.2 L 516.8 120.2 L 520.0 120.2" fill="none" stroke="#141311" stroke-width="6" stroke-linecap="round" stroke-dasharray="995.9" stroke-dashoffset="995.9"><animate attributeName="stroke-dashoffset" values="995.9;912.4;804.0;698.2;614.4;561.4;537.7;521.8;494.1;459.5;425.7;397.8;377.7;363.3;350.0;335.1;319.0;303.0;288.1;274.3;261.2;248.1;235.0;221.7;208.4;195.2;182.1;169.1;156.1;143.1;130.1;117.0;104.0;91.0;78.0;65.0;52.0;39.0;26.0;13.0;0.0" begin="17.92s" dur="0.55s" fill="freeze"/></path></g>
+      </g>
+    </svg>
+    <div class="f-ease mono"><div id="f-ease-roll"><div>ease: "expo.inOut"</div><div>ease: "back.out(2)"</div><div>ease: "elastic.out(1, 0.35)"</div></div></div>
+    <div class="f-rail"></div>
+    <div id="f-val"></div>
+    <div id="f-dot"></div>
+    <div class="mask f-head"><div class="serif" id="f-head">Every ease, natively.</div></div>
+    <div class="race" style="top:300px"><div class="race-l mono">power2.out</div><div class="race-t"></div><div class="pill" id="r0"></div></div>
+    <div class="race" style="top:410px"><div class="race-l mono">expo.inOut</div><div class="race-t"></div><div class="pill" id="r1"></div></div>
+    <div class="race" style="top:520px"><div class="race-l mono">back.out(2)</div><div class="race-t"></div><div class="pill o" id="r2"></div></div>
+    <div class="race" style="top:630px"><div class="race-l mono">elastic.out(1, .35)</div><div class="race-t"></div><div class="pill b" id="r3"></div></div>
+    <div class="race" style="top:740px"><div class="race-l mono">steps(8)</div><div class="race-t"></div><div class="pill" id="r4"></div></div>
+    <div class="f-foot mono" id="f-foot">GSAP TIMELINES COMPILE TO NATIVE KEYFRAMES. NO JS AT RENDER TIME.</div>
+    <div id="f-wipe"></div>
   </div>
 
-  <!-- F. Captions -->
-  <div id="f" class="scene" data-start="19.04" data-duration="3.808">
+  <!-- G. Layers -->
+  <div id="g" class="scene" data-start="19.04" data-duration="1.904">
+    <div class="pane" id="g0"><img src="../reel/assets/corridor.jpg"></div>
+    <div class="pane" id="g1"><img src="../reel/assets/monolith.jpg"></div>
+    <div class="pane" id="g2"><img src="../reel/assets/street.jpg"></div>
+    <div id="g-glass"><div class="glass-k">BACKDROP-FILTER · MASK · BLEND</div><div class="glass-t">Composite.</div></div>
+    <div id="g-band"></div>
+  </div>
+
+  <!-- H. Captions -->
+  <div id="h" class="scene" data-start="20.944" data-duration="3.808">
     <img class="plate" src="../reel/assets/profile.jpg">
     <div class="vig"></div>
-    <div class="label">06 / Captions</div>
     <div class="tag tag1">STYLE / POP</div>
     <div class="tag tag2">STYLE / SUBTITLE</div>
     <div class="lt"><div class="lt-bar"></div><div class="lt-box"><div class="lt-n">Steven Figler</div><div class="lt-r">Step Up Gaming</div></div></div>
     <div class="pop pg1"><div class="pw p0">No</div><div class="pw p1">browser.</div></div>
     <div class="pop pg2"><div class="pw p2">No</div><div class="pw p3">screenshots.</div></div>
-    <div class="sub"><div class="sw s0">Real</div><div class="sw s1">type,</div><div class="sw s2">timed</div><div class="sw s3">to</div><div class="sw s4">the</div><div class="sw s5">frame,</div><div class="sw s6">every</div><div class="sw s7">frame.</div></div>
+    <div id="h-dim" class="full"></div>
+    <div id="h-sub"><div id="h-words"><div class="sw s0">Real</div><div class="sw s1">type,</div><div class="sw s2">timed</div><div class="sw s3">to</div><div class="sw s4">the</div><div class="sw s5">frame,</div><div class="sw s6">every</div><div class="sw s7">frame.</div></div></div>
   </div>
 
-  <!-- G. Why Director -->
-  <div id="g" class="scene" data-start="22.848" data-duration="3.808">
-    <div class="label">07 / Why native</div>
-    <div class="grid">
-      <div class="cell hl g1"><div class="n">0</div><div class="d">browsers at render time</div></div>
-      <div class="cell g2"><div class="n">4.5&#215;</div><div class="d">faster export than<br>HyperFrames</div></div>
-      <div class="cell g3"><div class="n">47<span> MiB</span></div><div class="d">peak memory, vs 293 MiB<br>for the browser path</div></div>
-      <div class="cell g4"><div class="n">390</div><div class="d">frames per second<br>on Vulkan, 1080p</div></div>
-      <div class="cell g5"><div class="n s">Same</div><div class="d">frame, every time. Seek anywhere,<br>render identical pixels.</div></div>
-      <div class="cell hl g6"><div class="n s">MCP</div><div class="d">agents open, patch and<br>export a project</div></div>
+  <!-- I. Speed -->
+  <div id="i" class="scene" data-start="24.752" data-duration="1.904">
+    <div id="i-all" class="full">
+      <div class="i-k mono">3 S 1080P30 EXPORT · WARM RUN</div>
+      <div class="i-name" style="top:410px">Director</div>
+      <div class="i-time mono" id="i-td" style="top:410px">1.67 s</div>
+      <div class="i-track" style="top:470px"><div class="i-fill" id="i-fd"></div></div>
+      <div class="i-name" style="top:580px">HyperFrames (headless Chrome)</div>
+      <div class="i-time mono" id="i-th" style="top:580px">7.46 s</div>
+      <div class="i-track" style="top:640px"><div class="i-fill" id="i-fh"></div></div>
+      <div class="i-big"><div class="odo"><div class="odo-d" id="i-o1"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div></div></div><div class="ch">.</div><div class="odo"><div class="odo-d" id="i-o2"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div></div></div><div class="ch x">&#215;</div></div>
+      <div class="i-say serif" id="i-say">faster end to end.</div>
+      <div class="i-note mono" id="i-note">Ryzen 9 9900X, 2026-10-13. Method in director-html/README.md</div>
     </div>
-    <div class="foot">Numbers from director-html/README.md: 3 s 1080p30 sample vs HyperFrames CLI 0.8.107; Vulkan on a 90-frame clip, RTX 5060 Ti.</div>
   </div>
 
-  <!-- H. End -->
-  <div id="h" class="scene" data-start="26.656" data-duration="1.944">
-    <div class="logo serif">Director</div>
-    <div class="sub">HTML in. Motion out.</div>
-    <div class="url">github.com/stepupgaming/director</div>
-    <svg class="spinner" width="200" height="200" viewBox="0 0 200 200">
-      <circle cx="100" cy="100" r="60" fill="none" stroke="#2c46cf" stroke-width="6" stroke-dasharray="377" stroke-dashoffset="377">
-        <animate attributeName="stroke-dashoffset" from="377" to="0" begin="26.956s" dur="1.2s" fill="freeze"/>
+  <!-- J. End -->
+  <div id="j" class="scene" data-start="26.656" data-duration="1.944">
+    <svg class="full" width="1920" height="1080" viewBox="0 0 1920 1080">
+      <circle cx="1728" cy="474" r="28" fill="none" stroke="#ff7a33" stroke-width="3" opacity="0">
+        <animate attributeName="r" from="28" to="220" begin="27.25s" dur="0.9s" fill="freeze"/>
+        <animate attributeName="opacity" from="1" to="0" begin="27.25s" dur="0.9s" fill="freeze"/>
+      </circle>
+      <circle cx="1728" cy="474" r="28" fill="none" stroke="#ff7a33" stroke-width="2" opacity="0">
+        <animate attributeName="r" from="28" to="220" begin="27.73s" dur="0.9s" fill="freeze"/>
+        <animate attributeName="opacity" from="1" to="0" begin="27.73s" dur="0.9s" fill="freeze"/>
       </circle>
     </svg>
+    <div class="mask j-word"><div class="L">D</div><div class="L">I</div><div class="L">R</div><div class="L">E</div><div class="L">C</div><div class="L">T</div><div class="L">O</div><div class="L">R</div></div>
+    <div id="j-dot"></div>
+    <div class="j-sub serif" id="j-sub">HTML in. Motion out.</div>
+    <div class="j-stats mono" id="j-stats">28.6 S · 858 FRAMES · 16 SUBFRAMES EACH · 0 BROWSERS</div>
+    <div class="j-url mono" id="j-url">github.com/stepupgaming/director</div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="br tl"></div><div class="br tr"></div><div class="br bl"></div><div class="br brr"></div>
+    <div class="hud-id"><div class="hud-dot"></div><div>DIRECTOR — NATIVE REEL</div></div>
+    <div class="tc"><div>TC 00:00:</div>
+      <div class="col"><div class="digits s10"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div></div></div>
+      <div class="col"><div class="digits s1"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div></div></div>
+      <div>:</div>
+      <div class="col"><div class="digits f10"><div>0</div><div>1</div><div>2</div></div></div>
+      <div class="col"><div class="digits f1"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div></div></div>
+    </div>
+    <div class="prog">
+      <div class="pm" style="left:114px"></div><div class="pm" style="left:342px"></div><div class="pm" style="left:456px"></div>
+      <div class="pm" style="left:684px"></div><div class="pm" style="left:912px"></div><div class="pm" style="left:1140px"></div>
+      <div class="pm" style="left:1254px"></div><div class="pm" style="left:1482px"></div><div class="pm" style="left:1596px"></div>
+      <div id="prog-fill"></div><div id="playhead"></div>
+    </div>
+    <div class="chap"><div class="chap-roll" id="chap-roll">
+      <div class="cr"><div>01 PLAYHEAD</div><div class="ct">· elastic.out, width/height morph</div></div>
+      <div class="cr"><div>02 KINETIC TYPE</div><div class="ct">· Archivo Expanded, text-stroke</div></div>
+      <div class="cr"><div>03 PIPELINE</div><div class="ct">· html5ever → taffy → skia → ffmpeg</div></div>
+      <div class="cr"><div>04 SYSTEMS</div><div class="ct">· 275 elements, distance staggers</div></div>
+      <div class="cr"><div>05 DIMENSION</div><div class="ct">· preserve-3d, backface-visibility</div></div>
+      <div class="cr"><div>06 TIMING</div><div class="ct">· GSAP eases, SMIL keyTimes</div></div>
+      <div class="cr"><div>07 LAYERS</div><div class="ct">· backdrop-filter, mix-blend-mode</div></div>
+      <div class="cr"><div>08 CAPTIONS</div><div class="ct">· beat-timed type</div></div>
+      <div class="cr"><div>09 SPEED</div><div class="ct">· versus headless Chrome</div></div>
+      <div class="cr"><div>10 DIRECTOR</div><div class="ct">· HTML in, MP4 out</div></div>
+    </div></div>
+    <div class="spec">1920×1080 · 30 FPS · 16-SAMPLE MOTION BLUR</div>
   </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+  window.__timelines = window.__timelines || {};
+  const BEAT = 0.476, BAR = 1.904;
+  const tl = gsap.timeline({ paused: true });
+  const q = (s) => gsap.utils.toArray(s);
+
+  // HUD: progress, playhead and the chapter roller.
+  const CHAPTERS = [0, 1.904, 5.712, 7.616, 11.424, 15.232, 19.04, 20.944, 24.752, 26.656];
+  tl.to("#prog-fill", { width: 1712, duration: 28.6, ease: "none" }, 0)
+    .to("#playhead", { x: 1712, duration: 28.6, ease: "none" }, 0);
+  CHAPTERS.slice(1).forEach((t, k) => tl.to("#chap-roll", { y: -28 * (k + 1), duration: 0.4, ease: "expo.inOut" }, t - 0.2));
+
+  // A. Playhead
+  tl.fromTo("#a-dot", { scale: 0 }, { scale: 1, duration: 0.75, ease: "elastic.out(1, 0.45)" }, 0.1)
+    .to("#a-dot", { width: 1680, height: 6, left: 120, top: 537, borderRadius: 3, duration: 0.55, ease: "expo.inOut" }, 0.952)
+    .fromTo("#a-ticks .tk", { scaleY: 0, opacity: 0 }, { scaleY: 1, opacity: 1, duration: 0.35, ease: "back.out(3)", stagger: { amount: 0.25, from: "center" } }, 1.12)
+    .to("#a-dot", { width: 1920, height: 1080, left: 0, top: 0, borderRadius: 0, duration: 0.3, ease: "expo.in" }, 1.604);
+
+  // B. Kinetic type
+  tl.from(".b-html .L", { yPercent: 110, duration: 0.6, ease: "expo.out", stagger: 0.06 }, 1.96)
+    .from("#b-code", { opacity: 0, x: -40, duration: 0.4, ease: "power3.out" }, 2.0)
+    .fromTo("#b-in", { scale: 0, rotation: -14 }, { scale: 1, rotation: 0, duration: 0.5, ease: "back.out(2.2)" }, 2.856)
+    .from("#b-spec", { opacity: 0, y: 24, duration: 0.4, ease: "power3.out" }, 3.0)
+    .to("#b-blue", { top: 0, duration: 0.38, ease: "expo.inOut" }, 3.43)
+    .set("#b-orange, .b-html, #b-in, #b-code, #b-spec", { opacity: 0 }, 3.82)
+    .from(".b-motion .L", { yPercent: 110, duration: 0.6, ease: "expo.out", stagger: 0.05 }, 3.84)
+    .to(".echo", { y: (i) => -48 * (i + 1), opacity: (i) => 0.85 - i * 0.13, duration: 0.6, ease: "expo.out", stagger: 0.04 }, 4.284)
+    .fromTo("#b-out", { scale: 0, rotation: 10 }, { scale: 1, rotation: 0, duration: 0.5, ease: "back.out(2.2)" }, 4.76)
+    .to(".echo", { y: 0, opacity: 0, duration: 0.25, ease: "expo.in" }, 5.04)
+    .to(".b-motion .L", { yPercent: -110, duration: 0.28, ease: "expo.in", stagger: 0.025 }, 5.2)
+    .to("#b-out", { scale: 0, duration: 0.25, ease: "back.in(2)" }, 5.2)
+    .to("#b-blue", { left: 110, top: 474, width: 320, height: 132, borderRadius: 66, duration: 0.36, ease: "expo.inOut" }, 5.352);
+
+  // C. Pipeline: the dot runs the four stages on the beat.
+  tl.from("#c1 .chip-t, #c1 .chip-s", { opacity: 0, duration: 0.2 }, 5.712)
+    .fromTo("#c2, #c3, #c4", { scale: 0 }, { scale: 1, duration: 0.4, ease: "back.out(2)", stagger: 0.08 }, 5.76)
+    .fromTo(".wire", { scaleX: 0 }, { scaleX: 1, duration: 0.3, ease: "power3.out", stagger: 0.08 }, 5.95)
+    .from("#c-head", { y: 170, duration: 0.6, ease: "expo.out" }, 5.78)
+    .fromTo("#c-dot", { scale: 0 }, { scale: 1, duration: 0.5, ease: "elastic.out(1, 0.5)" }, 5.8)
+    .from("#c-foot", { opacity: 0, duration: 0.4 }, 6.1);
+  [6.188, 6.664, 7.14].forEach((t, k) => {
+    const d = k === 2 ? 0.2 : 0.3;
+    tl.to("#c-dot", { x: 460 * (k + 1), duration: d, ease: "expo.inOut" }, t)
+      .to("#c-dot", { y: -70, duration: d / 2, ease: "power2.out" }, t)
+      .to("#c-dot", { y: 0, duration: d / 2, ease: "power2.in" }, t + d / 2)
+      .to(`#c${k + 2} .chip-fill`, { width: 320, duration: 0.3, ease: "expo.out" }, t + d * 0.7);
+  });
+  tl.to("#c4, #c3, #c2, #c1", { scale: 0, duration: 0.26, ease: "back.in(1.4)", stagger: 0.03 }, 7.26)
+    .to(".wire", { opacity: 0, duration: 0.15 }, 7.36)
+    .to("#c-head", { y: -170, duration: 0.3, ease: "power3.in" }, 7.22)
+    .to("#c-foot", { opacity: 0, duration: 0.15 }, 7.36)
+    .to("#c-dot", { x: 690, y: 102, scale: 0.34, backgroundColor: "#f2eee6", duration: 0.26, ease: "expo.inOut" }, 7.36);
+
+  // D. Systems: one grid, ripples by distance from an origin.
+  const dots = q("#d .d");
+  const cx = (i) => 96 + (i % 25) * 72, cy = (i) => 180 + Math.floor(i / 25) * 72;
+  const dist = (ox, oy) => (i) => Math.hypot(cx(i) - ox, cy(i) - oy);
+  const wave = (ox, oy, speed) => (i) => dist(ox, oy)(i) / speed;
+  tl.fromTo(dots, { scale: 0 }, { scale: 1, duration: 0.5, ease: "back.out(3)", stagger: wave(960, 540, 1700) }, 7.616);
+  // Each ripple settles before the next one reaches a dot.
+  const ripple = (t, ox, oy, color, size, speed) => {
+    tl.to(dots, { backgroundColor: color, scale: size, duration: 0.12, ease: "power2.out", stagger: wave(ox, oy, speed) }, t)
+      .to(dots, { backgroundColor: "#f2eee6", scale: 1, duration: 0.3, ease: "power2.inOut", stagger: wave(ox, oy, speed) }, t + 0.12);
+  };
+  ripple(8.092, 960, 540, "#ff7a33", 2, 1700);
+  ripple(9.044, 240, 900, "#7d8cff", 1.7, 1300);
+  tl.fromTo("#d-card", { scaleY: 0 }, { scaleY: 1, duration: 0.45, ease: "expo.out" }, 9.52)
+    .to(dots, { rotation: 45, borderRadius: 0, duration: 0.45, ease: "back.out(2)", stagger: (i) => (i % 25) * 0.025 }, 9.995)
+    .to("#d-card", { scaleY: 0, duration: 0.25, ease: "expo.in" }, 10.75)
+    .to(dots, { x: (i) => 960 - cx(i), y: (i) => 540 - cy(i), scale: 0.6, duration: 0.45, ease: "expo.in", stagger: (i) => (940 - dist(960, 540)(i)) / 940 * 0.1 }, 10.87);
+
+  // E. Dimension: the grid's last dot becomes a globe.
+  tl.fromTo("#e-stage", { scale: 0.1, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.0, ease: "expo.out" }, 11.424)
+    .from("#e-head", { y: 130, duration: 0.6, ease: "expo.out" }, 11.9)
+    .from("#e-foot", { opacity: 0, duration: 0.4 }, 12.4)
+    .to("#e-head", { y: -130, duration: 0.3, ease: "expo.in" }, 14.6)
+    .to("#e-foot", { opacity: 0, duration: 0.2 }, 14.6)
+    .to("#e-stage", { scale: 3.5, duration: 0.5, ease: "power3.in" }, 14.72)
+    .to("#e-iris", { width: 2300, height: 2300, left: -190, top: -610, borderRadius: 1150, duration: 0.32, ease: "power3.in" }, 14.912);
+
+  // F. Timing: the dot traces each ease; the rail shows the value alone.
+  const EASES = ["expo.inOut", "back.out(2)", "elastic.out(1, 0.35)"];
+  [15.40, 16.66, 17.92].forEach((t, k) => {
+    if (k) tl.set("#f-dot, #f-val", { x: 0, y: 0 }, t - 0.05).to("#f-ease-roll", { y: -36 * k, duration: 0.3, ease: "expo.inOut" }, t - 0.3);
+    tl.to("#f-dot", { x: 520, duration: 0.55, ease: "none" }, t)
+      .to("#f-dot, #f-val", { y: -340, duration: 0.55, ease: EASES[k] }, t);
+  });
+  tl.from("#f-head", { y: 120, duration: 0.6, ease: "expo.out" }, 15.3)
+    .from(".race-l", { opacity: 0, x: -30, duration: 0.4, ease: "power3.out", stagger: 0.05 }, 15.35)
+    .from("#f-foot", { opacity: 0, duration: 0.4 }, 15.8);
+  ["power2.out", "expo.inOut", "back.out(2)", "elastic.out(1, 0.35)", "steps(8)"].forEach((ease, k) =>
+    tl.to(`#r${k}`, { x: 496, duration: 0.7, ease, repeat: 2, yoyo: true, repeatDelay: 0.3 }, 15.708));
+  tl.to("#f-wipe", { top: 0, duration: 0.26, ease: "expo.in" }, 18.78);
+
+  // G. Layers
+  tl.to(".pane", { top: -80, duration: 0.5, ease: "expo.out", stagger: 0.09 }, 19.04)
+    .fromTo(".pane img", { y: 0 }, { y: -140, duration: 1.9, ease: "none" }, 19.04)
+    .fromTo("#g-glass", { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.45, ease: "back.out(1.6)" }, 19.516)
+    .to("#g-band", { left: 2200, duration: 0.8, ease: "expo.inOut" }, 19.992)
+    .to("#g-glass", { scale: 0, duration: 0.25, ease: "back.in(2)" }, 20.62)
+    .to(".pane", { top: 1300, duration: 0.3, ease: "expo.in", stagger: 0.05 }, 20.6);
+
+  // H. Captions: the subtitle bar becomes the first speed track.
+  tl.to("#h-words", { opacity: 0, duration: 0.12 }, 24.5)
+    .to("#h-dim", { opacity: 1, duration: 0.25 }, 24.5)
+    .to("#h-sub", { left: 120, top: 470, width: 1680, height: 64, borderRadius: 32, backgroundColor: "rgba(242, 238, 230, 0.1)", duration: 0.25, ease: "expo.inOut" }, 24.5);
+
+  // I. Speed
+  tl.to("#i-fd", { width: 375, duration: 0.45, ease: "power3.out" }, 24.85)
+    .to("#i-fh", { width: 1680, duration: 1.25, ease: "power1.inOut" }, 24.85)
+    .from(".i-name, .i-k", { opacity: 0, y: 20, duration: 0.3, ease: "power3.out", stagger: 0.05 }, 24.76)
+    .from("#i-td", { opacity: 0, duration: 0.2 }, 25.3)
+    .from("#i-th", { opacity: 0, duration: 0.2 }, 26.1)
+    .from(".i-big", { opacity: 0, duration: 0.2 }, 25.2)
+    .to("#i-o1", { y: -760, duration: 1.0, ease: "expo.out" }, 25.2)
+    .to("#i-o2", { y: -950, duration: 1.2, ease: "expo.out" }, 25.2)
+    .from("#i-say", { opacity: 0, x: 40, duration: 0.4, ease: "power3.out" }, 25.5)
+    .from("#i-note", { opacity: 0, duration: 0.4 }, 25.7)
+    .to("#i-all", { opacity: 0, y: -50, duration: 0.24, ease: "expo.in" }, 26.4);
+
+  // J. End
+  tl.from(".j-word .L", { yPercent: 110, duration: 0.7, ease: "expo.out", stagger: 0.045 }, 26.7)
+    .fromTo("#j-dot", { scale: 0 }, { scale: 1, duration: 0.8, ease: "elastic.out(1, 0.4)" }, 27.13)
+    .from("#j-sub", { opacity: 0, y: 40, duration: 0.5, ease: "power3.out" }, 27.13)
+    .from("#j-stats", { opacity: 0, duration: 0.4 }, 27.4)
+    .from("#j-url", { opacity: 0, y: 20, duration: 0.4, ease: "power3.out" }, 27.6);
+
+  window.__timelines["motion"] = tl;
+</script>
 </body></html>

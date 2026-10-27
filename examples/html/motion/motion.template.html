@@ -1,0 +1,513 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  /* Director showcase reel. One HTML file, no browser at render time. build.py fills the
+     {{...}} blocks and writes motion.html. Bars are 1.904 s (4 beats of assets/music.wav,
+     ~126 BPM). Every time below, in CSS, SMIL and the GSAP timeline, is absolute reel time. */
+  @font-face { font-family:"Archivo Expanded"; src:url("../../assets/fonts/Archivo-ExpandedBlack.ttf"); font-weight:900; }
+  @font-face { font-family:"Archivo Expanded"; src:url("../../assets/fonts/Archivo-ExpandedBold.ttf"); font-weight:700; }
+  @font-face { font-family:"Archivo Condensed"; src:url("../../assets/fonts/Archivo-CondensedBlack.ttf"); font-weight:900; }
+  @font-face { font-family:"Instrument Serif"; src:url("../../assets/fonts/InstrumentSerif-Italic.ttf"); font-weight:400; font-style:italic; }
+  @font-face { font-family:"JetBrains Mono"; src:url("../../assets/fonts/JetBrainsMono-Regular.ttf"); font-weight:400; }
+  html, body { margin:0; background:#0b0b0d; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  #reel { position:relative; width:1920px; height:1080px; overflow:hidden; background:#0b0b0d; font-family:Inter; color:#f2eee6; }
+  .scene { position:absolute; left:0; top:0; width:1920px; height:1080px; overflow:hidden; background:#0b0b0d; }
+  .full { position:absolute; left:0; top:0; width:1920px; height:1080px; }
+  .paper { background:#f2eee6; color:#141311; }
+  .serif { font-family:"Instrument Serif"; font-style:italic; font-weight:400; }
+  .mono { font-family:"JetBrains Mono"; }
+  .xb { font-family:"Archivo Expanded"; font-weight:900; }
+  .mask { position:absolute; overflow:hidden; display:flex; }
+  .L { flex:none; }
+  @keyframes fadein { from { opacity:0; } to { opacity:1; } }
+  @keyframes fadeout { from { opacity:1; } to { opacity:0; } }
+  @keyframes slideL { from { transform:translateX(-1920px); } to { transform:translateX(0px); } }
+
+  /* ---------- HUD, over every chapter ---------- */
+  #hud { position:absolute; left:0; top:0; width:1920px; height:1080px; mix-blend-mode:difference; color:#f2eee6; font-family:"JetBrains Mono"; font-size:22px; letter-spacing:3px; }
+  .br { position:absolute; width:44px; height:44px; border-color:#f2eee6; border-style:solid; border-width:0px; }
+  .br.tl { left:40px; top:40px; border-left-width:3px; border-top-width:3px; }
+  .br.tr { left:1836px; top:40px; border-right-width:3px; border-top-width:3px; }
+  .br.bl { left:40px; top:996px; border-left-width:3px; border-bottom-width:3px; }
+  .br.brr { left:1836px; top:996px; border-right-width:3px; border-bottom-width:3px; }
+  .hud-id { position:absolute; left:104px; top:58px; height:28px; line-height:28px; display:flex; align-items:center; gap:14px; }
+  .hud-dot { width:14px; height:14px; border-radius:7px; background:#ff7a33; }
+  .tc { position:absolute; left:1546px; top:58px; height:28px; line-height:28px; display:flex; }
+  .col { width:13.2px; height:28px; overflow:hidden; }
+  .digits { display:flex; flex-direction:column; }
+  .digits div { height:28px; line-height:28px; }
+  /* Steps flip half a frame early, so the motion-blur shutter never straddles a flip. */
+  .f1 { animation:tc10 .333333s steps(10) -.016667s infinite; }
+  .f10 { animation:tc3 1s steps(3) -.016667s infinite; }
+  .s1 { animation:tc10 10s steps(10) -.016667s infinite; }
+  .s10 { animation:tc10 100s steps(10) -.016667s infinite; }
+  @keyframes tc10 { from { transform:translateY(0px); } to { transform:translateY(-280px); } }
+  @keyframes tc3 { from { transform:translateY(0px); } to { transform:translateY(-84px); } }
+  .chap { position:absolute; left:104px; top:1002px; width:900px; height:28px; overflow:hidden; }
+  .cr { display:flex; gap:14px; height:28px; line-height:28px; white-space:nowrap; }
+  .ct { opacity:.55; }
+  .spec { position:absolute; left:1016px; top:1002px; width:800px; height:28px; line-height:28px; text-align:right; }
+  .prog { position:absolute; left:104px; top:972px; width:1712px; height:2px; background:rgba(242,238,230,.25); }
+  #prog-fill { position:absolute; left:0px; top:0px; width:0px; height:2px; background:#f2eee6; }
+  .pm { position:absolute; top:-5px; width:2px; height:12px; background:rgba(242,238,230,.5); }
+  #playhead { position:absolute; left:-1px; top:-9px; width:4px; height:20px; background:#ff7a33; }
+
+  /* ---------- A. Playhead (0 - 1.904) ---------- */
+  #a-dot { position:absolute; left:900px; top:480px; width:120px; height:120px; border-radius:60px; background:#ff7a33; }
+  .tk { position:absolute; width:2px; background:rgba(242,238,230,.6); }
+  #a-svg { position:absolute; left:0; top:0; }
+
+  /* ---------- B. Kinetic type (1.904 - 5.712) ---------- */
+  #b-orange { background:#ff7a33; }
+  .b-code { position:absolute; left:128px; top:236px; font-size:34px; color:#141311; }
+  .b-html { left:120px; top:300px; height:330px; }
+  .b-html .L { font-family:"Archivo Expanded"; font-weight:900; font-size:300px; line-height:330px; color:#141311; }
+  #b-in { position:absolute; left:1330px; top:286px; font-size:330px; line-height:330px; color:#141311; }
+  .b-spec { position:absolute; left:128px; top:660px; font-size:28px; line-height:44px; color:#141311; }
+  #b-blue { position:absolute; left:0px; top:1080px; width:1920px; height:1080px; background:#2c46cf; }
+  .echo { position:absolute; left:0; top:380px; width:1920px; text-align:center; font-family:"Archivo Expanded"; font-weight:900; font-size:300px; line-height:330px; color:transparent; -webkit-text-stroke:3px #f2eee6; opacity:0; }
+  .b-motion { left:0; top:380px; width:1920px; height:330px; justify-content:center; }
+  .b-motion .L { font-family:"Archivo Expanded"; font-weight:900; font-size:300px; line-height:330px; color:#f2eee6; }
+  #b-out { position:absolute; left:1320px; top:650px; font-size:260px; line-height:280px; color:#ff7a33; }
+
+  /* ---------- C. Pipeline (5.712 - 7.616) ---------- */
+  .c-head { left:0; top:200px; width:1920px; height:170px; justify-content:center; }
+  .c-head div { font-size:130px; line-height:170px; }
+  .chip { position:absolute; top:474px; width:320px; height:132px; border-radius:66px; border:3px solid rgba(242,238,230,.5); overflow:hidden; }
+  .chip-fill { position:absolute; left:0px; top:0px; width:0px; height:132px; border-radius:66px; background:#2c46cf; }
+  .chip-t { position:absolute; left:0; top:28px; width:314px; text-align:center; font-family:"Archivo Expanded"; font-weight:900; font-size:40px; line-height:48px; }
+  .chip-s { position:absolute; left:0; top:78px; width:314px; text-align:center; font-family:"JetBrains Mono"; font-size:22px; opacity:.7; }
+  #c1 { left:110px; } #c2 { left:570px; } #c3 { left:1030px; } #c4 { left:1490px; }
+  #c1 .chip-fill { width:320px; }
+  .wire { position:absolute; top:539px; width:140px; height:2px; background:rgba(242,238,230,.6); transform-origin:0px 1px; }
+  #c-dot { position:absolute; left:252px; top:420px; width:36px; height:36px; border-radius:18px; background:#ff7a33; }
+  .c-foot { position:absolute; left:0; top:690px; width:1920px; text-align:center; font-size:26px; letter-spacing:2px; opacity:.75; }
+
+  /* ---------- D. Systems (7.616 - 11.424) ---------- */
+  .d { position:absolute; width:12px; height:12px; border-radius:6px; background:#f2eee6; }
+  #d-card { position:absolute; left:440px; top:446px; width:1040px; height:188px; background:#0b0b0d; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .d-big { font-family:"Archivo Expanded"; font-weight:900; font-size:64px; line-height:76px; }
+  .d-sub { font-size:56px; line-height:64px; color:#ff7a33; }
+
+  /* ---------- E. Dimension (11.424 - 15.232) ---------- */
+  .e-glow { background:radial-gradient(circle at 50% 50%, rgba(44,70,207,.55) 0%, rgba(44,70,207,0) 55%); }
+  #e-stage { position:absolute; left:0; top:0; width:1920px; height:1080px; perspective:1500px; transform-style:preserve-3d; }
+  .e-spin { position:absolute; left:960px; top:540px; width:0px; height:0px; transform-style:preserve-3d; animation:globe 9s linear 11.424s both; }
+  @keyframes globe { from { transform:rotateX(-16deg) rotateY(0deg); } to { transform:rotateX(-16deg) rotateY(-360deg); } }
+  .e-orbit { position:absolute; left:960px; top:540px; width:0px; height:0px; transform-style:preserve-3d; animation:orbit 5s linear 11.424s both; }
+  @keyframes orbit { from { transform:rotateX(-12deg) rotateZ(-6deg) rotateY(0deg); } to { transform:rotateX(-12deg) rotateZ(-6deg) rotateY(360deg); } }
+  .mer { position:absolute; left:-300px; top:-300px; width:600px; height:600px; border-radius:300px; border:2px solid rgba(242,238,230,.3); }
+  .lat { position:absolute; border:2px dashed rgba(242,238,230,.28); }
+  .lat.eq { border:3px solid rgba(255,122,51,.8); }
+  .sd { position:absolute; left:-5px; top:-5px; width:10px; height:10px; border-radius:5px; background:#f2eee6; backface-visibility:hidden; }
+  .sd.hot { left:-8px; top:-8px; width:16px; height:16px; border-radius:8px; background:#ff7a33; }
+  .ol { position:absolute; left:-60px; top:-60px; width:120px; height:120px; text-align:center; font-family:"Archivo Expanded"; font-weight:900; font-size:96px; line-height:120px; color:#ff7a33; backface-visibility:hidden; }
+  .ol.back { color:#7d8cff; }
+  .e-head { left:120px; top:150px; height:130px; }
+  .e-head div { font-size:110px; line-height:130px; }
+  .e-foot { position:absolute; left:0; top:900px; width:1920px; text-align:center; font-size:26px; letter-spacing:3px; opacity:.75; }
+  #e-iris { position:absolute; left:960px; top:540px; width:0px; height:0px; border-radius:0px; background:#f2eee6; }
+
+  /* ---------- F. Timing (15.232 - 19.04) ---------- */
+  #f-svg { position:absolute; left:140px; top:200px; }
+  #f-dot { position:absolute; left:186px; top:686px; width:28px; height:28px; border-radius:14px; background:#ff7a33; }
+  .f-rail { position:absolute; left:765px; top:360px; width:2px; height:340px; background:rgba(20,19,17,.2); }
+  #f-val { position:absolute; left:752px; top:686px; width:28px; height:28px; border-radius:14px; background:#141311; }
+  .f-ease { position:absolute; left:200px; top:196px; width:560px; height:36px; overflow:hidden; font-size:28px; letter-spacing:1px; }
+  .f-ease div { height:36px; line-height:36px; }
+  .f-head { left:900px; top:150px; height:120px; }
+  .f-head div { font-size:100px; line-height:120px; }
+  .race { position:absolute; left:900px; width:900px; height:60px; }
+  .race-l { position:absolute; left:0; top:12px; font-size:26px; line-height:36px; }
+  .race-t { position:absolute; left:330px; top:29px; width:560px; height:2px; background:rgba(20,19,17,.25); }
+  .pill { position:absolute; left:330px; top:12px; width:64px; height:36px; border-radius:18px; background:#141311; }
+  .pill.o { background:#ff7a33; } .pill.b { background:#2c46cf; }
+  .f-foot { position:absolute; left:200px; top:860px; font-size:26px; letter-spacing:1px; opacity:.7; }
+  #f-wipe { position:absolute; left:0px; top:1080px; width:1920px; height:1080px; background:#0b0b0d; }
+
+  /* ---------- G. Layers (19.04 - 20.944) ---------- */
+  .pane { position:absolute; top:-1400px; width:760px; height:1240px; overflow:hidden; transform:skewX(-14deg); }
+  .pane img { position:absolute; left:-260px; top:0px; width:1280px; height:1400px; object-fit:cover; transform:skewX(14deg); }
+  #g0 { left:-200px; } #g1 { left:560px; } #g2 { left:1320px; }
+  #g-glass { position:absolute; left:510px; top:330px; width:900px; height:420px; border-radius:36px; background:rgba(242,238,230,.16); border:2px solid rgba(242,238,230,.45); backdrop-filter:blur(34px);
+    display:flex; flex-direction:column; justify-content:center; padding:0 64px; }
+  .glass-k { font-family:"JetBrains Mono"; font-size:26px; letter-spacing:4px; opacity:.85; }
+  .glass-t { font-family:"Archivo Expanded"; font-weight:900; font-size:104px; letter-spacing:-2px; line-height:1.15; }
+  #g-band { position:absolute; left:-700px; top:-100px; width:420px; height:1300px; background:#f2eee6; mix-blend-mode:difference; transform:skewX(-18deg); }
+
+  /* ---------- H. Captions (20.944 - 24.752) ---------- */
+  #h .plate { position:absolute; left:0; top:0; width:1920px; height:1080px; object-fit:cover; animation:push 3.808s linear 20.944s both; }
+  @keyframes push { from { transform:scale(1.0); } to { transform:scale(1.09); } }
+  #h .vig { position:absolute; left:0; top:0; width:1920px; height:1080px; background:linear-gradient(180deg, rgba(11,11,13,.55) 0%, rgba(11,11,13,0) 30%, rgba(11,11,13,0) 55%, rgba(11,11,13,.8) 100%); }
+  #h .lt { position:absolute; left:120px; top:170px; display:flex; height:120px; overflow:hidden; animation:fadeout .3s linear 22.754s both; }
+  #h .lt-bar { width:14px; height:120px; background:#ff7a33; }
+  #h .lt-box { padding:14px 36px; background:rgba(20,19,17,.85); color:#f2eee6; animation:slideL .55s cubic-bezier(.2,.9,.2,1) 21.054s both; }
+  #h .lt-n { font-size:44px; font-weight:700; line-height:52px; }
+  #h .lt-r { font-family:"JetBrains Mono"; font-size:24px; letter-spacing:3px; text-transform:uppercase; opacity:.7; }
+  #h .tag { position:absolute; left:1450px; top:130px; width:350px; text-align:center; font-family:"JetBrains Mono"; font-size:24px; letter-spacing:4px; padding:8px 0px; border:2px solid rgba(242,238,230,.6); border-radius:999px; }
+  #h .tag1 { animation:fadein .3s linear 21.104s both, fadeout .2s linear 22.754s both; }
+  #h .tag2 { animation:fadein .3s linear 22.854s both; }
+  #h .pop { position:absolute; left:0; top:640px; width:1920px; display:flex; justify-content:center; gap:22px; }
+  #h .pg1 { animation:fadeout .1s linear 21.854s both; }
+  #h .pg2 { animation:fadeout .2s linear 22.754s both; }
+  #h .pw { font-size:132px; font-weight:900; letter-spacing:-4px; text-transform:uppercase; color:#f2eee6; padding:0 22px; border-radius:22px; background-color:rgba(255,122,51,0); }
+  #h .p0 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 20.944s both, pw-live 0.476s linear 20.944s both; }
+  #h .p1 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 21.420s both, pw-live 0.476s linear 21.420s both; }
+  #h .p2 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 21.896s both, pw-live 0.476s linear 21.896s both; }
+  #h .p3 { animation:pw-in .28s cubic-bezier(.2,1.4,.4,1) 22.372s both, pw-live 0.476s linear 22.372s both; }
+  @keyframes pw-in { from { opacity:0; transform:translateY(40px) scale(.6); } to { opacity:1; transform:translateY(0px) scale(1); } }
+  @keyframes pw-live { 0% { background-color:rgba(255,122,51,1); color:#141311; } 85% { background-color:rgba(255,122,51,1); color:#141311; } 100% { background-color:rgba(255,122,51,0); color:#f2eee6; } }
+  #h-dim { background:#0b0b0d; opacity:0; }
+  #h-sub { position:absolute; left:360px; top:880px; width:1200px; height:96px; border-radius:18px; background-color:rgba(11,11,13,.72); animation:fadein .2s linear 22.848s both; }
+  #h-words { position:absolute; left:0; top:0; width:1200px; height:96px; display:flex; justify-content:center; align-items:center; gap:16px; }
+  #h .sw { font-size:50px; font-weight:700; color:rgba(242,238,230,.45); }
+  #h .s0 { animation:sw-on .12s linear 22.848s both; }
+  #h .s1 { animation:sw-on .12s linear 23.086s both; }
+  #h .s2 { animation:sw-on .12s linear 23.324s both; }
+  #h .s3 { animation:sw-on .12s linear 23.562s both; }
+  #h .s4 { animation:sw-on .12s linear 23.800s both; }
+  #h .s5 { animation:sw-on .12s linear 24.038s both; }
+  #h .s6 { animation:sw-on .12s linear 24.276s both; }
+  #h .s7 { animation:sw-end .12s linear 24.514s both; }
+  @keyframes sw-on { from { color:rgba(242,238,230,.45); } to { color:#f2eee6; } }
+  @keyframes sw-end { from { color:rgba(242,238,230,.45); } to { color:#ff7a33; } }
+
+  /* ---------- I. Speed (24.752 - 26.656) ---------- */
+  .i-k { position:absolute; left:120px; top:180px; font-size:26px; letter-spacing:4px; opacity:.7; }
+  .i-name { position:absolute; left:120px; font-family:"Archivo Expanded"; font-weight:700; font-size:34px; line-height:44px; }
+  .i-time { position:absolute; left:1400px; width:400px; text-align:right; font-size:34px; line-height:44px; }
+  .i-track { position:absolute; left:120px; width:1680px; height:64px; border-radius:32px; background:rgba(242,238,230,.1); }
+  .i-fill { position:absolute; left:0px; top:0px; width:64px; height:64px; border-radius:32px; }
+  #i-fd { background:#2c46cf; } #i-fh { background:#8a857c; }
+  .i-big { position:absolute; left:120px; top:730px; height:190px; display:flex; }
+  .odo { height:190px; overflow:hidden; }
+  .odo-d, .i-big .ch { font-family:"Archivo Expanded"; font-weight:900; font-size:170px; line-height:190px; }
+  .odo-d div { height:190px; }
+  .i-big .x { color:#ff7a33; }
+  .i-say { position:absolute; left:860px; top:750px; font-size:72px; line-height:84px; }
+  .i-note { position:absolute; left:864px; top:850px; font-size:22px; opacity:.6; }
+
+  /* ---------- J. End (26.656 - 28.6) ---------- */
+  .j-word { left:172px; top:300px; height:250px; }
+  .j-word .L { font-family:"Archivo Expanded"; font-weight:900; font-size:220px; line-height:250px; }
+  #j-dot { position:absolute; left:1700px; top:446px; width:56px; height:56px; border-radius:28px; background:#ff7a33; }
+  .j-sub { position:absolute; left:0; top:590px; width:1920px; text-align:center; font-size:84px; line-height:100px; }
+  .j-stats { position:absolute; left:0; top:730px; width:1920px; text-align:center; font-size:26px; letter-spacing:3px; opacity:.7; }
+  .j-url { position:absolute; left:0; top:790px; width:1920px; text-align:center; font-size:32px; letter-spacing:2px; color:#7d8cff; }
+</style></head>
+<body>
+<div id="reel" data-composition-id="motion" data-width="1920" data-height="1080" data-fps="30" data-duration="28.6" data-motion-blur="16" data-shutter-angle="180">
+  <audio src="assets/music.wav" data-start="0" data-duration="28.6"></audio>
+
+  <!-- A. Playhead: a dot springs in, becomes the timeline, then floods the frame. -->
+  <div id="a" class="scene" data-start="0" data-duration="1.904">
+    <svg id="a-svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+      <g fill="none" stroke="#f2eee6" stroke-opacity="0.5">
+        <animate attributeName="opacity" from="1" to="0" begin="0.85s" dur="0.2s" fill="freeze"/>
+        <g>
+          <animateTransform attributeName="transform" type="rotate" from="0 960 540" to="120 960 540" begin="0s" dur="1.9s" fill="freeze"/>
+          <circle cx="960" cy="540" r="130" stroke-width="3" stroke-dasharray="12 10"/>
+        </g>
+        <circle cx="960" cy="540" r="210" stroke-width="2" stroke-dasharray="1320" stroke-dashoffset="1320">
+          <animate attributeName="stroke-dashoffset" from="1320" to="0" begin="0.2s" dur="0.6s" fill="freeze"/>
+        </circle>
+      </g>
+    </svg>
+    <div id="a-ticks">
+{{TICKS}}
+    </div>
+    <div id="a-dot"></div>
+  </div>
+
+  <!-- B. Kinetic type -->
+  <div id="b" class="scene" data-start="1.904" data-duration="3.808">
+    <div id="b-orange" class="full"></div>
+    <div class="b-code mono" id="b-code">&lt;h1&gt;</div>
+    <div class="mask b-html"><div class="L">H</div><div class="L">T</div><div class="L">M</div><div class="L">L</div></div>
+    <div id="b-in" class="serif">in.</div>
+    <div class="b-spec mono" id="b-spec">font: 900 300px "Archivo Expanded";<br>real glyphs, shaped and painted per frame</div>
+    <div id="b-blue"></div>
+    <div class="echo">MOTION</div><div class="echo">MOTION</div><div class="echo">MOTION</div>
+    <div class="echo">MOTION</div><div class="echo">MOTION</div><div class="echo">MOTION</div>
+    <div class="mask b-motion"><div class="L">M</div><div class="L">O</div><div class="L">T</div><div class="L">I</div><div class="L">O</div><div class="L">N</div></div>
+    <div id="b-out" class="serif">out.</div>
+  </div>
+
+  <!-- C. Pipeline -->
+  <div id="c" class="scene" data-start="5.712" data-duration="1.904">
+    <div class="mask c-head"><div class="serif" id="c-head">No browser in the loop.</div></div>
+    <div class="wire" style="left:430px"></div><div class="wire" style="left:890px"></div><div class="wire" style="left:1350px"></div>
+    <div class="chip" id="c1"><div class="chip-fill"></div><div class="chip-t">HTML</div><div class="chip-s">html5ever</div></div>
+    <div class="chip" id="c2"><div class="chip-fill"></div><div class="chip-t">LAYOUT</div><div class="chip-s">taffy</div></div>
+    <div class="chip" id="c3"><div class="chip-fill"></div><div class="chip-t">PAINT</div><div class="chip-s">skia · vulkan</div></div>
+    <div class="chip" id="c4"><div class="chip-fill"></div><div class="chip-t">MP4</div><div class="chip-s">ffmpeg</div></div>
+    <div id="c-dot"></div>
+    <div class="c-foot mono" id="c-foot">ONE RUST PROCESS · NO CHROMIUM · NO SCREENSHOTS</div>
+  </div>
+
+  <!-- D. Systems -->
+  <div id="d" class="scene" data-start="7.616" data-duration="3.808">
+{{DOTS}}
+    <div id="d-card"><div class="d-big">275 ELEMENTS.</div><div class="d-sub serif">one timeline, every frame exact.</div></div>
+  </div>
+
+  <!-- E. Dimension -->
+  <div id="e" class="scene" data-start="11.424" data-duration="3.808">
+    <div class="full e-glow"></div>
+    <div id="e-stage">
+      <div class="e-spin">
+{{GLOBE}}
+      </div>
+      <div class="e-orbit">
+{{ORBIT}}
+      </div>
+    </div>
+    <div class="mask e-head"><div class="serif" id="e-head">Real depth.</div></div>
+    <div class="e-foot mono" id="e-foot">PRESERVE-3D · DEPTH-SORTED · BACKFACE-VISIBILITY</div>
+    <div id="e-iris"></div>
+  </div>
+
+  <!-- F. Timing -->
+  <div id="f" class="scene paper" data-start="15.232" data-duration="3.808">
+    <svg id="f-svg" width="640" height="600" viewBox="0 0 640 600">
+      <g transform="translate(60,40)">
+        <line x1="0" y1="460" x2="520" y2="460" stroke="#141311" stroke-width="2"/>
+        <line x1="0" y1="120" x2="0" y2="460" stroke="#141311" stroke-width="2"/>
+        <line x1="0" y1="120" x2="520" y2="120" stroke="#141311" stroke-opacity="0.35" stroke-width="2" stroke-dasharray="8 8"/>
+{{CURVES}}
+      </g>
+    </svg>
+    <div class="f-ease mono"><div id="f-ease-roll"><div>ease: "expo.inOut"</div><div>ease: "back.out(2)"</div><div>ease: "elastic.out(1, 0.35)"</div></div></div>
+    <div class="f-rail"></div>
+    <div id="f-val"></div>
+    <div id="f-dot"></div>
+    <div class="mask f-head"><div class="serif" id="f-head">Every ease, natively.</div></div>
+    <div class="race" style="top:300px"><div class="race-l mono">power2.out</div><div class="race-t"></div><div class="pill" id="r0"></div></div>
+    <div class="race" style="top:410px"><div class="race-l mono">expo.inOut</div><div class="race-t"></div><div class="pill" id="r1"></div></div>
+    <div class="race" style="top:520px"><div class="race-l mono">back.out(2)</div><div class="race-t"></div><div class="pill o" id="r2"></div></div>
+    <div class="race" style="top:630px"><div class="race-l mono">elastic.out(1, .35)</div><div class="race-t"></div><div class="pill b" id="r3"></div></div>
+    <div class="race" style="top:740px"><div class="race-l mono">steps(8)</div><div class="race-t"></div><div class="pill" id="r4"></div></div>
+    <div class="f-foot mono" id="f-foot">GSAP TIMELINES COMPILE TO NATIVE KEYFRAMES. NO JS AT RENDER TIME.</div>
+    <div id="f-wipe"></div>
+  </div>
+
+  <!-- G. Layers -->
+  <div id="g" class="scene" data-start="19.04" data-duration="1.904">
+    <div class="pane" id="g0"><img src="../reel/assets/corridor.jpg"></div>
+    <div class="pane" id="g1"><img src="../reel/assets/monolith.jpg"></div>
+    <div class="pane" id="g2"><img src="../reel/assets/street.jpg"></div>
+    <div id="g-glass"><div class="glass-k">BACKDROP-FILTER · MASK · BLEND</div><div class="glass-t">Composite.</div></div>
+    <div id="g-band"></div>
+  </div>
+
+  <!-- H. Captions -->
+  <div id="h" class="scene" data-start="20.944" data-duration="3.808">
+    <img class="plate" src="../reel/assets/profile.jpg">
+    <div class="vig"></div>
+    <div class="tag tag1">STYLE / POP</div>
+    <div class="tag tag2">STYLE / SUBTITLE</div>
+    <div class="lt"><div class="lt-bar"></div><div class="lt-box"><div class="lt-n">Steven Figler</div><div class="lt-r">Step Up Gaming</div></div></div>
+    <div class="pop pg1"><div class="pw p0">No</div><div class="pw p1">browser.</div></div>
+    <div class="pop pg2"><div class="pw p2">No</div><div class="pw p3">screenshots.</div></div>
+    <div id="h-dim" class="full"></div>
+    <div id="h-sub"><div id="h-words"><div class="sw s0">Real</div><div class="sw s1">type,</div><div class="sw s2">timed</div><div class="sw s3">to</div><div class="sw s4">the</div><div class="sw s5">frame,</div><div class="sw s6">every</div><div class="sw s7">frame.</div></div></div>
+  </div>
+
+  <!-- I. Speed -->
+  <div id="i" class="scene" data-start="24.752" data-duration="1.904">
+    <div id="i-all" class="full">
+      <div class="i-k mono">3 S 1080P30 EXPORT · WARM RUN</div>
+      <div class="i-name" style="top:410px">Director</div>
+      <div class="i-time mono" id="i-td" style="top:410px">1.67 s</div>
+      <div class="i-track" style="top:470px"><div class="i-fill" id="i-fd"></div></div>
+      <div class="i-name" style="top:580px">HyperFrames (headless Chrome)</div>
+      <div class="i-time mono" id="i-th" style="top:580px">7.46 s</div>
+      <div class="i-track" style="top:640px"><div class="i-fill" id="i-fh"></div></div>
+      <div class="i-big"><div class="odo"><div class="odo-d" id="i-o1"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div></div></div><div class="ch">.</div><div class="odo"><div class="odo-d" id="i-o2"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div></div></div><div class="ch x">&#215;</div></div>
+      <div class="i-say serif" id="i-say">faster end to end.</div>
+      <div class="i-note mono" id="i-note">Ryzen 9 9900X, 2026-10-13. Method in director-html/README.md</div>
+    </div>
+  </div>
+
+  <!-- J. End -->
+  <div id="j" class="scene" data-start="26.656" data-duration="1.944">
+    <svg class="full" width="1920" height="1080" viewBox="0 0 1920 1080">
+      <circle cx="1728" cy="474" r="28" fill="none" stroke="#ff7a33" stroke-width="3" opacity="0">
+        <animate attributeName="r" from="28" to="220" begin="27.25s" dur="0.9s" fill="freeze"/>
+        <animate attributeName="opacity" from="1" to="0" begin="27.25s" dur="0.9s" fill="freeze"/>
+      </circle>
+      <circle cx="1728" cy="474" r="28" fill="none" stroke="#ff7a33" stroke-width="2" opacity="0">
+        <animate attributeName="r" from="28" to="220" begin="27.73s" dur="0.9s" fill="freeze"/>
+        <animate attributeName="opacity" from="1" to="0" begin="27.73s" dur="0.9s" fill="freeze"/>
+      </circle>
+    </svg>
+    <div class="mask j-word"><div class="L">D</div><div class="L">I</div><div class="L">R</div><div class="L">E</div><div class="L">C</div><div class="L">T</div><div class="L">O</div><div class="L">R</div></div>
+    <div id="j-dot"></div>
+    <div class="j-sub serif" id="j-sub">HTML in. Motion out.</div>
+    <div class="j-stats mono" id="j-stats">28.6 S · 858 FRAMES · 16 SUBFRAMES EACH · 0 BROWSERS</div>
+    <div class="j-url mono" id="j-url">github.com/stepupgaming/director</div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="br tl"></div><div class="br tr"></div><div class="br bl"></div><div class="br brr"></div>
+    <div class="hud-id"><div class="hud-dot"></div><div>DIRECTOR — NATIVE REEL</div></div>
+    <div class="tc"><div>TC 00:00:</div>
+      <div class="col"><div class="digits s10"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div></div></div>
+      <div class="col"><div class="digits s1"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div></div></div>
+      <div>:</div>
+      <div class="col"><div class="digits f10"><div>0</div><div>1</div><div>2</div></div></div>
+      <div class="col"><div class="digits f1"><div>0</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div></div></div>
+    </div>
+    <div class="prog">
+      <div class="pm" style="left:114px"></div><div class="pm" style="left:342px"></div><div class="pm" style="left:456px"></div>
+      <div class="pm" style="left:684px"></div><div class="pm" style="left:912px"></div><div class="pm" style="left:1140px"></div>
+      <div class="pm" style="left:1254px"></div><div class="pm" style="left:1482px"></div><div class="pm" style="left:1596px"></div>
+      <div id="prog-fill"></div><div id="playhead"></div>
+    </div>
+    <div class="chap"><div class="chap-roll" id="chap-roll">
+      <div class="cr"><div>01 PLAYHEAD</div><div class="ct">· elastic.out, width/height morph</div></div>
+      <div class="cr"><div>02 KINETIC TYPE</div><div class="ct">· Archivo Expanded, text-stroke</div></div>
+      <div class="cr"><div>03 PIPELINE</div><div class="ct">· html5ever → taffy → skia → ffmpeg</div></div>
+      <div class="cr"><div>04 SYSTEMS</div><div class="ct">· 275 elements, distance staggers</div></div>
+      <div class="cr"><div>05 DIMENSION</div><div class="ct">· preserve-3d, backface-visibility</div></div>
+      <div class="cr"><div>06 TIMING</div><div class="ct">· GSAP eases, SMIL keyTimes</div></div>
+      <div class="cr"><div>07 LAYERS</div><div class="ct">· backdrop-filter, mix-blend-mode</div></div>
+      <div class="cr"><div>08 CAPTIONS</div><div class="ct">· beat-timed type</div></div>
+      <div class="cr"><div>09 SPEED</div><div class="ct">· versus headless Chrome</div></div>
+      <div class="cr"><div>10 DIRECTOR</div><div class="ct">· HTML in, MP4 out</div></div>
+    </div></div>
+    <div class="spec">1920×1080 · 30 FPS · 16-SAMPLE MOTION BLUR</div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+  window.__timelines = window.__timelines || {};
+  const BEAT = 0.476, BAR = 1.904;
+  const tl = gsap.timeline({ paused: true });
+  const q = (s) => gsap.utils.toArray(s);
+
+  // HUD: progress, playhead and the chapter roller.
+  const CHAPTERS = [0, 1.904, 5.712, 7.616, 11.424, 15.232, 19.04, 20.944, 24.752, 26.656];
+  tl.to("#prog-fill", { width: 1712, duration: 28.6, ease: "none" }, 0)
+    .to("#playhead", { x: 1712, duration: 28.6, ease: "none" }, 0);
+  CHAPTERS.slice(1).forEach((t, k) => tl.to("#chap-roll", { y: -28 * (k + 1), duration: 0.4, ease: "expo.inOut" }, t - 0.2));
+
+  // A. Playhead
+  tl.fromTo("#a-dot", { scale: 0 }, { scale: 1, duration: 0.75, ease: "elastic.out(1, 0.45)" }, 0.1)
+    .to("#a-dot", { width: 1680, height: 6, left: 120, top: 537, borderRadius: 3, duration: 0.55, ease: "expo.inOut" }, 0.952)
+    .fromTo("#a-ticks .tk", { scaleY: 0, opacity: 0 }, { scaleY: 1, opacity: 1, duration: 0.35, ease: "back.out(3)", stagger: { amount: 0.25, from: "center" } }, 1.12)
+    .to("#a-dot", { width: 1920, height: 1080, left: 0, top: 0, borderRadius: 0, duration: 0.3, ease: "expo.in" }, 1.604);
+
+  // B. Kinetic type
+  tl.from(".b-html .L", { yPercent: 110, duration: 0.6, ease: "expo.out", stagger: 0.06 }, 1.96)
+    .from("#b-code", { opacity: 0, x: -40, duration: 0.4, ease: "power3.out" }, 2.0)
+    .fromTo("#b-in", { scale: 0, rotation: -14 }, { scale: 1, rotation: 0, duration: 0.5, ease: "back.out(2.2)" }, 2.856)
+    .from("#b-spec", { opacity: 0, y: 24, duration: 0.4, ease: "power3.out" }, 3.0)
+    .to("#b-blue", { top: 0, duration: 0.38, ease: "expo.inOut" }, 3.43)
+    .set("#b-orange, .b-html, #b-in, #b-code, #b-spec", { opacity: 0 }, 3.82)
+    .from(".b-motion .L", { yPercent: 110, duration: 0.6, ease: "expo.out", stagger: 0.05 }, 3.84)
+    .to(".echo", { y: (i) => -48 * (i + 1), opacity: (i) => 0.85 - i * 0.13, duration: 0.6, ease: "expo.out", stagger: 0.04 }, 4.284)
+    .fromTo("#b-out", { scale: 0, rotation: 10 }, { scale: 1, rotation: 0, duration: 0.5, ease: "back.out(2.2)" }, 4.76)
+    .to(".echo", { y: 0, opacity: 0, duration: 0.25, ease: "expo.in" }, 5.04)
+    .to(".b-motion .L", { yPercent: -110, duration: 0.28, ease: "expo.in", stagger: 0.025 }, 5.2)
+    .to("#b-out", { scale: 0, duration: 0.25, ease: "back.in(2)" }, 5.2)
+    .to("#b-blue", { left: 110, top: 474, width: 320, height: 132, borderRadius: 66, duration: 0.36, ease: "expo.inOut" }, 5.352);
+
+  // C. Pipeline: the dot runs the four stages on the beat.
+  tl.from("#c1 .chip-t, #c1 .chip-s", { opacity: 0, duration: 0.2 }, 5.712)
+    .fromTo("#c2, #c3, #c4", { scale: 0 }, { scale: 1, duration: 0.4, ease: "back.out(2)", stagger: 0.08 }, 5.76)
+    .fromTo(".wire", { scaleX: 0 }, { scaleX: 1, duration: 0.3, ease: "power3.out", stagger: 0.08 }, 5.95)
+    .from("#c-head", { y: 170, duration: 0.6, ease: "expo.out" }, 5.78)
+    .fromTo("#c-dot", { scale: 0 }, { scale: 1, duration: 0.5, ease: "elastic.out(1, 0.5)" }, 5.8)
+    .from("#c-foot", { opacity: 0, duration: 0.4 }, 6.1);
+  [6.188, 6.664, 7.14].forEach((t, k) => {
+    const d = k === 2 ? 0.2 : 0.3;
+    tl.to("#c-dot", { x: 460 * (k + 1), duration: d, ease: "expo.inOut" }, t)
+      .to("#c-dot", { y: -70, duration: d / 2, ease: "power2.out" }, t)
+      .to("#c-dot", { y: 0, duration: d / 2, ease: "power2.in" }, t + d / 2)
+      .to(`#c${k + 2} .chip-fill`, { width: 320, duration: 0.3, ease: "expo.out" }, t + d * 0.7);
+  });
+  tl.to("#c4, #c3, #c2, #c1", { scale: 0, duration: 0.26, ease: "back.in(1.4)", stagger: 0.03 }, 7.26)
+    .to(".wire", { opacity: 0, duration: 0.15 }, 7.36)
+    .to("#c-head", { y: -170, duration: 0.3, ease: "power3.in" }, 7.22)
+    .to("#c-foot", { opacity: 0, duration: 0.15 }, 7.36)
+    .to("#c-dot", { x: 690, y: 102, scale: 0.34, backgroundColor: "#f2eee6", duration: 0.26, ease: "expo.inOut" }, 7.36);
+
+  // D. Systems: one grid, ripples by distance from an origin.
+  const dots = q("#d .d");
+  const cx = (i) => 96 + (i % 25) * 72, cy = (i) => 180 + Math.floor(i / 25) * 72;
+  const dist = (ox, oy) => (i) => Math.hypot(cx(i) - ox, cy(i) - oy);
+  const wave = (ox, oy, speed) => (i) => dist(ox, oy)(i) / speed;
+  tl.fromTo(dots, { scale: 0 }, { scale: 1, duration: 0.5, ease: "back.out(3)", stagger: wave(960, 540, 1700) }, 7.616);
+  // Each ripple settles before the next one reaches a dot.
+  const ripple = (t, ox, oy, color, size, speed) => {
+    tl.to(dots, { backgroundColor: color, scale: size, duration: 0.12, ease: "power2.out", stagger: wave(ox, oy, speed) }, t)
+      .to(dots, { backgroundColor: "#f2eee6", scale: 1, duration: 0.3, ease: "power2.inOut", stagger: wave(ox, oy, speed) }, t + 0.12);
+  };
+  ripple(8.092, 960, 540, "#ff7a33", 2, 1700);
+  ripple(9.044, 240, 900, "#7d8cff", 1.7, 1300);
+  tl.fromTo("#d-card", { scaleY: 0 }, { scaleY: 1, duration: 0.45, ease: "expo.out" }, 9.52)
+    .to(dots, { rotation: 45, borderRadius: 0, duration: 0.45, ease: "back.out(2)", stagger: (i) => (i % 25) * 0.025 }, 9.995)
+    .to("#d-card", { scaleY: 0, duration: 0.25, ease: "expo.in" }, 10.75)
+    .to(dots, { x: (i) => 960 - cx(i), y: (i) => 540 - cy(i), scale: 0.6, duration: 0.45, ease: "expo.in", stagger: (i) => (940 - dist(960, 540)(i)) / 940 * 0.1 }, 10.87);
+
+  // E. Dimension: the grid's last dot becomes a globe.
+  tl.fromTo("#e-stage", { scale: 0.1, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.0, ease: "expo.out" }, 11.424)
+    .from("#e-head", { y: 130, duration: 0.6, ease: "expo.out" }, 11.9)
+    .from("#e-foot", { opacity: 0, duration: 0.4 }, 12.4)
+    .to("#e-head", { y: -130, duration: 0.3, ease: "expo.in" }, 14.6)
+    .to("#e-foot", { opacity: 0, duration: 0.2 }, 14.6)
+    .to("#e-stage", { scale: 3.5, duration: 0.5, ease: "power3.in" }, 14.72)
+    .to("#e-iris", { width: 2300, height: 2300, left: -190, top: -610, borderRadius: 1150, duration: 0.32, ease: "power3.in" }, 14.912);
+
+  // F. Timing: the dot traces each ease; the rail shows the value alone.
+  const EASES = ["expo.inOut", "back.out(2)", "elastic.out(1, 0.35)"];
+  [15.40, 16.66, 17.92].forEach((t, k) => {
+    if (k) tl.set("#f-dot, #f-val", { x: 0, y: 0 }, t - 0.05).to("#f-ease-roll", { y: -36 * k, duration: 0.3, ease: "expo.inOut" }, t - 0.3);
+    tl.to("#f-dot", { x: 520, duration: 0.55, ease: "none" }, t)
+      .to("#f-dot, #f-val", { y: -340, duration: 0.55, ease: EASES[k] }, t);
+  });
+  tl.from("#f-head", { y: 120, duration: 0.6, ease: "expo.out" }, 15.3)
+    .from(".race-l", { opacity: 0, x: -30, duration: 0.4, ease: "power3.out", stagger: 0.05 }, 15.35)
+    .from("#f-foot", { opacity: 0, duration: 0.4 }, 15.8);
+  ["power2.out", "expo.inOut", "back.out(2)", "elastic.out(1, 0.35)", "steps(8)"].forEach((ease, k) =>
+    tl.to(`#r${k}`, { x: 496, duration: 0.7, ease, repeat: 2, yoyo: true, repeatDelay: 0.3 }, 15.708));
+  tl.to("#f-wipe", { top: 0, duration: 0.26, ease: "expo.in" }, 18.78);
+
+  // G. Layers
+  tl.to(".pane", { top: -80, duration: 0.5, ease: "expo.out", stagger: 0.09 }, 19.04)
+    .fromTo(".pane img", { y: 0 }, { y: -140, duration: 1.9, ease: "none" }, 19.04)
+    .fromTo("#g-glass", { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.45, ease: "back.out(1.6)" }, 19.516)
+    .to("#g-band", { left: 2200, duration: 0.8, ease: "expo.inOut" }, 19.992)
+    .to("#g-glass", { scale: 0, duration: 0.25, ease: "back.in(2)" }, 20.62)
+    .to(".pane", { top: 1300, duration: 0.3, ease: "expo.in", stagger: 0.05 }, 20.6);
+
+  // H. Captions: the subtitle bar becomes the first speed track.
+  tl.to("#h-words", { opacity: 0, duration: 0.12 }, 24.5)
+    .to("#h-dim", { opacity: 1, duration: 0.25 }, 24.5)
+    .to("#h-sub", { left: 120, top: 470, width: 1680, height: 64, borderRadius: 32, backgroundColor: "rgba(242, 238, 230, 0.1)", duration: 0.25, ease: "expo.inOut" }, 24.5);
+
+  // I. Speed
+  tl.to("#i-fd", { width: 375, duration: 0.45, ease: "power3.out" }, 24.85)
+    .to("#i-fh", { width: 1680, duration: 1.25, ease: "power1.inOut" }, 24.85)
+    .from(".i-name, .i-k", { opacity: 0, y: 20, duration: 0.3, ease: "power3.out", stagger: 0.05 }, 24.76)
+    .from("#i-td", { opacity: 0, duration: 0.2 }, 25.3)
+    .from("#i-th", { opacity: 0, duration: 0.2 }, 26.1)
+    .from(".i-big", { opacity: 0, duration: 0.2 }, 25.2)
+    .to("#i-o1", { y: -760, duration: 1.0, ease: "expo.out" }, 25.2)
+    .to("#i-o2", { y: -950, duration: 1.2, ease: "expo.out" }, 25.2)
+    .from("#i-say", { opacity: 0, x: 40, duration: 0.4, ease: "power3.out" }, 25.5)
+    .from("#i-note", { opacity: 0, duration: 0.4 }, 25.7)
+    .to("#i-all", { opacity: 0, y: -50, duration: 0.24, ease: "expo.in" }, 26.4);
+
+  // J. End
+  tl.from(".j-word .L", { yPercent: 110, duration: 0.7, ease: "expo.out", stagger: 0.045 }, 26.7)
+    .fromTo("#j-dot", { scale: 0 }, { scale: 1, duration: 0.8, ease: "elastic.out(1, 0.4)" }, 27.13)
+    .from("#j-sub", { opacity: 0, y: 40, duration: 0.5, ease: "power3.out" }, 27.13)
+    .from("#j-stats", { opacity: 0, duration: 0.4 }, 27.4)
+    .from("#j-url", { opacity: 0, y: 20, duration: 0.4, ease: "power3.out" }, 27.6);
+
+  window.__timelines["motion"] = tl;
+</script>
+</body></html>
