@@ -1,123 +1,72 @@
-//! GSAP to `director-timeline/1`. Inline page scripts run once at compile time
-//! in an embedded JavaScript engine against a recording shim; the recorded
-//! tweens become exact keyframe tracks per element property.
+//! GSAP at compile time. The page scripts, GSAP included, run once in Boa
+//! against a Rust-owned document (`dom.rs`, `dom.js`). The registered
+//! timelines then seek to every frame, and what the scripts write while they
+//! play becomes native `director-timeline/1` tracks.
 
+mod dom;
 pub(crate) mod ease;
 
-use crate::animation::{is_component, Parts};
+use crate::animation::{Parts, COMPONENTS};
+use crate::assets::AssetStore;
 use crate::style::{color, PaintStyle};
 use crate::timeline::{TimelineKeyframe, TimelineTrack, TimelineValue};
-use boa_engine::{js_string, Context, JsResult, JsString, JsValue, NativeFunction, Source};
+use crate::CompileOptions;
+use boa_engine::{Context, Source};
 use director_core::types::Color;
-use ease::GsapEase;
 use ego_tree::NodeId;
-use scraper::{ElementRef, Html, Selector};
-use serde::Deserialize;
-use std::cell::RefCell;
+use scraper::{Html, Selector};
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
+use std::sync::Arc;
 
-const SHIM: &str = include_str!("shim.js");
-/// Seconds a value jump takes between two keyframes at the same instant.
-const JUMP: f64 = 1e-4;
+pub(crate) use dom::{matrix_text, Probe, Probed};
 
-/// Recorded GSAP tweens for each animated element.
+const DOM: &str = include_str!("dom.js");
+
+/// One value per frame for each property a script animates, `None` where the
+/// element falls back to its cascaded value.
+pub(crate) type Series = BTreeMap<String, Vec<Option<String>>>;
+
+/// What the page scripts animate, by element of the compiled document.
 #[derive(Debug, Default)]
-pub(crate) struct Recording {
-    pub(crate) records: HashMap<NodeId, Vec<Record>>,
+pub(crate) struct Motion {
+    pub(crate) series: HashMap<NodeId, Series>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Record {
-    target: usize,
-    order: u64,
-    start: f64,
-    duration: f64,
-    ease: String,
-    repeat: i64,
-    yoyo: bool,
-    repeat_delay: f64,
-    immediate: bool,
-    /// A `gsap.set` outside the timeline.
-    #[serde(default)]
-    base: bool,
-    method: String,
-    props: BTreeMap<String, Prop>,
-}
+/// Inline styles GSAP writes that change nothing on screen.
+const INVISIBLE: &[&str] = &[
+    "pointer-events",
+    "cursor",
+    "will-change",
+    "user-select",
+    "-webkit-user-select",
+    "touch-action",
+];
 
-#[derive(Debug, Clone, Deserialize)]
-struct Prop {
-    from: Option<Raw>,
-    to: Option<Raw>,
-}
+/// Properties that vary into native tracks.
+const CORNERS: [&str; 4] = [
+    "border-top-left-radius",
+    "border-top-right-radius",
+    "border-bottom-right-radius",
+    "border-bottom-left-radius",
+];
+const NATIVE: &[&str] = &[
+    "opacity",
+    "color",
+    "background-color",
+    "width",
+    "height",
+    "left",
+    "top",
+    "border-radius",
+    "transform",
+];
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum Raw {
-    Number(f64),
-    Text(String),
-}
-
-#[derive(Deserialize)]
-struct Output {
-    error: Option<String>,
-    #[serde(default)]
-    records: Vec<Record>,
-}
-
-/// The snapshot one element contributes to the shim's read-only DOM.
-#[derive(serde::Serialize)]
-struct SnapshotElement {
-    tag: String,
-    attrs: BTreeMap<String, String>,
-    text: String,
-    parent: i64,
-    children: Vec<usize>,
-}
-
-struct Snapshot {
-    html: Html,
-    ids: Vec<NodeId>,
-    index: HashMap<NodeId, usize>,
-}
-
-thread_local! {
-    static DOM: RefCell<Option<Snapshot>> = const { RefCell::new(None) };
-}
-
-fn select(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let selector = args
-        .first()
-        .cloned()
-        .unwrap_or_default()
-        .to_string(context)?
-        .to_std_string_escaped();
-    let scope = args.get(1).cloned().unwrap_or_default().to_i32(context)?;
-    let parsed = Selector::parse(&selector).map_err(|e| {
-        boa_engine::JsNativeError::syntax().with_message(format!("invalid selector '{selector}': {e}"))
-    })?;
-    let found = DOM.with(|dom| {
-        let dom = dom.borrow();
-        let dom = dom.as_ref().expect("GSAP DOM snapshot");
-        let found: Vec<NodeId> = if scope < 0 {
-            dom.html.select(&parsed).map(|e| e.id()).collect()
-        } else {
-            let scope = dom
-                .html
-                .tree
-                .get(dom.ids[scope as usize])
-                .and_then(ElementRef::wrap)
-                .expect("scope element");
-            scope.select(&parsed).map(|e| e.id()).collect()
-        };
-        found
-            .iter()
-            .filter_map(|id| dom.index.get(id))
-            .map(usize::to_string)
-            .collect::<Vec<_>>()
-            .join(",")
-    });
-    Ok(JsValue::from(JsString::from(found.as_str())))
+struct Script {
+    name: String,
+    source: String,
+    /// The GSAP major version a CDN URL names.
+    major: Option<u32>,
 }
 
 /// Whether a script `src` loads the GSAP library or one of its plugins.
@@ -126,20 +75,39 @@ fn gsap_library(src: &str) -> bool {
     src.contains("/gsap@") || src.contains("/gsap/") || file.starts_with("gsap")
 }
 
+/// The major version in `gsap@3.14.2` or cdnjs `/gsap/3.14.2/`.
+fn url_major(src: &str) -> Option<u32> {
+    let rest = src
+        .split_once("gsap@")
+        .or_else(|| src.split_once("/gsap/"))
+        .map(|(_, rest)| rest)?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// Where CDN GSAP files resolve: the option, `DIRECTOR_GSAP_DIR`, then the
+/// nearest `node_modules/gsap/dist` at or above the base directory.
+fn gsap_dir(options: &CompileOptions) -> Option<PathBuf> {
+    options
+        .gsap_dir
+        .clone()
+        .or_else(|| std::env::var_os("DIRECTOR_GSAP_DIR").map(PathBuf::from))
+        .or_else(|| {
+            let base = std::path::absolute(&options.base_dir).ok()?;
+            base.ancestors()
+                .map(|dir| dir.join("node_modules").join("gsap").join("dist"))
+                .find(|dir| dir.is_dir())
+        })
+}
+
 fn js_error(e: boa_engine::JsError) -> String {
     let text = e.to_string();
     text.strip_prefix("Error: ").unwrap_or(&text).to_string()
 }
 
-/// Run the document's inline scripts against the GSAP recorder. Returns
-/// `None` when the page has no executable script.
-pub(crate) fn record(
-    dom: &Html,
-    composition: &str,
-    width: i32,
-    height: i32,
-) -> Result<Option<Recording>, String> {
-    let mut sources = Vec::new();
+/// The page's classic scripts in document order.
+fn scripts(dom: &Html, options: &CompileOptions, assets: &AssetStore) -> Result<Vec<Script>, String> {
+    let mut out = Vec::new();
     for script in dom.select(&Selector::parse("script").unwrap()) {
         let kind = script.value().attr("type").map(str::trim).unwrap_or("");
         if matches!(
@@ -148,103 +116,340 @@ pub(crate) fn record(
         ) {
             continue;
         }
+        if kind == "module" {
+            return Err("module scripts do not run at compile time; load GSAP with a classic script".into());
+        }
         if !matches!(kind, "" | "text/javascript" | "application/javascript") {
             return Err(format!("script type '{kind}' requires extraction; run director-engine html capture"));
         }
-        if let Some(src) = script.value().attr("src") {
-            if gsap_library(src) {
-                continue;
+        let Some(src) = script.value().attr("src") else {
+            out.push(Script {
+                name: "inline script".into(),
+                source: script.text().collect(),
+                major: None,
+            });
+            continue;
+        };
+        let bytes = if src.contains("://") || src.starts_with("//") {
+            if !gsap_library(src) {
+                return Err(format!(
+                    "external script '{src}' must be downloaded before native compilation"
+                ));
             }
-            return Err(format!(
-                "external script '{src}' requires extraction; run director-engine html capture"
-            ));
-        }
-        sources.push(script.text().collect::<String>());
-    }
-    if sources.is_empty() {
-        return Ok(None);
-    }
-
-    let mut ids = Vec::new();
-    let mut index = HashMap::new();
-    let mut elements = Vec::new();
-    for node in dom.tree.root().descendants() {
-        let Some(el) = ElementRef::wrap(node) else { continue };
-        index.insert(el.id(), ids.len());
-        ids.push(el.id());
-        let parent = el
-            .parent()
-            .and_then(ElementRef::wrap)
-            .and_then(|p| index.get(&p.id()).copied())
-            .map_or(-1, |p| p as i64);
-        if parent >= 0 {
-            let at = ids.len() - 1;
-            let p: &mut SnapshotElement = &mut elements[parent as usize];
-            p.children.push(at);
-        }
-        elements.push(SnapshotElement {
-            tag: el.value().name().to_string(),
-            attrs: el.value().attrs().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
-            text: el.text().collect(),
-            parent,
-            children: Vec::new(),
+            let file = src.split(['?', '#']).next().unwrap_or(src).rsplit('/').next().unwrap_or(src);
+            let path = gsap_dir(options).map(|dir| dir.join(file)).filter(|path| path.is_file());
+            assets.read_as(src, path.as_deref()).map_err(|_| {
+                format!(
+                    "GSAP from '{src}' needs a local copy of {file}: set CompileOptions.gsap_dir or \
+                     DIRECTOR_GSAP_DIR, or install gsap under node_modules"
+                )
+            })?
+        } else {
+            assets.read(src).map_err(|e| e.to_string())?
+        };
+        out.push(Script {
+            name: src.to_string(),
+            source: String::from_utf8(bytes).map_err(|_| format!("script '{src}' is not UTF-8"))?,
+            major: url_major(src),
         });
     }
-    let snapshot = serde_json::json!({
-        "width": width,
-        "height": height,
-        "composition": composition,
-        "elements": elements,
-    });
-    DOM.with(|d| {
-        *d.borrow_mut() = Some(Snapshot {
-            html: dom.clone(),
-            ids: ids.clone(),
-            index,
-        })
-    });
-    let result = run(&snapshot.to_string(), &sources);
-    DOM.with(|d| d.borrow_mut().take());
-    let output = result?;
-    let mut recording = Recording::default();
-    for record in output {
-        let id = *ids.get(record.target).ok_or("GSAP target outside the document")?;
-        recording.records.entry(id).or_default().push(record);
-    }
-    Ok(Some(recording))
+    Ok(out)
 }
 
-fn run(snapshot: &str, sources: &[String]) -> Result<Vec<Record>, String> {
-    let mut context = Context::default();
-    context.runtime_limits_mut().set_loop_iteration_limit(50_000_000);
-    context.runtime_limits_mut().set_recursion_limit(4_096);
-    context
-        .register_global_callable(js_string!("__director_select"), 2, NativeFunction::from_fn_ptr(select))
-        .map_err(js_error)?;
-    context
-        .eval(Source::from_bytes(&format!("globalThis.__director_dom = {snapshot};")))
-        .map_err(js_error)?;
-    context.eval(Source::from_bytes(SHIM)).map_err(js_error)?;
-    for source in sources {
-        context.eval(Source::from_bytes(source)).map_err(|e| format!("script: {}", js_error(e)))?;
+/// Run the page scripts and record every frame. Constant results bake into
+/// `dom`, which is replaced by its compacted form; varying ones come back as
+/// series.
+pub(crate) fn run(dom: &mut Html, options: &CompileOptions, assets: &Arc<AssetStore>) -> Result<Motion, String> {
+    let scripts = scripts(dom, options, assets)?;
+    if scripts.is_empty() {
+        return Ok(Motion::default());
     }
-    let mut call = |name: &str| -> Result<Output, String> {
-        context.run_jobs().map_err(js_error)?;
-        let out = context
-            .eval(Source::from_bytes(&format!("{name}()")))
-            .map_err(js_error)?;
-        let text = out
-            .as_string()
-            .ok_or("GSAP recorder returned no output")?
-            .to_std_string_escaped();
-        let out: Output = serde_json::from_str(&text).map_err(|e| format!("GSAP recorder: {e}"))?;
-        match out.error {
-            Some(error) => Err(error),
-            None => Ok(out),
-        }
+    let prober: dom::Prober = {
+        let options = options.clone();
+        let assets = assets.clone();
+        Box::new(move |html: &Html| crate::compiler::probe(html, &options, &assets).map_err(|e| e.to_string()))
     };
-    call("__director_ready")?;
-    Ok(call("__director_export")?.records)
+    let html = std::mem::replace(dom, Html::new_document());
+    let doc = dom::Doc::new(html, prober, (options.width as f32, options.height as f32));
+    let frames = (options.duration * options.fps).ceil() as usize + 1;
+    let (recorded, mut doc) = dom::with_installed(doc, || execute(&scripts, frames, options.fps));
+    let series = recorded.and_then(|frames| collect(&mut doc, &frames));
+    let (html, map) = dom::compact(&doc.html);
+    *dom = html;
+    let series = series?
+        .into_iter()
+        .filter_map(|(i, series)| map.get(&doc.ids[i]).map(|id| (*id, series)))
+        .collect();
+    Ok(Motion { series })
+}
+
+/// Evaluate the scripts, fire the load events and seek every frame. Each
+/// frame is the change record `dom.js` returns.
+fn execute(scripts: &[Script], frames: usize, fps: f64) -> Result<Vec<String>, String> {
+    let mut cx = Context::default();
+    cx.runtime_limits_mut().set_loop_iteration_limit(50_000_000);
+    cx.runtime_limits_mut().set_recursion_limit(4_096);
+    dom::register(&mut cx).map_err(js_error)?;
+    cx.eval(Source::from_bytes(DOM)).map_err(js_error)?;
+    let eval = |cx: &mut Context, code: &str| -> Result<String, String> {
+        let value = cx.eval(Source::from_bytes(code)).map_err(js_error)?;
+        cx.run_jobs().map_err(js_error)?;
+        Ok(value.to_string(cx).map_err(js_error)?.to_std_string_escaped())
+    };
+    for script in scripts {
+        eval(&mut cx, &script.source).map_err(|e| format!("{}: {e}", script.name))?;
+        if let Some(major) = script.major {
+            let version = eval(&mut cx, "typeof gsap === 'object' && gsap.version || ''")?;
+            let found = version.split('.').next().and_then(|v| v.parse::<u32>().ok());
+            if found.is_some_and(|found| found != major) {
+                return Err(format!("{} names GSAP {major}, and the local copy is GSAP {version}", script.name));
+            }
+        }
+    }
+    eval(&mut cx, "__director.loaded()")?;
+    eval(&mut cx, "__director.settle()")?;
+    dom::with_doc(|d| {
+        d.playing = true;
+        Ok(())
+    })
+    .map_err(js_error)?;
+    eval(&mut cx, "__director.play()")?;
+    let mut out = Vec::with_capacity(frames);
+    for f in 0..frames {
+        let t = f as f64 / fps;
+        out.push(eval(&mut cx, &format!("__director.frame({t})")).map_err(|e| format!("at {t:.3}s: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// `name: value` pairs of an inline style.
+fn declarations(text: &str) -> Vec<(String, String)> {
+    let mut parts = Vec::new();
+    let (mut depth, mut quote, mut start) = (0i32, None, 0);
+    for (at, c) in text.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '(') => depth += 1,
+            (None, ')') => depth -= 1,
+            (None, ';') if depth == 0 => {
+                parts.push(&text[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
+        .into_iter()
+        .filter_map(|part| {
+            let (name, value) = part.split_once(':')?;
+            let name = name.trim();
+            let name = if name.starts_with("--") { name.to_string() } else { name.to_ascii_lowercase() };
+            let mut value = value.trim();
+            if value.len() >= 10 && value[value.len() - 10..].eq_ignore_ascii_case("!important") {
+                value = value[..value.len() - 10].trim_end();
+            }
+            (!name.is_empty() && !value.is_empty()).then(|| (name, value.to_string()))
+        })
+        .collect()
+}
+
+fn put(decls: &mut Vec<(String, String)>, name: &str, value: Option<String>) {
+    let at = decls.iter().position(|(n, _)| n == name);
+    match (value, at) {
+        (Some(v), Some(at)) => decls[at].1 = v,
+        (Some(v), None) => decls.push((name.to_string(), v)),
+        (None, Some(at)) => {
+            decls.remove(at);
+        }
+        (None, None) => {}
+    }
+}
+
+fn serialize(decls: &[(String, String)]) -> Option<String> {
+    (!decls.is_empty()).then(|| decls.iter().map(|(n, v)| format!("{n}: {v}")).collect::<Vec<_>>().join("; "))
+}
+
+/// A GSAP write with no effect on screen.
+fn invisible(name: &str, values: &[Option<String>]) -> bool {
+    INVISIBLE.contains(&name)
+        || name == "@data-svg-origin"
+        || (matches!(name, "translate" | "rotate" | "scale")
+            && values.iter().all(|v| v.as_deref().is_none_or(|v| v == "none")))
+}
+
+/// Turn the frame records into series, bake constant results into the
+/// document and refuse varying ones without a native track. Keys are style
+/// properties, `@name` attributes and `#text`.
+fn collect(doc: &mut dom::Doc, frames: &[String]) -> Result<HashMap<usize, Series>, String> {
+    // Inline styles hold the setup state flushed when play began.
+    let mut setup: HashMap<usize, Vec<(String, String)>> = HashMap::new();
+    let mut series: HashMap<usize, Series> = HashMap::new();
+    let mut current: BTreeMap<(usize, String), Option<String>> = BTreeMap::new();
+    let malformed = || "GSAP frame record is malformed".to_string();
+    for (f, frame) in frames.iter().enumerate() {
+        if !frame.is_empty() {
+            let parts: Vec<&str> = frame.split('\u{1}').collect();
+            if !parts.len().is_multiple_of(3) {
+                return Err(malformed());
+            }
+            for entry in parts.chunks(3) {
+                let i: usize = entry[0].parse().map_err(|_| malformed())?;
+                let key = entry[1].to_string();
+                let value = (entry[2] != "\u{2}").then(|| entry[2].to_string());
+                let slot = (i, key.clone());
+                if !current.contains_key(&slot) {
+                    let before = if let Some(name) = key.strip_prefix('@') {
+                        doc.attr(i, name)?
+                    } else if key == "#text" {
+                        Some(doc.text(i)?)
+                    } else {
+                        if let std::collections::hash_map::Entry::Vacant(e) = setup.entry(i) {
+                            e.insert(declarations(&doc.attr(i, "style")?.unwrap_or_default()));
+                        }
+                        setup[&i]
+                            .iter().find(|(n, _)| *n == key).map(|(_, v)| v.clone())
+                    };
+                    series.entry(i).or_default().insert(key.clone(), vec![before.clone(); f]);
+                    current.insert(slot.clone(), before);
+                }
+                current.insert(slot, value);
+            }
+        }
+        for ((i, key), value) in &current {
+            series.get_mut(i).and_then(|s| s.get_mut(key)).ok_or_else(malformed)?.push(value.clone());
+        }
+    }
+
+    // GSAP clears independent transforms and hints on every target it parses.
+    for i in 0..doc.ids.len() {
+        let Ok(Some(style)) = doc.attr(i, "style") else { continue };
+        let mut decls = declarations(&style);
+        let before = decls.len();
+        decls.retain(|(name, value)| !invisible(name, &[Some(value.clone())]));
+        if decls.len() != before {
+            doc.write_attr(i, "style", serialize(&decls))?;
+        }
+    }
+
+    let mut out = HashMap::new();
+    let mut elements: Vec<_> = series.into_iter().collect();
+    elements.sort_by_key(|(i, _)| *i);
+    for (i, mut props) in elements {
+        let label = doc.label(i);
+        props.retain(|name, values| !invisible(name, values));
+        let mut decls = declarations(&doc.attr(i, "style")?.unwrap_or_default());
+        if let Some(visibility) = props.get_mut("visibility") {
+            for v in visibility.iter_mut() {
+                if v.as_deref() == Some("inherit") {
+                    *v = Some("visible".into());
+                }
+            }
+        }
+        // autoAlpha: hidden only while transparent draws the same as visible.
+        if let Some(visibility) = props.get("visibility") {
+            let opacity = |f: usize| -> Option<f64> {
+                match props.get("opacity") {
+                    Some(series) => series[f].as_deref(),
+                    None => decls.iter().find(|(n, _)| n == "opacity").map(|(_, v)| v.as_str()),
+                }
+                .and_then(|v| v.trim().parse().ok())
+            };
+            let varies = visibility.iter().any(|v| v != &visibility[0]);
+            let transparent = visibility
+                .iter()
+                .enumerate()
+                .all(|(f, v)| v.as_deref() != Some("hidden") || opacity(f) == Some(0.0));
+            if varies && transparent {
+                props.remove("visibility");
+                put(&mut decls, "visibility", Some("visible".into()));
+            }
+        }
+        // GSAP writes borderRadius as four longhands; equal corners form the
+        // native uniform radius.
+        let corners = CORNERS.map(|c| props.get(c));
+        if let [Some(a), Some(b), Some(c), Some(d)] = corners {
+            if a == b && a == c && a == d {
+                let values = a.clone();
+                for corner in CORNERS {
+                    props.remove(corner);
+                    put(&mut decls, corner, None);
+                }
+                props.insert("border-radius".into(), values);
+            }
+        }
+        // Before GSAP writes a transform the cascade one shows. When that has
+        // no component form, its matrix in GSAP's own decomposition does.
+        if let Some(values) = props.get_mut("transform") {
+            if values.iter().any(Option::is_none) {
+                if let Some(probed) = doc.probed(i)? {
+                    let css = probed.css.get("transform").map_or("none", String::as_str);
+                    if css != "none" && decompose(css).is_err() {
+                        let fill = components(&probed.transform)
+                            .ok_or_else(|| format!("GSAP animates {label} over the 3D transform '{css}'"))?;
+                        for v in values.iter_mut().filter(|v| v.is_none()) {
+                            *v = Some(fill.clone());
+                        }
+                    }
+                }
+            }
+        }
+        let mut kept = Series::new();
+        for (key, values) in props {
+            let first = values[0].clone();
+            let constant = values.iter().all(|v| *v == first);
+            if let Some(name) = key.strip_prefix('@') {
+                if !constant {
+                    return Err(format!(
+                        "GSAP animates the '{name}' attribute of {label}; attribute tracks are not native yet"
+                    ));
+                }
+                doc.write_attr(i, name, first)?;
+                continue;
+            }
+            if key == "#text" {
+                if !constant {
+                    return Err(format!("GSAP animates the text of {label}; text tracks are not native yet"));
+                }
+                doc.write_text(i, first.as_deref().unwrap_or(""))?;
+                continue;
+            }
+            if constant {
+                put(&mut decls, &key, first);
+                continue;
+            }
+            // GSAP sets transformOrigin once when a tween starts.
+            if key == "transform-origin" {
+                let set: Vec<_> = values.iter().flatten().collect();
+                if set.iter().all(|v| *v == set[0]) {
+                    put(&mut decls, &key, Some(set[0].clone()));
+                    continue;
+                }
+            }
+            if !NATIVE.contains(&key.as_str()) {
+                let shown = |v: &Option<String>| v.as_deref().map_or("unset".into(), |v| format!("'{v}'"));
+                let change = values.iter().find(|v| **v != first).unwrap_or(&first);
+                return Err(format!(
+                    "GSAP animates '{key}' on {label} from {} to {}; native tracks cover {}",
+                    shown(&first),
+                    shown(change),
+                    NATIVE.join(", ")
+                ));
+            }
+            // The first frame becomes the base unless some frame falls back
+            // to the cascade.
+            let base = if values.iter().all(Option::is_some) { first } else { None };
+            put(&mut decls, &key, base);
+            kept.insert(key, values);
+        }
+        doc.write_attr(i, "style", serialize(&decls))?;
+        if !kept.is_empty() {
+            out.insert(i, kept);
+        }
+    }
+    Ok(out)
 }
 
 /// A channel value: a number in the track unit, or straight RGBA in 0..1.
@@ -257,18 +462,15 @@ impl Val {
     fn color(c: Color) -> Self {
         Self::Color([c.r as f64, c.g as f64, c.b as f64, c.a as f64])
     }
-    fn mix(self, other: Self, t: f64) -> Self {
-        match (self, other) {
-            (Self::Num(a), Self::Num(b)) => Self::Num(a + (b - a) * t),
-            (Self::Color(a), Self::Color(b)) => {
-                Self::Color(std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t))
-            }
-            _ => other,
+    fn dims(&self) -> &[f64] {
+        match self {
+            Self::Num(n) => std::slice::from_ref(n),
+            Self::Color(c) => c,
         }
     }
     fn timeline(self) -> TimelineValue {
         match self {
-            Self::Num(n) => TimelineValue::Number(n),
+            Self::Num(n) => TimelineValue::Number(round(n)),
             Self::Color([r, g, b, a]) => TimelineValue::Text(format!(
                 "rgba({}, {}, {}, {})",
                 round(r * 255.0),
@@ -280,7 +482,12 @@ impl Val {
     }
 }
 fn round(v: f64) -> f64 {
-    (v * 1e4).round() / 1e4
+    let r = (v * 1e4).round() / 1e4;
+    if r == 0.0 {
+        0.0
+    } else {
+        r
+    }
 }
 
 /// The base value of a channel on an element before any tween.
@@ -309,437 +516,207 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
         "left" => length(style.inset.left.into_raw(), channel),
         "top" => length(style.inset.top.into_raw(), channel),
         "border-top-left-radius" => length(paint.corners[0].0.into_raw(), channel),
-        _ if is_component(channel) => Parts::decompose(&paint.transform)
+        _ => Parts::decompose(&paint.transform)
             .and_then(|p| p.get(channel))
             .map(|v| Val::Num(v as f64))
             .ok_or_else(|| {
                 "GSAP transforms need a base transform of translations, rotations, one skew and scales"
                     .to_string()
             }),
-        _ => Err(format!("unsupported GSAP channel '{channel}'")),
     }
 }
 
-/// A recorded property value before it meets the channel's current value.
-#[derive(Debug, Clone, Copy)]
-enum Goal {
-    Abs(Val),
-    Rel(f64),
-}
-impl Goal {
-    fn resolve(self, current: Val) -> Result<Val, String> {
-        match (self, current) {
-            (Self::Abs(v), _) => Ok(v),
-            (Self::Rel(d), Val::Num(n)) => Ok(Val::Num(n + d)),
-            (Self::Rel(_), Val::Color(_)) => Err("relative GSAP colors are unsupported".into()),
-        }
+/// How far a key line may stray from a sample in the channel's unit.
+fn tolerance(channel: &str) -> f64 {
+    match channel {
+        "opacity" | "color" | "background-color" => 5e-4,
+        "scale-x" | "scale-y" => 1e-4,
+        "translate-x-percent" | "translate-y-percent" => 0.01,
+        c if c.starts_with("rotate") || c.starts_with("skew") => 0.01,
+        _ => 0.02,
     }
 }
 
-fn amount(raw: &Raw, prop: &str, units: &[(&str, f64)]) -> Result<Goal, String> {
-    let text = match raw {
-        Raw::Number(n) => return Ok(Goal::Abs(Val::Num(*n))),
-        Raw::Text(s) => s.trim(),
-    };
-    let (relative, rest) = match text.get(..2) {
-        Some("+=") => (Some(1.0), &text[2..]),
-        Some("-=") => (Some(-1.0), &text[2..]),
-        _ => (None, text),
-    };
-    let rest = rest.trim();
-    let (number, scale) = units
-        .iter()
-        .find_map(|(unit, scale)| rest.strip_suffix(unit).map(|n| (n, *scale)))
-        .unwrap_or((rest, 1.0));
-    let n = number
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|n| n.is_finite())
-        .ok_or_else(|| format!("unsupported GSAP value '{text}' for '{prop}'"))?
-        * scale;
-    Ok(match relative {
-        Some(sign) => Goal::Rel(sign * n),
-        None => Goal::Abs(Val::Num(n)),
-    })
-}
-
-const PX: &[(&str, f64)] = &[("px", 1.0)];
-const PERCENT: &[(&str, f64)] = &[("%", 1.0)];
-const DEG: &[(&str, f64)] = &[
-    ("deg", 1.0),
-    ("turn", 360.0),
-    ("rad", 180.0 / std::f64::consts::PI),
-];
-
-/// The native channels one GSAP property drives, with its parsed goal.
-fn channels(prop: &str, raw: &Raw) -> Result<Vec<(&'static str, Goal)>, String> {
-    let percent = matches!(raw, Raw::Text(s) if s.trim().ends_with('%'));
-    let one = |channel: &'static str, units| Ok(vec![(channel, amount(raw, prop, units)?)]);
-    match prop {
-        "opacity" | "autoAlpha" => one("opacity", &[]),
-        "x" if percent => one("translate-x-percent", PERCENT),
-        "y" if percent => one("translate-y-percent", PERCENT),
-        "x" => one("translate-x", PX),
-        "y" => one("translate-y", PX),
-        "z" => one("translate-z", PX),
-        "xPercent" => one("translate-x-percent", PERCENT),
-        "yPercent" => one("translate-y-percent", PERCENT),
-        "rotation" | "rotate" | "rotationZ" | "rotateZ" => one("rotate-z", DEG),
-        "rotationX" | "rotateX" => one("rotate-x", DEG),
-        "rotationY" | "rotateY" => one("rotate-y", DEG),
-        "skewX" => one("skew-x", DEG),
-        "skewY" => one("skew-y", DEG),
-        "scaleX" => one("scale-x", &[]),
-        "scaleY" => one("scale-y", &[]),
-        "scale" => {
-            let goal = amount(raw, prop, &[])?;
-            Ok(vec![("scale-x", goal), ("scale-y", goal)])
-        }
-        "width" => one("width", PX),
-        "height" => one("height", PX),
-        "left" => one("left", PX),
-        "top" => one("top", PX),
-        "borderRadius" => one("border-top-left-radius", PX),
-        "color" | "backgroundColor" => {
-            let Raw::Text(text) = raw else {
-                return Err(format!("GSAP '{prop}' takes a CSS color"));
-            };
-            let c = color(text.trim(), Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 })?;
-            let channel = if prop == "color" { "color" } else { "background-color" };
-            Ok(vec![(channel, Goal::Abs(Val::color(c)))])
-        }
-        _ => Err(format!(
-            "GSAP property '{prop}' has no native track; run director-engine html capture"
-        )),
-    }
-}
-
-/// One tween on one channel, with resolved endpoints once playback reaches it.
-#[derive(Debug, Clone)]
-struct Segment {
-    start: f64,
-    duration: f64,
-    ease: Option<GsapEase>,
-    repeat: u32,
-    yoyo: bool,
-    repeat_delay: f64,
-    from: Val,
-    to: Val,
-}
-impl Segment {
-    fn cycle(&self) -> f64 {
-        self.duration + self.repeat_delay
-    }
-    fn end(&self) -> f64 {
-        self.start + self.cycle() * (self.repeat as f64 + 1.0) - self.repeat_delay
-    }
-    fn final_value(&self) -> Val {
-        if self.yoyo && self.repeat % 2 == 1 {
-            self.from
-        } else {
-            self.to
-        }
-    }
-    fn ratio(&self, p: f64) -> f64 {
-        self.ease.as_ref().map_or(p, |e| e.eval(p))
-    }
-    fn value_at(&self, t: f64) -> Val {
-        let local = t - self.start;
-        if self.duration <= 0.0 || t >= self.end() {
-            return self.final_value();
-        }
-        let k = (local / self.cycle()).floor().max(0.0);
-        let within = local - k * self.cycle();
-        let forward = !(self.yoyo && (k as u64) % 2 == 1);
-        if within >= self.duration {
-            return if forward { self.to } else { self.from };
-        }
-        let p = within / self.duration;
-        let r = if forward { self.ratio(p) } else { self.ratio(1.0 - p) };
-        self.from.mix(self.to, r)
-    }
-}
-
-/// The value the latest-started segment holds at `t`, else `initial`.
-fn value_at(segments: &[Segment], initial: Val, t: f64) -> Val {
-    segments
-        .iter()
-        .rev()
-        .find(|s| s.start <= t)
-        .map_or(initial, |s| s.value_at(t))
-}
-
-struct Keys(Vec<TimelineKeyframe>, Vec<Val>);
-impl Keys {
-    fn last(&self) -> Option<(f64, Val)> {
-        self.0.last().map(|k| k.time).zip(self.1.last().copied())
-    }
-    fn push(&mut self, time: f64, value: Val, ease: Option<String>) {
-        self.0.push(TimelineKeyframe {
-            time,
-            value: value.timeline(),
-            ease,
+/// The samples a piecewise-linear line through them keeps, each within
+/// `eps` of the line on every dimension (swing door from each anchor).
+fn keep(samples: &[Val], eps: f64) -> Vec<usize> {
+    let n = samples.len();
+    let dims = samples[0].dims().len();
+    let mut kept = vec![0];
+    let mut anchor = 0;
+    let mut lo = vec![f64::NEG_INFINITY; dims];
+    let mut hi = vec![f64::INFINITY; dims];
+    let mut j = 1;
+    while j < n {
+        let dt = (j - anchor) as f64;
+        let (a, b) = (samples[anchor].dims(), samples[j].dims());
+        let fits = (0..dims).all(|d| {
+            let slope = (b[d] - a[d]) / dt;
+            slope >= lo[d] - 1e-12 && slope <= hi[d] + 1e-12
         });
-        self.1.push(value);
-    }
-    /// `value` from `time` on, jumping there when it differs.
-    fn at(&mut self, time: f64, value: Val) {
-        match self.last() {
-            None => self.push(time, value, None),
-            Some((t, v)) if t >= time - 1e-9 => {
-                if v == value {
-                    return;
-                }
-                let n = self.0.len();
-                if n >= 2 && self.0[n - 2].time >= time - JUMP - 1e-9 {
-                    self.0.pop();
-                    self.1.pop();
-                    self.at(time, value);
-                    return;
-                }
-                self.0[n - 1].time = time - JUMP;
-                self.push(time, value, None);
+        if fits {
+            for d in 0..dims {
+                lo[d] = lo[d].max((b[d] - eps - a[d]) / dt);
+                hi[d] = hi[d].min((b[d] + eps - a[d]) / dt);
             }
-            Some((t, v)) => {
-                if v != value && time - JUMP > t + 1e-9 {
-                    self.push(time - JUMP, v, None);
-                }
-                self.push(time, value, None);
-            }
-        }
-    }
-    fn ramp(&mut self, time: f64, value: Val, ease: Option<String>) {
-        if self.last().is_some_and(|(t, _)| time <= t + 1e-9) {
-            self.at(time, value);
+            j += 1;
         } else {
-            self.push(time, value, ease);
+            anchor = j - 1;
+            kept.push(anchor);
+            lo.fill(f64::NEG_INFINITY);
+            hi.fill(f64::INFINITY);
         }
+    }
+    if *kept.last().unwrap() != n - 1 {
+        kept.push(n - 1);
+    }
+    // A track holds its first and last values, so equal end keys add nothing.
+    while kept.len() > 1 && samples[kept[kept.len() - 1]] == samples[kept[kept.len() - 2]] {
+        kept.pop();
+    }
+    while kept.len() > 1 && samples[kept[0]] == samples[kept[1]] {
+        kept.remove(0);
+    }
+    kept
+}
+
+fn sample(channel: &str, text: &str) -> Result<Val, String> {
+    match channel {
+        "opacity" => text.trim().parse().map(Val::Num).map_err(|_| format!("GSAP opacity '{text}'")),
+        "color" | "background-color" => {
+            color(text.trim(), Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }).map(Val::color)
+        }
+        _ => text
+            .trim()
+            .strip_suffix("px")
+            .and_then(|n| n.trim().parse().ok())
+            .map(Val::Num)
+            .ok_or_else(|| format!("GSAP animates {channel} as '{text}'; native tracks take px")),
     }
 }
 
-/// Exact keyframes for the visible part `[start, cut)` of one segment.
-fn emit(keys: &mut Keys, s: &Segment, cut: f64, fps: f64) {
-    for k in 0..=s.repeat {
-        let begin = s.start + k as f64 * s.cycle();
-        if begin >= cut {
-            break;
-        }
-        let forward = !(s.yoyo && k % 2 == 1);
-        let (a, b) = if forward { (s.from, s.to) } else { (s.to, s.from) };
-        if s.duration <= 0.0 {
-            keys.at(begin, a);
-            keys.at(begin, b);
-            continue;
-        }
-        let end = begin + s.duration;
-        let ease = match (&s.ease, forward) {
-            (None, _) => Some(None),
-            (Some(e), true) => e.exact().then(|| Some(e.text())),
-            (Some(e), false) => e.reversed().filter(GsapEase::exact).map(|e| Some(e.text())),
-        };
-        keys.at(begin, a);
-        match ease {
-            Some(ease) if end <= cut + 1e-9 => {
-                let ease = ease.filter(|e| e != "none");
-                keys.ramp(end, b, ease);
-            }
-            _ => {
-                // Steps jump at their boundaries; other curves sample each frame.
-                let stop = end.min(cut);
-                let local = |t: f64| {
-                    let p = (t - begin) / s.duration;
-                    a.mix(b, if forward { s.ratio(p) } else { 1.0 - s.ratio(1.0 - p) })
-                };
-                if let Some(n) = s.ease.as_ref().and_then(GsapEase::steps) {
-                    for i in 1..=n {
-                        let t = begin + s.duration * i as f64 / (n as f64 + 1.0);
-                        if t >= stop {
-                            break;
-                        }
-                        keys.at(t, local(t + 1e-9));
-                    }
-                } else {
-                    let mut f = (begin * fps).floor() + 1.0;
-                    while f / fps < stop - 1e-9 {
-                        keys.ramp(f / fps, local(f / fps), None);
-                        f += 1.0;
-                    }
-                }
-                if end <= cut + 1e-9 {
-                    keys.at(end, b);
-                }
-            }
-        }
+/// GSAP's component form of a 2D `matrix(...)`: rotate, skewX and scale
+/// recompose it in that order.
+fn components(matrix: &str) -> Option<String> {
+    let inner = matrix.trim().strip_prefix("matrix(")?.strip_suffix(')')?;
+    let v: Vec<f64> = inner.split(',').map(|n| n.trim().parse().ok()).collect::<Option<_>>()?;
+    let [a, b, mut c, mut d, e, f] = v[..] else { return None };
+    // A mirrored matrix decomposes as its unmirrored form with scaleY negated.
+    let mirrored = a * d - b * c < 0.0;
+    if mirrored {
+        (c, d) = (-c, -d);
     }
+    let sx = a.hypot(b);
+    let mut sy = c.hypot(d);
+    let rotation = if a != 0.0 || b != 0.0 { b.atan2(a).to_degrees() } else { 0.0 };
+    let skew = if c != 0.0 || d != 0.0 { c.atan2(d).to_degrees() + rotation } else { 0.0 };
+    sy *= skew.to_radians().cos().abs();
+    if mirrored {
+        sy = -sy;
+    }
+    Some(format!(
+        "translate({e}px, {f}px) rotate({rotation}deg) skewX({skew}deg) scale({sx}, {sy})"
+    ))
 }
 
-/// Native timeline tracks for one element's recorded tweens.
+fn decompose(text: &str) -> Result<Parts, String> {
+    use lightningcss::{properties::transform::TransformList, traits::Parse};
+    TransformList::parse_string(text)
+        .ok()
+        .and_then(|list| Parts::decompose(&list))
+        .ok_or_else(|| format!("GSAP transform '{text}' has no component form"))
+}
+
+/// Native timeline tracks for one element's sampled properties. Keys sit on
+/// frames and interpolate linearly.
 pub(crate) fn tracks(
-    records: &[Record],
+    series: &Series,
     target: &str,
     base: &dyn Fn(&str) -> Result<Val, String>,
     fps: f64,
-    duration: f64,
 ) -> Result<Vec<TimelineTrack>, String> {
-    // Each record's goals per channel, in record order.
-    struct Entry<'a> {
-        record: &'a Record,
-        from: Option<Goal>,
-        to: Option<Goal>,
-    }
-    let mut by_channel: BTreeMap<&'static str, Vec<Entry>> = BTreeMap::new();
-    let mut records: Vec<&Record> = records.iter().collect();
-    records.sort_by_key(|r| r.order);
-    for record in records {
-        for (prop, value) in &record.props {
-            let mut goals: BTreeMap<&'static str, (Option<Goal>, Option<Goal>)> = BTreeMap::new();
-            for (raw, side) in [(&value.from, 0), (&value.to, 1)] {
-                let Some(raw) = raw else { continue };
-                for (channel, goal) in channels(prop, raw)? {
-                    let slot = goals.entry(channel).or_default();
-                    if side == 0 {
-                        slot.0 = Some(goal);
-                    } else {
-                        slot.1 = Some(goal);
-                    }
-                }
-            }
-            for (channel, (from, to)) in goals {
-                let list = by_channel.entry(channel).or_default();
-                list.retain(|e| !std::ptr::eq(e.record, record));
-                list.push(Entry { record, from, to });
-            }
-        }
-    }
-    let mut out = Vec::new();
-    for (channel, entries) in by_channel {
-        let base = base(channel)?;
-        // Creation pass: immediate renders change the starting state in
-        // script order, and an immediate from() ends at the state it found.
-        let mut state = base;
-        let mut planned = Vec::new();
-        for entry in &entries {
-            let r = entry.record;
-            let mut from = None;
-            let mut to = None;
-            if r.base {
-                // gsap.set outside the timeline only moves the starting state.
-                state = entry.to.ok_or("gsap.set() without values")?.resolve(state)?;
-                continue;
-            }
-            if r.immediate {
-                match r.method.as_str() {
-                    "from" => {
-                        to = Some(state);
-                        let f = entry.from.ok_or("GSAP from() without values")?.resolve(state)?;
-                        from = Some(f);
-                        state = f;
-                    }
-                    "fromTo" => {
-                        let f = entry.from.map(|g| g.resolve(state)).transpose()?.unwrap_or(state);
-                        to = entry.to.map(|g| g.resolve(f)).transpose()?;
-                        from = Some(f);
-                        state = f;
-                    }
-                    "set" => {
-                        let v = entry.to.ok_or("GSAP set() without values")?.resolve(state)?;
-                        state = v;
-                        from = Some(v);
-                        to = Some(v);
-                    }
-                    // An immediate to() renders its own starting state.
-                    _ => {}
-                }
-            }
-            planned.push((entry, from, to));
-        }
-        let initial = state;
-        // Playback pass: tweens start in time order and pick up the value
-        // their channel holds when they start.
-        planned.sort_by(|a, b| {
-            (a.0.record.start, a.0.record.order)
-                .partial_cmp(&(b.0.record.start, b.0.record.order))
-                .unwrap()
-        });
-        let mut segments: Vec<Segment> = Vec::new();
-        for (entry, from, to) in planned {
-            let r = entry.record;
-            let current = value_at(&segments, initial, r.start);
-            let from = match from {
-                Some(v) => v,
-                None => match entry.from {
-                    Some(goal) => goal.resolve(current)?,
-                    None => current,
-                },
-            };
-            let to = match to {
-                Some(v) => v,
-                None => match (r.method.as_str(), entry.to) {
-                    ("from", _) => current,
-                    (_, Some(goal)) => goal.resolve(from)?,
-                    (_, None) => from,
-                },
-            };
-            let cycle = r.duration.max(0.0) + r.repeat_delay.max(0.0);
-            let repeat = match r.repeat {
-                n if n >= 0 => n as u32,
-                _ if cycle <= 0.0 => 0,
-                _ => (((duration - r.start) / cycle).ceil().max(0.0) as u32).min(100_000),
-            };
-            let ease = if r.method == "set" || r.ease == "none" {
-                None
-            } else {
-                Some(GsapEase::parse(&r.ease)?)
-            };
-            let segment = Segment {
-                start: r.start,
-                duration: r.duration.max(0.0),
-                ease,
-                repeat,
-                yoyo: r.yoyo,
-                repeat_delay: r.repeat_delay.max(0.0),
-                from,
-                to,
-            };
-            // Overlapping tweens resolve by seek order in GSAP; refuse the
-            // case where an earlier tween outlives a later one.
-            if let Some(earlier) = segments
+    let mut channels: Vec<(&str, Vec<Val>)> = Vec::new();
+    for (property, values) in series {
+        if property == "transform" {
+            let parts = values
                 .iter()
-                .find(|e| e.start < segment.start && e.end() > segment.end() + 1e-9)
-            {
-                return Err(format!(
-                    "GSAP tweens overlap on '{channel}' of '{target}': the tween at {}s outlives the one at {}s",
-                    earlier.start, segment.start
-                ));
-            }
-            segments.push(segment);
-        }
-        if segments.is_empty() {
-            if initial != base {
-                let mut keys = Keys(Vec::new(), Vec::new());
-                keys.at(0.0, initial);
-                out.push(track(target, channel, keys));
+                .map(|v| v.as_deref().map(decompose).transpose())
+                .collect::<Result<Vec<_>, _>>()?;
+            for channel in COMPONENTS {
+                let base = base(channel)?;
+                let samples = parts
+                    .iter()
+                    .map(|p| p.map_or(base, |p| Val::Num(p.get(channel).unwrap_or_default() as f64)))
+                    .collect();
+                channels.push((channel, samples));
             }
             continue;
         }
-        let mut keys = Keys(Vec::new(), Vec::new());
-        if segments[0].start > 0.0 && initial != segments[0].from {
-            keys.at(0.0, initial);
+        let channel = match property.as_str() {
+            "border-radius" => "border-top-left-radius",
+            other => other,
+        };
+        let base = base(channel)?;
+        let samples = values
+            .iter()
+            .map(|v| v.as_deref().map_or(Ok(base), |text| sample(channel, text)))
+            .collect::<Result<Vec<_>, _>>()?;
+        channels.push((channel, samples));
+    }
+    let mut out = Vec::new();
+    for (channel, samples) in channels {
+        let eps = tolerance(channel);
+        let base = base(channel)?;
+        let differs = samples
+            .iter()
+            .any(|v| v.dims().iter().zip(base.dims()).any(|(a, b)| (a - b).abs() > eps));
+        if !differs {
+            continue;
         }
-        for (i, segment) in segments.iter().enumerate() {
-            let cut = segments.get(i + 1).map_or(f64::INFINITY, |n| n.start);
-            emit(&mut keys, segment, cut, fps);
-        }
-        out.push(track(target, channel, keys));
+        let keyframes = keep(&samples, eps)
+            .into_iter()
+            .map(|f| TimelineKeyframe {
+                time: f as f64 / fps,
+                value: samples[f].timeline(),
+                ease: None,
+            })
+            .collect();
+        out.push(TimelineTrack {
+            target: target.to_string(),
+            property: channel.to_string(),
+            keyframes,
+        });
     }
     Ok(out)
 }
 
-fn track(target: &str, channel: &str, keys: Keys) -> TimelineTrack {
-    TimelineTrack {
-        target: target.to_string(),
-        property: channel.to_string(),
-        keyframes: keys.0,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swing_door_keeps_corners_within_tolerance() {
+        let ramp: Vec<Val> = (0..=30)
+            .map(|f| Val::Num(if f <= 10 { 0.0 } else if f <= 20 { (f - 10) as f64 * 10.0 } else { 100.0 }))
+            .collect();
+        assert_eq!(keep(&ramp, 0.02), vec![10, 20]);
+        let curve: Vec<Val> = (0..=60).map(|f| Val::Num((f as f64 / 60.0).powi(2) * 500.0)).collect();
+        let kept = keep(&curve, 0.02);
+        for pair in kept.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            for f in a..=b {
+                let t = (f - a) as f64 / (b - a) as f64;
+                let (Val::Num(va), Val::Num(vb), Val::Num(v)) = (curve[a], curve[b], curve[f]) else { unreachable!() };
+                assert!((va + (vb - va) * t - v).abs() <= 0.02 + 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn declarations_split_on_top_level_semicolons() {
+        let decls = declarations("color: red; background: url(\"a;b\") ; transform: translate(1px, 2px) !important;");
+        assert_eq!(decls.len(), 3);
+        assert_eq!(decls[1].1, "url(\"a;b\")");
+        assert_eq!(decls[2].1, "translate(1px, 2px)");
     }
 }

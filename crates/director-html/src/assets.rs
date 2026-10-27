@@ -103,6 +103,25 @@ impl AssetStore {
         Ok(bytes)
     }
 
+    /// The bytes bundled under `reference`, else the file at `path`, which a
+    /// packing store records under `reference`. A remote script resolves to a
+    /// local copy this way.
+    pub fn read_as(&self, reference: &str, path: Option<&Path>) -> Result<Vec<u8>, CompileError> {
+        if let Some(bytes) = self.bytes.lock().map_err(lock_error)?.get(reference).cloned() {
+            return Ok((*bytes).clone());
+        }
+        let path = path.ok_or_else(|| CompileError::Input(format!("'{reference}' has no local copy")))?;
+        let bytes = std::fs::read(path).map_err(|e| CompileError::Input(format!("{}: {e}", path.display())))?;
+        self.dependencies.lock().map_err(lock_error)?.insert(path.into());
+        if self.record {
+            self.bytes
+                .lock()
+                .map_err(lock_error)?
+                .insert(reference.into(), Arc::new(bytes.clone()));
+        }
+        Ok(bytes)
+    }
+
     pub fn media_path(&self, source: &str) -> Result<PathBuf, CompileError> {
         if let Some(base) = &self.base {
             if !source.starts_with("data:") && !source.contains("://") {

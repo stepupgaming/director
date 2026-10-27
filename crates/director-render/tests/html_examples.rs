@@ -39,7 +39,11 @@ fn every_html_example_renders_from_its_document() {
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let compiled = compile_file(&path, CompileOptions::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let options = CompileOptions {
+            gsap_dir: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../director-html/tools/node_modules/gsap/dist")),
+            ..Default::default()
+        };
+        let compiled = compile_file(&path, options).unwrap_or_else(|e| panic!("{name}: {e}"));
         failures.extend(mismatches(&name, compiled));
         count += 1;
     }

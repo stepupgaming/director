@@ -119,33 +119,6 @@ impl GsapEase {
         }
     }
 
-    /// The ease a yoyo iteration plays: `1 - ease(1 - p)`. Steps have no
-    /// mirrored form.
-    pub(crate) fn reversed(&self) -> Option<Self> {
-        let kind = match self.kind {
-            Kind::In => Kind::Out,
-            Kind::Out => Kind::In,
-            Kind::InOut => Kind::InOut,
-        };
-        // Every inOut curve is point-symmetric, and in/out share their defaults.
-        match self.family {
-            Family::Steps(_) => None,
-            _ => Some(Self { family: self.family, kind }),
-        }
-    }
-
-    /// Whether a keyframe can carry this ease by name. Steps jump instead.
-    pub(crate) fn exact(&self) -> bool {
-        self.steps().is_none()
-    }
-
-    pub(crate) fn steps(&self) -> Option<u32> {
-        match self.family {
-            Family::Steps(n) => Some(n),
-            _ => None,
-        }
-    }
-
     fn ease_in(&self, p: f64) -> f64 {
         match self.family {
             Family::Linear => p,
@@ -276,17 +249,5 @@ mod tests {
         close(ease("steps(4)").eval(0.5), 0.5);
         close(ease("steps(4)").eval(1.0), 1.0);
         assert!(ease("back.out(1.7)").eval(0.6) > 1.0);
-    }
-
-    #[test]
-    fn reversed_eases_mirror_the_curve() {
-        for name in ["power3.out", "back.in(2)", "expo.inOut", "elastic.out(1, 0.4)", "circ.in"] {
-            let e = ease(name);
-            let r = e.reversed().unwrap();
-            for p in [0.1, 0.35, 0.8] {
-                assert!((r.eval(p) - (1.0 - e.eval(1.0 - p))).abs() < 1e-9, "{name} at {p}");
-            }
-        }
-        assert!(ease("steps(3)").reversed().is_none());
     }
 }

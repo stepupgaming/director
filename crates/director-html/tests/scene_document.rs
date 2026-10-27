@@ -48,7 +48,11 @@ fn every_html_example_round_trips() {
         if path.extension().and_then(|e| e.to_str()) != Some("html") {
             continue;
         }
-        let compiled = compile_file(&path, CompileOptions::default())
+        let options = CompileOptions {
+            gsap_dir: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/node_modules/gsap/dist")),
+            ..Default::default()
+        };
+        let compiled = compile_file(&path, options)
             .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let document = round_trip(&compiled);
         assert!(

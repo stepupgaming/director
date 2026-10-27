@@ -106,6 +106,11 @@ pub struct CompileOptions {
     #[serde(skip, default = "default_base_dir")]
     pub base_dir: PathBuf,
     pub composition: Option<String>,
+    /// Directory holding GSAP `dist` files for pages that load GSAP from a
+    /// CDN. Unset, compilation reads `DIRECTOR_GSAP_DIR`, then the nearest
+    /// `node_modules/gsap/dist` at or above `base_dir`.
+    #[serde(skip)]
+    pub gsap_dir: Option<PathBuf>,
 }
 
 fn default_base_dir() -> PathBuf {
@@ -121,6 +126,7 @@ impl Default for CompileOptions {
             duration: 5.0,
             base_dir: PathBuf::from("."),
             composition: None,
+            gsap_dir: None,
         }
     }
 }

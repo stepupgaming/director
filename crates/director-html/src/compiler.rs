@@ -457,12 +457,9 @@ pub fn compile(source: &str, options: CompileOptions) -> Result<CompiledHtml, Co
     compile_with_assets(source, options, assets)
 }
 
-pub(crate) fn compile_with_assets(
-    source: &str,
-    mut options: CompileOptions,
-    assets: Arc<AssetStore>,
-) -> Result<CompiledHtml, CompileError> {
-    let dom = Html::parse_document(source);
+/// The composition root: the `[data-composition-id]` element `options`
+/// names, else the first one, else `body`.
+fn composition_root<'a>(dom: &'a Html, options: &CompileOptions) -> Result<ElementRef<'a>, CompileError> {
     let selector = Selector::parse("[data-composition-id]").unwrap();
     let roots: Vec<_> = dom.select(&selector).collect();
     let root = if let Some(id) = &options.composition {
@@ -487,6 +484,12 @@ pub(crate) fn compile_with_assets(
             "standalone template roots must be assembled or captured first".into(),
         ));
     }
+    Ok(root)
+}
+
+/// `options` with the root's size, duration and frame rate applied.
+fn resolve_options(dom: &Html, mut options: CompileOptions) -> Result<CompileOptions, CompileError> {
+    let root = composition_root(dom, &options)?;
     for (attr, target) in [
         ("data-width", &mut options.width),
         ("data-height", &mut options.height),
@@ -508,6 +511,123 @@ pub(crate) fn compile_with_assets(
         }
     }
     validate_options(&options)?;
+    Ok(options)
+}
+
+pub(crate) fn compile_with_assets(
+    source: &str,
+    options: CompileOptions,
+    assets: Arc<AssetStore>,
+) -> Result<CompiledHtml, CompileError> {
+    let mut dom = Html::parse_document(source);
+    let options = resolve_options(&dom, options)?;
+    let motion = crate::gsap::run(&mut dom, &options, &assets)
+        .map_err(|e| CompileError::Diagnostics(vec![diagnostic("script", e)]))?;
+    let (mut builder, root_id) = build(&dom, options, assets, motion, false)?;
+    if !builder.errors.is_empty() {
+        return Err(CompileError::Diagnostics(builder.errors));
+    }
+    if let Some(target) = builder.timeline.keys().next() {
+        return Err(CompileError::Input(format!(
+            "timeline target '{target}' matches no animatable element"
+        )));
+    }
+    if let Some(el) = builder.motion.series.keys().find_map(|id| dom.tree.get(*id).and_then(ElementRef::wrap)) {
+        let name = match el.value().attr("id") {
+            Some(id) => format!("#{id}"),
+            None => format!("<{}>", el.value().name()),
+        };
+        return Err(CompileError::Diagnostics(vec![diagnostic(
+            "script",
+            format!("GSAP animates {name}, which is not an animatable box inside the composition"),
+        )]));
+    }
+    let timeline = (!builder.emitted.is_empty()).then(|| crate::Timeline {
+        format: crate::TIMELINE_FORMAT.into(),
+        tracks: std::mem::take(&mut builder.emitted),
+    });
+    builder
+        .director
+        .push_scene_root(root_id, builder.options.duration);
+    builder.director.compile();
+    Ok(CompiledHtml {
+        director: builder.director,
+        element_ids: builder.ids,
+        source_kind: "static".into(),
+        sample_rate: None,
+        node_count: builder.nodes,
+        source_inspection: None,
+        assets: builder.assets,
+        timeline,
+    })
+}
+
+/// Lay out `dom` at time 0 for the computed style and geometry page scripts
+/// read while they set up.
+pub(crate) fn probe(
+    dom: &Html,
+    options: &CompileOptions,
+    assets: &Arc<AssetStore>,
+) -> Result<crate::gsap::Probe, CompileError> {
+    let (mut builder, root_id) = build(dom, options.clone(), assets.clone(), Default::default(), true)?;
+    if !builder.errors.is_empty() {
+        return Err(CompileError::Diagnostics(builder.errors));
+    }
+    let entries = builder.probe.take().unwrap_or_default();
+    let director = &mut builder.director;
+    director.push_scene_root(root_id, builder.options.duration);
+    director.update(0.0, None);
+    director_core::systems::layout::LayoutEngine::default().compute_layout(
+        &mut director.scene,
+        director.width,
+        director.height,
+        0.0,
+    );
+    director.run_post_layout(0.0);
+    let mut probe = crate::gsap::Probe::new();
+    for entry in entries {
+        let Some(node) = director.scene.get_node(entry.node) else { continue };
+        let rect = node.layout_rect;
+        let (width, height) = (rect.width(), rect.height());
+        let mut abs = [rect.left, rect.top];
+        let mut parent = node.parent;
+        while let Some(id) = parent {
+            let Some(p) = director.scene.get_node(id) else { break };
+            abs[0] += p.layout_rect.left;
+            abs[1] += p.layout_rect.top;
+            parent = p.parent;
+        }
+        let (x, y) = (style::resolve(entry.origin.0, width), style::resolve(entry.origin.1, height));
+        let origin = if entry.origin_z != 0.0 {
+            format!("{x}px {y}px {}px", entry.origin_z)
+        } else {
+            format!("{x}px {y}px")
+        };
+        probe.insert(
+            entry.element,
+            crate::gsap::Probed {
+                transform: crate::gsap::matrix_text(&entry.transform, (width, height)),
+                css: entry.css,
+                rect: [rect.left, rect.top, width, height],
+                abs,
+                origin,
+                font_size: entry.font_size,
+            },
+        );
+    }
+    Ok(probe)
+}
+
+/// Compile the composition tree of `dom`. A probe build records every box
+/// for layout reads and skips timeline JSON.
+fn build(
+    dom: &Html,
+    options: CompileOptions,
+    assets: Arc<AssetStore>,
+    motion: crate::gsap::Motion,
+    probing: bool,
+) -> Result<(Builder, NodeId), CompileError> {
+    let root = composition_root(dom, &options)?;
     let mut css = Css::default();
     // Explicit video-authoring UA defaults. No host/browser-dependent styles.
     css.append("html, body { display:block; font-size:16px; color:black; font-family:Roboto; } body { margin:8px; } div,section,article,main,header,footer,p,h1,h2,h3,ul,li { display:block; } h1 {font-size:2em;font-weight:bold;margin-top:.67em;margin-bottom:.67em} h2 {font-size:1.5em;font-weight:bold;margin-top:.83em;margin-bottom:.83em} p {margin-top:1em;margin-bottom:1em} b,strong {font-weight:bold} em,i {font-style:italic} img,svg,video {display:block}", options.width, options.height)?;
@@ -545,11 +665,7 @@ pub(crate) fn compile_with_assets(
             .ok_or_else(|| CompileError::Input(format!("invalid data-shutter-angle: {v} (0..=360 degrees)")))?;
     }
     load_fonts(&mut director, &css.fonts, &assets)?;
-    let timeline = crate::timeline::collect(&dom)?;
-    let composition = root.value().attr("data-composition-id").unwrap_or_default();
-    let motion = crate::gsap::record(&dom, composition, options.width, options.height)
-        .map_err(|e| CompileError::Diagnostics(vec![diagnostic("script", e)]))?
-        .unwrap_or_default();
+    let timeline = if probing { BTreeMap::new() } else { crate::timeline::collect(dom)? };
     let mut builder = Builder {
         director,
         css,
@@ -564,6 +680,7 @@ pub(crate) fn compile_with_assets(
         svg_fonts: None,
         timeline,
         motion,
+        probe: probing.then(Vec::new),
         root_element: root.id(),
         emitted: Vec::new(),
     };
@@ -587,42 +704,18 @@ pub(crate) fn compile_with_assets(
         ),
         0,
     )?;
-    if !builder.errors.is_empty() {
-        return Err(CompileError::Diagnostics(builder.errors));
-    }
-    if let Some(target) = builder.timeline.keys().next() {
-        return Err(CompileError::Input(format!(
-            "timeline target '{target}' matches no animatable element"
-        )));
-    }
-    if let Some(el) = builder.motion.records.keys().find_map(|id| dom.tree.get(*id).and_then(ElementRef::wrap)) {
-        let name = match el.value().attr("id") {
-            Some(id) => format!("#{id}"),
-            None => format!("<{}>", el.value().name()),
-        };
-        return Err(CompileError::Diagnostics(vec![diagnostic(
-            "script",
-            format!("GSAP animates {name}, which is not an animatable box inside the composition"),
-        )]));
-    }
-    let timeline = (!builder.emitted.is_empty()).then(|| crate::Timeline {
-        format: crate::TIMELINE_FORMAT.into(),
-        tracks: std::mem::take(&mut builder.emitted),
-    });
-    builder
-        .director
-        .push_scene_root(root_id, builder.options.duration);
-    builder.director.compile();
-    Ok(CompiledHtml {
-        director: builder.director,
-        element_ids: builder.ids,
-        source_kind: "static".into(),
-        sample_rate: None,
-        node_count: builder.nodes,
-        source_inspection: None,
-        assets: builder.assets,
-        timeline,
-    })
+    Ok((builder, root_id))
+}
+
+/// What a probe build keeps of one box until layout runs.
+struct ProbeEntry {
+    element: ego_tree::NodeId,
+    node: NodeId,
+    css: Values,
+    transform: String,
+    origin: (taffy::style::LengthPercentage, taffy::style::LengthPercentage),
+    origin_z: f32,
+    font_size: f32,
 }
 
 struct Builder {
@@ -636,8 +729,10 @@ struct Builder {
     assets: Arc<AssetStore>,
     root_id: Option<NodeId>,
     fixed: HashSet<NodeId>,
-    /// GSAP tweens recorded from the page scripts, by element.
-    motion: crate::gsap::Recording,
+    /// What the page scripts animate, by element.
+    motion: crate::gsap::Motion,
+    /// Boxes a probe build records for layout reads.
+    probe: Option<Vec<ProbeEntry>>,
     root_element: ego_tree::NodeId,
     /// Every timeline track attached so far, in document order.
     emitted: Vec<crate::TimelineTrack>,
@@ -1390,15 +1485,13 @@ impl Builder {
         for key in el.value().attr("id").into_iter().chain([path.as_str()]) {
             tracks.extend(self.timeline.remove(key).unwrap_or_default());
         }
-        if let Some(records) = self.motion.records.remove(&el.id()) {
+        if let Some(series) = self.motion.series.remove(&el.id()) {
             let target = el.value().attr("id").map_or_else(|| path.clone(), str::to_string);
             let base = |channel: &str| {
                 crate::gsap::base_value(channel, &element.base_style, &element.base_paint)
             };
-            let fps = self.options.fps;
-            let duration = self.options.duration;
             tracks.extend(
-                crate::gsap::tracks(&records, &target, &base, fps, duration)
+                crate::gsap::tracks(&series, &target, &base, self.options.fps)
                     .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?,
             );
         }
@@ -1425,6 +1518,17 @@ impl Builder {
         animation::check_components(&element.animations, &element.base_paint.transform)
             .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
         let id = self.director.scene.add_node(Box::new(element));
+        if let Some(probe) = &mut self.probe {
+            probe.push(ProbeEntry {
+                element: el.id(),
+                node: id,
+                css: (*values).clone(),
+                transform: values.get("transform").cloned().unwrap_or_else(|| "none".into()),
+                origin: paint.origin,
+                origin_z: paint.origin_z,
+                font_size: paint.font_size,
+            });
+        }
         if root {
             self.root_id = Some(id);
         }

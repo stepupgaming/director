@@ -464,6 +464,15 @@ impl Css {
     }
 }
 
+/// Evaluate a media query list written as text, as `matchMedia` does.
+pub(crate) fn media_text_matches(text: &str, width: f32, height: f32) -> Result<bool, String> {
+    let mut input = cssparser::ParserInput::new(text);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let list = MediaList::parse(&mut parser, &ParserOptions::default())
+        .map_err(|e| format!("matchMedia: cannot parse '{text}': {:?}", e.kind))?;
+    media_matches(&list, width, height).map_err(|e| e.to_string())
+}
+
 fn media_matches(list: &MediaList<'_>, width: f32, height: f32) -> Result<bool, CompileError> {
     if list.media_queries.is_empty() {
         return Ok(true);

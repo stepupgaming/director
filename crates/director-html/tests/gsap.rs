@@ -1,5 +1,6 @@
-//! GSAP timelines translate to native `director-timeline/1` tracks. The
-//! fixtures under `tests/fixtures/gsap` are the phase 5 GSAP gate set.
+//! Real GSAP runs at compile time and its frames become native
+//! `director-timeline/1` tracks. The fixtures under `tests/fixtures/gsap` are
+//! the phase 5 GSAP gate set; reference values come from GSAP itself.
 
 use director_core::scene_export::export_scene;
 use director_html::{
@@ -7,22 +8,32 @@ use director_html::{
     TimelineValue,
 };
 use director_render::render_frame;
-use director_scene::{html::CssTiming, NodeBody};
+use director_scene::NodeBody;
 use std::path::PathBuf;
+
+const GSAP: &str = "<script src='https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js'></script>";
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gsap").join(name)
 }
 
+fn opts() -> CompileOptions {
+    CompileOptions {
+        gsap_dir: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tools/node_modules/gsap/dist")),
+        ..Default::default()
+    }
+}
+
 fn load(name: &str) -> CompiledHtml {
-    compile_file(&fixture(name), CompileOptions::default()).unwrap()
+    compile_file(&fixture(name), opts()).unwrap()
+}
+
+fn tracks(c: &CompiledHtml) -> &[TimelineTrack] {
+    &c.timeline.as_ref().unwrap().tracks
 }
 
 fn track<'a>(c: &'a CompiledHtml, target: &str, property: &str) -> &'a TimelineTrack {
-    c.timeline
-        .as_ref()
-        .unwrap()
-        .tracks
+    tracks(c)
         .iter()
         .find(|t| t.target == target && t.property == property)
         .unwrap_or_else(|| panic!("no {property} track on {target}"))
@@ -35,12 +46,22 @@ fn num(k: &TimelineKeyframe) -> f64 {
     }
 }
 
-/// `(time, value, ease)` for a numeric track.
-fn keys(t: &TimelineTrack) -> Vec<(f64, f64, Option<&str>)> {
-    t.keyframes
-        .iter()
-        .map(|k| ((k.time * 1e4).round() / 1e4, (num(k) * 1e4).round() / 1e4, k.ease.as_deref()))
-        .collect()
+/// The track value at `time`: keys interpolate linearly and hold at the ends.
+fn at(t: &TimelineTrack, time: f64) -> f64 {
+    let keys = &t.keyframes;
+    let i = keys.partition_point(|k| k.time <= time);
+    if i == 0 {
+        return num(&keys[0]);
+    }
+    if i == keys.len() {
+        return num(&keys[i - 1]);
+    }
+    let (a, b) = (&keys[i - 1], &keys[i]);
+    num(a) + (num(b) - num(a)) * (time - a.time) / (b.time - a.time)
+}
+
+fn near(value: f64, expected: f64, eps: f64) {
+    assert!((value - expected).abs() <= eps, "{value} vs {expected}");
 }
 
 fn frame(c: &mut CompiledHtml, time: f64) -> Vec<u8> {
@@ -67,6 +88,25 @@ fn close(a: [u8; 4], b: [u8; 4]) -> bool {
     a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 3)
 }
 
+/// A 64x64 page with a blue 20px `#box` at (20, 20) and five `.dot` cells.
+fn page(script: &str) -> String {
+    format!(
+        "<style>body{{margin:0;background:white}}#box{{position:absolute;left:20px;top:20px;width:20px;height:20px;background:rgb(0,0,255)}}\
+         .dot{{position:absolute;width:4px;height:4px;background:red}}</style>\
+         <div id='root' data-composition-id='main' data-width='64' data-height='64' data-duration='2'>\
+         <div id='box'></div><div class='dot'></div><div class='dot'></div><div class='dot'></div><div class='dot'></div><div class='dot'></div>\
+         <p>text <span id='word'>here</span></p></div>{GSAP}<script>{script}</script>"
+    )
+}
+
+fn run(script: &str) -> CompiledHtml {
+    compile(&page(script), opts()).unwrap_or_else(|e| panic!("{script}: {e}"))
+}
+
+fn refused(source: &str) -> String {
+    compile(source, opts()).err().expect(source).to_string()
+}
+
 #[test]
 fn every_fixture_renders_as_native_tracks() {
     for name in ["entrance.html", "loop.html", "stagger.html"] {
@@ -84,30 +124,31 @@ fn every_fixture_renders_as_native_tracks() {
 #[test]
 fn entrance_resolves_positions_labels_defaults_and_stagger() {
     let c = load("entrance.html");
-    // from() at 0.2 with the timeline defaults.
-    assert_eq!(
-        keys(track(&c, "headline", "translate-y")),
-        [(0.2, 40.0, None), (0.8, 0.0, Some("power3.out"))]
-    );
-    assert_eq!(
-        keys(track(&c, "headline", "opacity")),
-        [(0.2, 0.0, None), (0.8, 1.0, Some("power3.out"))]
-    );
-    // ">0.4" follows the rule's fromTo, and xPercent starts from the CSS translate(-50%).
-    assert_eq!(
-        keys(track(&c, "headline", "translate-x-percent")),
-        [(2.5, -50.0, None), (3.3, -40.0, Some("sine.inOut"))]
-    );
-    // "chips" sits 0.1 after the headline; each chip staggers by 0.15.
-    assert_eq!(
-        keys(track(&c, "/2", "scale-x")),
-        [(1.05, 0.5, None), (1.65, 1.0, Some("back.out(1.7)"))]
-    );
-    // "<0.2" starts 0.2 after the staggered chips begin.
-    assert_eq!(
-        keys(track(&c, "rule", "width")),
-        [(1.1, 0.0, None), (2.1, 400.0, Some("expo.inOut"))]
-    );
+    // from() at 0.2 with the timeline defaults: power3.out is 0.9375 halfway.
+    let y = track(&c, "headline", "translate-y");
+    near(at(y, 0.2), 40.0, 1e-6);
+    near(at(y, 0.5), 2.5, 0.02);
+    near(at(y, 1.0), 0.0, 1e-6);
+    near(at(track(&c, "headline", "opacity"), 0.5), 0.9375, 1e-3);
+    // ">0.4" follows the rule's fromTo; xPercent starts from the CSS translate(-50%).
+    let x = track(&c, "headline", "translate-x-percent");
+    near(at(x, 2.5), -50.0, 1e-6);
+    near(at(x, 2.9), -45.0, 0.02);
+    near(at(x, 3.5), -40.0, 1e-6);
+    near(at(track(&c, "headline", "rotate-z"), 3.5), -4.0, 1e-6);
+    // "chips" sits 0.1 after the headline; each chip staggers by 0.15 and
+    // back.out(1.7) overshoots to 1.0875 halfway.
+    let chip = track(&c, "/1", "scale-x");
+    near(at(chip, 0.9), 0.5, 1e-6);
+    near(at(chip, 1.2), 0.5 + 0.5 * 1.0875, 1e-3);
+    near(at(track(&c, "/2", "scale-x"), 1.0333), 0.5, 1e-6);
+    near(at(chip, 2.0), 1.0, 1e-6);
+    // "<0.2" starts 0.2 after the staggered chips begin. GSAP rounds px widths.
+    let rule = track(&c, "rule", "width");
+    near(at(rule, 1.1), 0.0, 1e-6);
+    near(at(rule, 1.4), 11.0, 1e-6);
+    near(at(rule, 1.6), 200.0, 1e-6);
+    near(at(rule, 2.2), 400.0, 1e-6);
 }
 
 #[test]
@@ -129,39 +170,22 @@ fn entrance_pixels_follow_gsap_eases() {
 #[test]
 fn loop_covers_yoyo_repeats_sets_steps_and_colors() {
     let c = load("loop.html");
-    assert_eq!(
-        keys(track(&c, "dot", "translate-x")),
-        [
-            (0.0, 0.0, None),
-            (1.0, 480.0, Some("power1.inOut")),
-            (2.0, 0.0, Some("power1.inOut")),
-            (3.0, 480.0, Some("power1.inOut")),
-            (4.0, 0.0, Some("power1.inOut")),
-        ]
-    );
+    let dot = track(&c, "dot", "translate-x");
+    for (time, x) in [(0.0, 0.0), (0.5, 240.0), (1.0, 480.0), (1.5, 240.0), (2.0, 0.0), (3.0, 480.0), (4.0, 0.0), (4.5, 0.0)] {
+        near(at(dot, time), x, 0.02);
+    }
     // gsap.set hides the square until the timeline set at 1s.
-    assert_eq!(
-        keys(track(&c, "blink", "opacity")),
-        [(0.9999, 0.0, None), (1.0, 1.0, None)]
-    );
+    let blink = track(&c, "blink", "opacity");
+    near(at(blink, 0.9), 0.0, 1e-6);
+    near(at(blink, 1.0), 1.0, 1e-6);
     // steps(3) jumps at quarters; repeat -1 restarts every 1.5s until the end.
-    let rotation = keys(track(&c, "blink", "rotate-z"));
-    assert_eq!(
-        &rotation[..5],
-        [
-            (1.5, 0.0, None),
-            (1.7499, 0.0, None),
-            (1.75, 30.0, None),
-            (1.9999, 30.0, None),
-            (2.0, 60.0, None)
-        ]
-    );
-    assert!(rotation.iter().any(|k| k.0 == 3.0 && k.1 == 0.0));
-    assert!(rotation.last().unwrap().0 >= 5.0);
+    let rotation = track(&c, "blink", "rotate-z");
+    for (time, angle) in [(1.7, 0.0), (1.8, 30.0), (2.1, 60.0), (2.4, 90.0), (2.9, 90.0), (3.1, 0.0), (3.3, 30.0)] {
+        near(at(rotation, time), angle, 1e-6);
+    }
     let bar = track(&c, "bar", "background-color");
-    assert_eq!(bar.keyframes.len(), 2);
-    assert_eq!(bar.keyframes[1].value, TimelineValue::Text("rgba(233, 196, 106, 1)".into()));
-    assert_eq!(bar.keyframes[1].ease.as_deref(), Some("power2.out"));
+    assert_eq!(bar.keyframes.last().unwrap().value, TimelineValue::Text("rgba(233, 196, 106, 1)".into()));
+    near(at(track(&c, "bar", "width"), 2.5), 360.0, 1e-6);
 }
 
 #[test]
@@ -183,30 +207,36 @@ fn stagger_runs_listeners_nested_timelines_and_function_values() {
     let c = load("stagger.html");
     // Center-out stagger inside a nested timeline added at 0.25: GSAP spreads
     // each * (n - 1) over the normalized distance, so neighbors start 0.2 later.
-    assert_eq!(keys(track(&c, "/2", "height"))[0], (0.25, 0.0, None));
-    assert_eq!(keys(track(&c, "/1", "height"))[0], (0.45, 0.0, None));
-    assert_eq!(keys(track(&c, "/0", "height"))[0], (0.65, 0.0, None));
-    assert_eq!(keys(track(&c, "/0", "height"))[1], (1.15, 200.0, Some("circ.out")));
+    for (bar, start) in [("/2", 0.25), ("/1", 0.45), ("/0", 0.65)] {
+        let height = track(&c, bar, "height");
+        near(at(height, start - 1.0 / 60.0), 0.0, 1e-6);
+        near(at(height, start + 0.5), 200.0, 1e-6);
+    }
     // Function values per index, from "swing+=0.2".
+    near(at(track(&c, "/4", "skew-x"), 2.0), 10.0, 0.01);
+    near(at(track(&c, "/0", "skew-x"), 2.0), -10.0, 0.01);
+    // "-=0.2" overlaps the swing on other channels; "none" stays linear and
+    // the four GSAP corner longhands form one radius.
+    let radius = track(&c, "/1", "border-top-left-radius");
+    near(at(radius, 2.0), 15.0, 1.0);
+    near(at(radius, 2.3), 30.0, 1e-6);
     assert_eq!(
-        keys(track(&c, "/4", "skew-x")),
-        [(1.35, 0.0, None), (1.95, 10.0, Some("elastic.out(1, 0.4)"))]
+        track(&c, "/1", "background-color").keyframes.last().unwrap().value,
+        TimelineValue::Text("rgba(255, 107, 107, 1)".into())
     );
-    // "-=0.2" overlaps the swing on other channels; "none" stays linear.
-    assert_eq!(
-        keys(track(&c, "/1", "border-top-left-radius")),
-        [(1.75, 0.0, None), (2.25, 30.0, None)]
-    );
-    // amount 0.4 from the end: the last bar leads.
-    assert_eq!(keys(track(&c, "/4", "opacity"))[0].0, 2.75);
-    assert_eq!(keys(track(&c, "/0", "opacity"))[0].0, 3.15);
+    // autoAlpha with amount 0.4 from the end: the last bar leads.
+    let (last, first) = (track(&c, "/4", "opacity"), track(&c, "/0", "opacity"));
+    near(at(last, 2.75 - 1.0 / 60.0), 1.0, 1e-6);
+    near(at(last, 3.2), 0.25, 1e-6);
+    near(at(first, 3.15 - 1.0 / 60.0), 1.0, 1e-6);
+    near(at(first, 3.6), 0.25, 1e-6);
 }
 
 #[test]
-fn gsap_eases_survive_scene_export() {
+fn gsap_tracks_survive_scene_export() {
     let c = load("entrance.html");
     let doc = export_scene(&c.director).unwrap();
-    let timings: Vec<_> = doc
+    let channels = doc
         .nodes
         .iter()
         .filter_map(|n| match &n.body {
@@ -215,109 +245,161 @@ fn gsap_eases_survive_scene_export() {
         })
         .flat_map(|h| &h.animations)
         .flat_map(|a| &a.channels)
-        .flat_map(|ch| &ch.keyframes)
-        .map(|k| k.timing.clone())
-        .collect();
-    assert!(timings.contains(&CssTiming::Gsap("power3.out".into())));
-    assert!(timings.contains(&CssTiming::Gsap("back.out(1.7)".into())));
-}
-
-fn page(script: &str) -> String {
-    format!(
-        "<style>body{{margin:0}}#box{{position:absolute;width:10px;height:10px;background:red}}</style>\
-         <div id='root' data-composition-id='main'><div id='box'></div><p>text <span id='word'>here</span></p></div>\
-         <script>{script}</script>"
-    )
-}
-
-fn refused(script: &str) -> String {
-    let error = compile(&page(script), CompileOptions::default()).err().expect(script);
-    error.to_string()
+        .count();
+    assert!(channels >= tracks(&c).len());
 }
 
 #[test]
-fn unsupported_gsap_and_scripts_fail_with_context() {
-    let tl = "const tl = gsap.timeline({paused:true}); window.__timelines.main = tl;";
-    for (script, message) in [
-        ("gsap.to('#box', {x: 10})", "gsap.to outside a timeline"),
-        (&format!("{tl} tl.to('#box', {{x: 10, onUpdate() {{}}}})"), "callback 'onUpdate'"),
-        (&format!("{tl} tl.to('#box', {{filter: 'blur(2px)'}})"), "property 'filter' has no native track"),
-        (&format!("{tl} tl.to('#box', {{x: Math.random()}})"), "Math.random"),
-        (&format!("{tl} tl.call(() => {{}})"), "call()"),
-        (&format!("{tl} tl.to('#box', {{x: 10, ease: 'rough'}})"), "unsupported GSAP ease"),
+fn page_scripts_fail_with_context() {
+    for (source, message) in [
+        (page("gsap.to('#box', {filter: 'blur(2px)', duration: 1})"), "'filter' on #box"),
+        (page("gsap.to('#word', {opacity: 0})"), "not an animatable box"),
+        (page("gsap.to('#box', {attr: {'data-x': 10}})"), "'data-x' attribute of #box"),
+        (page("setTimeout(() => {}, 100)"), "setTimeout of 100 ms"),
+        (page("fetch('data.json')"), "fetch is not available"),
         (
-            &format!("{tl} tl.to('#box', {{x: 10, duration: 2}}, 0).to('#box', {{x: 0, duration: 0.5}}, 0.5)"),
-            "overlap",
+            format!("<div data-composition-id='main'><svg><path id='p' d='M0 0L9 9'/></svg></div>{GSAP}<script>document.querySelector('#p').getTotalLength()</script>"),
+            "SVG path length",
         ),
-        (&format!("{tl} tl.to('#word', {{opacity: 0}})"), "not an animatable box"),
-        ("gsap.timeline().to('#box', {x: 10});", "neither registered"),
-        ("document.querySelector('#box').style.opacity = 0", "element style"),
+        ("<div></div><script type='module'>gsap</script>".into(), "module scripts"),
+        ("<div></div><script src='https://example.com/app.js'></script>".into(), "must be downloaded"),
+        ("<div></div><script src='app.js'></script>".into(), "app.js"),
+        ("<div></div><script>window.missing.call()</script>".into(), "inline script"),
     ] {
-        let error = refused(script);
-        assert!(error.contains(message), "{script}: {error}");
+        let error = refused(&source);
+        assert!(error.contains(message), "{message}: {error}");
     }
-    let error = compile(
-        "<div></div><script src='app.js'></script>",
-        CompileOptions::default(),
-    )
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(error.contains("external script 'app.js'"), "{error}");
 }
 
 #[test]
-fn script_without_gsap_compiles_static() {
-    let c = compile(&page("const unused = 1 + 1;"), CompileOptions::default()).unwrap();
+fn scripts_without_motion_compile_static() {
+    let c = compile(&page("const unused = 1 + 1;"), opts()).unwrap();
     assert!(c.timeline.is_none());
+    let c = compile(&page("gsap.set('#box', {x: 10, opacity: 0.5})"), opts()).unwrap();
+    assert!(c.timeline.is_none());
+}
+
+#[test]
+fn global_tweens_callbacks_and_random_values_play() {
+    // The global timeline plays without registration.
+    let c = run("gsap.to('#box', {x: 30, duration: 1, ease: 'none'})");
+    near(at(track(&c, "box", "translate-x"), 0.5), 15.0, 1e-3);
+    // Callbacks run every frame and their writes become tracks.
+    let c = run(
+        "gsap.to('#box', {x: 10, duration: 1, ease: 'none', onUpdate() { \
+         document.querySelector('#box').style.opacity = String(1 - this.progress()); }})",
+    );
+    near(at(track(&c, "box", "opacity"), 0.5), 0.5, 1e-3);
+    // Math.random is seeded, so compiles repeat.
+    let random = "gsap.to('.dot', {x: () => Math.random() * 40, duration: 1})";
+    assert_eq!(run(random).timeline, run(random).timeline);
 }
 
 #[test]
 fn transform_components_compose_over_the_css_transform() {
     let source = "<style>body{margin:0;background:white}#box{position:absolute;left:20px;top:20px;width:20px;height:20px;background:rgb(0,0,255);transform:translate(-50%,-50%)}</style>\
-        <div id='root' data-composition-id='main' data-width='64' data-height='64' data-duration='2'><div id='box'></div></div>\
-        <script>const tl = gsap.timeline({paused:true}); tl.to('#box', {x: 30, duration: 1, ease: 'none'}); window.__timelines.main = tl;</script>";
-    let mut c = compile(source, CompileOptions::default()).unwrap();
+        <div id='root' data-composition-id='main' data-width='64' data-height='64' data-duration='2'><div id='box'></div></div>"
+        .to_string()
+        + GSAP
+        + "<script>gsap.to('#box', {x: 30, duration: 1, ease: 'none'});</script>";
+    let mut c = compile(&source, opts()).unwrap();
     let start = frame(&mut c, 0.0);
     assert!(close(pixel(&start, 64, 15, 15), [0, 0, 255, 255]));
     let end = frame(&mut c, 1.5);
     assert!(close(pixel(&end, 64, 45, 15), [0, 0, 255, 255]));
     assert!(!close(pixel(&end, 64, 15, 15), [0, 0, 255, 255]));
-    let rotated = "<style>#box{width:10px;height:10px;transform:skewX(5deg) rotate(10deg)}</style>\
-        <div id='root' data-composition-id='main'><div id='box'></div></div>\
-        <script>const tl = gsap.timeline({paused:true}); tl.to('#box', {x: 30}); window.__timelines.main = tl;</script>";
-    let error = compile(rotated, CompileOptions::default()).err().unwrap().to_string();
-    assert!(error.contains("base transform"), "{error}");
+    // GSAP parses a skewed and rotated base into its own components, which
+    // stay put while x moves.
+    let skewed = source.replace("translate(-50%,-50%)", "skewX(5deg) rotate(10deg)");
+    let c = compile(&skewed, opts()).unwrap();
+    near(at(track(&c, "box", "translate-x"), 0.5), 15.0, 1e-3);
+    assert!(tracks(&c).iter().all(|t| t.property == "translate-x"));
+}
+
+#[test]
+fn transform_origin_pivots_rotation() {
+    let mut c = run("gsap.to('#box', {rotation: 90, transformOrigin: '0% 0%', duration: 1})");
+    // A quarter turn about the top-left corner swings the box left of it.
+    let end = frame(&mut c, 1.5);
+    assert!(close(pixel(&end, 64, 10, 30), [0, 0, 255, 255]));
+    assert!(!close(pixel(&end, 64, 30, 30), [0, 0, 255, 255]));
+}
+
+#[test]
+fn keyframes_arrays_objects_and_percentages() {
+    let c = run("gsap.to('#box', {keyframes: {x: [0, 30, 10], easeEach: 'none'}, ease: 'none', duration: 2})");
+    let x = track(&c, "box", "translate-x");
+    near(at(x, 1.0), 30.0, 1e-3);
+    near(at(x, 2.0), 10.0, 1e-3);
+    let c = run(
+        "gsap.to('#box', {keyframes: [{x: 30, duration: 1, ease: 'none'}, {y: 20, duration: 1, ease: 'none'}]})",
+    );
+    near(at(track(&c, "box", "translate-x"), 1.0), 30.0, 1e-3);
+    near(at(track(&c, "box", "translate-y"), 1.0), 0.0, 1e-3);
+    near(at(track(&c, "box", "translate-y"), 1.5), 10.0, 1e-3);
+    let c = run("gsap.to('#box', {keyframes: {'50%': {x: 30}, '100%': {x: 0}}, ease: 'none', duration: 2})");
+    near(at(track(&c, "box", "translate-x"), 1.0), 30.0, 0.05);
+}
+
+/// Each dot's linear opacity at 0.6s is 0.6 minus its stagger offset.
+fn offsets(stagger: &str, dots: usize) -> Vec<f64> {
+    let script = format!("gsap.from('.dot', {{opacity: 0, duration: 1, ease: 'none', stagger: {stagger}}})");
+    let c = run(&script);
+    (0..dots)
+        .map(|i| ((0.6 - at(track(&c, &format!("/{}", i + 1), "opacity"), 0.6)) * 1e4).round() / 1e4)
+        .collect()
+}
+
+#[test]
+fn stagger_distribution_matches_gsap() {
+    assert_eq!(offsets("0.1", 5), [0.0, 0.1, 0.2, 0.3, 0.4]);
+    assert_eq!(offsets("{each: 0.1, from: 'center'}", 5), [0.4, 0.2, 0.0, 0.2, 0.4]);
+    assert_eq!(offsets("{each: 0.1, from: 'edges'}", 5), [0.0, 0.2, 0.4, 0.2, 0.0]);
+    assert_eq!(offsets("{amount: 0.4, from: 'end'}", 5), [0.4, 0.3, 0.2, 0.1, 0.0]);
+    // A stagger ease spreads the 0.4s total along power2.in, a cubic.
+    assert_eq!(offsets("{each: 0.1, ease: 'power2.in'}", 5), [0.0, 0.0062, 0.05, 0.1687, 0.4]);
+}
+
+#[test]
+fn grid_staggers_read_layout() {
+    // Six dots in three columns: explicit and measured grids agree with GSAP.
+    let cells = (0..6)
+        .map(|i| format!("<div class='cell' style='left:{}px;top:{}px'></div>", (i % 3) * 10, (i / 3) * 10))
+        .collect::<String>();
+    let source = |stagger: &str| {
+        format!(
+            "<style>body{{margin:0}}.cell{{position:absolute;width:8px;height:8px;background:red}}</style>\
+             <div id='root' data-composition-id='main' data-width='64' data-height='64' data-duration='2'>{cells}</div>{GSAP}\
+             <script>gsap.from('.cell', {{opacity: 0, duration: 1, ease: 'none', stagger: {stagger}}})</script>"
+        )
+    };
+    let offsets = |stagger: &str| {
+        let c = compile(&source(stagger), opts()).unwrap();
+        (0..6)
+            .map(|i| ((0.6 - at(track(&c, &format!("/{i}"), "opacity"), 0.6)) * 1e4).round() / 1e4)
+            .collect::<Vec<_>>()
+    };
+    let expected = [0.5, 0.0, 0.5, 0.5, 0.0, 0.5];
+    assert_eq!(offsets("{grid: [2, 3], from: 'center', amount: 0.5}"), expected);
+    assert_eq!(offsets("{grid: 'auto', from: 'center', amount: 0.5}"), expected);
+    assert_eq!(offsets("{grid: 'auto', from: 'end', axis: 'x', each: 0.1}"), [0.3, 0.15, 0.0, 0.3, 0.15, 0.0]);
 }
 
 #[test]
 fn gsap_motion_example_compiles_to_tracks() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/html/gsap-motion.html");
-    let c = compile_file(&path, CompileOptions::default()).unwrap();
-    assert_eq!(
-        keys(track(&c, "pulse", "scale-x"))[..3],
-        [(1.0, 0.6, None), (1.5, 1.0, Some("sine.inOut")), (2.0, 0.6, Some("sine.inOut"))]
-    );
-    assert_eq!(track(&c, "/5", "background-color").keyframes.len(), 2);
+    let c = compile_file(&path, opts()).unwrap();
+    let pulse = track(&c, "pulse", "scale-x");
+    near(at(pulse, 1.0), 0.6, 1e-3);
+    near(at(pulse, 1.5), 1.0, 1e-3);
+    near(at(pulse, 2.0), 0.6, 1e-3);
+    assert!(track(&c, "/5", "background-color").keyframes.len() >= 2);
 }
 
 #[test]
-fn stagger_distribution_matches_gsap() {
-    let starts = |stagger: &str| {
-        let source = format!(
-            "<style>div div{{position:absolute;width:10px;height:10px;background:red}}</style>\
-             <div id='root' data-composition-id='main'><div></div><div></div><div></div><div></div><div></div></div>\
-             <script>const tl = gsap.timeline({{paused:true}}); tl.from('#root div', {{opacity: 0, duration: 1, stagger: {stagger}}}); window.__timelines.main = tl;</script>"
-        );
-        let c = compile(&source, CompileOptions::default()).unwrap();
-        (0..5)
-            .map(|i| keys(track(&c, &format!("/{i}"), "opacity"))[0].0)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(starts("0.1"), [0.0, 0.1, 0.2, 0.3, 0.4]);
-    assert_eq!(starts("{each: 0.1, from: 'center'}"), [0.4, 0.2, 0.0, 0.2, 0.4]);
-    assert_eq!(starts("{each: 0.1, from: 'edges'}"), [0.0, 0.2, 0.4, 0.2, 0.0]);
-    assert_eq!(starts("{each: 0.1, from: 1}"), [0.1333, 0.0, 0.1333, 0.2667, 0.4]);
-    assert_eq!(starts("{amount: 0.4, from: 'end'}"), [0.4, 0.3, 0.2, 0.1, 0.0]);
-    assert_eq!(starts("{each: 0.1, from: 0.25}"), [0.0667, 0.0, 0.1333, 0.2667, 0.4]);
+fn boa_reads_left_operands_before_the_right_assigns() {
+    // GSAP's grid detection runs `max < (max = rect.left)`; the vendored Boa
+    // copies the left local first, matching Node.
+    let source = "<div data-composition-id='main'></div><script>        function a() { let k = -1; return k < (k = 5); } function c() { var k = 3; return k - (k = 5); }         function e() { var k = 3; return k + k++; } function g() { var k = 3; return k === (k = 5); }         function i() { var k = 3; k += (k = 5); return k; } function j() { var k = 3; return k * (k++, k); }         function l() { let k = -1, n = 0; while (k < (k = n++) && n < 4) {} return n; }         throw new Error(JSON.stringify([a(), c(), e(), g(), i(), j(), l()]));</script>";
+    assert!(refused(source).contains("[true,-2,6,false,8,12,4]"));
 }

@@ -1,0 +1,815 @@
+//! The document page scripts see. Scraper's tree is mutated in place through
+//! native functions; `dom.js` wraps node indexes in browser-shaped objects.
+//! Layout and computed style come from a probe compile of the current tree.
+
+use boa_engine::{
+    object::builtins::JsArray, Context, JsNativeError, JsResult, JsString, JsValue, NativeFunction,
+};
+use ego_tree::NodeId;
+use html5ever::{ns, Attribute, LocalName, Namespace, QualName};
+use scraper::node::{Comment, Element, Node, Text};
+use scraper::{ElementRef, Html, Selector, StrTendril};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
+
+/// What the probe compile knows about one element box.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Probed {
+    /// Computed longhands as cascade text.
+    pub css: BTreeMap<String, String>,
+    /// x, y relative to the parent box, then width and height.
+    pub rect: [f32; 4],
+    /// Position relative to the canvas.
+    pub abs: [f32; 2],
+    /// `none`, `matrix(...)` or `matrix3d(...)` in px.
+    pub transform: String,
+    /// Transform origin in px.
+    pub origin: String,
+    pub font_size: f32,
+}
+
+pub(crate) type Probe = HashMap<NodeId, Probed>;
+pub(crate) type Prober = Box<dyn Fn(&Html) -> Result<Probe, String>>;
+
+pub(crate) struct Doc {
+    pub html: Html,
+    pub ids: Vec<NodeId>,
+    index: HashMap<NodeId, usize>,
+    selectors: HashMap<String, Rc<Selector>>,
+    /// Bumped on every structural or attribute change.
+    pub generation: u64,
+    /// The generation and node of the latest insert of a detached node, so
+    /// removing it again restores the generation.
+    undo: Option<(u64, NodeId)>,
+    probe: Option<(u64, Rc<Probe>)>,
+    prober: Prober,
+    /// While the timeline plays, layout answers stay at the setup state.
+    pub playing: bool,
+    pub viewport: (f32, f32),
+}
+
+thread_local! {
+    static DOC: RefCell<Option<Doc>> = const { RefCell::new(None) };
+}
+
+impl Doc {
+    pub(crate) fn new(html: Html, prober: Prober, viewport: (f32, f32)) -> Self {
+        let mut doc = Self {
+            html,
+            ids: Vec::new(),
+            index: HashMap::new(),
+            selectors: HashMap::new(),
+            generation: 0,
+            undo: None,
+            probe: None,
+            prober,
+            playing: false,
+            viewport,
+        };
+        let root = doc.html.tree.root().id();
+        doc.register(root);
+        let all: Vec<NodeId> = doc.html.tree.root().descendants().map(|n| n.id()).collect();
+        for id in all {
+            doc.register(id);
+        }
+        doc
+    }
+
+    fn register(&mut self, id: NodeId) -> usize {
+        if let Some(&i) = self.index.get(&id) {
+            return i;
+        }
+        self.index.insert(id, self.ids.len());
+        self.ids.push(id);
+        self.ids.len() - 1
+    }
+
+    pub(crate) fn index_of(&self, id: NodeId) -> Option<usize> {
+        self.index.get(&id).copied()
+    }
+
+    fn id(&self, i: usize) -> Result<NodeId, String> {
+        self.ids.get(i).copied().ok_or_else(|| format!("unknown node {i}"))
+    }
+
+    fn node(&self, i: usize) -> Result<ego_tree::NodeRef<'_, Node>, String> {
+        let id = self.id(i)?;
+        self.html.tree.get(id).ok_or_else(|| format!("unknown node {i}"))
+    }
+
+    fn element(&self, i: usize) -> Result<ElementRef<'_>, String> {
+        ElementRef::wrap(self.node(i)?).ok_or_else(|| "node is not an element".to_string())
+    }
+
+    fn selector(&mut self, text: &str) -> Result<Rc<Selector>, String> {
+        if let Some(s) = self.selectors.get(text) {
+            return Ok(s.clone());
+        }
+        let parsed = Selector::parse(text)
+            .map_err(|e| format!("SyntaxError: '{text}' is not a valid selector: {e}"))?;
+        let parsed = Rc::new(parsed);
+        self.selectors.insert(text.to_string(), parsed.clone());
+        Ok(parsed)
+    }
+
+    fn touch(&mut self) {
+        self.generation += 1;
+        self.undo = None;
+    }
+
+    /// Whether `node` hangs below the document root.
+    fn connected(&self, id: NodeId) -> bool {
+        let root = self.html.tree.root().id();
+        self.html
+            .tree
+            .get(id)
+            .is_some_and(|n| n.ancestors().any(|a| a.id() == root) || id == root)
+    }
+
+    fn orphan(&mut self, value: Node) -> usize {
+        let id = self.html.tree.orphan(value).id();
+        self.register(id)
+    }
+
+    fn set_element(&mut self, i: usize, edit: impl FnOnce(&mut Vec<Attribute>)) -> Result<(), String> {
+        let id = self.id(i)?;
+        let mut node = self.html.tree.get_mut(id).ok_or("unknown node")?;
+        let Node::Element(el) = node.value() else {
+            return Err("node is not an element".into());
+        };
+        let mut attrs: Vec<Attribute> = el
+            .attrs
+            .iter()
+            .map(|(name, value)| Attribute {
+                name: name.clone(),
+                value: value.to_string().into(),
+            })
+            .collect();
+        edit(&mut attrs);
+        *el = Element::new(el.name.clone(), attrs);
+        self.touch();
+        Ok(())
+    }
+
+    fn deep_copy(&mut self, from: NodeId) -> NodeId {
+        let value = self.html.tree.get(from).unwrap().value().clone();
+        let children: Vec<NodeId> = self.html.tree.get(from).unwrap().children().map(|c| c.id()).collect();
+        let copy = self.html.tree.orphan(value).id();
+        self.register(copy);
+        for child in children {
+            let c = self.deep_copy(child);
+            self.html.tree.get_mut(copy).unwrap().append_id(c);
+        }
+        copy
+    }
+
+    /// The value of attribute `name` on element `i`.
+    pub(crate) fn attr(&self, i: usize, name: &str) -> Result<Option<String>, String> {
+        Ok(self
+            .element(i)?
+            .value()
+            .attrs
+            .iter()
+            .find(|(n, _)| attr_name(n) == name)
+            .map(|(_, v)| v.to_string()))
+    }
+
+    /// Set or remove attribute `name` on element `i`.
+    pub(crate) fn write_attr(&mut self, i: usize, name: &str, value: Option<String>) -> Result<(), String> {
+        let html = self.element(i)?.value().name.ns == ns!(html);
+        let name = if html { name.to_ascii_lowercase() } else { name.to_string() };
+        self.set_element(i, |attrs| {
+            let at = attrs.iter().position(|a| attr_name(&a.name) == name);
+            match (value, at) {
+                (Some(v), Some(at)) => attrs[at].value = v.into(),
+                (Some(v), None) => {
+                    let qual = match name.split_once(':') {
+                        Some(("xlink", local)) => QualName::new(Some("xlink".into()), ns!(xlink), LocalName::from(local)),
+                        _ => QualName::new(None, ns!(), LocalName::from(name.as_str())),
+                    };
+                    attrs.push(Attribute { name: qual, value: v.into() })
+                }
+                (None, Some(at)) => {
+                    attrs.remove(at);
+                }
+                (None, None) => {}
+            }
+        })
+    }
+
+    /// `#id`, else `<tag>`, naming element `i` in diagnostics.
+    pub(crate) fn label(&self, i: usize) -> String {
+        match self.element(i) {
+            Ok(el) => match el.value().attr("id") {
+                Some(id) => format!("#{id}"),
+                None => format!("<{}>", el.value().name()),
+            },
+            Err(_) => format!("node {i}"),
+        }
+    }
+
+    /// The text content of node `i`.
+    pub(crate) fn text(&self, i: usize) -> Result<String, String> {
+        let node = self.node(i)?;
+        Ok(match node.value() {
+            Node::Text(t) => t.text.to_string(),
+            Node::Comment(c) => c.comment.to_string(),
+            Node::Element(_) | Node::Fragment | Node::Document => node
+                .descendants()
+                .filter_map(|n| n.value().as_text().map(|t| t.text.to_string()))
+                .collect(),
+            _ => String::new(),
+        })
+    }
+
+    /// Replace the text content of node `i`.
+    pub(crate) fn write_text(&mut self, i: usize, value: &str) -> Result<(), String> {
+        let id = self.id(i)?;
+        let mut node = self.html.tree.get_mut(id).ok_or("unknown node")?;
+        let parent = match node.value() {
+            Node::Text(t) => {
+                t.text = StrTendril::from(value);
+                false
+            }
+            Node::Comment(c) => {
+                c.comment = StrTendril::from(value);
+                false
+            }
+            Node::Element(_) | Node::Fragment => true,
+            _ => false,
+        };
+        if parent {
+            let kids: Vec<NodeId> = self.html.tree.get(id).unwrap().children().map(|c| c.id()).collect();
+            for kid in kids {
+                self.html.tree.get_mut(kid).unwrap().detach();
+            }
+            if !value.is_empty() {
+                let t = self
+                    .html
+                    .tree
+                    .get_mut(id)
+                    .unwrap()
+                    .append(Node::Text(Text {
+                        text: StrTendril::from(value),
+                    }))
+                    .id();
+                self.register(t);
+            }
+        }
+        self.touch();
+        Ok(())
+    }
+
+    /// Layout facts for element `i` from the probe compile.
+    pub(crate) fn probed(&mut self, i: usize) -> Result<Option<Probed>, String> {
+        let id = self.id(i)?;
+        let stale = match &self.probe {
+            None => true,
+            Some((generation, _)) => *generation != self.generation && !self.playing,
+        };
+        if stale {
+            let (compact, map) = compact(&self.html);
+            let probe = (self.prober)(&compact)?;
+            let back: HashMap<NodeId, NodeId> = map.into_iter().map(|(old, new)| (new, old)).collect();
+            let probe: Probe = probe
+                .into_iter()
+                .filter_map(|(new, p)| back.get(&new).map(|old| (*old, p)))
+                .collect();
+            self.probe = Some((self.generation, Rc::new(probe)));
+        }
+        Ok(self.probe.as_ref().unwrap().1.get(&id).cloned())
+    }
+}
+
+/// A copy of `html` holding only nodes reachable from the root, in document
+/// order, with the map from old node ids to new ones.
+pub(crate) fn compact(html: &Html) -> (Html, HashMap<NodeId, NodeId>) {
+    let mut out = Html::new_document();
+    out.quirks_mode = html.quirks_mode;
+    let mut map = HashMap::new();
+    let root = html.tree.root();
+    map.insert(root.id(), out.tree.root().id());
+    fn copy(src: ego_tree::NodeRef<'_, Node>, dst: NodeId, out: &mut Html, map: &mut HashMap<NodeId, NodeId>) {
+        for child in src.children() {
+            let id = out.tree.get_mut(dst).unwrap().append(child.value().clone()).id();
+            map.insert(child.id(), id);
+            copy(child, id, out, map);
+        }
+    }
+    copy(root, out.tree.root().id(), &mut out, &mut map);
+    (out, map)
+}
+
+/// Install `doc` for the natives, run `f`, and hand the document back.
+pub(crate) fn with_installed<R>(doc: Doc, f: impl FnOnce() -> R) -> (R, Doc) {
+    DOC.with(|d| *d.borrow_mut() = Some(doc));
+    let out = f();
+    let doc = DOC.with(|d| d.borrow_mut().take()).expect("installed document");
+    (out, doc)
+}
+
+pub(crate) fn with_doc<R>(f: impl FnOnce(&mut Doc) -> Result<R, String>) -> JsResult<R> {
+    DOC.with(|d| {
+        let mut d = d.borrow_mut();
+        let doc = d.as_mut().expect("installed document");
+        f(doc)
+    })
+    .map_err(|e| JsNativeError::error().with_message(e).into())
+}
+
+fn arg_index(args: &[JsValue], n: usize, cx: &mut Context) -> JsResult<usize> {
+    let v = args.get(n).cloned().unwrap_or_default().to_i32(cx)?;
+    usize::try_from(v).map_err(|_| JsNativeError::range().with_message("negative node index").into())
+}
+fn arg_int(args: &[JsValue], n: usize, cx: &mut Context) -> JsResult<i64> {
+    Ok(args.get(n).cloned().unwrap_or_default().to_i32(cx)? as i64)
+}
+fn arg_text(args: &[JsValue], n: usize, cx: &mut Context) -> JsResult<String> {
+    Ok(args
+        .get(n)
+        .cloned()
+        .unwrap_or_default()
+        .to_string(cx)?
+        .to_std_string_escaped())
+}
+fn arg_opt(args: &[JsValue], n: usize, cx: &mut Context) -> JsResult<Option<String>> {
+    match args.get(n) {
+        None => Ok(None),
+        Some(v) if v.is_null_or_undefined() => Ok(None),
+        Some(v) => Ok(Some(v.to_string(cx)?.to_std_string_escaped())),
+    }
+}
+fn text(s: &str) -> JsValue {
+    JsValue::from(JsString::from(s))
+}
+fn indexes(list: Vec<usize>, cx: &mut Context) -> JsValue {
+    JsArray::from_iter(list.into_iter().map(|i| JsValue::from(i as i32)), cx).into()
+}
+fn strings(list: Vec<String>, cx: &mut Context) -> JsValue {
+    JsArray::from_iter(list.iter().map(|s| text(s)), cx).into()
+}
+fn numbers(list: &[f32], cx: &mut Context) -> JsValue {
+    JsArray::from_iter(list.iter().map(|n| JsValue::from(*n as f64)), cx).into()
+}
+
+fn qual(tag: &str, namespace: &str) -> QualName {
+    let ns = match namespace {
+        "" | "http://www.w3.org/1999/xhtml" => ns!(html),
+        "http://www.w3.org/2000/svg" => ns!(svg),
+        "http://www.w3.org/1998/Math/MathML" => ns!(mathml),
+        other => Namespace::from(other),
+    };
+    let tag = if ns == ns!(html) { tag.to_ascii_lowercase() } else { tag.to_string() };
+    QualName::new(None, ns, LocalName::from(tag))
+}
+
+fn kind(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    with_doc(|d| {
+        Ok(JsValue::from(match d.node(i)?.value() {
+            Node::Element(_) => 1,
+            Node::Text(_) => 3,
+            Node::ProcessingInstruction(_) => 7,
+            Node::Comment(_) => 8,
+            Node::Document => 9,
+            Node::Doctype(_) => 10,
+            Node::Fragment => 11,
+        }))
+    })
+}
+
+fn tag(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    with_doc(|d| Ok(text(d.element(i)?.value().name())))
+}
+
+fn namespace(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    with_doc(|d| Ok(text(&d.element(i)?.value().name.ns)))
+}
+
+fn parent(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    with_doc(|d| {
+        let parent = d.node(i)?.parent().map(|p| p.id());
+        Ok(JsValue::from(parent.and_then(|p| d.index_of(p)).map_or(-1, |p| p as i32)))
+    })
+}
+
+fn children(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let list = with_doc(|d| {
+        let ids: Vec<NodeId> = d.node(i)?.children().map(|c| c.id()).collect();
+        Ok(ids.into_iter().map(|id| d.register(id)).collect::<Vec<_>>())
+    })?;
+    Ok(indexes(list, cx))
+}
+
+fn connected(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    with_doc(|d| Ok(JsValue::from(d.connected(d.id(i)?))))
+}
+
+fn attribute(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let name = arg_text(args, 1, cx)?;
+    with_doc(|d| Ok(d.attr(i, &name)?.map_or(JsValue::null(), |v| text(&v))))
+}
+
+fn attr_name(name: &QualName) -> String {
+    match &name.prefix {
+        Some(prefix) => format!("{prefix}:{}", name.local),
+        None => name.local.to_string(),
+    }
+}
+
+fn attributes(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let flat = with_doc(|d| {
+        let el = d.element(i)?;
+        Ok(el
+            .value()
+            .attrs
+            .iter()
+            .flat_map(|(n, v)| [attr_name(n), v.to_string()])
+            .collect::<Vec<_>>())
+    })?;
+    Ok(strings(flat, cx))
+}
+
+fn set_attribute(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let name = arg_text(args, 1, cx)?;
+    let value = arg_opt(args, 2, cx)?;
+    with_doc(|d| d.write_attr(i, &name, value).map(|_| JsValue::undefined()))
+}
+
+fn text_content(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    with_doc(|d| Ok(text(&d.text(i)?)))
+}
+
+fn set_text(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let value = arg_text(args, 1, cx)?;
+    with_doc(|d| d.write_text(i, &value).map(|_| JsValue::undefined()))
+}
+
+fn create(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let tag = arg_text(args, 0, cx)?;
+    let ns = arg_text(args, 1, cx)?;
+    with_doc(|d| {
+        let node = if tag == "#fragment" {
+            Node::Fragment
+        } else {
+            Node::Element(Element::new(qual(&tag, &ns), Vec::new()))
+        };
+        Ok(JsValue::from(d.orphan(node) as i32))
+    })
+}
+
+fn create_text(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let value = arg_text(args, 0, cx)?;
+    let comment = args.get(1).is_some_and(JsValue::to_boolean);
+    with_doc(|d| {
+        let value = StrTendril::from(value.as_str());
+        let node = if comment {
+            Node::Comment(Comment { comment: value })
+        } else {
+            Node::Text(Text { text: value })
+        };
+        Ok(JsValue::from(d.orphan(node) as i32))
+    })
+}
+
+fn insert(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let parent = arg_index(args, 0, cx)?;
+    let child = arg_index(args, 1, cx)?;
+    let before = arg_int(args, 2, cx)?;
+    with_doc(|d| {
+        let (p, c) = (d.id(parent)?, d.id(child)?);
+        if d.html.tree.get(p).unwrap().ancestors().any(|a| a.id() == c) || p == c {
+            return Err("HierarchyRequestError: the new child contains the parent".into());
+        }
+        let detached = !d.connected(c);
+        let generation = d.generation;
+        d.html.tree.get_mut(c).unwrap().detach();
+        if before < 0 {
+            d.html.tree.get_mut(p).unwrap().append_id(c);
+        } else {
+            let b = d.id(before as usize)?;
+            if d.html.tree.get(b).and_then(|n| n.parent()).map(|n| n.id()) != Some(p) {
+                return Err("NotFoundError: the reference node is not a child of this node".into());
+            }
+            d.html.tree.get_mut(b).unwrap().insert_id_before(c);
+        }
+        d.touch();
+        if detached && d.connected(c) {
+            d.undo = Some((generation, c));
+        }
+        Ok(JsValue::undefined())
+    })
+}
+
+fn remove(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let child = arg_index(args, 0, cx)?;
+    with_doc(|d| {
+        let c = d.id(child)?;
+        let undo = d.undo.take();
+        d.html.tree.get_mut(c).unwrap().detach();
+        d.touch();
+        if let Some((generation, node)) = undo {
+            if node == c {
+                d.generation = generation;
+            }
+        }
+        Ok(JsValue::undefined())
+    })
+}
+
+fn clone(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let deep = args.get(1).is_some_and(JsValue::to_boolean);
+    with_doc(|d| {
+        let id = d.id(i)?;
+        let copy = if deep {
+            d.deep_copy(id)
+        } else {
+            let value = d.html.tree.get(id).unwrap().value().clone();
+            d.html.tree.orphan(value).id()
+        };
+        Ok(JsValue::from(d.register(copy) as i32))
+    })
+}
+
+fn set_inner(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let markup = arg_text(args, 1, cx)?;
+    with_doc(|d| {
+        let id = d.id(i)?;
+        let kids: Vec<NodeId> = d.html.tree.get(id).ok_or("unknown node")?.children().map(|c| c.id()).collect();
+        for kid in kids {
+            d.html.tree.get_mut(kid).unwrap().detach();
+        }
+        let fragment = Html::parse_fragment(&markup);
+        let holder = fragment.root_element();
+        fn copy(src: ego_tree::NodeRef<'_, Node>, dst: NodeId, d: &mut Doc) {
+            for child in src.children() {
+                let new = d.html.tree.get_mut(dst).unwrap().append(child.value().clone()).id();
+                d.register(new);
+                copy(child, new, d);
+            }
+        }
+        copy(*holder, id, d);
+        d.touch();
+        Ok(JsValue::undefined())
+    })
+}
+
+fn markup(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let outer = args.get(1).is_some_and(JsValue::to_boolean);
+    with_doc(|d| {
+        let el = d.element(i)?;
+        Ok(text(&if outer { el.html() } else { el.inner_html() }))
+    })
+}
+
+fn select(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let scope = arg_index(args, 0, cx)?;
+    let selector = arg_text(args, 1, cx)?;
+    let first = args.get(2).is_some_and(JsValue::to_boolean);
+    let found = with_doc(|d| {
+        let selector = d.selector(&selector)?;
+        let root = d.node(scope)?;
+        let mut out = Vec::new();
+        // Descendants of the scope, matched against the whole document.
+        for node in root.descendants().skip(1) {
+            let Some(el) = ElementRef::wrap(node) else { continue };
+            if selector.matches(&el) {
+                out.push(node.id());
+                if first {
+                    break;
+                }
+            }
+        }
+        Ok(out.into_iter().map(|id| d.register(id)).collect::<Vec<_>>())
+    })?;
+    Ok(indexes(found, cx))
+}
+
+fn matches(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let selector = arg_text(args, 1, cx)?;
+    with_doc(|d| {
+        let selector = d.selector(&selector)?;
+        Ok(JsValue::from(selector.matches(&d.element(i)?)))
+    })
+}
+
+fn layout(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let found = with_doc(|d| {
+        Ok(d.probed(i)?.map(|p| {
+            let mut v = p.rect.to_vec();
+            v.extend(p.abs);
+            v.push(p.font_size);
+            v
+        }))
+    })?;
+    Ok(match found {
+        Some(v) => numbers(&v, cx),
+        None => JsValue::null(),
+    })
+}
+
+fn viewport(_: &JsValue, _: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let (w, h) = with_doc(|d| Ok(d.viewport))?;
+    Ok(numbers(&[w, h], cx))
+}
+
+fn computed(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let prop = arg_text(args, 1, cx)?;
+    with_doc(|d| {
+        let tag = d.element(i).map(|e| e.value().name().to_string()).unwrap_or_default();
+        let probed = d.probed(i)?;
+        Ok(text(&computed_value(probed.as_ref(), &tag, &prop)))
+    })
+}
+
+fn px(v: f32) -> String {
+    format!("{}px", round(v))
+}
+fn round(v: f32) -> f32 {
+    let r = (v * 1e4).round() / 1e4;
+    if r == 0.0 {
+        0.0
+    } else {
+        r
+    }
+}
+
+/// Properties whose computed zero carries no unit.
+const UNITLESS: &[&str] = &[
+    "opacity", "z-index", "order", "flex-grow", "flex-shrink", "font-weight", "line-height", "zoom",
+    "fill-opacity", "stroke-opacity", "stop-opacity", "flood-opacity", "orphans", "widows", "tab-size",
+    "column-count", "stroke-miterlimit", "scale", "rotate", "aspect-ratio",
+];
+
+/// `getComputedStyle` text for `prop` (kebab case).
+fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
+    if let Some(p) = probed {
+        match prop {
+            "width" => return px(p.rect[2]),
+            "height" => return px(p.rect[3]),
+            "transform" => return p.transform.clone(),
+            "transform-origin" => return p.origin.clone(),
+            "font-size" => return px(p.font_size),
+            _ => {}
+        }
+        if let Some(v) = p.css.get(prop) {
+            if prop.ends_with("color") || matches!(prop, "fill" | "stroke") {
+                let current = p
+                    .css
+                    .get("color")
+                    .and_then(|c| crate::style::color(c, director_core::types::Color::BLACK).ok())
+                    .unwrap_or(director_core::types::Color::BLACK);
+                if let Ok(c) = crate::style::color(v, current) {
+                    return rgb(c);
+                }
+            }
+            // Browsers serialize a zero length with its unit.
+            if v == "0" && !UNITLESS.contains(&prop) {
+                return "0px".into();
+            }
+            return v.clone();
+        }
+    }
+    initial(tag, prop).to_string()
+}
+
+pub(crate) fn rgb(c: director_core::types::Color) -> String {
+    let b = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    if c.a >= 1.0 {
+        format!("rgb({}, {}, {})", b(c.r), b(c.g), b(c.b))
+    } else {
+        format!("rgba({}, {}, {}, {})", b(c.r), b(c.g), b(c.b), round(c.a))
+    }
+}
+
+/// Initial values for longhands the cascade leaves unset.
+fn initial(tag: &str, prop: &str) -> &'static str {
+    match prop {
+        "opacity" => "1",
+        "visibility" => "visible",
+        "display" => match tag {
+            "span" | "b" | "strong" | "em" | "i" | "small" | "a" | "img" | "svg" => "inline",
+            "head" | "script" | "style" | "link" | "meta" | "title" | "template" => "none",
+            _ => "block",
+        },
+        "position" => "static",
+        "z-index" | "left" | "top" | "right" | "bottom" => "auto",
+        "filter" | "box-shadow" | "text-shadow" | "clip-path" | "mask-image" | "background-image" => "none",
+        "letter-spacing" | "word-spacing" | "line-height" | "font-weight" | "font-style" => "normal",
+        "color" => "rgb(0, 0, 0)",
+        "background-color" | "border-color" => "rgba(0, 0, 0, 0)",
+        "background-position" => "0% 0%",
+        "transform" | "perspective" => "none",
+        "transform-origin" => "0px 0px",
+        "transform-style" => "flat",
+        "backface-visibility" => "visible",
+        p if p.starts_with("margin") || p.starts_with("padding") || p.ends_with("radius") || p.ends_with("width") => "0px",
+        _ => "",
+    }
+}
+
+fn matrix(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let i = arg_index(args, 0, cx)?;
+    let value = arg_text(args, 1, cx)?;
+    with_doc(|d| {
+        let size = d.probed(i)?.map_or((0.0, 0.0), |p| (p.rect[2], p.rect[3]));
+        Ok(text(&matrix_text(&value, size)))
+    })
+}
+
+/// The computed matrix text of a CSS transform at a box size.
+pub(crate) fn matrix_text(value: &str, size: (f32, f32)) -> String {
+    use lightningcss::{properties::transform::TransformList, traits::Parse};
+    let Ok(list) = TransformList::parse_string(value) else {
+        return "none".into();
+    };
+    if list.0.is_empty() {
+        return "none".into();
+    }
+    let metrics = crate::style::Metrics {
+        width: size.0,
+        height: size.1,
+        font_size: 16.0,
+    };
+    match crate::style::canvas_transform(&list, metrics, size) {
+        crate::style::CanvasTransform::Affine(m) => {
+            let v = [m.scale_x(), m.skew_y(), m.skew_x(), m.scale_y(), m.translate_x(), m.translate_y()];
+            format!(
+                "matrix({})",
+                v.iter().map(|n| round(*n).to_string()).collect::<Vec<_>>().join(", ")
+            )
+        }
+        crate::style::CanvasTransform::Projective(m) => {
+            let mut v = Vec::with_capacity(16);
+            for c in 0..4 {
+                for r in 0..4 {
+                    v.push(round(m.rc(r, c)).to_string());
+                }
+            }
+            format!("matrix3d({})", v.join(", "))
+        }
+    }
+}
+
+/// Register the DOM natives as globals.
+pub(crate) fn register(cx: &mut Context) -> JsResult<()> {
+    type Native = fn(&JsValue, &[JsValue], &mut Context) -> JsResult<JsValue>;
+    let natives: [(&str, usize, Native); 26] = [
+        ("__dKind", 1, kind),
+        ("__dTag", 1, tag),
+        ("__dNs", 1, namespace),
+        ("__dParent", 1, parent),
+        ("__dChildren", 1, children),
+        ("__dConnected", 1, connected),
+        ("__dAttr", 2, attribute),
+        ("__dAttrs", 1, attributes),
+        ("__dSetAttr", 3, set_attribute),
+        ("__dText", 1, text_content),
+        ("__dSetText", 2, set_text),
+        ("__dCreate", 2, create),
+        ("__dCreateText", 2, create_text),
+        ("__dInsert", 3, insert),
+        ("__dRemove", 1, remove),
+        ("__dClone", 2, clone),
+        ("__dSetInner", 2, set_inner),
+        ("__dMarkup", 2, markup),
+        ("__dSelect", 3, select),
+        ("__dMatches", 2, matches),
+        ("__dLayout", 1, layout),
+        ("__dViewport", 0, viewport),
+        ("__dComputed", 2, computed),
+        ("__dMatrix", 2, matrix),
+        ("__dGeneration", 0, generation),
+        ("__dMedia", 1, media),
+    ];
+    for (name, length, f) in natives {
+        cx.register_global_callable(JsString::from(name), length, NativeFunction::from_fn_ptr(f))?;
+    }
+    Ok(())
+}
+
+fn media(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let query = arg_text(args, 0, cx)?;
+    with_doc(|d| Ok(JsValue::from(crate::css::media_text_matches(&query, d.viewport.0, d.viewport.1)?)))
+}
+
+fn generation(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+    with_doc(|d| Ok(JsValue::from(d.generation as f64)))
+}

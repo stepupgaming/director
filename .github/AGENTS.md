@@ -13,6 +13,7 @@
 - CI commands match the local verification in the root `AGENTS.md`.
 - CI installs the latest stable Rust, so a new release can add clippy lints that an older local toolchain never reports. Run `rustup update stable` before the local gate. On 2026-10-21 Rust 1.99.1 flagged `chunks_exact` with a constant size, and the fix was `as_chunks::<N>()`.
 - Bundled fonts are committed under `crates/director-core/assets/fonts/`; CI downloads no fonts.
+- The GSAP tests read GSAP 3.14.2 from `crates/director-html/tools/node_modules`. CI installs Node 22 and runs `npm ci` there; Playwright's npm package downloads no browser.
 - FFmpeg runs as a subprocess. CI installs the `ffmpeg` package and verifies `ffmpeg` and `ffprobe`; no FFmpeg development libraries are linked.
 
 ## Work Guidance
