@@ -83,7 +83,7 @@ cargo test -p director-core
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 # when touching pixels/fonts:
-cargo test -p director-core --release --test visual_suite
+cargo test -p director-core --release --test integration visual_suite::
 ```
 
 ## Doc ownership

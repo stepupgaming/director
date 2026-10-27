@@ -38,7 +38,7 @@
 ```powershell
 cargo test --release -p director-html -p director-cli --features director-cli/vulkan
 cargo clippy --release -p director-html --all-targets --no-deps -- -D warnings
-cargo clippy --release -p director-cli --features vulkan --bin director-engine --test project_workflow --no-deps -- -D warnings
+cargo clippy --release -p director-cli --features vulkan --bin director-engine --test integration --no-deps -- -D warnings
 cargo check --release --workspace --all-targets --features director-cli/vulkan
 ```
 

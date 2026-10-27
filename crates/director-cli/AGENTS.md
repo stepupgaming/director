@@ -6,7 +6,7 @@
 
 - `src/main.rs` owns the `director-engine` CLI: `render`, `batch`, `still`, `sheet`, `audio`, `check`, `qa`, `snapshot`, `onion`, `inspect`, `outline`, `diff`, `editor`, `mcp`, `skills`, `project`, `compositions`, `html`, plus legacy bare `SCRIPT [OUTPUT]`.
 - `src/sheet.rs` owns the contact-sheet plan and PNG. `src/audio_report.rs` owns the mixer loudness report. `src/check.rs` owns canvas-edge findings on the host `sample_times` grid. `src/qa.rs` owns the `qa` command over `Session::qa`. `src/snapshot.rs` owns golden PNG comparison. `src/onion.rs` owns the weighted frame blend. `src/outline.rs` owns `outline`, `diff` and the error envelope exit mapping. `src/editor.rs` owns the `editor` command over `director_host::Editor`. `src/mcp.rs` owns the stdio MCP server: JSON-RPC framing, protocol negotiation, the session table and tool schemas generated from the argument types. `src/skills.rs` owns the `director-mcp` skill generated from those schemas and the host error codes.
-- `src/batch.rs` owns batch output names and the status report. It stays free of other crate dependencies so `tests/repair_batch.rs` can include it.
+- `src/batch.rs` owns batch output names and the status report. It stays free of other crate dependencies so `tests/main.rs` can include it for `tests/repair_batch.rs`.
 - `src/input.rs` owns the shared input flags (`Input`, converted to `director_host::Source`, which loads every input kind), `Input::open` into a `director_host::Session`, and encoder selection.
 - `src/project.rs` owns portable project packing and `project edit|repair`, which apply element-ID keyed JSON edits through `director_host::Session::edit_project`.
 - `src/renderer.rs` owns `use_gpu` (a required Vulkan context handed to a session), `paint` under the frame pixel limit, PNG encoding, and `export_video` (with `director_host::import_registry`) for `html render` and `html benchmark --export`.
@@ -55,8 +55,8 @@
 
 ## Verification
 
-- `cargo test -p director-cli`
-- `cargo test -p director-cli --features vulkan --bin director-engine gpu_readback -- --ignored` requires a live Vulkan device.
+- `cargo test -p director-cli --release`
+- `cargo test -p director-cli --release --bin director-engine gpu_readback -- --ignored` requires a live Vulkan device.
 - `tests/html_export.rs` verifies real FFmpeg/ffprobe frame count and audio/video/container duration alignment.
 - `tests/project_workflow.rs` verifies pack → remove sources → inspect/edit/still/export, including atomic rejection and native command parity.
 - `tests/outline_diff.rs` verifies outline and diff JSON and the load error envelope.

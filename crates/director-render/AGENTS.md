@@ -42,7 +42,7 @@
 ## Verification
 
 - `cargo test -p director-render --release` (parity tests, incremental frames, and `paint::tests` for layer reuse)
-- `cargo test -p director-core --release --test visual_suite` paints every golden document through `Renderer` and compares it with the golden.
+- `cargo test -p director-core --release --test integration visual_suite::` paints every golden document through `Renderer` and compares it with the golden.
 
 ## Child DOX Index
 

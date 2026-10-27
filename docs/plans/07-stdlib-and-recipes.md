@@ -81,11 +81,11 @@ What v1 does **not** claim:
 
 ```bash
 cargo test -p director-core --lib stdlib
-cargo test -p director-core --test examples stdlib_motion
-cargo test -p director-core --test examples smart_lower_third
-cargo test -p director-core --test examples faceless_short
-cargo test -p director-core --test examples kinetic_lower_third
-cargo test -p director-core --test examples image_beats
+cargo test -p director-core --release --test integration examples::stdlib_motion
+cargo test -p director-core --release --test integration examples::smart_lower_third
+cargo test -p director-core --release --test integration examples::faceless_short
+cargo test -p director-core --release --test integration examples::kinetic_lower_third
+cargo test -p director-core --release --test integration examples::image_beats
 ```
 
 CLI smoke (optional local):

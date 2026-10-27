@@ -2,6 +2,7 @@
 name = "director-html"
 version.workspace = true
 edition.workspace = true
+autotests = false
 license.workspace = true
 description = "HTML, CSS and HyperFrames compiler for Director's native renderer"
 
@@ -33,3 +34,8 @@ director-render = { path = "../director-render" }
 [[bench]]
 name = "html"
 harness = false
+
+# tests/main.rs declares every tests/*.rs as a module: one test binary.
+[[test]]
+name = "integration"
+path = "tests/main.rs"

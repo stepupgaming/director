@@ -1,7 +1,4 @@
-#[path = "../src/sample_times.rs"]
-mod sample_times;
-
-use sample_times::{check_sample_times, SamplePlan};
+use crate::sample_times::{check_sample_times, SamplePlan};
 
 #[test]
 fn check_sample_times_covers_empty_one_order_negative_and_nan() {

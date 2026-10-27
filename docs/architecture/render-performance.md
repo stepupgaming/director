@@ -170,7 +170,7 @@ PY
 Correctness and build checks:
 
 ```bash
-cargo test -p director-core --lib --test layout --test pipeline_equivalence
+cargo test -p director-core --release --lib --test integration -- layout:: pipeline_equivalence::
 cargo check --workspace --all-targets
 ```
 

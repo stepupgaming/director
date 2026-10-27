@@ -48,9 +48,7 @@ let movie = engine.eval::<scripting::MovieHandle>(script)?;
 
 ## Feature Flags
 
-| Flag | Purpose |
-|------|---------|
-| `vulkan` | Enable Vulkan Skia backend |
+None. Skia always builds with its Ganesh and Vulkan backends; `director-render`, `director-host` and `director-cli` own the `vulkan` feature.
 
 ## Core hardening
 

@@ -57,8 +57,7 @@ director-engine html benchmark examples/html/native-motion.html --export target/
 director-engine html capture composition.html -o target/scene.json --chrome /path/to/chrome
 director-engine html render target/scene.json -o target/captured-native.mp4
 
-# Vulkan rendering; independent encoder selection
-cargo build --release -p director-cli --bin director-engine --features vulkan
+# Vulkan rendering (in the default build); independent encoder selection
 director-engine html render examples/html/native-motion.html --gpu -o target/native-gpu.mp4
 director-engine html render examples/html/native-motion.html --gpu --encoder nvenc -o target/native-gpu-nvenc.mp4
 director-engine html still examples/html/native-motion.html --gpu -t 1 -o target/native-gpu.png

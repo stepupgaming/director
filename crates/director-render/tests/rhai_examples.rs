@@ -13,7 +13,7 @@ use rhai::{Dynamic, Engine};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-mod common;
+use crate::common;
 
 const TIMES: [f64; 3] = [0.0, 0.75, 2.0];
 

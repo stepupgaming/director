@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-mod common;
+use crate::common;
 
 const TIMES: [f64; 4] = [0.0, 0.5, 1.25, 1.9];
 

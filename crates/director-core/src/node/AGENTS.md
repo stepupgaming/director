@@ -30,7 +30,7 @@ build/tests fail. Plan 10 phase 2 collapses this into one effect table.
 ### Text stroke pass
 
 - `TextNode::stroke_paragraph` is an optional stroke-only paragraph that the fast render path lays out at the fill paragraph's width and paints with it. `stroke_over_fill` picks the order: `true` paints the stroke over the fill. Shadows cast from both. The per-glyph animator path paints the fill paragraph only.
-- The HTML compiler sets both fields. Regression checks: `cargo test -p director-html --release --test text_stroke`.
+- The HTML compiler sets both fields. Regression checks: `cargo test -p director-html --release --test integration text_stroke::`.
 
 ### Adding a runtime shader touches 5 places
 

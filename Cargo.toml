@@ -27,7 +27,10 @@ thiserror = "2.0.17"
 anyhow = "1.0"
 glam = "0.24"
 kurbo = "0.9"
-skia-safe = "0.153.3"
+# One Skia feature set for every crate and command. The GPU backend is always
+# compiled, so builds, tests and `-p` runs share one skia-bindings build and
+# one artifact hash per crate.
+skia-safe = { version = "0.153.3", features = ["textlayout", "ganesh", "vulkan"] }
 schemars = "0.8"
 ron = "0.8"
 

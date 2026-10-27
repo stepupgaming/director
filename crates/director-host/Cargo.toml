@@ -2,6 +2,7 @@
 name = "director-host"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "Host session over a Director scene document: open, patch, inspect, render and export."
 license = "MIT"
 
@@ -23,5 +24,10 @@ tracing = "0.1.43"
 tempfile = "3.23"
 
 [features]
-default = []
+default = ["vulkan"]
 vulkan = ["director-render/vulkan"]
+
+# tests/main.rs declares every tests/*.rs as a module: one test binary.
+[[test]]
+name = "integration"
+path = "tests/main.rs"

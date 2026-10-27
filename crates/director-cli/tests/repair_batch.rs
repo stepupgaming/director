@@ -1,5 +1,4 @@
-#[path = "../src/batch.rs"]
-mod batch;
+use crate::batch;
 
 use std::{
     path::{Path, PathBuf},

@@ -94,7 +94,10 @@ When the user requests a durable behavior change, record it here or in the relev
 - Use parallel subagents on file-disjoint slices when it helps. Default subagents to Grok 4.7 (`grok-4.7-xhigh`). Give them explicit step-by-step prompts with exact files, allowed edits and the report format, and review their diffs before landing. Subagents do not compile, run tests, commit, or edit `vendor/`, `Cargo.toml`, `Cargo.lock`, AGENTS.md, README, or docs. The parent runs one release test pass after their edits land, does the DOX pass, and commits.
 - Commit each finished slice with one imperative sentence. Never commit `.freebuff/`. Push only when asked.
 - Ask before GPU- or browser-heavy work: the Hyper CN registry smoke, Chrome launches, and long benchmarks.
-- On a Windows `LNK1181` link failure for skia-bindings 0.153.3, restore `skia.lib` and `skunicode_icu.lib` beside `skunicode_core.lib` from the matching prebuilt archive: `jpegd-jpege-pdf-textlayout` for the CPU build, `ganesh-jpegd-jpege-pdf-textlayout-vulkan` for `--features vulkan`. Do not start a Skia source build.
+- On a Windows `LNK1181` link failure for skia-bindings 0.153.3, restore `skia.lib` and `skunicode_icu.lib` beside `skunicode_core.lib` from the prebuilt `ganesh-jpegd-jpege-pdf-textlayout-vulkan` archive. Do not start a Skia source build.
+- Every build, test run and `-p` subset compiles Skia with Ganesh and Vulkan (the workspace `skia-safe` features), and `vulkan` is a default feature of `director-render`, `director-host` and `director-cli`. `--gpu` picks the GPU at run time. Keep features on for every command, because a feature that only some commands turn on gives every crate above Skia another copy. Dev-dependencies and `-p` subsets still resolve features their own way, so `cargo build -p director-cli`, `cargo test --workspace` and each `cargo test -p <crate>` keep their own set of copies (about 0.6 GB each). `cargo test --workspace` and `cargo build -p director-cli` relink the `director-cli` binaries for each other, which takes about 6 s.
+- Each Skia-linking crate builds its integration tests as one `integration` binary. `tests/main.rs` declares every `tests/<name>.rs` as `mod <name>;`, and its `every_test_file_is_a_module` test fails when a file is missing. Run one file with `cargo test -p <crate> --release --test integration <name>::`. The files share one process, so a test must not change env vars or the current directory. A test that reads its own log lines under `tracing::subscriber::with_default` calls `tracing::callsite::rebuild_interest_cache()` first, because another test's thread may have cached the callsite as unwanted.
+- Cargo never deletes old builds. `python scripts/prune-target.py` reads the `.fingerprint` graph and keeps the newest build of each target, anything built in the last day, and every unit those were compiled from. It reports the rest, and `--delete` removes it from `deps`, `examples`, `build` and `.fingerprint`. Builds of workspace targets or features that no longer exist always go. `--days 0` keeps only the newest builds, so a command whose targets a later command rebuilt compiles its copies again. It refuses while cargo or rustc runs. Run it when `C:` runs low or `target/release` passes about 10 GB.
 
 ## Work Guidance
 
@@ -115,7 +118,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Rust workspace: `cargo check --workspace --all-targets --release`
 - Rust tests: `cargo test --workspace --release` (CI runs this on push to `main` and on pull requests)
 - Rust lint: `cargo clippy --workspace --all-targets --release -- -D warnings`
-- Visual regression: `cargo test -p director-core --release --test visual_suite`
+- Visual regression: `cargo test -p director-core --release --test integration visual_suite::`
 
 ## Child DOX Index
 

@@ -33,7 +33,7 @@ pub struct PixelDiff {
     pub fraction: f64,
 }
 
-const GENERATE_HINT: &str = "Set DIRECTOR_UPDATE_GOLDENS=1 and run: cargo test -p director-core --release --test visual_suite";
+const GENERATE_HINT: &str = "Set DIRECTOR_UPDATE_GOLDENS=1 and run: cargo test -p director-core --release --test integration visual_suite::";
 
 fn manifest_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))

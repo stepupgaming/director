@@ -93,8 +93,7 @@ director/
 git clone https://github.com/stepupgaming/director.git
 cd director
 cargo build --release -p director-cli --bin director-engine
-# Vulkan rendering:
-cargo build --release -p director-cli --bin director-engine --features vulkan
+# The engine includes Vulkan rendering; pass --gpu to use it.
 ```
 
 ### System Dependencies

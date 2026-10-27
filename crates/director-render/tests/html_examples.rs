@@ -9,7 +9,7 @@ use director_render::{export_director, render_export, render_export_at_scale, Re
 use std::path::Path;
 use std::sync::Arc;
 
-mod common;
+use crate::common;
 
 const TIMES: [f64; 4] = [0.0, 0.5, 1.25, 2.5];
 

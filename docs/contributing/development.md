@@ -52,7 +52,7 @@ cargo build --release
 
 | Flag | Purpose |
 |------|---------|
-| `vulkan` | Enable Vulkan backend for Skia |
+| `vulkan` | Vulkan rendering in `director-render`, `director-host` and `director-cli`. On by default; `--gpu` uses it at run time. |
 
 ---
 
@@ -66,10 +66,10 @@ cargo test --release
 cargo test --release -p director-core
 
 # Visual regression tests (40 golden frames)
-cargo test --release -p director-core --test visual_suite
+cargo test --release -p director-core --test integration visual_suite::
 
 # Regenerate goldens after an intended visual change, then review the PNG diff
-$env:DIRECTOR_UPDATE_GOLDENS="1"; cargo test --release -p director-core --test visual_suite; Remove-Item Env:DIRECTOR_UPDATE_GOLDENS
+$env:DIRECTOR_UPDATE_GOLDENS="1"; cargo test --release -p director-core --test integration visual_suite::; Remove-Item Env:DIRECTOR_UPDATE_GOLDENS
 ```
 Goldens live in `crates/director-core/tests/visual/golden/<module>/<name>.png`. A missing golden fails. Failures write `<name>.actual.png` and `<name>.diff.png` under `target/tmp/director-visual/<module>/`.
 

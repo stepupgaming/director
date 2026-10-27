@@ -694,6 +694,9 @@ fn compile_logs_an_unchanged_violation_list_once() {
 
     // The HTML frontend compiles, then export compiles the same scene again.
     tracing::subscriber::with_default(subscriber, || {
+        // Tests share this process. Another thread may have hit the warning's
+        // callsite first and cached "never" for it, before this subscriber.
+        tracing::callsite::rebuild_interest_cache();
         d.compile();
         d.compile();
         let node = d.scene.get_node_mut(id).unwrap();

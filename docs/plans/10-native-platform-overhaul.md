@@ -92,8 +92,8 @@ One row per check, holding the most recent passing count. Replace the row when a
 | --- | --- | --- | --- |
 | workspace clippy | pass | 2026-10-27 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
 | director-core release tests | 432 | 2026-10-26 | `cargo test -p director-core --release` |
-| visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
-| html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test html_export` |
+| visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test integration visual_suite::` |
+| html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test integration html_export::` |
 | workspace release tests | 1042, 2 ignored | 2026-10-27 | `cargo test --workspace --exclude director-cli --release --no-fail-fast` plus `cargo test -p director-cli --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 22 | 2026-10-26 | `cargo test -p director-render --release` |
@@ -102,32 +102,32 @@ One row per check, holding the most recent passing count. Replace the row when a
 | 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | 1080p HTML export on Vulkan, CLI `html render --gpu` serial `render_export_at_scale` vs pipelined `export_on` (one session, four frames in flight; 90 frames, x264, median of 3; CPU pool export for reference) | native-motion 565 vs 505 ms (CPU 546), image-background 483 vs 415 ms (CPU 396), nested-rule 474 vs 421 ms (CPU 371), text-decoration 485 vs 417 ms (CPU 379); GPU outputs frame-identical to the serial GPU export (framemd5) | 2026-10-25 | `director-engine html render examples/html/<name>.html -o <out>.mp4 --gpu` from `cargo build -p director-cli --release --features vulkan` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
-| filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test filter_fns` |
-| HTML scene_document | 7 | 2026-10-27 | `cargo test -p director-html --release --test scene_document` |
-| HTML timeline | 7 | 2026-10-26 | `cargo test -p director-html --release --test timeline` |
-| HTML gsap (phase 5 GSAP gate) | 12 | 2026-10-27 | `cargo test -p director-html --release --test gsap` |
+| filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test integration filter_fns::` |
+| HTML scene_document | 7 | 2026-10-27 | `cargo test -p director-html --release --test integration scene_document::` |
+| HTML timeline | 7 | 2026-10-26 | `cargo test -p director-html --release --test integration timeline::` |
+| HTML gsap (phase 5 GSAP gate) | 12 | 2026-10-27 | `cargo test -p director-html --release --test integration gsap::` |
 | GSAP Chromium parity, 30fps every frame | entrance SSIM .999317 MAE .0519; loop .999945 / .0073; stagger .999140 / .0790; gsap-motion 1080p .995709 / .3758; all pass | 2026-10-27 | `node crates/director-html/tools/parity.mjs --input <fixture> --output target/gsap-parity/final/<name> --director target/release/director-engine.exe --chrome <chromium_headless_shell-1248>` (`--root .` for the example) |
 | Vulkan engine clippy | pass | 2026-10-25 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
-| text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test text_stroke` |
-| shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test shrink_wrap` |
-| padded_text | 1 | 2026-10-20 | `cargo test -p director-html --release --test padded_text` |
-| rich_text | 5 | 2026-10-21 | `cargo test -p director-html --release --test rich_text` |
-| font_shorthand | 4 | 2026-10-21 | `cargo test -p director-html --release --test font_shorthand` |
-| gradient_tiles | 2 | 2026-10-21 | `cargo test -p director-html --release --test gradient_tiles` |
-| motion_policy | 3 | 2026-10-21 | `cargo test -p director-html --release --test motion_policy` |
-| transform_angles | 3 | 2026-10-22 | `cargo test -p director-html --release --test transform_angles` |
+| text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test integration text_stroke::` |
+| shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test integration shrink_wrap::` |
+| padded_text | 1 | 2026-10-20 | `cargo test -p director-html --release --test integration padded_text::` |
+| rich_text | 5 | 2026-10-21 | `cargo test -p director-html --release --test integration rich_text::` |
+| font_shorthand | 4 | 2026-10-21 | `cargo test -p director-html --release --test integration font_shorthand::` |
+| gradient_tiles | 2 | 2026-10-21 | `cargo test -p director-html --release --test integration gradient_tiles::` |
+| motion_policy | 3 | 2026-10-21 | `cargo test -p director-html --release --test integration motion_policy::` |
+| transform_angles | 3 | 2026-10-22 | `cargo test -p director-html --release --test integration transform_angles::` |
 | director-core doctest | 1 | 2026-10-22 | `cargo test -p director-core --doc --release` |
 | director-html lib | 118 | 2026-10-27 | `cargo test -p director-html --release --lib` |
 | Hyper CN registry smoke, typed style path | original 238/239, portrait 238/239; `github-stars` has no input file in the local checkout | 2026-10-26 | `node crates/director-html/tools/registry-audit.mjs --registry C:/Projects/hypercn/registry --output F:/hypercn-smoke-typed2-<profile> --director <engine> --chrome <chromium_headless_shell-1248> --fps 2 [--portrait]` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
 | object_position_css, gradient_hints, project, shader | 9, 8, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |
-| mixed_calc, gradient_calc | 12, 3 | 2026-10-18 | `cargo test -p director-html --release --test mixed_calc --test gradient_calc` |
-| subgrid filter | lib 8, grid_lines 1 | 2026-10-18 | `cargo test -p director-html --release --lib --test grid_lines subgrid` |
-| fixed_position, css_media, css_nesting | 5, 6, 12 | 2026-10-18 | `cargo test -p director-html --release --test fixed_position --test css_media --test css_nesting` |
-| svg_presentation, svg_markers | 12, 12 | 2026-10-18 | `cargo test -p director-html --release --test svg_presentation --test svg_markers` |
-| depth_sort, depth_nested | 8, 1 | 2026-10-18 | `cargo test -p director-html --release --test depth_sort --test depth_nested` |
+| mixed_calc, gradient_calc | 12, 3 | 2026-10-18 | `cargo test -p director-html --release --test integration -- mixed_calc:: gradient_calc::` |
+| subgrid filter | lib 8, grid_lines 1 | 2026-10-18 | `cargo test -p director-html --release --lib --test integration subgrid` |
+| fixed_position, css_media, css_nesting | 5, 6, 12 | 2026-10-18 | `cargo test -p director-html --release --test integration -- fixed_position:: css_media:: css_nesting::` |
+| svg_presentation, svg_markers | 12, 12 | 2026-10-18 | `cargo test -p director-html --release --test integration -- svg_presentation:: svg_markers::` |
+| depth_sort, depth_nested | 8, 1 | 2026-10-18 | `cargo test -p director-html --release --test integration -- depth_sort:: depth_nested::` |
 | capture extractor | 6 | 2026-10-17 | `node --test crates/director-html/tools/tools.test.mjs` |
-| static_reuse, pipeline_equivalence | 7, 8 | 2026-10-17 | `cargo test -p director-core --release --test static_reuse --test pipeline_equivalence` |
+| static_reuse, pipeline_equivalence | 7, 8 | 2026-10-17 | `cargo test -p director-core --release --test integration -- static_reuse:: pipeline_equivalence::` |
 | agent commands | 15 | 2026-10-17 | `cargo test -p director-cli --release --bin director-engine agent_` |
 | inspect_samples, repair_batch | 1, 5 | 2026-10-17 | release `director-cli` tests, exact command not recorded |
 | recipe scripts | 9 | 2026-10-17 | release `examples` filter `example_recipes_` |

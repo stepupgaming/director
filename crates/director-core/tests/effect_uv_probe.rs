@@ -7,7 +7,7 @@
 //! If `pos` is absolute canvas coordinates (the suspected bug), the gradient is
 //! shifted and the node's top-left reads ~mid-gray instead of near-black.
 //!
-//! Run with: `cargo test -p director-core --test effect_uv_probe -- --nocapture`
+//! Run with: `cargo test -p director-core --release --test integration effect_uv_probe:: -- --nocapture`
 
 use director_core::scripting::{register_rhai_api, MovieHandle};
 use director_core::DefaultAssetLoader;

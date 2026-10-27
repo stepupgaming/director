@@ -2,6 +2,7 @@
 name = "director-render"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "Paints and exports frames of a live Director or a scene document."
 license = "MIT"
 
@@ -23,5 +24,10 @@ rhai = { version = "1.23.6", features = ["metadata"] }
 serde_json = { workspace = true }
 
 [features]
-default = []
-vulkan = ["director-core/vulkan", "skia-safe/ganesh", "skia-safe/vulkan"]
+default = ["vulkan"]
+vulkan = []
+
+# tests/main.rs declares every tests/*.rs as a module: one test binary.
+[[test]]
+name = "integration"
+path = "tests/main.rs"

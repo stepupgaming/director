@@ -27,7 +27,7 @@ Loading recompiles stored native authoring input; it does not deserialize HTML a
 Vulkan rendering and NVIDIA encoding are independent:
 
 ```bash
-cargo build --release -p director-cli --bin director-engine --features vulkan
+cargo build --release -p director-cli --bin director-engine
 director-engine html render examples/html/native-motion.html --gpu -o target/native-gpu.mp4
 director-engine html render examples/html/native-motion.html --gpu --encoder nvenc -o target/native-gpu-nvenc.mp4
 director-engine html benchmark examples/html/native-motion.html --gpu --export target/gpu-benchmark.mp4
