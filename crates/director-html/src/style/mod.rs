@@ -1,9 +1,8 @@
 use crate::background_box::AxisRepeat;
-use crate::box_edges::{parse_box_edge, BoxEdge};
+use crate::box_edges::BoxEdge;
 use crate::computed::ComputedStyle;
 use crate::css::{split, Values};
 use director_core::{
-    animation::Animated,
     node::BoxNode,
     types::{Color, ObjectPosition},
 };
@@ -25,9 +24,14 @@ use lightningcss::{
 };
 use skia_safe::{Matrix, M44};
 use taffy::prelude::*;
-use taffy::style::Overflow;
 
+mod background;
+mod border;
+mod boxes;
+mod effects;
 mod layout;
+mod text;
+mod transform;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BorderLine {
@@ -207,6 +211,11 @@ pub struct Shadow {
     pub y: f32,
     pub blur: f32,
     pub spread: f32,
+}
+
+/// The message for a typed longhand whose value Director does not support.
+fn unsupported(name: &str, s: &str) -> String {
+    format!("unsupported {name} '{s}'")
 }
 
 pub fn number(s: &str) -> Result<f32, String> {
@@ -855,7 +864,7 @@ fn named_span(columns: bool, name: &str, count: u16) -> Result<GridPlacement, St
 }
 
 pub fn translate(
-    values: &Values,
+    values: &ComputedStyle,
     mut m: Metrics,
     block: ContainingBlock,
     assets: &crate::assets::AssetStore,
@@ -942,18 +951,26 @@ pub fn translate(
             Err(e) => errors.push(e),
         }
     }
-    let computed = ComputedStyle::parse(values);
-    for (name, value) in values {
+    for (name, value) in values.iter() {
         let s = value.as_str();
         let result: Result<(), String> = (|| {
-            if let Some(entry) = computed.get(name) {
+            if let Some(entry) = values.computed(name) {
                 let Some(info) = crate::property::info(name) else {
                     return Err(format!("unsupported property '{name}'"));
                 };
-                if info.group == crate::property::Group::Layout {
-                    if let Some(result) = layout::apply(name, entry, &mut style, m, block) {
-                        return result;
-                    }
+                use crate::property::Group;
+                let typed = match info.group {
+                    Group::Layout => layout::apply(name, entry, &mut style, m, block),
+                    Group::Background => background::apply(name, entry, &mut paint, m),
+                    Group::Border => border::apply(name, entry, &mut style, &mut paint, m),
+                    Group::Box => boxes::apply(name, entry, &mut style, &mut paint),
+                    Group::Effects => effects::apply(name, entry, &mut paint, m),
+                    Group::Transform => transform::apply(name, entry, &mut paint, m),
+                    Group::Text => text::apply(name, entry, &mut paint, m, block),
+                    Group::Animation => None,
+                };
+                if let Some(result) = typed {
+                    return result;
                 }
             }
             match name.as_str() {
@@ -989,159 +1006,15 @@ pub fn translate(
                 "grid-column-end" => style.grid_column.end = placement(s, true)?,
                 "grid-row-start" => style.grid_row.start = placement(s, false)?,
                 "grid-row-end" => style.grid_row.end = placement(s, false)?,
-                "background-color" => {
-                    paint.box_node.bg_color = Some(Animated::new(color(s, paint.color)?))
-                }
                 "background-image" => {
                     if s != "none" {
                         paint.layers = background_layers(s, m, paint.color, assets)?;
                     }
                 }
-                "background-position-x" => {
-                    paint.background_position_x = axis_position_list(s, m, horizontal_position)?;
-                }
-                "background-position-y" => {
-                    paint.background_position_y = axis_position_list(s, m, vertical_position)?;
-                }
                 "background-position" => {
                     let layers = background_position_layers(s, m)?;
                     paint.background_position_x = layers.iter().map(|(x, _)| *x).collect();
                     paint.background_position_y = layers.iter().map(|(_, y)| *y).collect();
-                }
-                "background-size" => paint.background_size = background_size_list(s, m)?,
-                "background-repeat" => paint.background_repeat = background_repeat_list(s)?,
-                "background-attachment" => {
-                    if s.trim() != "scroll" {
-                        return Err(format!("unsupported background-attachment '{s}'"));
-                    }
-                }
-                "background-origin" => {
-                    paint.background_origin = match s.trim() {
-                        "padding-box" => BackgroundOrigin::PaddingBox,
-                        "border-box" => BackgroundOrigin::BorderBox,
-                        "content-box" => BackgroundOrigin::ContentBox,
-                        _ => return Err(format!("unsupported background-origin '{s}'")),
-                    }
-                }
-                "background-clip" => {
-                    paint.background_clip = parse_box_edge(s)
-                        .map_err(|_| format!("unsupported background-clip '{s}'"))?;
-                }
-                "opacity" => paint.opacity = number(s)?.clamp(0.0, 1.0),
-                "visibility" => {
-                    paint.visible = match s {
-                        "visible" => true,
-                        "hidden" => false,
-                        _ => return Err("visibility collapse unsupported".into()),
-                    }
-                }
-                "overflow-x" | "overflow-y" => {
-                    let overflow = match s {
-                        "visible" => Overflow::Visible,
-                        "hidden" | "clip" => Overflow::Hidden,
-                        _ => return Err("scrolling overflow unsupported".into()),
-                    };
-                    if name == "overflow-x" {
-                        style.overflow.x = overflow
-                    } else {
-                        style.overflow.y = overflow
-                    };
-                    if overflow == Overflow::Hidden {
-                        paint.box_node.overflow = "hidden".into();
-                    }
-                }
-                n if n.starts_with("border-") && n.ends_with("-width") => {
-                    let w = if s == "medium" {
-                        3.0
-                    } else if s == "thin" {
-                        1.0
-                    } else if s == "thick" {
-                        5.0
-                    } else {
-                        px(s, m)?
-                    };
-                    let v = LengthPercentage::length(w);
-                    match n {
-                        "border-top-width" => style.border.top = v,
-                        "border-right-width" => style.border.right = v,
-                        "border-bottom-width" => style.border.bottom = v,
-                        "border-left-width" => style.border.left = v,
-                        _ => return Err("unsupported border width".into()),
-                    }
-                }
-                n if n.starts_with("border-") && n.ends_with("-color") => {
-                    color(s, paint.color)?;
-                }
-                n if n.starts_with("border-") && n.ends_with("-style") => {
-                    let line = match s {
-                        "none" | "hidden" | "solid" => BorderLine::Solid,
-                        "dashed" => BorderLine::Dashed,
-                        "dotted" => BorderLine::Dotted,
-                        "double" => BorderLine::Double,
-                        "groove" => BorderLine::Groove,
-                        "ridge" => BorderLine::Ridge,
-                        "inset" => BorderLine::Inset,
-                        "outset" => BorderLine::Outset,
-                        _ => return Err("only solid/dashed/dotted borders supported".into()),
-                    };
-                    let index = match n {
-                        "border-top-style" => 0,
-                        "border-right-style" => 1,
-                        "border-bottom-style" => 2,
-                        "border-left-style" => 3,
-                        _ => return Err("unsupported border style".into()),
-                    };
-                    paint.border_lines[index] = line;
-                }
-                n if n.starts_with("border-") && n.ends_with("-radius") => {
-                    let radii = split(s, false);
-                    if radii.is_empty() || radii.len() > 2 {
-                        return Err("invalid corner radius".into());
-                    };
-                    let index = match n {
-                        "border-top-left-radius" => 0,
-                        "border-top-right-radius" => 1,
-                        "border-bottom-right-radius" => 2,
-                        "border-bottom-left-radius" => 3,
-                        _ => return Err("unknown border radius".into()),
-                    };
-                    paint.corners[index] = (
-                        length(&radii[0], m)?,
-                        length(radii.get(1).unwrap_or(&radii[0]), m)?,
-                    );
-                }
-                "box-shadow" => {
-                    if s != "none" {
-                        paint.shadows = shadows(s, m, paint.color)?;
-                    }
-                }
-                "filter" => {
-                    if s != "none" {
-                        paint.filters = filters(s, m)?;
-                        paint.filter = compile_filters(&paint.filters);
-                    }
-                }
-                "mix-blend-mode" => {
-                    paint.blend_mode = match s {
-                        "normal" => skia_safe::BlendMode::SrcOver,
-                        "multiply" => skia_safe::BlendMode::Multiply,
-                        "screen" => skia_safe::BlendMode::Screen,
-                        "overlay" => skia_safe::BlendMode::Overlay,
-                        "darken" => skia_safe::BlendMode::Darken,
-                        "lighten" => skia_safe::BlendMode::Lighten,
-                        "difference" => skia_safe::BlendMode::Difference,
-                        "exclusion" => skia_safe::BlendMode::Exclusion,
-                        _ => return Err("unsupported blend mode".into()),
-                    }
-                }
-                "backdrop-filter" => {
-                    if s != "none" {
-                        let value = s
-                            .strip_prefix("blur(")
-                            .and_then(|s| s.strip_suffix(')'))
-                            .ok_or("only backdrop blur is supported")?;
-                        paint.box_node.backdrop_blur = Animated::new(px(value, m)?);
-                    }
                 }
                 "mask-image" => {
                     if s != "none" {
@@ -1149,70 +1022,8 @@ pub fn translate(
                             Some(crate::gradient::NativeGradient::parse(s, m, paint.color)?);
                     }
                 }
-                "mask-mode" => {
-                    paint.mask_luminance = match s.trim() {
-                        "alpha" | "match-source" => false,
-                        "luminance" => true,
-                        _ => return Err(format!("unsupported mask-mode '{s}'")),
-                    }
-                }
-                "transform" => {
-                    paint.transform =
-                        TransformList::parse_string(s).map_err(|e| format!("transform: {e:?}"))?;
-                    for t in &paint.transform.0 {
-                        match t {
-                            Transform::Translate(x, y) => {
-                                convert_length(x, m)?;
-                                convert_length(y, m)?;
-                            }
-                            Transform::TranslateX(x) | Transform::TranslateY(x) => {
-                                convert_length(x, m)?;
-                            }
-                            Transform::TranslateZ(z) => {
-                                absolute_px(z, m)?;
-                            }
-                            Transform::Translate3d(x, y, z) => {
-                                convert_length(x, m)?;
-                                convert_length(y, m)?;
-                                absolute_px(z, m)?;
-                            }
-                            Transform::Perspective(z) => {
-                                let distance = absolute_px(z, m)?;
-                                if distance <= 0.0 {
-                                    return Err("perspective distance must be positive".into());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                "perspective" => {
-                    paint.perspective = if s == "none" {
-                        None
-                    } else {
-                        let distance = px(s, m)?;
-                        if distance <= 0.0 {
-                            return Err("perspective distance must be positive".into());
-                        }
-                        Some(distance)
-                    };
-                }
                 "perspective-origin" => {
                     paint.perspective_origin = origin_pair(s, m)?;
-                }
-                "transform-style" => {
-                    paint.preserve_3d = match s {
-                        "flat" => false,
-                        "preserve-3d" => true,
-                        _ => return Err("unsupported transform-style".into()),
-                    };
-                }
-                "backface-visibility" => {
-                    paint.backface_hidden = match s {
-                        "visible" => false,
-                        "hidden" => true,
-                        _ => return Err("unsupported backface-visibility".into()),
-                    };
                 }
                 "transform-origin" => {
                     let (origin, z) = origin_with_z(s, m)?;
@@ -1226,31 +1037,6 @@ pub fn translate(
                         .trim_matches(['\'', '"'])
                         .to_string()
                 }
-                "font-weight" => {
-                    paint.font_weight = match s {
-                        "normal" => 400,
-                        "bold" => 700,
-                        _ => number(s)?.clamp(1.0, 1000.0) as u16,
-                    }
-                }
-                "font-style" => {
-                    if matches!(s, "normal" | "italic") {
-                        paint.font_style = s.into()
-                    } else {
-                        return Err("oblique font style unsupported".into());
-                    }
-                }
-                // The `font` shorthand expands to both, so `normal` must pass.
-                "font-stretch" => {
-                    if !matches!(s.trim(), "normal" | "100%") {
-                        return Err("font-stretch other than normal unsupported".into());
-                    }
-                }
-                "font-variant-caps" => {
-                    if s.trim() != "normal" {
-                        return Err("font-variant-caps other than normal unsupported".into());
-                    }
-                }
                 "font-variant-numeric" => {
                     paint.tabular_nums = match s.trim() {
                         "normal" => false,
@@ -1258,77 +1044,8 @@ pub fn translate(
                         _ => return Err("unsupported font-variant-numeric".into()),
                     }
                 }
-                "letter-spacing" => {
-                    paint.letter_spacing = if s == "normal" { 0.0 } else { px(s, m)? }
-                }
-                "line-height" => {
-                    if s != "normal" {
-                        paint.line_height = Some(number(s).or_else(|_| {
-                            length(s, m).map(|l| resolve(l, m.font_size) / m.font_size)
-                        })?)
-                    }
-                }
-                "text-align" => {
-                    paint.align = match s {
-                        "left" | "start" => skia_safe::textlayout::TextAlign::Left,
-                        "right" | "end" => skia_safe::textlayout::TextAlign::Right,
-                        "center" => skia_safe::textlayout::TextAlign::Center,
-                        "justify" => skia_safe::textlayout::TextAlign::Justify,
-                        _ => return Err("unsupported text-align".into()),
-                    }
-                }
-                "text-indent" => {
-                    let parsed = lightningcss::properties::text::TextIndent::parse_string(s)
-                        .map_err(|_| "unsupported text-indent".to_string())?;
-                    if parsed.hanging || parsed.each_line {
-                        return Err("unsupported text-indent".into());
-                    }
-                    paint.text_indent = convert_length_with_basis(&parsed.value, m, block.width)?;
-                }
-                "text-overflow" => {
-                    paint.text_overflow = match s.trim() {
-                        "clip" => TextOverflow::Clip,
-                        "ellipsis" => TextOverflow::Ellipsis,
-                        _ => return Err("unsupported text-overflow".into()),
-                    }
-                }
                 "line-clamp" | "-webkit-line-clamp" => {
                     paint.line_clamp = parse_line_clamp(s)?;
-                }
-                "white-space" => {
-                    // pre-line skips normalize so hard newlines stay. The wrap path collapses spaces.
-                    paint.pre_line = s == "pre-line";
-                    paint.preserve_space = match s {
-                        "normal" | "nowrap" => false,
-                        "pre" | "pre-wrap" | "pre-line" => true,
-                        _ => return Err("unsupported whitespace mode".into()),
-                    };
-                    paint.no_wrap = matches!(s, "nowrap" | "pre");
-                }
-                "overflow-wrap" | "word-wrap" => {
-                    paint.overflow_wrap = match s.trim() {
-                        "normal" => OverflowWrap::Normal,
-                        "break-word" => OverflowWrap::BreakWord,
-                        "anywhere" => OverflowWrap::Anywhere,
-                        _ => return Err("unsupported overflow-wrap".into()),
-                    }
-                }
-                "word-break" => {
-                    let mode = s.trim();
-                    paint.break_word = mode == "break-word";
-                    paint.break_all = mode == "break-all";
-                    if !matches!(mode, "normal" | "break-word" | "break-all") {
-                        return Err("unsupported word-break".into());
-                    }
-                }
-                "text-transform" => {
-                    paint.text_transform = match s {
-                        "none" => TextTransform::None,
-                        "uppercase" => TextTransform::Uppercase,
-                        "lowercase" => TextTransform::Lowercase,
-                        "capitalize" => TextTransform::Capitalize,
-                        _ => return Err("unsupported text-transform".into()),
-                    }
                 }
                 "text-decoration" => {
                     let parsed = crate::decoration_value::parse_shorthand(s, m)?;
@@ -1344,25 +1061,11 @@ pub fn translate(
                     paint.decoration.overline = parsed.overline;
                     paint.decoration.line_through = parsed.line_through;
                 }
-                "text-decoration-style" => {
-                    paint.decoration_style = crate::decoration_value::parse_style(s)?;
-                }
-                "text-decoration-color" => {
-                    let trimmed = s.trim();
-                    paint.decoration_color = if trimmed.eq_ignore_ascii_case("currentcolor") {
-                        None
-                    } else {
-                        Some(color(trimmed, paint.color)?)
-                    };
-                }
                 "text-decoration-thickness" => {
                     paint.decoration_thickness = crate::decoration_value::parse_thickness(s, m)?;
                 }
                 "text-underline-offset" => {
                     paint.text_underline_offset = parse_underline_offset(s, m)?;
-                }
-                "text-shadow" => {
-                    paint.text_shadows = text_shadows(s, m, paint.color)?;
                 }
                 "-webkit-text-stroke"
                 | "-webkit-text-stroke-width"
@@ -1418,19 +1121,6 @@ pub fn translate(
                 }
                 "paint-order" => {
                     paint.stroke_over_fill = stroke_over_fill(s)?;
-                }
-                "direction" => {
-                    if !matches!(s, "ltr" | "rtl") {
-                        return Err("invalid text direction".into());
-                    }
-                    paint.rtl = s == "rtl";
-                }
-                "z-index" => {
-                    paint.z_index = if s == "auto" {
-                        0
-                    } else {
-                        s.parse().map_err(|_| "invalid z-index")?
-                    }
                 }
                 "object-fit" => {
                     if !matches!(s, "fill" | "cover" | "contain" | "none" | "scale-down") {
@@ -1553,69 +1243,6 @@ pub fn translate(
 }
 
 /// Parses a CSS `text-shadow` list in source order. `none` is empty.
-fn text_shadows(
-    s: &str,
-    m: Metrics,
-    current: Color,
-) -> Result<Vec<director_core::element::TextShadow>, String> {
-    if s.trim() == "none" {
-        return Ok(Vec::new());
-    }
-    split(s, true)
-        .iter()
-        .map(|part| {
-            let parsed = lightningcss::properties::text::TextShadow::parse_string(part)
-                .map_err(|e| format!("text-shadow: {e:?}"))?;
-            let spread = shadow_length(&parsed.spread, m)?;
-            if spread != 0.0 {
-                return Err("text-shadow spread is unsupported".into());
-            }
-            Ok(director_core::element::TextShadow {
-                color: css_color(&parsed.color, current)?,
-                blur: shadow_length(&parsed.blur, m)?.max(0.0),
-                offset: (
-                    shadow_length(&parsed.x_offset, m)?,
-                    shadow_length(&parsed.y_offset, m)?,
-                ),
-            })
-        })
-        .collect()
-}
-
-fn shadow_length(length: &lightningcss::values::length::Length, m: Metrics) -> Result<f32, String> {
-    px(
-        &length
-            .to_css_string(Default::default())
-            .map_err(|e| e.to_string())?,
-        m,
-    )
-}
-
-fn shadows(s: &str, m: Metrics, current: Color) -> Result<Vec<Shadow>, String> {
-    split(s, true)
-        .iter()
-        .map(|s| {
-            let shadow = lightningcss::properties::box_shadow::BoxShadow::parse_string(s)
-                .map_err(|e| format!("shadow: {e:?}"))?;
-            let convert = |l: &lightningcss::values::length::Length| -> Result<f32, String> {
-                px(
-                    &l.to_css_string(Default::default())
-                        .map_err(|e| e.to_string())?,
-                    m,
-                )
-            };
-            Ok(Shadow {
-                inset: shadow.inset,
-                color: css_color(&shadow.color, current)?,
-                blur: convert(&shadow.blur)? / 2.0,
-                x: convert(&shadow.x_offset)?,
-                y: convert(&shadow.y_offset)?,
-                spread: convert(&shadow.spread)?,
-            })
-        })
-        .collect()
-}
-
 /// One CSS filter function with its amount resolved.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FilterFn {
@@ -1630,73 +1257,6 @@ pub enum FilterFn {
     Invert(f32),
     Sepia(f32),
     Opacity(f32),
-}
-
-fn filters(s: &str, m: Metrics) -> Result<Vec<FilterFn>, String> {
-    let mut out = Vec::new();
-    for call in split(s, false) {
-        let (name, args) = call.split_once('(').ok_or("invalid filter function")?;
-        let args = args.strip_suffix(')').ok_or("invalid filter function")?;
-        // Lightning CSS writes a default amount as an empty call, such as `grayscale()` or `blur()`.
-        let scalar = || -> Result<f32, String> {
-            let args = args.trim();
-            if args.is_empty() {
-                Ok(1.0)
-            } else if let Some(n) = args.strip_suffix('%') {
-                Ok(number(n)? / 100.0)
-            } else {
-                number(args)
-            }
-        };
-        // Omitted amount is the CSS default (1). Amounts outside 0..=1 clamp.
-        let unit = |empty: f32| -> Result<f32, String> {
-            let args = args.trim();
-            let amount = if args.is_empty() {
-                empty
-            } else if let Some(n) = args.strip_suffix('%') {
-                number(n.trim())? / 100.0
-            } else {
-                number(args)?
-            };
-            Ok(amount.clamp(0.0, 1.0))
-        };
-        out.push(match name {
-            "blur" if args.trim().is_empty() => continue,
-            "blur" => FilterFn::Blur(px(args, m)?),
-            "brightness" => FilterFn::Brightness(scalar()?),
-            "contrast" => FilterFn::Contrast(scalar()?),
-            "saturate" => FilterFn::Saturate(scalar()?),
-            "grayscale" => FilterFn::Grayscale(unit(1.0)?),
-            "hue-rotate" if args.trim().is_empty() => continue,
-            "hue-rotate" => FilterFn::HueRotate(
-                lightningcss::values::angle::Angle::parse_string(args)
-                    .map_err(|e| format!("hue angle: {e:?}"))?
-                    .to_degrees(),
-            ),
-            "drop-shadow" => {
-                let parsed = lightningcss::properties::box_shadow::BoxShadow::parse_string(args)
-                    .map_err(|e| format!("drop-shadow: {e:?}"))?;
-                let conv = |l: &lightningcss::values::length::Length| -> Result<f32, String> {
-                    px(
-                        &l.to_css_string(Default::default())
-                            .map_err(|e| e.to_string())?,
-                        m,
-                    )
-                };
-                FilterFn::DropShadow {
-                    x: conv(&parsed.x_offset)?,
-                    y: conv(&parsed.y_offset)?,
-                    blur: conv(&parsed.blur)?,
-                    color: css_color(&parsed.color, Color::BLACK)?,
-                }
-            }
-            "invert" => FilterFn::Invert(unit(1.0)?),
-            "sepia" => FilterFn::Sepia(unit(1.0)?),
-            "opacity" => FilterFn::Opacity(unit(1.0)?),
-            _ => return Err(format!("unsupported filter '{name}'")),
-        });
-    }
-    Ok(out)
 }
 
 /// Compose a filter list into one image filter, the first function innermost.
@@ -1761,12 +1321,16 @@ pub(crate) fn compile_filters(list: &[FilterFn]) -> Option<skia_safe::ImageFilte
     chain
 }
 
+/// A length that cannot be a percentage, in px.
 fn absolute_px(l: &Length, m: Metrics) -> Result<f32, String> {
-    px(
-        &l.to_css_string(Default::default())
-            .map_err(|e| e.to_string())?,
-        m,
-    )
+    match l {
+        Length::Value(v) => Ok(convert_length(&CssLength::Dimension(v.clone()), m)?.value()),
+        Length::Calc(_) => px(
+            &l.to_css_string(Default::default())
+                .map_err(|e| e.to_string())?,
+            m,
+        ),
+    }
 }
 
 fn origin_with_z(
@@ -1974,18 +1538,6 @@ fn background_position_layers(s: &str, m: Metrics) -> Result<Vec<(AxisPos, AxisP
         .collect()
 }
 
-fn axis_position_list(
-    s: &str,
-    m: Metrics,
-    parse: fn(&str, Metrics) -> Result<AxisPos, String>,
-) -> Result<Vec<AxisPos>, String> {
-    let parts = split(s.trim(), true);
-    if parts.is_empty() {
-        return Err(format!("unsupported background-position '{s}'"));
-    }
-    parts.iter().map(|part| parse(part, m)).collect()
-}
-
 fn background_position(s: &str, m: Metrics) -> Result<(AxisPos, AxisPos), String> {
     let parts = split(s.trim(), false);
     let center = AxisPos {
@@ -2042,12 +1594,22 @@ fn parse_underline_offset(source: &str, m: Metrics) -> Result<f32, String> {
 fn horizontal_position(s: &str, m: Metrics) -> Result<AxisPos, String> {
     let parsed = HorizontalPosition::parse_string(s)
         .map_err(|_| format!("unsupported background-position '{s}'"))?;
-    match parsed {
+    horizontal_axis(&parsed, m)
+}
+
+fn vertical_position(s: &str, m: Metrics) -> Result<AxisPos, String> {
+    let parsed = VerticalPosition::parse_string(s)
+        .map_err(|_| format!("unsupported background-position '{s}'"))?;
+    vertical_axis(&parsed, m)
+}
+
+fn horizontal_axis(position: &HorizontalPosition, m: Metrics) -> Result<AxisPos, String> {
+    match position {
         PositionComponent::Center => Ok(AxisPos {
             percent: 0.5,
             length: 0.0,
         }),
-        PositionComponent::Length(v) => axis_from_length(&v, m),
+        PositionComponent::Length(v) => axis_from_length(v, m),
         PositionComponent::Side { side, offset } => side_offset(
             matches!(side, HorizontalPositionKeyword::Right),
             offset.as_ref(),
@@ -2056,15 +1618,13 @@ fn horizontal_position(s: &str, m: Metrics) -> Result<AxisPos, String> {
     }
 }
 
-fn vertical_position(s: &str, m: Metrics) -> Result<AxisPos, String> {
-    let parsed = VerticalPosition::parse_string(s)
-        .map_err(|_| format!("unsupported background-position '{s}'"))?;
-    match parsed {
+fn vertical_axis(position: &VerticalPosition, m: Metrics) -> Result<AxisPos, String> {
+    match position {
         PositionComponent::Center => Ok(AxisPos {
             percent: 0.5,
             length: 0.0,
         }),
-        PositionComponent::Length(v) => axis_from_length(&v, m),
+        PositionComponent::Length(v) => axis_from_length(v, m),
         PositionComponent::Side { side, offset } => side_offset(
             matches!(side, VerticalPositionKeyword::Bottom),
             offset.as_ref(),
@@ -2089,10 +1649,7 @@ fn side_offset(from_end: bool, offset: Option<&CssLength>, m: Metrics) -> Result
 }
 
 fn axis_from_length(value: &CssLength, m: Metrics) -> Result<AxisPos, String> {
-    let s = value
-        .to_css_string(Default::default())
-        .map_err(|e| e.to_string())?;
-    let l = length(&s, m)?;
+    let l = convert_length(value, m)?;
     if l.is_percent() {
         Ok(AxisPos {
             percent: l.value(),
@@ -2106,18 +1663,8 @@ fn axis_from_length(value: &CssLength, m: Metrics) -> Result<AxisPos, String> {
     }
 }
 
-fn background_size_list(s: &str, m: Metrics) -> Result<Vec<BackgroundFit>, String> {
-    let parts = split(s.trim(), true);
-    if parts.is_empty() {
-        return Err(format!("unsupported background-size '{s}'"));
-    }
-    parts.iter().map(|part| background_size(part, m)).collect()
-}
-
-fn background_size(s: &str, m: Metrics) -> Result<BackgroundFit, String> {
-    let parsed = BackgroundSize::parse_string(s)
-        .map_err(|_| format!("unsupported background-size '{s}'"))?;
-    match parsed {
+fn background_fit(size: &BackgroundSize, m: Metrics) -> Result<BackgroundFit, String> {
+    match size {
         BackgroundSize::Cover => Ok(BackgroundFit::Cover),
         BackgroundSize::Contain => Ok(BackgroundFit::Contain),
         BackgroundSize::Explicit { width, height } => Ok(BackgroundFit::Lengths(
@@ -2128,30 +1675,13 @@ fn background_size(s: &str, m: Metrics) -> Result<BackgroundFit, String> {
 }
 
 fn size_component(
-    value: LengthPercentageOrAuto,
+    value: &LengthPercentageOrAuto,
     m: Metrics,
 ) -> Result<Option<LengthPercentage>, String> {
     match value {
         LengthPercentageOrAuto::Auto => Ok(None),
-        LengthPercentageOrAuto::LengthPercentage(value) => {
-            let s = value
-                .to_css_string(Default::default())
-                .map_err(|e| e.to_string())?;
-            Ok(Some(length(&s, m)?))
-        }
+        LengthPercentageOrAuto::LengthPercentage(value) => Ok(Some(convert_length(value, m)?)),
     }
-}
-
-fn background_repeat_list(s: &str) -> Result<Vec<(AxisRepeat, AxisRepeat)>, String> {
-    let parts = split(s.trim(), true);
-    if parts.is_empty() {
-        return Err(format!("unsupported background-repeat '{s}'"));
-    }
-    parts.iter().map(|part| background_repeat(part)).collect()
-}
-
-fn background_repeat(s: &str) -> Result<(AxisRepeat, AxisRepeat), String> {
-    crate::background_box::parse_repeat(s)
 }
 
 fn clip_shape_points(s: &str, values: &Values, m: Metrics) -> Result<Vec<(f32, f32)>, String> {

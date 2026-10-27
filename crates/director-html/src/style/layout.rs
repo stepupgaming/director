@@ -64,7 +64,7 @@ const TYPED: &[&str] = &[
 /// text path in `translate`.
 pub(super) fn apply(
     name: &str,
-    entry: &Computed,
+    entry: Computed<'_>,
     style: &mut Style,
     m: Metrics,
     block: ContainingBlock,
@@ -72,9 +72,9 @@ pub(super) fn apply(
     if !TYPED.contains(&name) {
         return None;
     }
-    let s = entry.text.as_str();
+    let s = entry.text;
     let length = |value: &CssLength, basis: Option<f32>| convert_length_with_basis(value, m, basis);
-    let result = match &entry.value {
+    let result = match entry.value {
         Property::Display(display) => display_of(display, s).map(|d| style.display = d),
         Property::BoxSizing(sizing, _) => {
             style.box_sizing = match sizing {
@@ -432,7 +432,7 @@ mod tests {
 
     fn applied(name: &str, text: &str) -> Result<Style, String> {
         let values = [(name.to_string(), text.to_string())].into();
-        let computed = ComputedStyle::parse(&values);
+        let computed = ComputedStyle::from_text(&values);
         let mut style = Style::default();
         let m = Metrics {
             width: 200.0,
@@ -440,7 +440,7 @@ mod tests {
             font_size: 10.0,
         };
         let block = ContainingBlock::from_axes(400.0, 300.0);
-        apply(name, computed.get(name).unwrap(), &mut style, m, block)
+        apply(name, computed.computed(name).unwrap(), &mut style, m, block)
             .expect("typed property")
             .map(|_| style)
     }

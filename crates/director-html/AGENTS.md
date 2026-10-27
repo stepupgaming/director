@@ -5,8 +5,8 @@
 ## Ownership
 
 - `src/` owns parsing, cascade, style translation, deterministic animation, native element adapters, and captured-scene loading.
-- `src/property.rs` owns the property table: every compiled longhand, whether it inherits, and its translation group. `css::inherited` and the unsupported-property refusal read it. `src/computed.rs` owns `ComputedStyle`, which parses each longhand once into a typed Lightning CSS `Property`.
-- `src/style/mod.rs` owns `translate` and the text-path property groups. `src/style/layout.rs` owns the typed layout longhands.
+- `src/property.rs` owns the property table: every compiled longhand, whether it inherits, and its translation group. `css::inherited` and the unsupported-property refusal read it. `src/computed.rs` owns `ComputedStyle`: the text map plus a typed Lightning CSS `Property` per longhand, reached through `computed(name)`. It derefs to the text map for text-path readers.
+- `src/style/mod.rs` owns `translate`, group dispatch and the text-path properties: color, font-size, font-family, font-variant-numeric, gaps, grid templates and placements, background-image and the background-position shorthand, mask-image, transform and perspective origins, line clamps, decoration lines and thickness, underline offset, text stroke, paint-order, object-fit and object-position, clip-path, animation and transition. Typed group modules: `style/layout.rs`, `style/background.rs`, `style/border.rs`, `style/boxes.rs` (opacity, visibility, overflow, z-index), `style/effects.rs` (box shadows, filters, backdrop blur, blending, mask mode), `style/transform.rs` and `style/text.rs`. A group module returns `None` for names it leaves to the text path.
 - `src/element/mod.rs` owns `HtmlElement`, its layout hooks, and the paint order: transform, clip path, effect layer, outer shadows, background, inset shadows, content and children, borders, mask. `src/element/background.rs` owns box shadows, background colors and layers, and `background-clip: text`. `src/element/borders.rs` owns border sides, styles, and corner joins. `src/element/text.rs` owns text decoration lines.
 - `src/project.rs` owns `director-native-project/1`, editable source and validated element overrides; `src/assets.rs` owns asset recording, deduplicated SHA-256 blobs and temporary media-file leases.
 - `tools/` owns optional compile-time browser extraction, Chromium and CPU/GPU parity, real HyperFrames CLI and CPU/GPU export benchmarks, and Hyper CN registry auditing.
@@ -63,6 +63,8 @@
 
 - Nested style rules flatten into the same selector list as top-level rules. `&` is replaced with the parent selector. A parent list becomes `:is(...)`.
 - Nested `@media` and `@supports` evaluate at compile time against the composition size. `(orientation: landscape)` is true when width is at least height. `(aspect-ratio)`, `(min-aspect-ratio)`, and `(max-aspect-ratio)` compare width/height to the ratio. Top-level `@media` fails with `unsupported CSS at-rule`. Unknown media features fail.
+- The cascade carries each winning declaration's parsed `Property` into `ComputedStyle` with no reparse. Only a value containing `var()` is substituted as text and parsed again. `inherit` copies the parent's text and typed value. Custom properties keep text only.
+- Lightning CSS 1.0.0-alpha.72 leaves `transform-style: preserve-3d`, `text-shadow: none` and `box-shadow: none` unparsed. The typed modules match those three texts explicitly.
 - `@supports` is true for `display` (`block`, `flex`, `grid`, `inline`, `inline-block`, `none`), `background-clip` (`text`, `border-box`, `padding-box`, `content-box`), `text-overflow` (`ellipsis`, `clip`), `object-fit` (`fill`, `cover`, `contain`, `none`, `scale-down`), `position` (`static`, `relative`, `absolute`, `fixed`, `sticky`), and `overflow` / `overflow-x` / `overflow-y` (`visible`, `hidden`, `clip`). Any other declaration fails.
 
 ### Layout
@@ -93,7 +95,7 @@
 - `mask-mode: luminance` writes Rec.709 luma into alpha and blends with `DstIn`. A non-gradient mask image fails.
 - `clip-path` accepts `polygon()`, `circle()`, `ellipse()`, and `inset()` without `round`. `url()` fails.
 - `filter` accepts `invert`, `sepia`, and `opacity` after the existing color matrix, clamped to `0..=1`.
-- An empty filter call takes the CSS default amount: `blur()` and `hue-rotate()` are no-ops, and `brightness()`, `contrast()`, `saturate()` and `grayscale()` take 1. Lightning CSS prints a default amount this way, so `grayscale(1)` arrives as `grayscale()`. `tests/filter_fns.rs` covers a chain of default amounts.
+- An empty filter call takes the CSS default amount: `blur()` and `hue-rotate()` are no-ops, and `brightness()`, `contrast()`, `saturate()` and `grayscale()` take 1. `tests/filter_fns.rs` covers a chain of default amounts.
 - `object-fit` accepts `fill`, `cover`, `contain`, `none`, and `scale-down`; the core `ObjectFit` default stays `Cover`. `object-position` positions image and video content, including a captured video's shared decoder. The default is 50% 50%. Keyword order can swap axes. One keyword plus a length sets the other axis.
 
 ### Text

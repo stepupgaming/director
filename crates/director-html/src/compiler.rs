@@ -1,6 +1,7 @@
 use crate::{
     animation,
     assets::AssetStore,
+    computed::ComputedStyle,
     css::{diagnostic, Css, Values},
     element::HtmlElement,
     style::{self, Metrics, PaintStyle},
@@ -79,7 +80,7 @@ const SVG_ANIMATION_PROPERTIES: &[&str] = &[
 fn serialize_svg_children(
     el: ElementRef<'_>,
     css: &Css,
-    parent: &Values,
+    parent: &ComputedStyle,
     plan: &crate::smil::SmilPlan,
 ) -> Result<String, CompileError> {
     let mut out = String::new();
@@ -90,7 +91,7 @@ fn serialize_svg_children(
 fn write_svg_children(
     el: ElementRef<'_>,
     css: &Css,
-    parent: &Values,
+    parent: &ComputedStyle,
     out: &mut String,
     parent_path: &str,
     plan: &crate::smil::SmilPlan,
@@ -325,7 +326,7 @@ fn specifies_transform(css: &Css, el: ElementRef<'_>) -> Result<bool, CompileErr
     if !css.has_local_property(el, "transform") {
         return Ok(false);
     }
-    let values = css.cascade(el, &Values::new())?;
+    let values = css.cascade(el, &ComputedStyle::default())?;
     Ok(values.get("transform").is_some_and(|value| value != "none"))
 }
 
@@ -546,7 +547,7 @@ pub(crate) fn compile_with_assets(
     // Compute inherited values along the full ancestor chain, including body resets.
     let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
     ancestors.reverse();
-    let mut parent = Values::new();
+    let mut parent = ComputedStyle::default();
     for ancestor in ancestors {
         if ancestor.id() != root.id() {
             parent = builder.css.cascade(ancestor, &parent)?;
@@ -931,7 +932,7 @@ impl Builder {
     fn node(
         &mut self,
         el: ElementRef<'_>,
-        parent: &Values,
+        parent: &ComputedStyle,
         composition_start: f64,
         root: bool,
         containing_block: style::ContainingBlock,
@@ -947,7 +948,7 @@ impl Builder {
         let mut values = self.css.cascade(el, parent)?;
         if tag == "svg" && !self.css.has_local_property(el, "color") {
             if let Some(color) = el.value().attr("color") {
-                values.insert("color".into(), color.into());
+                values.insert("color", color);
             }
         }
         if matches!(tag, "img" | "svg" | "video") {
@@ -958,7 +959,7 @@ impl Builder {
                             .parse::<f32>()
                             .map(|v| format!("{v}px"))
                             .unwrap_or_else(|_| value.into());
-                        values.insert(dimension.into(), value);
+                        values.insert(dimension, value);
                     }
                 }
             }
@@ -1002,7 +1003,7 @@ impl Builder {
                 },
             )?;
         // Store computed font-size to avoid repeated relative-unit multiplication in descendants.
-        values.insert("font-size".into(), format!("{}px", paint.font_size));
+        values.insert("font-size", format!("{}px", paint.font_size));
         if root {
             layout.size = taffy::geometry::Size {
                 width: taffy::prelude::length(self.options.width as f32),
@@ -1420,7 +1421,7 @@ impl Builder {
         &mut self,
         svg: ElementRef<'_>,
         parent: NodeId,
-        svg_values: &Values,
+        svg_values: &ComputedStyle,
         fallback: (f32, f32),
         start: f64,
         depth: usize,
@@ -1465,7 +1466,7 @@ impl Builder {
         svg: ElementRef<'_>,
         foreign: ElementRef<'_>,
         parent: NodeId,
-        svg_values: &Values,
+        svg_values: &ComputedStyle,
         space: &SvgSpace,
         start: f64,
         depth: usize,
@@ -1553,7 +1554,7 @@ impl Builder {
                 .unwrap_or(16.0),
         };
         let (mut layout, mut paint, _grid_scope) = style::translate(
-            &Values::new(),
+            &ComputedStyle::default(),
             metrics,
             style::ContainingBlock::from_axes(width, height),
             &self.assets,
@@ -1616,7 +1617,7 @@ impl Builder {
     fn rich_text(
         &self,
         el: ElementRef<'_>,
-        values: &Values,
+        values: &ComputedStyle,
         paint: &PaintStyle,
         block: style::ContainingBlock,
         spans: &mut Vec<TextSpan>,

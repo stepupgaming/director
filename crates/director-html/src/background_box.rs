@@ -69,41 +69,6 @@ fn placed(area: f32, tile: f32, pos_percent: f32, pos_length: f32) -> AxisTiles 
     }
 }
 
-pub fn parse_repeat(source: &str) -> Result<(AxisRepeat, AxisRepeat), String> {
-    let trimmed = source.trim();
-    let mut tokens = trimmed.split_whitespace();
-    let first = tokens.next();
-    let second = tokens.next();
-    let parsed = if tokens.next().is_some() {
-        None
-    } else {
-        match (first, second) {
-            (Some("repeat"), None) => Some((AxisRepeat::Repeat, AxisRepeat::Repeat)),
-            (Some("no-repeat"), None) => Some((AxisRepeat::NoRepeat, AxisRepeat::NoRepeat)),
-            (Some("repeat-x"), None) => Some((AxisRepeat::Repeat, AxisRepeat::NoRepeat)),
-            (Some("repeat-y"), None) => Some((AxisRepeat::NoRepeat, AxisRepeat::Repeat)),
-            (Some("space"), None) => Some((AxisRepeat::Space, AxisRepeat::Space)),
-            (Some("round"), None) => Some((AxisRepeat::Round, AxisRepeat::Round)),
-            (Some(first), Some(second)) => match (axis_keyword(first), axis_keyword(second)) {
-                (Some(horizontal), Some(vertical)) => Some((horizontal, vertical)),
-                _ => None,
-            },
-            _ => None,
-        }
-    };
-    parsed.ok_or_else(|| format!("unsupported background-repeat '{trimmed}'"))
-}
-
-fn axis_keyword(token: &str) -> Option<AxisRepeat> {
-    match token {
-        "repeat" => Some(AxisRepeat::Repeat),
-        "no-repeat" => Some(AxisRepeat::NoRepeat),
-        "space" => Some(AxisRepeat::Space),
-        "round" => Some(AxisRepeat::Round),
-        _ => None,
-    }
-}
-
 #[allow(dead_code)]
 pub fn tile_origins(tiles: AxisTiles) -> Vec<f32> {
     let mut origins = Vec::with_capacity(tiles.count as usize);
@@ -116,7 +81,7 @@ pub fn tile_origins(tiles: AxisTiles) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_repeat, place_axis, tile_origins, AxisRepeat, AxisTiles};
+    use super::{place_axis, tile_origins, AxisRepeat, AxisTiles};
 
     fn tiles(origin: f32, tile: f32, gap: f32, count: u32) -> AxisTiles {
         AxisTiles {
@@ -200,73 +165,6 @@ mod tests {
         assert_eq!(
             place_axis(f32::INFINITY, 40.0, 0.0, 0.0, AxisRepeat::Space),
             tiles(0.0, 0.0, 0.0, 0)
-        );
-    }
-
-    #[test]
-    fn parse_repeat_one_token() {
-        assert_eq!(
-            parse_repeat("repeat").unwrap(),
-            (AxisRepeat::Repeat, AxisRepeat::Repeat)
-        );
-        assert_eq!(
-            parse_repeat("no-repeat").unwrap(),
-            (AxisRepeat::NoRepeat, AxisRepeat::NoRepeat)
-        );
-        assert_eq!(
-            parse_repeat("repeat-x").unwrap(),
-            (AxisRepeat::Repeat, AxisRepeat::NoRepeat)
-        );
-        assert_eq!(
-            parse_repeat("repeat-y").unwrap(),
-            (AxisRepeat::NoRepeat, AxisRepeat::Repeat)
-        );
-        assert_eq!(
-            parse_repeat("space").unwrap(),
-            (AxisRepeat::Space, AxisRepeat::Space)
-        );
-        assert_eq!(
-            parse_repeat("round").unwrap(),
-            (AxisRepeat::Round, AxisRepeat::Round)
-        );
-    }
-
-    #[test]
-    fn parse_repeat_two_tokens() {
-        assert_eq!(
-            parse_repeat("repeat space").unwrap(),
-            (AxisRepeat::Repeat, AxisRepeat::Space)
-        );
-        assert_eq!(
-            parse_repeat("space round").unwrap(),
-            (AxisRepeat::Space, AxisRepeat::Round)
-        );
-        assert_eq!(
-            parse_repeat("round no-repeat").unwrap(),
-            (AxisRepeat::Round, AxisRepeat::NoRepeat)
-        );
-        assert_eq!(
-            parse_repeat("no-repeat space").unwrap(),
-            (AxisRepeat::NoRepeat, AxisRepeat::Space)
-        );
-        assert_eq!(
-            parse_repeat("repeat repeat").unwrap(),
-            (AxisRepeat::Repeat, AxisRepeat::Repeat)
-        );
-    }
-
-    #[test]
-    fn parse_repeat_rejects_bad_values() {
-        let repeat_x = parse_repeat("repeat-x repeat").unwrap_err();
-        assert!(repeat_x.contains("background-repeat"));
-        assert_eq!(repeat_x, "unsupported background-repeat 'repeat-x repeat'");
-        assert_eq!(
-            parse_repeat("").unwrap_err(),
-            "unsupported background-repeat ''"
-        );
-        assert_eq!(
-            parse_repeat("space round extra").unwrap_err(),
-            "unsupported background-repeat 'space round extra'"
         );
     }
 

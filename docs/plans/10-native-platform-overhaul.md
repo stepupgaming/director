@@ -71,7 +71,7 @@ Gate: an agent can open, patch, inspect and export a project through MCP alone. 
 
 ### Phase 5: Authoring
 
-- Typed `ComputedStyle` plus a property table in `director-html`; split element paint. Landed: the property table, `ComputedStyle`, typed layout longhands in `style/layout.rs`, and element paint split into `element/{mod,background,borders,text}.rs`.
+- Typed `ComputedStyle` plus a property table in `director-html`; split element paint. Landed: the property table, `ComputedStyle`, element paint split into `element/{mod,background,borders,text}.rs`, a cascade that carries typed values and reparses only `var()` values, and typed layout, background, border, box, effect, transform and text groups in `style/`.
 - Timeline JSON for motion over HTML visuals.
 - GSAP to native keyframe tracks.
 
@@ -94,7 +94,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 432 | 2026-10-26 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test visual_suite` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test html_export` |
-| workspace release tests | 1021, 2 ignored | 2026-10-26 | `cargo test --workspace --release --no-fail-fast` |
+| workspace release tests | 1021, 2 ignored (969 without director-cli, director-cli 52) | 2026-10-26 | `cargo test --workspace --exclude director-cli --release --no-fail-fast` plus `cargo test -p director-cli --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 22 | 2026-10-26 | `cargo test -p director-render --release` |
 | director-host | 25 | 2026-10-26 | `cargo test -p director-host --release` |
@@ -114,7 +114,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | motion_policy | 3 | 2026-10-21 | `cargo test -p director-html --release --test motion_policy` |
 | transform_angles | 3 | 2026-10-22 | `cargo test -p director-html --release --test transform_angles` |
 | director-core doctest | 1 | 2026-10-22 | `cargo test -p director-core --doc --release` |
-| director-html lib | 116 | 2026-10-26 | `cargo test -p director-html --release --lib` |
+| director-html lib | 114 | 2026-10-26 | `cargo test -p director-html --release --lib` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
 | object_position_css, gradient_hints, project, shader | 9, 8, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |
 | mixed_calc, gradient_calc | 12, 3 | 2026-10-18 | `cargo test -p director-html --release --test mixed_calc --test gradient_calc` |
@@ -136,7 +136,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Continue phase 5: port the remaining property groups to typed values and carry typed values through the cascade so `var()` substitution replaces the stringify and reparse. Then timeline JSON and GSAP to native tracks. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Continue phase 5: timeline JSON for motion over HTML visuals, then GSAP to native keyframe tracks. Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

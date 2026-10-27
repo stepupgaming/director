@@ -1,5 +1,6 @@
-//! Typed computed values. Each declared longhand parses once into a Lightning
-//! CSS [`Property`], so `style::translate` matches typed values.
+//! Typed computed values. The cascade carries each longhand as its computed
+//! text plus the Lightning CSS [`Property`] parsed when the stylesheet loaded,
+//! so `style::translate` matches typed values without reparsing text.
 
 use crate::css::Values;
 use lightningcss::{
@@ -11,51 +12,94 @@ use lightningcss::{
     traits::IntoOwned,
 };
 use std::collections::BTreeMap;
+use std::ops::Deref;
 
-/// One declared longhand: the computed text and its parsed value.
-#[derive(Clone, Debug)]
-pub struct Computed {
-    pub text: String,
+/// One computed longhand: its text and its parsed value.
+#[derive(Clone, Copy, Debug)]
+pub struct Computed<'a> {
+    pub text: &'a str,
     /// `Property::Unparsed` when Lightning CSS cannot read the text.
-    pub value: Property<'static>,
+    pub value: &'a Property<'static>,
 }
 
-/// The computed longhands of one element, by name in name order.
+/// The computed longhands of one element. Reads through [`Deref`] see the
+/// text map; [`ComputedStyle::computed`] adds the typed value.
 #[derive(Clone, Debug, Default)]
 pub struct ComputedStyle {
-    entries: BTreeMap<String, Computed>,
+    text: Values,
+    /// One entry per non-custom name in `text`.
+    typed: BTreeMap<String, Property<'static>>,
 }
 
 impl ComputedStyle {
-    /// Parse every value of `values`. Custom properties are left out.
-    pub fn parse(values: &Values) -> Self {
-        let entries = values
-            .iter()
-            .filter(|(name, _)| !name.starts_with("--"))
-            .map(|(name, text)| (name.clone(), computed(name, text)))
-            .collect();
-        Self { entries }
+    /// Parse every entry of `values`, as captured or authored text arrives.
+    pub fn from_text(values: &Values) -> Self {
+        let mut style = Self::default();
+        for (name, text) in values {
+            style.insert(name.clone(), text.clone());
+        }
+        style
     }
 
-    pub fn get(&self, name: &str) -> Option<&Computed> {
-        self.entries.get(name)
+    /// The text and typed value of a non-custom longhand.
+    pub fn computed(&self, name: &str) -> Option<Computed<'_>> {
+        let (text, value) = (self.text.get(name)?, self.typed.get(name)?);
+        Some(Computed { text, value })
+    }
+
+    /// Set `name` from text, parsing it.
+    pub fn insert(&mut self, name: impl Into<String>, text: impl Into<String>) {
+        let name = name.into();
+        let text = text.into();
+        let property = (!name.starts_with("--")).then(|| parse(&name, &text));
+        self.set(name, text, property);
+    }
+
+    /// Set `name` from text and the value already parsed from it. Custom
+    /// properties carry no typed value.
+    pub fn set(&mut self, name: String, text: String, property: Option<Property<'static>>) {
+        match property.filter(|_| !name.starts_with("--")) {
+            Some(property) => {
+                self.typed.insert(name.clone(), property);
+            }
+            None => {
+                self.typed.remove(&name);
+            }
+        }
+        self.text.insert(name, text);
+    }
+
+    pub fn remove(&mut self, name: &str) {
+        self.text.remove(name);
+        self.typed.remove(name);
+    }
+
+    /// Copy `name` from `other`, or remove it when `other` has none.
+    pub fn copy_from(&mut self, other: &Self, name: &str) {
+        match other.text.get(name) {
+            Some(text) => self.set(name.into(), text.clone(), other.typed.get(name).cloned()),
+            None => self.remove(name),
+        }
     }
 }
 
-fn computed(name: &str, text: &str) -> Computed {
-    let value = Property::parse_string(PropertyId::from(name), text, ParserOptions::default())
+impl Deref for ComputedStyle {
+    type Target = Values;
+
+    fn deref(&self) -> &Values {
+        &self.text
+    }
+}
+
+/// Parse one longhand. Text Lightning CSS rejects outright becomes an empty
+/// unparsed value, so translation still reports the property.
+pub fn parse(name: &str, text: &str) -> Property<'static> {
+    Property::parse_string(PropertyId::from(name), text, ParserOptions::default())
         .map(|property| property.into_owned())
-        .unwrap_or_else(|_| unparsed(name));
-    Computed {
-        text: text.to_string(),
-        value,
-    }
-}
-
-/// An empty unparsed value for text Lightning CSS rejects outright.
-fn unparsed(name: &str) -> Property<'static> {
-    Property::Unparsed(UnparsedProperty {
-        property_id: PropertyId::from(name).into_owned(),
-        value: TokenList(Vec::new()),
-    })
+        .unwrap_or_else(|_| {
+            Property::Unparsed(UnparsedProperty {
+                property_id: PropertyId::from(name).into_owned(),
+                value: TokenList(Vec::new()),
+            })
+        })
 }

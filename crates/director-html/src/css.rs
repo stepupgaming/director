@@ -1,4 +1,4 @@
-use crate::{CompileError, Diagnostic};
+use crate::{computed::ComputedStyle, CompileError, Diagnostic};
 use lightningcss::{
     declaration::DeclarationBlock,
     media_query::{
@@ -9,10 +9,10 @@ use lightningcss::{
     rules::{keyframes::KeyframeSelector, style::StyleRule, supports::SupportsCondition, CssRule},
     selector::SelectorList,
     stylesheet::{ParserOptions, PrinterOptions, StyleSheet},
-    traits::ToCss,
+    traits::{IntoOwned, ToCss},
 };
 use scraper::{ElementRef, Selector};
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
 pub type Values = BTreeMap<String, String>;
 
@@ -20,8 +20,12 @@ pub type Values = BTreeMap<String, String>;
 pub struct Declaration {
     pub name: String,
     pub value: String,
+    /// The longhand as parsed. `Property::Unparsed` for values with `var()`.
+    pub property: Property<'static>,
     pub important: bool,
 }
+
+type Rank = (bool, u32, usize);
 
 #[derive(Debug)]
 pub struct Rule {
@@ -65,6 +69,7 @@ fn expanded(property: &Property<'_>, important: bool) -> Result<Vec<Declaration>
                 value: p
                     .value_to_css_string(PrinterOptions::default())
                     .map_err(|e| CompileError::Input(e.to_string()))?,
+                property: p.into_owned(),
                 important,
             })
         })
@@ -387,65 +392,71 @@ impl Css {
         Ok(())
     }
 
-    pub fn cascade(&self, el: ElementRef<'_>, parent: &Values) -> Result<Values, CompileError> {
-        let mut values: Values = parent
-            .iter()
-            .filter(|(k, _)| inherited(k))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        let mut winners: BTreeMap<String, ((bool, u32, usize), String)> = BTreeMap::new();
-        let mut matched = Vec::new();
+    /// Cascade `el` over its parent's computed style. Declarations keep the
+    /// typed value parsed with the stylesheet; only values with `var()` are
+    /// substituted and parsed again.
+    pub fn cascade(
+        &self,
+        el: ElementRef<'_>,
+        parent: &ComputedStyle,
+    ) -> Result<ComputedStyle, CompileError> {
+        let mut values = ComputedStyle::default();
+        for name in parent.keys().filter(|k| inherited(k)) {
+            values.copy_from(parent, name);
+        }
+        let inline = match el.value().attr("style") {
+            Some(style) => parse_inline(style)?,
+            None => Vec::new(),
+        };
+        let mut matched: Vec<(&Declaration, Rank)> = Vec::new();
         for (order, rule) in self.rules.iter().enumerate() {
             if rule.selector.matches(&el) {
                 for d in &rule.declarations {
-                    matched.push((d.clone(), (d.important, rule.specificity, order)));
+                    matched.push((d, (d.important, rule.specificity, order)));
                 }
             }
         }
-        if let Some(style) = el.value().attr("style") {
-            for d in parse_inline(style)? {
-                let rank = (d.important, u32::MAX, self.rules.len());
-                matched.push((d, rank));
-            }
+        for d in &inline {
+            matched.push((d, (d.important, u32::MAX, self.rules.len())));
         }
-        for (d, rank) in &matched {
+        let mut winners: BTreeMap<String, (Rank, Cow<'_, Declaration>)> = BTreeMap::new();
+        for &(d, rank) in &matched {
             if d.name.starts_with("--") {
-                insert_winner(&mut winners, d, *rank);
+                insert_winner(&mut winners, Cow::Borrowed(d), rank);
             }
         }
-        let mut variables = values.clone();
-        for (key, (_, value)) in &winners {
-            variables.insert(key.clone(), value.clone());
+        let mut variables = Values::clone(&values);
+        for (key, (_, d)) in &winners {
+            variables.insert(key.clone(), d.value.clone());
         }
         // Expand variable-dependent shorthands before ranking their longhands.
         for (d, rank) in matched {
-            if !d.name.starts_with("--") {
+            if d.name.starts_with("--") {
+                continue;
+            }
+            if has_var(&d.value) {
                 let value = resolve_vars(&d.value, &variables, 0)?;
                 for expanded in parse_inline(&format!("{}: {}", d.name, value))? {
-                    insert_winner(&mut winners, &expanded, rank);
+                    insert_winner(&mut winners, Cow::Owned(expanded), rank);
                 }
+            } else {
+                insert_winner(&mut winners, Cow::Borrowed(d), rank);
             }
         }
-        for (key, (_, value)) in winners {
-            match value.as_str() {
-                "inherit" => {
-                    if let Some(value) = parent.get(&key) {
-                        values.insert(key, value.clone());
-                    } else {
-                        values.remove(&key);
-                    }
-                }
+        for (key, (_, d)) in winners {
+            match d.value.as_str() {
+                "inherit" => values.copy_from(parent, &key),
                 "unset" if inherited(&key) => {}
-                "initial" | "unset" => {
-                    values.remove(&key);
-                }
+                "initial" | "unset" => values.remove(&key),
                 "revert" | "revert-layer" => {
                     return Err(CompileError::Input(format!(
-                        "{key}: {value} is unsupported"
+                        "{key}: {} is unsupported",
+                        d.value
                     )))
                 }
                 _ => {
-                    values.insert(key, value);
+                    let d = d.into_owned();
+                    values.set(key, d.value, Some(d.property));
                 }
             }
         }
@@ -709,14 +720,18 @@ fn css_text(value: &impl ToCss) -> String {
         .unwrap_or_else(|_| "condition".into())
 }
 
-fn insert_winner(
-    winners: &mut BTreeMap<String, ((bool, u32, usize), String)>,
-    d: &Declaration,
-    rank: (bool, u32, usize),
+fn insert_winner<'a>(
+    winners: &mut BTreeMap<String, (Rank, Cow<'a, Declaration>)>,
+    d: Cow<'a, Declaration>,
+    rank: Rank,
 ) {
     if winners.get(&d.name).is_none_or(|(old, _)| rank >= *old) {
-        winners.insert(d.name.clone(), (rank, d.value.clone()));
+        winners.insert(d.name.clone(), (rank, d));
     }
+}
+
+fn has_var(value: &str) -> bool {
+    value.to_ascii_lowercase().contains("var(")
 }
 
 pub fn inherited(name: &str) -> bool {
@@ -815,4 +830,57 @@ pub fn split(value: &str, comma: bool) -> Vec<String> {
         parts.push(piece.into());
     }
     parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lightningcss::properties::size::Size;
+    use scraper::Html;
+
+    fn cascade(css: &str, html: &str, parent: &ComputedStyle) -> ComputedStyle {
+        let mut sheet = Css::default();
+        sheet.append(css, 400, 300).unwrap();
+        let document = Html::parse_fragment(html);
+        let div = document.select(&Selector::parse("div").unwrap()).next().unwrap();
+        sheet.cascade(div, parent).unwrap()
+    }
+
+    #[test]
+    fn declarations_keep_their_parsed_values() {
+        let values = cascade("div { width: 12px; --gap: 4px }", "<div></div>", &Default::default());
+        let width = values.computed("width").unwrap();
+        assert_eq!(width.text, "12px");
+        assert!(matches!(width.value, Property::Width(Size::LengthPercentage(_))));
+        assert_eq!(values.get("--gap").map(String::as_str), Some("4px"));
+        assert!(values.computed("--gap").is_none());
+    }
+
+    #[test]
+    fn var_values_substitute_then_parse_as_longhands() {
+        let values = cascade(
+            "div { --w: 20px; --pad: 1px 2px; height: var(--w); padding: var(--pad) }",
+            "<div style=\"--w: 30px\"></div>",
+            &Default::default(),
+        );
+        assert_eq!(values.get("height").map(String::as_str), Some("30px"));
+        assert!(matches!(
+            values.computed("height").unwrap().value,
+            Property::Height(Size::LengthPercentage(_))
+        ));
+        assert_eq!(values.get("padding-left").map(String::as_str), Some("2px"));
+        assert!(matches!(
+            values.computed("padding-left").unwrap().value,
+            Property::PaddingLeft(_)
+        ));
+    }
+
+    #[test]
+    fn inherit_copies_the_parent_typed_value() {
+        let parent = ComputedStyle::from_text(&[("width".to_string(), "40px".to_string())].into());
+        let values = cascade("div { width: inherit }", "<div></div>", &parent);
+        let width = values.computed("width").unwrap();
+        assert_eq!(width.text, "40px");
+        assert!(matches!(width.value, Property::Width(_)));
+    }
 }

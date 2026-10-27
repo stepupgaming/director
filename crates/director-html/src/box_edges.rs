@@ -18,16 +18,6 @@ pub struct Insets {
     pub bottom: f32,
 }
 
-pub fn parse_box_edge(source: &str) -> Result<BoxEdge, String> {
-    match source.trim() {
-        "border-box" => Ok(BoxEdge::BorderBox),
-        "padding-box" => Ok(BoxEdge::PaddingBox),
-        "content-box" => Ok(BoxEdge::ContentBox),
-        "text" => Ok(BoxEdge::Text),
-        trimmed => Err(format!("unsupported box edge '{trimmed}'")),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn edge_insets(
     edge: BoxEdge,
@@ -64,7 +54,7 @@ pub fn edge_insets(
 
 #[cfg(test)]
 mod tests {
-    use super::{edge_insets, parse_box_edge, BoxEdge, Insets};
+    use super::{edge_insets, BoxEdge, Insets};
 
     fn insets(left: f32, top: f32, right: f32, bottom: f32) -> Insets {
         Insets {
@@ -73,19 +63,6 @@ mod tests {
             right,
             bottom,
         }
-    }
-
-    #[test]
-    fn parses_content_padding_and_border_box() {
-        assert_eq!(parse_box_edge("content-box"), Ok(BoxEdge::ContentBox));
-        assert_eq!(parse_box_edge(" padding-box "), Ok(BoxEdge::PaddingBox));
-        assert_eq!(parse_box_edge("border-box"), Ok(BoxEdge::BorderBox));
-    }
-
-    #[test]
-    fn rejects_margin_box() {
-        let err = parse_box_edge("margin-box").expect_err("margin-box");
-        assert!(err.contains("box edge"), "{err}");
     }
 
     #[test]
