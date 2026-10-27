@@ -22,8 +22,9 @@ Sampled captures stay sample holds. A continuous editable GSAP or JS timeline is
 
 ## Hyper CN smoke coverage
 
-- Carried-forward coverage is 239/239 on the original and portrait profiles. It combines the 2026-10-15 full run (207), the six CSS blocks re-smoked after capture forwarding, and the 26 Paper Shader blocks (reports at `F:\shader-smoke-original` and `F:\shader-smoke-portrait`).
-- The registry has not been re-smoked since. Smoke counts compilation and one rendered still per block. Pixel parity is a separate measurement and exists only for `examples/html/native-motion.html` and `blur-in`.
+- The 2026-10-26 full re-smoke through the typed style path rendered 238/239 on the original and portrait profiles (reports at `F:\hypercn-smoke-typed2-original` and `F:\hypercn-smoke-typed2-portrait`). It used Playwright's installed `chromium_headless_shell-1248` through `--chrome`, because Playwright 1.61.1 expects build 1228, which is absent.
+- `github-stars` has no input: the local hypercn checkout deletes its tracked `index.html` and leaves `compositions/` empty. Director refuses no block.
+- Smoke counts compilation and one rendered still per block. Pixel parity is a separate measurement and exists only for `examples/html/native-motion.html` and `blur-in`.
 - Do not start a registry re-smoke or launch Chrome without an explicit yes from the user.
 
 ## Known refusals

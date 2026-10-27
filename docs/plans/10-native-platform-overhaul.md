@@ -75,7 +75,7 @@ Gate: an agent can open, patch, inspect and export a project through MCP alone. 
 - Timeline JSON for motion over HTML visuals.
 - GSAP to native keyframe tracks.
 
-Gate: the Hyper CN corpus compiles through the typed style path with no new refusals, and a GSAP fixture set renders as native tracks.
+Gate: the Hyper CN corpus compiles through the typed style path with no new refusals, and a GSAP fixture set renders as native tracks. The corpus half was met 2026-10-26.
 
 ### Phase 6: Proof and media quality
 
@@ -114,7 +114,8 @@ One row per check, holding the most recent passing count. Replace the row when a
 | motion_policy | 3 | 2026-10-21 | `cargo test -p director-html --release --test motion_policy` |
 | transform_angles | 3 | 2026-10-22 | `cargo test -p director-html --release --test transform_angles` |
 | director-core doctest | 1 | 2026-10-22 | `cargo test -p director-core --doc --release` |
-| director-html lib | 114 | 2026-10-26 | `cargo test -p director-html --release --lib` |
+| director-html lib | 115 | 2026-10-26 | `cargo test -p director-html --release --lib` |
+| Hyper CN registry smoke, typed style path | original 238/239, portrait 238/239; `github-stars` has no input file in the local checkout | 2026-10-26 | `node crates/director-html/tools/registry-audit.mjs --registry C:/Projects/hypercn/registry --output F:/hypercn-smoke-typed2-<profile> --director <engine> --chrome <chromium_headless_shell-1248> --fps 2 [--portrait]` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
 | object_position_css, gradient_hints, project, shader | 9, 8, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |
 | mixed_calc, gradient_calc | 12, 3 | 2026-10-18 | `cargo test -p director-html --release --test mixed_calc --test gradient_calc` |
