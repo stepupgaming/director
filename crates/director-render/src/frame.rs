@@ -10,7 +10,7 @@ use director_core::systems::layout::LayoutEngine;
 use director_core::systems::transitions::{draw_transition, Transition, TransitionType};
 use director_core::types::NodeId;
 use director_core::Director;
-use skia_safe::{BlendMode, Canvas, Color, Paint, Surface};
+use skia_safe::{BlendMode, Canvas, Color, ColorType, Paint, Surface};
 use std::collections::HashSet;
 
 /// What one evaluated frame draws, bottom layer first.
@@ -30,7 +30,8 @@ enum Layer {
 #[derive(Default)]
 pub struct FrameState {
     layout: LayoutEngine,
-    accumulation: Option<Surface>,
+    /// The sub-frame raster and the half-float sum the sub-frames add into.
+    accumulation: Option<(Surface, Surface)>,
     transitions: Option<(Surface, Surface)>,
 }
 
@@ -211,23 +212,31 @@ impl FrameState {
             return paint(director, &plan, target, &mut self.transitions);
         }
         if self.accumulation.is_none() {
+            // Summing 1/N-weighted samples in 8 bits rounds each one, which leaves
+            // smooth gradients with about 256/N levels; the sum stays in half floats.
             let info = target.image_info();
-            self.accumulation =
-                Some(target.new_surface(&info).ok_or(RenderError::Surface(info.width(), info.height()))?);
+            let failed = || RenderError::Surface(info.width(), info.height());
+            let sample = target.new_surface(&info).ok_or_else(failed)?;
+            let sum = target.new_surface(&info.with_color_type(ColorType::RGBAF16)).ok_or_else(failed)?;
+            self.accumulation = Some((sample, sum));
         }
-        let sample_target = self.accumulation.as_mut().unwrap();
+        let (sample_target, sum) = self.accumulation.as_mut().unwrap();
         let shutter = (1.0 / director.fps) * (director.shutter_angle.clamp(0.0, 360.0) as f64 / 360.0);
         let shutter_start = time - shutter / 2.0;
         let mut weight = Paint::default();
         weight.set_alpha_f(1.0 / samples as f32);
         weight.set_blend_mode(BlendMode::Plus);
-        target.canvas().clear(clear_color(director));
+        sum.canvas().clear(Color::TRANSPARENT);
         for sample in 0..samples {
             let sample_time = shutter_start + (sample as f64 / (samples - 1) as f64) * shutter;
             let plan = evaluate(director, &mut self.layout, sample_time);
             paint(director, &plan, sample_target, &mut self.transitions)?;
-            target.canvas().draw_image(sample_target.image_snapshot(), (0, 0), Some(&weight));
+            sum.canvas().draw_image(sample_target.image_snapshot(), (0, 0), Some(&weight));
         }
+        let mut add = Paint::default();
+        add.set_blend_mode(BlendMode::Plus);
+        target.canvas().clear(clear_color(director));
+        target.canvas().draw_image(sum.image_snapshot(), (0, 0), Some(&add));
         Ok(())
     }
 }

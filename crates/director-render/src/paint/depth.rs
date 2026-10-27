@@ -177,9 +177,11 @@ impl Painter<'_> {
 
     /// Per-pixel occlusion for planes whose Z changes across the quad.
     ///
-    /// Planes stay in center-Z order. A covered fragment replaces the stored one
-    /// when its view Z is greater or equal, so an equal-Z tie still follows
-    /// z-index and source order.
+    /// Planes stay in center-Z order. A fragment whose view Z is greater or
+    /// equal to the nearest one stored so far composites over the pixel and
+    /// becomes the nearest, so an equal-Z tie still follows z-index and source
+    /// order; a farther fragment composites under it. Translucent and
+    /// antialiased fragments keep their coverage instead of being dropped.
     pub(super) fn occluded_planes(
         &self,
         cache: &mut LayerCache,
@@ -193,7 +195,7 @@ impl Painter<'_> {
             return self.sorted_planes(cache, planes, canvas, opacity, depth);
         }
         let (width, height) = (layer.width as usize, layer.height as usize);
-        let info = ImageInfo::new((layer.width, layer.height), ColorType::RGBA8888, AlphaType::Unpremul, None);
+        let info = ImageInfo::new((layer.width, layer.height), ColorType::RGBA8888, AlphaType::Premul, None);
         let parent_ctm = canvas.local_to_device();
         let mut color = vec![0u8; width * height * 4];
         let mut stored = vec![f32::NEG_INFINITY; width * height];
@@ -213,16 +215,25 @@ impl Painter<'_> {
             for y in 0..height {
                 for x in 0..width {
                     let offset = (y * width + x) * 4;
-                    if pixels[offset + 3] < 128 {
+                    if pixels[offset + 3] == 0 {
                         continue;
                     }
                     let Some(view_z) = plane_depth_at(&device, &chain, x as f32 + 0.5, y as f32 + 0.5) else {
                         continue;
                     };
                     let index = y * width + x;
-                    if view_z >= stored[index] {
+                    let src: [u8; 4] = pixels[offset..offset + 4].try_into().unwrap();
+                    let dst: [u8; 4] = color[offset..offset + 4].try_into().unwrap();
+                    let (top, bottom) = if view_z >= stored[index] {
                         stored[index] = view_z;
-                        color[offset..offset + 4].copy_from_slice(&pixels[offset..offset + 4]);
+                        (src, dst)
+                    } else {
+                        (dst, src)
+                    };
+                    // Premultiplied source-over.
+                    for c in 0..4 {
+                        let rest = bottom[c] as u32 * (255 - top[3] as u32);
+                        color[offset + c] = (top[c] as u32 + (rest + 127) / 255).min(255) as u8;
                     }
                 }
             }

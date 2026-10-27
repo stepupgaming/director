@@ -529,6 +529,21 @@ pub(crate) fn compile_with_assets(
         RenderMode::Export,
         None,
     );
+    // Sub-frame motion blur: `data-motion-blur` samples spread over `data-shutter-angle` degrees.
+    if let Some(v) = root.value().attr("data-motion-blur") {
+        director.samples_per_frame = v
+            .parse()
+            .ok()
+            .filter(|n| (1..=64).contains(n))
+            .ok_or_else(|| CompileError::Input(format!("invalid data-motion-blur: {v} (1..=64 samples)")))?;
+    }
+    if let Some(v) = root.value().attr("data-shutter-angle") {
+        director.shutter_angle = v
+            .parse()
+            .ok()
+            .filter(|a: &f32| (0.0..=360.0).contains(a))
+            .ok_or_else(|| CompileError::Input(format!("invalid data-shutter-angle: {v} (0..=360 degrees)")))?;
+    }
     load_fonts(&mut director, &css.fonts, &assets)?;
     let timeline = crate::timeline::collect(&dom)?;
     let composition = root.value().attr("data-composition-id").unwrap_or_default();
@@ -1057,6 +1072,8 @@ impl Builder {
                         | "data-start"
                         | "data-end"
                         | "data-fps"
+                        | "data-motion-blur"
+                        | "data-shutter-angle"
                         | "data-track-index"
                         | "data-hidden"
                         | "data-no-timeline"
