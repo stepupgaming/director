@@ -94,6 +94,11 @@ fn reel_seconds_count_from_the_clip_start() {
     assert!(shows(&mut c, 1.9, "00"));
     assert!(!shows(&mut c, 2.6, "42"));
     assert!(shows(&mut c, 2.9, "42"));
+    // A reel without its own data-start starts with its clip.
+    let reel = "<div data-start='1'><p data-reel data-reel-duration='0.5' data-reel-stagger='0'>42</p></div>";
+    let mut c = run(&page("", reel));
+    assert!(shows(&mut c, 1.0, "00"));
+    assert!(shows(&mut c, 1.6, "42"));
 }
 
 #[test]

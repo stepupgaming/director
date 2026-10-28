@@ -179,10 +179,20 @@ fn number(value: &str, name: &str) -> Result<f64, String> {
 }
 
 /// The composition second `el`'s clip starts at: a beat-valued `data-start`
-/// names a grid point, and seconds count from the enclosing composition's start.
+/// names a grid point, seconds count from the enclosing composition's start,
+/// and an element without one starts with its nearest timed ancestor.
 fn clip_start(el: ElementRef<'_>, root: NodeId, beats: &Beats) -> Result<f64, String> {
     if el.id() == root {
         return Ok(0.0);
+    }
+    let Some(value) = el.value().attr("data-start") else {
+        return match el.parent().and_then(ElementRef::wrap) {
+            Some(parent) => clip_start(parent, root, beats),
+            None => Ok(0.0),
+        };
+    };
+    if let Some(seconds) = beats.seconds(value)? {
+        return Ok(seconds);
     }
     let composition = el
         .ancestors()
@@ -192,13 +202,7 @@ fn clip_start(el: ElementRef<'_>, root: NodeId, beats: &Beats) -> Result<f64, St
         Some(parent) => clip_start(parent, root, beats)?,
         None => 0.0,
     };
-    match el.value().attr("data-start") {
-        Some(value) => match beats.seconds(value)? {
-            Some(seconds) => Ok(seconds),
-            None => Ok(offset + number(value, "data-start")?),
-        },
-        None => Ok(offset),
-    }
+    Ok(offset + number(value, "data-start")?)
 }
 
 /// Replaces the reel's text with static text and one window per digit, and
