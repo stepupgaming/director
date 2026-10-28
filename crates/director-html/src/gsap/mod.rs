@@ -525,6 +525,13 @@ fn svg_animation(
             }
         }
     }
+    if name == "d" {
+        for t in texts.iter_mut() {
+            if let Some(d) = path_data(t) {
+                *t = d;
+            }
+        }
+    }
     let black = Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
     if SVG_COLORS.contains(&name) && texts.iter().all(|t| color(t, black).is_ok()) {
         for t in texts.iter_mut() {
@@ -564,6 +571,61 @@ fn svg_animation(
     attrs.push(("fill".into(), "freeze".into()));
     attrs.push(("director-clock".into(), "composition".into()));
     Ok((base, Some(attrs)))
+}
+
+/// Path data with every segment's command written out, numbers split by
+/// spaces and `Z` closing, so MorphSVG's frames and the end path it writes back
+/// share one skeleton. `None` leaves data this does not read untouched.
+fn path_data(d: &str) -> Option<String> {
+    let (shape, nums) = skeleton(d);
+    let mut nums = nums.into_iter();
+    let (mut out, mut cmd, mut args) = (Vec::<String>::new(), None::<char>, Vec::<f64>::new());
+    let flush = |out: &mut Vec<String>, cmd: Option<char>, args: &mut Vec<f64>| -> Option<()> {
+        let Some(c) = cmd else {
+            return args.is_empty().then_some(());
+        };
+        let n = match c.to_ascii_lowercase() {
+            'z' => 0,
+            'h' | 'v' => 1,
+            'm' | 'l' | 't' => 2,
+            's' | 'q' => 4,
+            'c' => 6,
+            'a' => 7,
+            _ => return None,
+        };
+        if n == 0 {
+            return args.is_empty().then(|| out.push("Z".into()));
+        }
+        if args.is_empty() || !args.len().is_multiple_of(n) {
+            return None;
+        }
+        for (k, seg) in args.chunks(n).enumerate() {
+            // Coordinates after a moveto are implicit linetos.
+            let letter = match (k, c) {
+                (0, _) => c,
+                (_, 'M') => 'L',
+                (_, 'm') => 'l',
+                _ => c,
+            };
+            let list: Vec<String> = seg.iter().map(|v| v.to_string()).collect();
+            out.push(format!("{letter}{}", list.join(" ")));
+        }
+        args.clear();
+        Some(())
+    };
+    for ch in shape.chars() {
+        match ch {
+            SLOT => args.push(nums.next()?),
+            c if c.is_ascii_alphabetic() => {
+                flush(&mut out, cmd, &mut args)?;
+                cmd = Some(c);
+            }
+            c if c.is_whitespace() || c == ',' => {}
+            _ => return None,
+        }
+    }
+    flush(&mut out, cmd, &mut args)?;
+    Some(out.join(" "))
 }
 
 /// Marks a number's place in a [`skeleton`].

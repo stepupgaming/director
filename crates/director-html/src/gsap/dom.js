@@ -34,6 +34,9 @@ const S = {
   touched: new Set(),
   last: new Map(),
   generation: 0,
+  // Nodes a script added to the document while the timeline played; each
+  // must leave again before its frame ends.
+  transient: new Set(),
   timeouts: [],
   timerSeq: 1,
   frames: [],
@@ -239,19 +242,141 @@ function offsetSize(el, axis) {
   const b = box(el);
   return b ? b[axis + 2] : 0;
 }
+// The border box on the page: the layout box through the element's own and
+// every ancestor transform, as browsers report it.
 function rectOf(el) {
   if (el === document.body || el === document.documentElement) return domRect(0, 0, VW, VH);
-  const b = box(el);
-  if (b) return domRect(b[4], b[5], b[2], b[3]);
+  if (!el.isConnected) return domRect(0, 0, 0, 0);
+  let x = 0, y = 0, w, h;
   if (el.namespaceURI === SVG_NS && el.ownerSVGElement) {
-    const svg = rectOf(el.ownerSVGElement);
     const bb = el.getBBox();
-    return domRect(svg.x + bb.x, svg.y + bb.y, bb.width, bb.height);
+    x = bb.x; y = bb.y; w = bb.width; h = bb.height;
+  } else if (box(el) || placed(el)) {
+    w = offsetSize(el, 0); h = offsetSize(el, 1);
+  } else {
+    return domRect(0, 0, 0, 0);
   }
-  return domRect(0, 0, 0, 0);
+  const m = globalMatrix(el);
+  const pts = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].map(([px, py]) => apply(m, px, py));
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const left = Math.min(...xs), top = Math.min(...ys);
+  return domRect(left, top, Math.max(...xs) - left, Math.max(...ys) - top);
 }
 function domRect(x, y, width, height) {
   return { x, y, width, height, left: x, top: y, right: x + width, bottom: y + height, toJSON() { return this; } };
+}
+
+// ---- transforms ----
+// Affine matrices are [a, b, c, d, e, f], as in CSS `matrix()`.
+const IDENTITY = [1, 0, 0, 1, 0, 0];
+const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3],
+  m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+const translation = (x, y) => [1, 0, 0, 1, x, y];
+const apply = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+const asArray = (m) => [m.a, m.b, m.c, m.d, m.e, m.f];
+const asMatrix = (m) => ({ a: m[0], b: m[1], c: m[2], d: m[3], e: m[4], f: m[5] });
+function cssMatrix(text) {
+  const m = /^matrix(3d)?\(([^)]*)\)$/.exec(String(text || "").trim());
+  if (!m) return IDENTITY;
+  const v = m[2].split(",").map(Number);
+  return m[1] ? [v[0], v[1], v[4], v[5], v[12], v[13]] : v.slice(0, 6);
+}
+const isRoot = (el) => !el || el === document.body || el === document.documentElement || el.nodeType !== 1;
+// An unprobed box that places itself: absolute or fixed with inline insets.
+function placed(el) {
+  const pos = S.styles.get(el.__i)?.get("position");
+  return pos === "absolute" || pos === "fixed";
+}
+// The nearest positioned or transformed ancestor, which places absolute boxes
+// and is the offset parent.
+function positionedAncestor(el) {
+  for (let p = el.parentElement; !isRoot(p); p = p.parentElement) {
+    if (p.namespaceURI !== HTML_NS) continue;
+    const pos = computedValue(p, "position");
+    if ((pos && pos !== "static") || cssMatrix(computedValue(p, "transform")) !== IDENTITY) return p;
+  }
+  return null;
+}
+// The untransformed layout position of the border box on the page.
+function layoutOrigin(el) {
+  if (isRoot(el)) return [0, 0];
+  const b = box(el);
+  if (b) return [b[4], b[5]];
+  if (placed(el)) {
+    const map = S.styles.get(el.__i);
+    const fixed = map.get("position") === "fixed";
+    const [x, y] = fixed ? [0, 0] : layoutOrigin(positionedAncestor(el));
+    return [x + (unitPx(map.get("left") || "0", el, 0) || 0), y + (unitPx(map.get("top") || "0", el, 1) || 0)];
+  }
+  return layoutOrigin(el.parentElement);
+}
+function originPx(el, w, h) {
+  const text = S.styles.get(el.__i)?.get("transform-origin") || computedValue(el, "transform-origin") || "";
+  const parts = text.trim().split(/\s+/).filter(Boolean);
+  const keyword = { left: "0%", center: "50%", right: "100%", top: "0%", bottom: "100%" };
+  let [x, y] = [parts[0] || "50%", parts[1] || "50%"];
+  if (parts.length === 1 && /^(top|bottom)$/.test(x)) [x, y] = ["50%", x];
+  if (/^(top|bottom)$/.test(x) || /^(left|right)$/.test(y)) [x, y] = [y, x];
+  const resolve = (v, size) => {
+    v = keyword[v] || v;
+    return v.endsWith("%") ? parseFloat(v) * size / 100 : parseFloat(v) || 0;
+  };
+  return [resolve(x, w), resolve(y, h)];
+}
+// The element's CSS transform about its origin.
+function localMatrix(el) {
+  const t = cssMatrix(computedValue(el, "transform"));
+  if (t === IDENTITY) return t;
+  const [ox, oy] = originPx(el, offsetSize(el, 0), offsetSize(el, 1));
+  return mul(mul(translation(ox, oy), t), translation(-ox, -oy));
+}
+// Maps the element's local space onto the page.
+function globalMatrix(el) {
+  if (isRoot(el)) return IDENTITY;
+  if (el.namespaceURI === SVG_NS && el.ownerSVGElement) {
+    const owner = el.ownerSVGElement;
+    return mul(mul(globalMatrix(owner), viewBoxMatrix(owner)), svgChain(el, owner));
+  }
+  const parent = el.parentElement;
+  const [x, y] = layoutOrigin(el), [px, py] = layoutOrigin(parent);
+  return mul(mul(globalMatrix(parent), translation(x - px, y - py)), localMatrix(el));
+}
+function viewBoxOf(svg) {
+  const v = (svg.getAttribute("viewBox") || "").split(/[\s,]+/).filter(Boolean).map(Number);
+  return v.length === 4 && v.every(Number.isFinite) ? v : null;
+}
+// Maps an svg's user space onto its viewport box, as `preserveAspectRatio` places it.
+function viewBoxMatrix(svg) {
+  const vb = viewBoxOf(svg);
+  if (!vb || vb[2] <= 0 || vb[3] <= 0) return IDENTITY;
+  const own = box(svg);
+  const w = own ? own[2] : parseFloat(svg.getAttribute("width")) || vb[2];
+  const h = own ? own[3] : parseFloat(svg.getAttribute("height")) || vb[3];
+  let sx = w / vb[2], sy = h / vb[3];
+  const [align, mode] = (svg.getAttribute("preserveAspectRatio") || "xMidYMid meet").trim().split(/\s+/);
+  let tx = -vb[0] * sx, ty = -vb[1] * sy;
+  if (align !== "none") {
+    sx = sy = mode === "slice" ? Math.max(sx, sy) : Math.min(sx, sy);
+    tx = -vb[0] * sx; ty = -vb[1] * sy;
+    const part = (key, free) => (align.includes(key + "Mid") ? free / 2 : align.includes(key + "Max") ? free : 0);
+    tx += part("x", w - vb[2] * sx);
+    ty += part("Y", h - vb[3] * sy);
+  }
+  return [sx, 0, 0, sy, tx, ty];
+}
+// An SVG node's own transform: its attribute, or a nested svg's placement.
+function svgNodeMatrix(n) {
+  if (n.localName === "svg") {
+    const at = (name) => parseFloat(n.getAttribute(name)) || 0;
+    return mul(translation(at("x"), at("y")), viewBoxMatrix(n));
+  }
+  return asArray(svgMatrix(n.getAttribute("transform")));
+}
+// Maps `el`'s user space into `owner`'s user space.
+function svgChain(el, owner) {
+  let m = IDENTITY;
+  for (let n = el; n && n !== owner; n = n.parentElement) m = mul(svgNodeMatrix(n), m);
+  return m;
 }
 
 // ---- SVG geometry ----
@@ -477,15 +602,27 @@ class Node extends EventTarget {
       for (const c of child.childNodes) this.insertBefore(c, ref);
       return child;
     }
-    if (S.phase === "play" && child.isConnected) assertSetup("insertBefore");
+    if (S.phase === "play") {
+      if (child.isConnected) assertSetup("insertBefore");
+      N.insert(this.__i, child.__i, ref ? ref.__i : -1);
+      if (this.isConnected) S.transient.add(child);
+      S.generation = N.generation();
+      return child;
+    }
     N.insert(this.__i, child.__i, ref ? ref.__i : -1);
-    S.layoutDirty = S.layoutDirty || S.phase === "setup";
+    S.layoutDirty = true;
     return child;
   }
   removeChild(child) {
     if (!child || child.parentNode !== this) fail("NotFoundError: the node to remove is not a child of this node");
+    if (S.phase === "play") {
+      if (child.isConnected && !isTransient(child)) assertSetup("removeChild");
+      N.remove(child.__i);
+      S.generation = N.generation();
+      return child;
+    }
     N.remove(child.__i);
-    S.layoutDirty = S.layoutDirty || S.phase === "setup";
+    S.layoutDirty = true;
     return child;
   }
   replaceChild(next, old) { this.insertBefore(next, old); this.removeChild(old); return old; }
@@ -609,7 +746,10 @@ class Element extends ParentNode {
   get dataset() { return dataset(this); }
   get attributes() {
     const flat = N.attrs(this.__i), out = [];
-    for (let k = 0; k < flat.length; k += 2) out.push({ name: flat[k], value: this.getAttribute(flat[k]), localName: flat[k] });
+    for (let k = 0; k < flat.length; k += 2) {
+      const value = this.getAttribute(flat[k]);
+      out.push({ name: flat[k], value, localName: flat[k], nodeName: flat[k], nodeValue: value });
+    }
     return out;
   }
   getAttributeNames() { return this.attributes.map((a) => a.name); }
@@ -689,14 +829,17 @@ class Element extends ParentNode {
   getClientRects() { return [rectOf(this)]; }
   get offsetParent() {
     if (this === document.body || this === document.documentElement || !this.isConnected) return null;
-    if (S.styles.get(this.__i)?.get("display") === "none") return null;
-    // An inline box lays out inside its parent's text.
-    return box(this) || selfSize(this, 0) != null || this.parentElement?.offsetParent ? document.body : null;
+    const own = S.styles.get(this.__i);
+    if (own?.get("display") === "none" || own?.get("position") === "fixed") return null;
+    // An inline box lays out inside its parent's text, and an element added
+    // while the timeline plays has no probed box.
+    const shown = box(this) || placed(this) || isTransient(this) || this.parentElement?.offsetParent;
+    return shown ? positionedAncestor(this) || document.body : null;
   }
   get offsetWidth() { return offsetSize(this, 0); }
   get offsetHeight() { return offsetSize(this, 1); }
-  get offsetLeft() { return rectOf(this).x; }
-  get offsetTop() { return rectOf(this).y; }
+  get offsetLeft() { return offsetIn(this, 0); }
+  get offsetTop() { return offsetIn(this, 1); }
   get clientWidth() { return offsetSize(this, 0); }
   get clientHeight() { return offsetSize(this, 1); }
   get scrollWidth() { return offsetSize(this, 0); }
@@ -713,6 +856,16 @@ class Element extends ParentNode {
   getAnimations() { return []; }
   animate() { fail("the Web Animations API runs in wall-clock time; animate with GSAP or CSS"); }
   attachShadow() { fail("shadow DOM is not supported at compile time"); }
+}
+// The untransformed layout offset from the offset parent.
+function offsetIn(el, axis) {
+  if (el === document.body || el === document.documentElement || !el.isConnected) return 0;
+  const parent = el.offsetParent;
+  return layoutOrigin(el)[axis] - (parent && parent !== document.body ? layoutOrigin(parent)[axis] : 0);
+}
+function isTransient(el) {
+  for (let n = el; n; n = n.parentNode) if (S.transient.has(n)) return true;
+  return false;
 }
 function attrKey(el, name) {
   name = String(name);
@@ -763,14 +916,26 @@ class SVGElement extends Element {
   }
   get viewportElement() { return this.ownerSVGElement; }
   getBBox() { return bboxOf(this); }
-  getCTM() { return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }; }
-  getScreenCTM() { return this.getCTM(); }
+  // The map from user space into the nearest svg viewport.
+  getCTM() {
+    const owner = this.ownerSVGElement;
+    return asMatrix(owner ? mul(viewBoxMatrix(owner), svgChain(this, owner)) : viewBoxMatrix(this));
+  }
+  getScreenCTM() {
+    return asMatrix(this.ownerSVGElement ? globalMatrix(this) : mul(globalMatrix(this), viewBoxMatrix(this)));
+  }
   get transform() {
     const el = this;
+    const item = () => ({ type: 1, matrix: svgMatrix(el.getAttribute("transform")) });
     return { baseVal: {
       get numberOfItems() { return el.getAttribute("transform") ? 1 : 0; },
-      consolidate() { return el.getAttribute("transform") ? { matrix: svgMatrix(el.getAttribute("transform")) } : null; },
+      getItem(n) { if (n !== 0 || !el.getAttribute("transform")) fail("IndexSizeError: no such transform item"); return item(); },
+      consolidate() { return el.getAttribute("transform") ? item() : null; },
     } };
+  }
+  get viewBox() {
+    const v = viewBoxOf(this) || [0, 0, 0, 0];
+    return { baseVal: { x: v[0], y: v[1], width: v[2], height: v[3] }, animVal: { x: v[0], y: v[1], width: v[2], height: v[3] } };
   }
   getTotalLength() { return N.path(shapePath(this)); }
   getPointAtLength(at) {
@@ -943,9 +1108,14 @@ G.__director = {
       tl.totalTime(local + 0.000001, true);
       tl.totalTime(local, false);
     }
+    for (const n of S.transient) {
+      if (n.isConnected) fail(`scripts left a <${n.nodeName.toLowerCase()}> in the document while the timeline played (at ${t}s); remove it before the frame ends or build it during setup`);
+    }
+    S.transient.clear();
     if (N.generation() !== S.generation) fail(`scripts changed the document structure while the timeline played (at ${t}s)`);
     const out = [];
     for (const i of S.touched) {
+      if (!N.connected(i)) continue;
       const now = S.styles.get(i) || new Map();
       const before = S.last.get(i) || new Map();
       for (const [k, v] of now) if (before.get(k) !== v) out.push(i, k, v);

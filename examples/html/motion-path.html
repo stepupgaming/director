@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  @font-face { font-family:Roboto; src:url("../../crates/director-core/assets/fonts/Roboto-Bold.ttf"); font-weight:700; }
+  html, body { margin:0; background:#0f172a; }
+  * { box-sizing:border-box; }
+  #stage { position:relative; width:100%; height:100%; overflow:hidden; background:linear-gradient(160deg,#0f172a 0%,#1e1b4b 100%); font-family:Roboto; color:#fff; }
+  #title { position:absolute; left:140px; top:90px; margin:0; font-size:88px; font-weight:700; }
+  #track { position:absolute; left:160px; top:260px; width:1600px; height:640px; transform:rotate(-4deg); }
+  #track svg { display:block; }
+  #rocket { position:absolute; left:120px; top:120px; width:96px; height:56px; border-radius:28px 8px 8px 28px; background:#f472b6; }
+  #morph-wrap { position:absolute; left:1560px; top:700px; }
+</style></head><body>
+<div id="stage" data-composition-id="motion-path" data-width="1920" data-height="1080" data-fps="30" data-duration="5">
+  <h1 id="title">Paths and morphs, natively.</h1>
+  <div id="track">
+    <svg width="1600" height="640" viewBox="0 0 800 320">
+      <path id="route" d="M40,260 C200,20 360,20 420,160 S640,320 760,60" fill="none" stroke="#6366f1" stroke-width="4" stroke-dasharray="10 10"/>
+    </svg>
+  </div>
+  <div id="rocket"></div>
+  <div id="morph-wrap">
+    <svg width="320" height="320" viewBox="0 0 100 100">
+      <path id="shape" d="M15,15 L85,15 L85,85 L15,85 Z" fill="#22d3ee"/>
+      <path id="star" d="M50,5 L61,38 L95,38 L67,58 L78,92 L50,72 L22,92 L33,58 L5,38 L39,38 Z" fill="none"/>
+    </svg>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/MotionPathPlugin.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/MorphSVGPlugin.min.js"></script>
+<script>
+  gsap.registerPlugin(MotionPathPlugin, MorphSVGPlugin);
+  window.__timelines = window.__timelines || {};
+  const tl = gsap.timeline({ paused: true });
+  tl.from("#title", { y: -40, opacity: 0, duration: 0.6, ease: "power3.out" }, 0)
+    .to("#rocket", {
+      duration: 4,
+      ease: "power1.inOut",
+      motionPath: { path: "#route", align: "#route", alignOrigin: [0.5, 0.5], autoRotate: true },
+    }, 0)
+    .to("#shape", { morphSVG: "#star", duration: 1.6, ease: "sine.inOut", repeat: 1, yoyo: true }, 1)
+    .to("#shape", { fill: "#facc15", duration: 1.6, ease: "sine.inOut", repeat: 1, yoyo: true }, 1);
+  window.__timelines["motion-path"] = tl;
+</script>
+</body></html>

@@ -8,6 +8,7 @@ use director_html::{
     TimelineValue,
 };
 use director_render::render_frame;
+use director_scene::html::{SmilCalcMode, SmilEffect};
 use director_scene::NodeBody;
 use std::path::PathBuf;
 
@@ -397,6 +398,23 @@ fn gsap_motion_example_compiles_to_tracks() {
 }
 
 #[test]
+fn motion_path_example_follows_its_route_and_morphs() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/html/motion-path.html");
+    let mut c = compile_file(&path, opts()).unwrap();
+    // The route ends at (760, 60) in a 2x viewBox inside a box turned -4deg
+    // about its center, which puts the end at (1664.295, 330.262) on the page.
+    // The rocket's center starts at (168, 148).
+    near(at(track(&c, "rocket", "translate-x"), 4.0), 1496.295, 0.05);
+    near(at(track(&c, "rocket", "translate-y"), 4.0), 182.262, 0.05);
+    assert!(track(&c, "rocket", "rotate-z").keyframes.len() > 2);
+    let (w, h) = (c.director.width, c.director.height);
+    let p = frame(&mut c, 4.0);
+    let rocket = pixel(&p, w, 1664, 330);
+    assert!(rocket[0] > 200 && rocket[2] > 150, "{rocket:?}");
+    assert_eq!(h, 1080);
+}
+
+#[test]
 fn boa_reads_left_operands_before_the_right_assigns() {
     // GSAP's grid detection runs `max < (max = rect.left)`; the vendored Boa
     // copies the left local first, matching Node.
@@ -543,6 +561,105 @@ fn draw_svg_and_path_geometry() {
     );
     let p = frame(&mut c, 0.0);
     assert!(blue(pixel(&p, 64, 32, 48)), "{:?}", pixel(&p, 64, 32, 48));
+}
+
+const MOTION_PATH: &str = "<script src='https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/MotionPathPlugin.min.js'></script>";
+
+fn motion_page(markup: &str, motion_path: &str) -> CompiledHtml {
+    let source = page(&format!(
+        "gsap.registerPlugin(MotionPathPlugin); \
+         window.__timelines = {{main: gsap.timeline({{paused: true}}).to('#box', {{duration: 1, ease: 'none', motionPath: {motion_path}}})}}"
+    ))
+        .replace("<div id='box'></div>", &format!("<div id='box'></div>{markup}"))
+        .replace(GSAP, &format!("{GSAP}{MOTION_PATH}"));
+    compile(&source, opts()).unwrap_or_else(|e| panic!("{motion_path}: {e}"))
+}
+
+#[test]
+fn motion_path_follows_path_strings_and_point_lists() {
+    // References: GSAP 3.14.2 MotionPathPlugin at progress 0.2 and 0.6.
+    let c = motion_page("", "{path: 'M0,0 C40,80 80,-40 120,40', autoRotate: true}");
+    let (x, y, r) = (track(&c, "box", "translate-x"), track(&c, "box", "translate-y"), track(&c, "box", "rotate-z"));
+    for (t, ex, ey, er) in [(0.2, 18.103, 23.925, 35.715), (0.6, 73.663, 13.759, -20.323), (1.0, 120.0, 40.0, 63.435)] {
+        near(at(x, t), ex, 0.02);
+        near(at(y, t), ey, 0.02);
+        near(at(r, t), er, 0.02);
+    }
+    let c = motion_page("", "{path: [{x: 0, y: 0}, {x: 60, y: 60}, {x: 120, y: 0}], curviness: 1.5}");
+    let (x, y) = (track(&c, "box", "translate-x"), track(&c, "box", "translate-y"));
+    for (t, ex, ey) in [(0.2, 18.225, 30.214), (0.6, 76.691, 54.865)] {
+        near(at(x, t), ex, 0.02);
+        near(at(y, t), ey, 0.02);
+    }
+}
+
+#[test]
+fn motion_path_aligns_through_view_boxes_and_ancestor_transforms() {
+    // The svg draws 128 user units into 64 px and its wrapper shifts it 4 px
+    // right, so the path runs from (8, 48) to (64, 48) on the page.
+    let mut c = motion_page(
+        "<div style='position:absolute;left:0;top:0;transform:translateX(4px)'>\
+         <svg width='64' height='64' viewBox='0 0 128 128' style='display:block'><path id='p' d='M8,96 L120,96' fill='none'/></svg></div>",
+        "{path: '#p', align: '#p', alignOrigin: [0.5, 0.5], autoRotate: true}",
+    );
+    // The box's center starts at (30, 30). The y offset and the flat path's
+    // rotation hold, so they bake.
+    let x = track(&c, "box", "translate-x");
+    for (t, ex) in [(0.0, -22.0), (0.5, 6.0), (1.0, 34.0)] {
+        near(at(x, t), ex, 0.02);
+    }
+    assert!(tracks(&c).iter().all(|t| t.property != "translate-y" && t.property != "rotate-z"));
+    let p = frame(&mut c, 0.0);
+    assert!(blue(pixel(&p, 64, 8, 48)) && !blue(pixel(&p, 64, 8, 30)) && !blue(pixel(&p, 64, 30, 48)));
+    let p = frame(&mut c, 0.5);
+    assert!(blue(pixel(&p, 64, 36, 48)) && !blue(pixel(&p, 64, 8, 48)));
+}
+
+#[test]
+fn morph_svg_interpolates_paths() {
+    let morph = "<script src='https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/MorphSVGPlugin.min.js'></script>\
+        <script>gsap.registerPlugin(MorphSVGPlugin); MorphSVGPlugin.convertToPath('#c'); \
+        window.__timelines = {main: gsap.timeline({paused: true}).to('#a', {morphSVG: '#b', duration: 1, ease: 'none'})}</script>";
+    let mut c = svg_page(
+        "",
+        "<path id='a' d='M8,8 L56,8 L56,56 L8,56 Z' fill='blue'/>\
+         <path id='b' d='M32,2 C48,2 62,16 62,32 C62,48 48,62 32,62 C16,62 2,48 2,32 C2,16 16,2 32,2 Z' fill='none'/>\
+         <circle id='c' cx='32' cy='32' r='2' fill='red'/>",
+        morph,
+    );
+    let p = frame(&mut c, 0.0);
+    assert!(blue(pixel(&p, 64, 10, 10)) && !blue(pixel(&p, 64, 4, 32)));
+    let p = frame(&mut c, 1.5);
+    assert!(!blue(pixel(&p, 64, 10, 10)) && blue(pixel(&p, 64, 4, 32)));
+    // convertToPath swapped the circle for a path in place.
+    assert!(close(pixel(&p, 64, 32, 32), [255, 0, 0, 255]), "{:?}", pixel(&p, 64, 32, 32));
+    // Every frame, the end path GSAP writes back included, interpolates.
+    let doc = export_scene(&c.director).unwrap();
+    let modes: Vec<_> = doc
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.body {
+            NodeBody::Html(h) => match &h.content.as_ref()?.body {
+                NodeBody::SvgSmil(s) => Some(s),
+                _ => None,
+            },
+            _ => None,
+        })
+        .flat_map(|s| &s.animations)
+        .filter_map(|a| match &a.effect {
+            SmilEffect::Attribute { name, mode, .. } if name == "d" => Some(*mode),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(modes, [SmilCalcMode::Linear]);
+}
+
+#[test]
+fn helper_elements_must_leave_before_the_frame_ends() {
+    // GSAP's measuring helpers add and remove elements mid-timeline.
+    run("gsap.to('#box', {x: 10, duration: 1, onUpdate() { const i = document.createElement('i'); document.body.appendChild(i); i.getBoundingClientRect(); i.remove(); }})");
+    let e = refused(&page("gsap.to('#box', {x: 10, duration: 1, onUpdate() { document.body.appendChild(document.createElement('i')); }})"));
+    assert!(e.contains("scripts left a <i> in the document"), "{e}");
 }
 
 /// A 200x64 page of 20px Roboto on 24px lines holding `body`.
