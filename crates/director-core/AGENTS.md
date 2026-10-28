@@ -291,6 +291,10 @@ Taffy 0.9 passes a known size to the measure closure as the border box and the
 available space as the content box. The closure hands `Element::measure` the
 content size for a known axis, so padded text wraps at the width it paints at
 (`director-html/tests/padded_text.rs`).
+After the parallel `update` pass, `Director::update` calls `Element::pre_layout`
+on every visited node, one at a time; `true` marks the node's style dirty, so a
+measured node is measured again. HTML text reads the live sizes its atomic
+inline boxes published while updating.
 `run_post_layout` runs every `post_layout` first, then moves each node whose
 `Element::layout_origin` returns a point to that origin in its parent's box.
 HTML inline boxes read their slot from the text line a sibling laid out.

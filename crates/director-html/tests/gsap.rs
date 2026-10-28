@@ -258,7 +258,6 @@ fn gsap_tracks_survive_scene_export() {
 fn page_scripts_fail_with_context() {
     for (source, message) in [
         (page("gsap.to('#box', {textIndent: 4, duration: 1})"), "'text-indent' on #box"),
-        (page("gsap.to('#word', {fontSize: 30, duration: 1})"), "keeps its line box"),
         (
             page("gsap.fromTo('#box', {clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)'}, {clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)', duration: 1})"),
             "different corner counts",
@@ -747,6 +746,46 @@ fn inline_spans_animate_opacity_and_color_without_transforms() {
     let p = frame(&mut c, 1.5);
     assert_eq!(ink(&p, 30..56, 0..64), 0, "the span faded out in place");
     assert!(ink(&p, 0..26, 2..22) > 0 && ink(&p, 60..90, 2..22) > 0);
+}
+
+#[test]
+fn animated_inline_boxes_resize_their_line_live() {
+    // "Ab Cd Ef" at 20px puts Ef at about 58..80. Cd growing to 40px pushes it
+    // past 80.
+    let mut c = line_page("<p>Ab <span id='w'>Cd</span> Ef</p>", "gsap.to('#w', {fontSize: 40, duration: 1, ease: 'none'})");
+    track(&c, "w", "font-size");
+    let p = frame(&mut c, 0.0);
+    assert!(ink(&p, 60..80, 2..22) > 0);
+    assert_eq!(ink(&p, 84..110, 0..64), 0);
+    let p = frame(&mut c, 1.5);
+    assert!(ink(&p, 84..110, 0..64) > 0, "Ef moved right of the grown span");
+    let p = frame(&mut c, 0.0);
+    assert_eq!(ink(&p, 84..110, 0..64), 0, "seeking back shrinks the span again");
+    let doc = export_scene(&c.director).unwrap();
+    let auto = doc.nodes.iter().any(|n| {
+        matches!(&n.body, NodeBody::Html(h) if matches!(h.inline, Some(director_scene::html::InlineFlow::Box { auto_width: true, auto_height: true, .. })))
+    });
+    assert!(auto, "the box records that its size follows its text");
+
+    // The paragraph's font size reaches the span, and both grow on one line.
+    let mut c = line_page(
+        "<p id='t'>Ab <span id='w'>Cd</span> Ef</p>",
+        "gsap.to('#w', {opacity: 0.99, duration: 1}); gsap.to('#t', {fontSize: 30, duration: 1, ease: 'none'})",
+    );
+    let p = frame(&mut c, 1.5);
+    // At 30px, Ab Cd is about 80px wide, so Ef starts past 85.
+    assert!(ink(&p, 90..125, 0..64) > 0, "Ef follows the grown span");
+
+    // A padding tween on an inline block pushes its text and its neighbours.
+    let mut c = line_page(
+        "<p>Ab <span id='w' style='display:inline-block'>Cd</span> Ef</p>",
+        "gsap.to('#w', {paddingLeft: 30, duration: 1, ease: 'none'})",
+    );
+    let p = frame(&mut c, 0.0);
+    assert!(ink(&p, 30..56, 2..22) > 0);
+    let p = frame(&mut c, 1.5);
+    assert_eq!(ink(&p, 30..58, 2..22), 0, "the padding pushed Cd right");
+    assert!(ink(&p, 88..112, 2..22) > 0, "and Ef after it");
 }
 
 #[test]

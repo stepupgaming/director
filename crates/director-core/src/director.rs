@@ -763,7 +763,14 @@ impl Director {
             }
         });
 
-        // Pass 3: Audio Reactive Bindings
+        // Pass 3: elements read what other nodes published during the parallel update.
+        for node in self.scene.nodes.iter_mut().flatten() {
+            if (node.last_visit_time - global_time).abs() < 0.0001 && node.element.pre_layout() {
+                node.dirty_style = true;
+            }
+        }
+
+        // Pass 4: Audio Reactive Bindings
         // Process after animations so audio values take priority
         let analyzer = self.audio_analyzer.clone();
         for (node_id, node) in self.scene.iter_alive_mut() {

@@ -10,7 +10,7 @@
 - `src/channel.rs` owns `Channel`, `Keyframe`, `Easing` and `Rgba`.
 - `src/effect.rs` owns `Effect`, `EffectParam` and `Uniform`.
 - `src/layout.rs` owns `LayoutStyle`, the Taffy-free mirror of a node's layout style.
-- `src/html.rs` owns the `director-html` bodies: `HtmlBody` with its computed CSS paint, content, CSS animations, Paper shader and `InlineFlow` link (a text leaf's placeholders, or an atomic box's slot); `HtmlVideoBody`; `HtmlCaptureBody` with deduplicated sampled graphs, each carrying the sampled layout rect of every node in `rects`; and `SvgSmilBody` with SMIL animations.
+- `src/html.rs` owns the `director-html` bodies: `HtmlBody` with its computed CSS paint, content, CSS animations, Paper shader and `InlineFlow` link (a text leaf's placeholders, or an atomic box's slot with its auto axes and box sizing); `HtmlVideoBody`; `HtmlCaptureBody` with deduplicated sampled graphs, each carrying the sampled layout rect of every node in `rects`; and `SvgSmilBody` with SMIL animations.
 - `src/timeline.rs` owns tracks, clips and transitions. `src/audio.rs` owns the mixer tracks and effect chains. `src/entity.rs` owns semantic entities and their samples.
 
 ## Local Contracts

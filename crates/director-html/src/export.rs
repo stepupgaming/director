@@ -55,9 +55,12 @@ pub(crate) fn html_body(element: &HtmlElement, cx: &mut ExportContext) -> Result
                     flow: flow.id,
                     boxes: element.base_paint.placeholders.clone(),
                 },
-                InlineLink::Box(flow, slot) => doc::InlineFlow::Box {
+                InlineLink::Box(flow, slot, sizing) => doc::InlineFlow::Box {
                     flow: flow.id,
                     slot: *slot as u32,
+                    auto_width: sizing.auto_width,
+                    auto_height: sizing.auto_height,
+                    content_box: sizing.content_box,
                 },
             }),
         })),

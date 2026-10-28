@@ -9,7 +9,7 @@
 use crate::animation::Animation;
 use crate::background_box::AxisRepeat;
 use crate::box_edges::BoxEdge;
-use crate::element::{HtmlElement, InlineFlow, InlineLink};
+use crate::element::{AtomicSizing, HtmlElement, InlineFlow, InlineLink};
 use crate::gradient::NativeGradient;
 use crate::shader::PaperPaint;
 use crate::style::{
@@ -86,7 +86,11 @@ fn decode_html(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn El
     element.inline = match &body.inline {
         None => None,
         Some(doc::InlineFlow::Text { flow: id, .. }) => Some(InlineLink::Text(flow(*id)?)),
-        Some(doc::InlineFlow::Box { flow: id, slot }) => Some(InlineLink::Box(flow(*id)?, *slot as usize)),
+        Some(doc::InlineFlow::Box { flow: id, slot, auto_width, auto_height, content_box }) => Some(InlineLink::Box(
+            flow(*id)?,
+            *slot as usize,
+            AtomicSizing { auto_width: *auto_width, auto_height: *auto_height, content_box: *content_box },
+        )),
     };
     Ok(Box::new(element))
 }

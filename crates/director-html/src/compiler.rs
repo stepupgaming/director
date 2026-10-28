@@ -3,7 +3,7 @@ use crate::{
     assets::AssetStore,
     computed::ComputedStyle,
     css::{diagnostic, Css, Values},
-    element::{HtmlElement, InlineFlow, InlineLink},
+    element::{AtomicSizing, HtmlElement, InlineFlow, InlineLink},
     style::{self, Metrics, PaintStyle},
     CompileError, CompileOptions, CompiledHtml,
 };
@@ -1694,17 +1694,11 @@ impl Builder {
                     format!("the timeline animates '{}' twice on one element", track.property),
                 )]));
             }
-            if promoted && matches!(track.property.as_str(), "font-size" | "letter-spacing" | "word-spacing" | "line-height") {
-                return Err(CompileError::Diagnostics(vec![diagnostic(
-                    &context,
-                    format!("the timeline animates '{}', but an animated inline span keeps its line box", track.property),
-                )]));
-            }
         }
         // Timeline tracks play like inline styles, so a running @keyframes
         // animation of the same property applies after them and wins.
         let keyframes = std::mem::take(&mut element.animations);
-        element.animations = self.inherit_text(el, specified_font.as_deref(), paint.font_size, tag, promoted);
+        element.animations = self.inherit_text(el, specified_font.as_deref(), paint.font_size, tag);
         for track in tracks {
             let animation = animation::from_track(&track, &paint, metrics)
                 .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
@@ -1831,9 +1825,8 @@ impl Builder {
     /// The parent's text animations that reach `el`. A local `color`,
     /// `letter-spacing`, `word-spacing`, `line-height` or `text-shadow` stops its channel. A
     /// local relative font size scales the parent's, and an absolute one stops
-    /// it. Inline spans on their own line box keep their size, spacing and line
-    /// height, and replaced elements inherit nothing.
-    fn inherit_text(&self, el: ElementRef<'_>, specified_font: Option<&str>, font_size: f32, tag: &str, promoted: bool) -> Vec<animation::Animation> {
+    /// it. Replaced elements inherit nothing.
+    fn inherit_text(&self, el: ElementRef<'_>, specified_font: Option<&str>, font_size: f32, tag: &str) -> Vec<animation::Animation> {
         let Some((parent_font, list)) = self.inherited.last() else { return Vec::new() };
         if list.is_empty() || matches!(tag, "img" | "svg" | "video" | "audio") {
             return Vec::new();
@@ -1852,10 +1845,10 @@ impl Builder {
         };
         let keep = |name: &str| match name {
             "color" => !local(&["color"]),
-            "font-size" => font_scale.is_some() && !promoted,
-            "letter-spacing" => !local(&["letter-spacing"]) && !promoted,
-            "word-spacing" => !local(&["word-spacing"]) && !promoted,
-            "line-height" => !local(&["line-height", "font"]) && !promoted,
+            "font-size" => font_scale.is_some(),
+            "letter-spacing" => !local(&["letter-spacing"]),
+            "word-spacing" => !local(&["word-spacing"]),
+            "line-height" => !local(&["line-height", "font"]),
             _ => !local(&["text-shadow"]),
         };
         list.iter().filter_map(|a| a.inherited(keep, font_scale.unwrap_or(1.0))).collect()
@@ -2077,9 +2070,10 @@ impl Builder {
             let id = self.node(*child, values, start, false, block, depth + 1);
             self.atomic.remove(&child.id());
             let id = id?;
-            boxes.push(self.size_atomic(id, *child)?);
+            let (placeholder, sizing) = self.size_atomic(id, *child)?;
+            boxes.push(placeholder);
             let element = html_mut(&mut self.director, id);
-            element.inline = Some(InlineLink::Box(flow.clone(), slot));
+            element.inline = Some(InlineLink::Box(flow.clone(), slot, sizing));
             self.director.scene.add_child(parent, id);
         }
         let leaf = html_mut(&mut self.director, text);
@@ -2097,8 +2091,13 @@ impl Builder {
     }
 
     /// Sizes the compiled atomic box `id` to its max-content text, makes it
-    /// absolute, and returns its margin box for the parent's line.
-    fn size_atomic(&mut self, id: NodeId, el: ElementRef<'_>) -> Result<director_scene::html::InlinePlaceholder, CompileError> {
+    /// absolute, and returns its margin box for the parent's line and how its
+    /// size follows live text.
+    fn size_atomic(
+        &mut self,
+        id: NodeId,
+        el: ElementRef<'_>,
+    ) -> Result<(director_scene::html::InlinePlaceholder, AtomicSizing), CompileError> {
         let children = self.director.scene.get_node(id).map(|n| n.children.clone()).unwrap_or_default();
         let mut text = html_mut(&mut self.director, id).inline_text_metrics();
         for (i, child) in children.iter().enumerate() {
@@ -2130,6 +2129,11 @@ impl Builder {
             Some(length) => length + edges,
             None => content + edges,
         };
+        let sizing = AtomicSizing {
+            auto_width: style.size.width.into_option().is_none(),
+            auto_height: style.size.height.into_option().is_none(),
+            content_box: style.box_sizing != taffy::style::BoxSizing::BorderBox,
+        };
         let width = border_box(style.size.width, width, left + right);
         let height = border_box(style.size.height, height, top + bottom);
         // A box without text sits on its bottom margin edge.
@@ -2145,11 +2149,12 @@ impl Builder {
         element.set_layout_style(style.clone());
         element.paint.box_node.style = style.clone();
         element.base_paint.box_node.style = style;
-        Ok(director_scene::html::InlinePlaceholder {
+        let placeholder = director_scene::html::InlinePlaceholder {
             width: width + margin.left + margin.right,
             height: height + margin.top + margin.bottom,
             baseline: margin.top + baseline,
-        })
+        };
+        Ok((placeholder, sizing))
     }
 
     fn rich_text<'a>(

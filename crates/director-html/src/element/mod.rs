@@ -7,6 +7,7 @@ use crate::{
     },
 };
 use director_core::{element::TextShadow, Element, RenderError};
+use director_scene::html::InlinePlaceholder;
 use skia_safe::{color_filters, Canvas, Matrix, Rect, M44};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -23,20 +24,35 @@ mod borders;
 mod text;
 
 /// Origins a text paragraph lays out for its atomic inline boxes, relative to
-/// their shared parent, by slot.
+/// their shared parent, by slot, and the live sizes animated boxes publish.
 #[derive(Debug)]
 pub struct InlineFlow {
     /// Names the flow in the scene document.
     pub id: u32,
     slots: Mutex<Vec<(f32, f32)>>,
+    /// Each animated box's margin box this frame, by slot. `None` keeps the
+    /// compiled placeholder.
+    sizes: Mutex<Vec<Option<InlinePlaceholder>>>,
 }
 impl InlineFlow {
     pub fn new(id: u32) -> Arc<Self> {
         Arc::new(Self {
             id,
             slots: Mutex::new(Vec::new()),
+            sizes: Mutex::new(Vec::new()),
         })
     }
+}
+
+/// How an atomic inline box's border box follows its live text and edges.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct AtomicSizing {
+    /// The author's width is `auto`, so the box is as wide as its text.
+    pub auto_width: bool,
+    /// The author's height is `auto`, so the box is as tall as its text.
+    pub auto_height: bool,
+    /// The author's lengths size the content box.
+    pub content_box: bool,
 }
 
 /// A box's part in an inline flow.
@@ -45,7 +61,7 @@ pub enum InlineLink {
     /// The text whose U+FFFC placeholders place the boxes.
     Text(Arc<InlineFlow>),
     /// The box on one slot.
-    Box(Arc<InlineFlow>, usize),
+    Box(Arc<InlineFlow>, usize, AtomicSizing),
 }
 
 /// A length margin in px. `auto` and percents are 0 on an inline box.
@@ -83,6 +99,10 @@ pub struct HtmlElement {
     /// The animated font size, letter spacing, line height and word spacing
     /// on screen. `None` is the base.
     shown_size: Option<TextSize>,
+    /// An animated atomic box's text metrics, once measured.
+    atomic_text: Option<Option<(f32, f32, f32)>>,
+    /// The live placeholders the text paragraph holds. `None` is the base.
+    held_boxes: Option<Vec<InlinePlaceholder>>,
 }
 impl HtmlElement {
     pub fn new(
@@ -111,6 +131,8 @@ impl HtmlElement {
             own_spans: None,
             shown_text: None,
             shown_size: None,
+            atomic_text: None,
+            held_boxes: None,
         }
     }
     fn ellipsizes(&self) -> bool {
@@ -177,6 +199,50 @@ impl HtmlElement {
             .as_ref()
             .map_or(1, |p| p.line_number().max(1));
         Some((size.width, size.height, baseline + (lines - 1) as f32 * line))
+    }
+    /// Sizes an atomic inline box from its live text metrics, padding and
+    /// border, as `size_atomic` did at compile time, and returns its margin box
+    /// as the text line sees it.
+    fn place_atomic(&mut self, sizing: AtomicSizing, text: Option<(f32, f32, f32)>) -> InlinePlaceholder {
+        use taffy::style::{Dimension, LengthPercentage};
+        let edges = |s: &Style| {
+            let edge = |p: LengthPercentage, b: LengthPercentage| resolve(p, 0.0) + resolve(b, 0.0);
+            let top = edge(s.padding.top, s.border.top);
+            (
+                edge(s.padding.left, s.border.left) + edge(s.padding.right, s.border.right),
+                top + edge(s.padding.bottom, s.border.bottom),
+                top,
+            )
+        };
+        let (base_x, base_y, _) = edges(&self.base_style);
+        let (x, y, top) = edges(&self.style);
+        let px = |d: Dimension| d.into_option().unwrap_or(0.0);
+        let axis = |current: Dimension, base: Dimension, auto: bool, content: Option<f32>, base_edges: f32, edges: f32| {
+            if current != base {
+                // A width or height track writes the author's length.
+                px(current) + if sizing.content_box { edges } else { 0.0 }
+            } else if auto {
+                content.unwrap_or(px(base) - base_edges) + edges
+            } else if sizing.content_box {
+                px(base) - base_edges + edges
+            } else {
+                px(base)
+            }
+        };
+        let width = axis(self.style.size.width, self.base_style.size.width, sizing.auto_width, text.map(|t| t.0), base_x, x);
+        let height = axis(self.style.size.height, self.base_style.size.height, sizing.auto_height, text.map(|t| t.1), base_y, y);
+        // A box without text sits on its bottom margin edge.
+        let baseline = text.map_or(height, |t| top + t.2);
+        let margin = self.style.margin.map(margin_px);
+        self.style.size = Size {
+            width: taffy::prelude::length(width),
+            height: taffy::prelude::length(height),
+        };
+        InlinePlaceholder {
+            width: width + margin.left + margin.right,
+            height: height + margin.top + margin.bottom,
+            baseline: margin.top + baseline,
+        }
     }
     fn content_rect(&self, rect: Rect) -> Rect {
         let left = resolve(self.style.padding.left, rect.width()) + self.style.border.left.value();
@@ -371,7 +437,7 @@ impl Element for HtmlElement {
         }
     }
     fn layout_origin(&self) -> Option<(f32, f32)> {
-        let Some(InlineLink::Box(flow, slot)) = &self.inline else {
+        let Some(InlineLink::Box(flow, slot, _)) = &self.inline else {
             return None;
         };
         let (x, y) = *flow.slots.lock().unwrap().get(*slot)?;
@@ -438,6 +504,7 @@ impl Element for HtmlElement {
                 }
                 if recolor || relayout {
                     crate::compiler::prepare_paragraph(text, &self.paint);
+                    self.held_boxes = None;
                 }
                 // Text shadows paint from the node at draw time.
                 let same = |a: &TextShadow, b: &TextShadow| a.color == b.color && a.blur == b.blur && a.offset == b.offset;
@@ -448,7 +515,47 @@ impl Element for HtmlElement {
             }
             content.update(self.media_start + (time - self.start).max(0.0) * self.playback_rate);
         }
+        // An animated atomic box publishes its live margin box for its text line.
+        if let Some(InlineLink::Box(flow, slot, sizing)) = self.inline.clone() {
+            if !self.animations.is_empty() {
+                if relayout || self.atomic_text.is_none() {
+                    self.atomic_text = Some(self.inline_text_metrics());
+                }
+                let placeholder = self.place_atomic(sizing, self.atomic_text.flatten());
+                let mut sizes = flow.sizes.lock().unwrap();
+                if sizes.len() <= slot {
+                    sizes.resize(slot + 1, None);
+                }
+                sizes[slot] = Some(placeholder);
+            }
+        }
         relayout || self.style != old_style
+    }
+    fn pre_layout(&mut self) -> bool {
+        let Some(InlineLink::Text(flow)) = &self.inline else {
+            return false;
+        };
+        let boxes: Vec<InlinePlaceholder> = {
+            let sizes = flow.sizes.lock().unwrap();
+            if sizes.is_empty() {
+                return false;
+            }
+            let base = &self.base_paint.placeholders;
+            base.iter().enumerate().map(|(i, b)| sizes.get(i).copied().flatten().unwrap_or(*b)).collect()
+        };
+        let changed = *self.held_boxes.as_ref().unwrap_or(&self.base_paint.placeholders) != boxes;
+        self.paint.placeholders = boxes;
+        if changed {
+            if let Some(text) = self
+                .content
+                .as_mut()
+                .and_then(|c| c.as_any_mut().downcast_mut::<director_core::node::TextNode>())
+            {
+                crate::compiler::prepare_paragraph(text, &self.paint);
+            }
+            self.held_boxes = Some(self.paint.placeholders.clone());
+        }
+        changed
     }
     fn shares_3d(&self) -> bool {
         self.paint.preserve_3d

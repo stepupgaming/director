@@ -40,8 +40,19 @@ pub struct HtmlBody {
 pub enum InlineFlow {
     /// The text holds U+FFFC once per box, in box order, sized by `boxes`.
     Text { flow: u32, boxes: Vec<InlinePlaceholder> },
-    /// The box sits on placeholder `slot` of the text.
-    Box { flow: u32, slot: u32 },
+    /// The box sits on placeholder `slot` of the text. An `auto` width or
+    /// height follows the box's live text, and `content_box` lengths add its
+    /// live padding and border.
+    Box {
+        flow: u32,
+        slot: u32,
+        #[serde(default)]
+        auto_width: bool,
+        #[serde(default)]
+        auto_height: bool,
+        #[serde(default)]
+        content_box: bool,
+    },
 }
 
 /// One atomic inline box as its text line sees it, margins included, in px.

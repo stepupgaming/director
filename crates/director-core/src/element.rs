@@ -137,6 +137,14 @@ pub trait Element: std::fmt::Debug + ElementClone {
     /// * `true` if the element's visual appearance changed (requiring a repaint).
     fn update(&mut self, time: f64) -> bool;
 
+    /// Runs after every node's `update` and before layout, one node at a time,
+    /// so an element can read what other nodes published while they updated in
+    /// parallel. Returns `true` when its layout must be measured again. HTML
+    /// text picks up the live sizes of its atomic inline boxes here.
+    fn pre_layout(&mut self) -> bool {
+        false
+    }
+
     /// Paint depends on local time, so a static-subtree cache key includes that time.
     fn varies_with_time(&self) -> bool {
         false
