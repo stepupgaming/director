@@ -7,7 +7,7 @@ mod dom;
 pub(crate) mod ease;
 
 use crate::animation::{
-    border_side, filter_default as default_amount, filter_scalar, filter_shadow_color, indexed, shadow_scalar, Parts,
+    border_side, box_side, filter_default as default_amount, filter_scalar, filter_shadow_color, indexed, shadow_scalar, Parts,
     COMPONENTS, NO_TEXT_SHADOW,
     FILTERS as FILTER_CHANNELS, NO_BOX_SHADOW,
 };
@@ -88,6 +88,17 @@ const NATIVE: &[&str] = &[
     "background-size",
     "font-size",
     "letter-spacing",
+    "line-height",
+    "padding",
+    "margin",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "margin-top",
+    "margin-right",
+    "margin-bottom",
+    "margin-left",
 ];
 
 struct Script {
@@ -881,6 +892,19 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
         "border-top-left-radius" => length(paint.corners[0].0.into_raw(), channel),
         "font-size" => Ok(Val::Num(paint.font_size as f64)),
         "letter-spacing" => Ok(Val::Num(paint.letter_spacing as f64)),
+        "line-height" => paint
+            .line_height
+            .map(|h| Val::Num(h as f64))
+            .ok_or_else(|| "GSAP 'line-height' needs a line-height on the element".to_string()),
+        c if box_side(c).is_some() => {
+            let side = box_side(c).map_or(0, |(_, side)| side);
+            let raw = if c.starts_with("padding") {
+                [style.padding.top, style.padding.right, style.padding.bottom, style.padding.left][side].into_raw()
+            } else {
+                [style.margin.top, style.margin.right, style.margin.bottom, style.margin.left][side].into_raw()
+            };
+            length(raw, c)
+        }
         "filter-drop-shadow-color" => Ok(filter_shadow_color(&paint.filters).map_or_else(|| filter_default(channel), Val::color)),
         c if FILTER_CHANNELS.contains(&c) => Ok(filter_scalar(&paint.filters, c).map_or_else(|| filter_default(c), |v| Val::Num(v as f64))),
         c if border_side(c).is_some() => {
@@ -928,6 +952,7 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
 fn tolerance(channel: &str) -> f64 {
     match channel {
         "opacity" | "color" | "background-color" => 5e-4,
+        "line-height" => 1e-3,
         "filter-blur" | "filter-drop-shadow-x" | "filter-drop-shadow-y" | "filter-drop-shadow-blur" => 0.02,
         "filter-hue-rotate" => 0.01,
         c if c.starts_with("filter-") => 5e-4,
@@ -1292,6 +1317,65 @@ pub(crate) fn tracks(
                     let samples = axes.iter().map(|a| Val::Num(a.map_or(0.0, |(_, v)| v))).collect();
                     channels.push((channel, property, samples));
                 }
+            }
+            continue;
+        }
+        // Line heights key as multiples of the frame's font size.
+        if property == "line-height" {
+            let font = |f: usize| -> Result<f64, String> {
+                let sampled = series.get("font-size").and_then(|s| s[f].as_deref());
+                match sampled.and_then(|t| t.trim().strip_suffix("px")?.trim().parse().ok()) {
+                    Some(size) => Ok(size),
+                    None => match base("font-size")? {
+                        Val::Num(size) => Ok(size),
+                        Val::Color(_) => unreachable!(),
+                    },
+                }
+            };
+            let samples = values
+                .iter()
+                .enumerate()
+                .map(|(f, v)| {
+                    let Some(text) = v.as_deref() else { return base("line-height") };
+                    let t = text.trim();
+                    match t.strip_suffix("px") {
+                        Some(n) => n.trim().parse::<f64>().ok().map(|n| n / font(f).unwrap_or(1.0).max(f64::EPSILON)),
+                        None => t.parse::<f64>().ok(),
+                    }
+                    .map(Val::Num)
+                    .ok_or_else(|| format!("GSAP animates line-height as '{text}'; native tracks take px or a number"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            channels.push(("line-height".into(), property, samples));
+            continue;
+        }
+        // `padding` and `margin` list one to four lengths, top, right, bottom, left.
+        if property == "padding" || property == "margin" {
+            let sides = values
+                .iter()
+                .map(|v| {
+                    v.as_deref()
+                        .map(|text| {
+                            let parts = crate::css::split(text.trim(), false);
+                            let pick: &[usize; 4] = match parts.len() {
+                                1 => &[0, 0, 0, 0],
+                                2 => &[0, 1, 0, 1],
+                                3 => &[0, 1, 2, 1],
+                                4 => &[0, 1, 2, 3],
+                                _ => return Err(format!("GSAP {property} '{text}' lists {} lengths", parts.len())),
+                            };
+                            pick.iter().map(|&k| sample(property, &parts[k])).collect::<Result<Vec<_>, _>>()
+                        })
+                        .transpose()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            for (side, name) in ["top", "right", "bottom", "left"].iter().enumerate() {
+                let channel = format!("{property}-{name}");
+                let samples = sides
+                    .iter()
+                    .map(|s| s.as_ref().map_or_else(|| base(&channel), |s| Ok(s[side])))
+                    .collect::<Result<Vec<_>, _>>()?;
+                channels.push((channel, property, samples));
             }
             continue;
         }

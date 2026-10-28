@@ -127,6 +127,12 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
         "width" | "height" | "left" | "top" | "border-top-left-radius" | "font-size" => Value::Scalar(px(s, m)?),
         "letter-spacing" if s.trim() == "normal" => Value::Scalar(0.0),
         "letter-spacing" => Value::Scalar(px(s, m)?),
+        // A line height track is a multiple of the font size; px divide by it.
+        "line-height" => match s.trim().strip_suffix("px") {
+            Some(n) => Value::Scalar(number(n.trim())? / m.font_size.max(f32::EPSILON)),
+            None => Value::Scalar(number(s.trim())?),
+        },
+        name if box_side(name).is_some() => Value::Scalar(px(s, m)?),
         name if border_side(name).is_some_and(|(_, field)| field == "color") => Value::Color(color(s, current)?),
         name if border_side(name).is_some() => Value::Scalar(px(s, m)?),
         name if is_component(name) => Value::Scalar(component(name, s)?),
@@ -378,6 +384,14 @@ fn set_size(list: &mut Vec<BackgroundFit>, i: usize, field: &str, v: f32) {
     } else {
         BackgroundFit::Lengths(width, Some(axis))
     };
+}
+/// Padding and margin side channels: `padding-<side>` and `margin-<side>` in
+/// px, sides in CSS order top, right, bottom, left.
+pub(crate) fn box_side(name: &str) -> Option<(&'static str, usize)> {
+    let (property, side) = name.split_once('-')?;
+    let property = ["padding", "margin"].into_iter().find(|p| *p == property)?;
+    let side = ["top", "right", "bottom", "left"].iter().position(|s| *s == side)?;
+    Some((property, side))
 }
 /// Border side channels: `border-<side>-color` and `border-<side>-width`,
 /// sides in CSS order top, right, bottom, left.
@@ -632,6 +646,8 @@ pub(crate) fn from_track(
                     format!("{n}px")
                 }
                 name if border_side(name).is_some_and(|(_, field)| field == "width") => format!("{n}px"),
+                name if box_side(name).is_some() => format!("{n}px"),
+                "line-height" => n.to_string(),
                 name if is_component(name) => n.to_string(),
                 "filter-drop-shadow-color" => return Err(format!("timeline '{property}' takes CSS text")),
                 name if indexed(name).is_some_and(|(_, _, field)| field == "color") => {
@@ -684,16 +700,41 @@ impl Animation {
         self.channels.iter().map(|c| c.name.as_str())
     }
 
-    /// The channels that reach text an element's descendants inherit: color,
-    /// font size, letter spacing, text shadows and text tracks.
+    /// The channels that reach an anonymous text leaf: the inherited text
+    /// channels and text tracks.
     pub(crate) fn text_part(&self) -> Option<Animation> {
-        let channels: Vec<Channel> = self.channels.iter().filter(|c| is_text_channel(&c.name)).cloned().collect();
+        let channels: Vec<Channel> =
+            self.channels.iter().filter(|c| c.name == "text" || is_inherited(&c.name)).cloned().collect();
+        (!channels.is_empty()).then(|| Animation { channels, ..self.clone() })
+    }
+
+    /// The inherited text channels `keep` accepts, with font sizes scaled by
+    /// `font_scale` for a descendant whose own size is relative.
+    pub(crate) fn inherited(&self, keep: impl Fn(&str) -> bool, font_scale: f32) -> Option<Animation> {
+        let channels: Vec<Channel> = self
+            .channels
+            .iter()
+            .filter(|c| is_inherited(&c.name) && keep(&c.name))
+            .cloned()
+            .map(|mut channel| {
+                if channel.name == "font-size" {
+                    for point in &mut channel.points {
+                        if let Value::Scalar(v) = &mut point.value {
+                            *v *= font_scale;
+                        }
+                    }
+                }
+                channel
+            })
+            .collect();
         (!channels.is_empty()).then(|| Animation { channels, ..self.clone() })
     }
 }
 
-pub(crate) fn is_text_channel(name: &str) -> bool {
-    matches!(name, "color" | "font-size" | "letter-spacing" | "text")
+/// Channels whose CSS properties descendants inherit: color, font size,
+/// letter spacing, line height and text shadows.
+pub(crate) fn is_inherited(name: &str) -> bool {
+    matches!(name, "color" | "font-size" | "letter-spacing" | "line-height")
         || indexed(name).is_some_and(|(list, _, _)| list == "text-shadow")
 }
 
@@ -901,6 +942,28 @@ impl Animation {
                 // The element rebuilds its text spans and relayouts when these change.
                 ("font-size", Value::Scalar(v)) => paint.font_size = v.max(0.0),
                 ("letter-spacing", Value::Scalar(v)) => paint.letter_spacing = v,
+                ("line-height", Value::Scalar(v)) => paint.line_height = Some(v.max(0.0)),
+                (name, Value::Scalar(v)) if box_side(name).is_some() => {
+                    let side = box_side(name).map_or(0, |(_, side)| side);
+                    if name.starts_with("padding") {
+                        let v = taffy::LengthPercentage::length(v.max(0.0));
+                        match side {
+                            0 => style.padding.top = v,
+                            1 => style.padding.right = v,
+                            2 => style.padding.bottom = v,
+                            _ => style.padding.left = v,
+                        }
+                    } else {
+                        let v = taffy::LengthPercentageAuto::length(v);
+                        match side {
+                            0 => style.margin.top = v,
+                            1 => style.margin.right = v,
+                            2 => style.margin.bottom = v,
+                            _ => style.margin.left = v,
+                        }
+                    }
+                    layout = true;
+                }
                 ("border-top-left-radius", Value::Scalar(v)) => {
                     paint.corners = [(
                         taffy::LengthPercentage::length(v.max(0.0)),

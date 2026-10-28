@@ -746,6 +746,38 @@ fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
                 return side_color(side);
             }
         }
+        // Padding and margin sides read their longhand, else the shorthand, in
+        // px; the shorthand lists one value when the sides agree.
+        let m = crate::style::Metrics { width: 0.0, height: 0.0, font_size: p.font_size };
+        let box_side = |property: &str, side: usize| {
+            let names = ["top", "right", "bottom", "left"];
+            let text = p.css.get(&format!("{property}-{}", names[side])).cloned().or_else(|| {
+                let parts = crate::css::split(p.css.get(property)?.trim(), false);
+                let pick = [[0, 0, 0, 0], [0, 1, 0, 1], [0, 1, 2, 1], [0, 1, 2, 3]].get(parts.len().checked_sub(1)?)?;
+                parts.get(pick[side]).cloned()
+            });
+            match text {
+                Some(t) if t.trim().ends_with('%') || t.trim() == "auto" => t,
+                Some(t) => crate::style::px(&t, m).map_or(t, px),
+                None => "0px".to_string(),
+            }
+        };
+        if prop == "padding" || prop == "margin" {
+            let sides = [0, 1, 2, 3].map(|side| box_side(prop, side));
+            return if sides.iter().all(|s| *s == sides[0]) { sides[0].clone() } else { sides.join(" ") };
+        }
+        if let Some((property, side)) = crate::animation::box_side(prop) {
+            return box_side(property, side);
+        }
+        // Browsers compute a line height to px unless it is `normal`.
+        if prop == "line-height" {
+            if let Some(v) = p.css.get(prop).filter(|v| v.as_str() != "normal") {
+                return match v.trim().parse::<f32>() {
+                    Ok(factor) => px(factor * p.font_size),
+                    Err(_) => crate::style::px(v, m).map_or_else(|_| v.clone(), px),
+                };
+            }
+        }
         // Each layer's x and y longhands pair into one position.
         if prop == "background-position" && !p.css.contains_key(prop) {
             let axis = |name: &str, fallback: &str| {

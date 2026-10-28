@@ -685,6 +685,7 @@ fn build(
         emitted: Vec::new(),
         atomic: HashSet::new(),
         flows: 0,
+        inherited: Vec::new(),
     };
     // Compute inherited values along the full ancestor chain, including body resets.
     let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
@@ -745,6 +746,9 @@ struct Builder {
     atomic: HashSet<ego_tree::NodeId>,
     /// Inline formatting contexts with atomic boxes so far.
     flows: u32,
+    /// Per open ancestor: its font size and the text animations its
+    /// descendants inherit.
+    inherited: Vec<(f32, Vec<animation::Animation>)>,
 }
 
 /// The HTML element on scene node `id`.
@@ -1273,6 +1277,7 @@ impl Builder {
                 },
             )?;
         // Store computed font-size to avoid repeated relative-unit multiplication in descendants.
+        let specified_font = values.get("font-size").cloned();
         values.insert("font-size", format!("{}px", paint.font_size));
         if promoted {
             match authored_display {
@@ -1670,10 +1675,6 @@ impl Builder {
             });
             tracks.extend(emitted);
         }
-        let holds_text = element
-            .content
-            .as_ref()
-            .is_some_and(|c| c.as_any().downcast_ref::<director_core::node::TextNode>().is_some());
         for (i, track) in tracks.iter().enumerate() {
             if tracks[..i].iter().any(|t| t.property == track.property) {
                 return Err(CompileError::Diagnostics(vec![diagnostic(
@@ -1681,18 +1682,17 @@ impl Builder {
                     format!("the timeline animates '{}' twice on one element", track.property),
                 )]));
             }
-            // Font size and spacing tracks reach the element's own text only.
-            if matches!(track.property.as_str(), "font-size" | "letter-spacing") && (promoted || !holds_text) {
-                let reason = if promoted { "an animated inline span keeps its line box" } else { "the element holds no text of its own" };
+            if promoted && matches!(track.property.as_str(), "font-size" | "letter-spacing" | "line-height") {
                 return Err(CompileError::Diagnostics(vec![diagnostic(
                     &context,
-                    format!("the timeline animates '{}', but {reason}", track.property),
+                    format!("the timeline animates '{}', but an animated inline span keeps its line box", track.property),
                 )]));
             }
         }
         // Timeline tracks play like inline styles, so a running @keyframes
         // animation of the same property applies after them and wins.
         let keyframes = std::mem::take(&mut element.animations);
+        element.animations = self.inherit_text(el, specified_font.as_deref(), paint.font_size, tag, promoted);
         for track in tracks {
             let animation = animation::from_track(&track, &paint, metrics)
                 .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
@@ -1702,6 +1702,10 @@ impl Builder {
         animation::check_components(&element.animations, &element.base_paint.transform)
             .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
         element.animations.extend(keyframes);
+        // Descendants inherit every text animation that reaches this element.
+        let passed: Vec<animation::Animation> =
+            element.animations.iter().filter_map(|a| a.inherited(|_| true, 1.0)).collect();
+        self.inherited.push((paint.font_size, passed));
         let id = self.director.scene.add_node(Box::new(element));
         if let Some(probe) = &mut self.probe {
             probe.push(ProbeEntry {
@@ -1808,7 +1812,40 @@ impl Builder {
             };
             self.place_foreign_objects(el, id, &values, fallback, next_start, depth)?;
         }
+        self.inherited.pop();
         Ok(id)
+    }
+
+    /// The parent's text animations that reach `el`. A local `color`,
+    /// `letter-spacing`, `line-height` or `text-shadow` stops its channel. A
+    /// local relative font size scales the parent's, and an absolute one stops
+    /// it. Inline spans on their own line box keep their size, spacing and line
+    /// height, and replaced elements inherit nothing.
+    fn inherit_text(&self, el: ElementRef<'_>, specified_font: Option<&str>, font_size: f32, tag: &str, promoted: bool) -> Vec<animation::Animation> {
+        let Some((parent_font, list)) = self.inherited.last() else { return Vec::new() };
+        if list.is_empty() || matches!(tag, "img" | "svg" | "video" | "audio") {
+            return Vec::new();
+        }
+        let local = |names: &[&str]| names.iter().any(|n| self.css.has_local_property(el, n));
+        let relative = specified_font.is_some_and(|s| {
+            let s = s.trim();
+            (s.ends_with("em") && !s.ends_with("rem")) || s.ends_with('%') || matches!(s, "larger" | "smaller")
+        });
+        let font_scale = if !local(&["font-size", "font"]) {
+            Some(1.0)
+        } else if relative {
+            Some(font_size / parent_font.max(f32::EPSILON))
+        } else {
+            None
+        };
+        let keep = |name: &str| match name {
+            "color" => !local(&["color"]),
+            "font-size" => font_scale.is_some() && !promoted,
+            "letter-spacing" => !local(&["letter-spacing"]) && !promoted,
+            "line-height" => !local(&["line-height", "font"]) && !promoted,
+            _ => !local(&["text-shadow"]),
+        };
+        list.iter().filter_map(|a| a.inherited(keep, font_scale.unwrap_or(1.0))).collect()
     }
 
     fn place_foreign_objects(

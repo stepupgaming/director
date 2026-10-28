@@ -77,8 +77,8 @@ pub struct HtmlElement {
     /// The text a `text` track replaced, and the track text on screen.
     own_spans: Option<Vec<director_core::element::TextSpan>>,
     shown_text: Option<String>,
-    /// The animated font size and letter spacing on screen. `None` is the base.
-    shown_size: Option<(f32, f32)>,
+    /// The animated font size, letter spacing and line height on screen. `None` is the base.
+    shown_size: Option<(f32, f32, Option<f32>)>,
 }
 impl HtmlElement {
     pub fn new(
@@ -399,15 +399,15 @@ impl Element for HtmlElement {
                 if recolor {
                     text.default_color = director_core::animation::Animated::new(self.paint.color);
                 }
-                let base = (self.base_paint.font_size, self.base_paint.letter_spacing);
-                let size = (self.paint.font_size, self.paint.letter_spacing);
+                let base = (self.base_paint.font_size, self.base_paint.letter_spacing, self.base_paint.line_height);
+                let size = (self.paint.font_size, self.paint.letter_spacing, self.paint.line_height);
                 let sized = (size != base).then_some(size);
                 if self.paint.text != self.shown_text || sized != self.shown_size {
                     let own = self.own_spans.get_or_insert_with(|| text.spans.clone());
                     text.spans = match &self.paint.text {
                         Some(shown) => crate::compiler::text_spans(shown, &self.paint),
-                        // Spans at the element's own size and spacing inherit
-                        // the animated ones; spans that set their own keep them.
+                        // Spans at the element's own size, spacing and line height
+                        // inherit the animated ones; spans that set their own keep them.
                         None => own
                             .iter()
                             .cloned()
@@ -417,6 +417,9 @@ impl Element for HtmlElement {
                                 }
                                 if span.letter_spacing == Some(base.1) {
                                     span.letter_spacing = Some(size.1);
+                                }
+                                if span.line_height == base.2 {
+                                    span.line_height = size.2;
                                 }
                                 span
                             })

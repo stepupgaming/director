@@ -258,7 +258,6 @@ fn gsap_tracks_survive_scene_export() {
 fn page_scripts_fail_with_context() {
     for (source, message) in [
         (page("gsap.to('#box', {wordSpacing: 4, duration: 1})"), "'word-spacing' on #box"),
-        (page("gsap.to('#box', {letterSpacing: '4px', duration: 1})"), "holds no text of its own"),
         (page("gsap.to('#word', {fontSize: 30, duration: 1})"), "keeps its line box"),
         (
             page("gsap.fromTo('#box', {clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)'}, {clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)', duration: 1})"),
@@ -1009,6 +1008,57 @@ fn font_size_letter_spacing_and_background_size_tweens_become_channels() {
     near(at(track(&c, "box", "background-size-0-width-percent"), 0.5), 75.0, 1e-2);
     assert!(tracks(&c).iter().all(|t| !t.property.starts_with("background-size-0-height")));
     assert!(!red(&frame(&mut c, 0.0)) && red(&frame(&mut c, 1.0)));
+}
+
+#[test]
+fn inherited_text_line_height_and_box_tweens_become_channels() {
+    let doc = |body: &str, tween: &str| {
+        format!(
+            "<style>body{{margin:0;background:black}}p{{margin:0;position:absolute;top:0}}</style>\
+             <div data-composition-id='main' data-width='96' data-height='64' data-duration='2'>{body}</div>\
+             {GSAP}<script>window.__timelines = {{main: gsap.timeline({{paused: true}}).to('#t', {{{tween}, duration: 1, ease: 'none'}}, 0)}};</script>"
+        )
+    };
+    let lit = |p: &[u8], x0: usize, x1: usize| {
+        p.chunks(4).enumerate().filter(|(i, p)| (x0..x1).contains(&(i % 96)) && (p[0] > 150 || p[1] > 150)).count()
+    };
+    let red = |p: &[u8], x0: usize, x1: usize| {
+        p.chunks(4).enumerate().filter(|(i, p)| (x0..x1).contains(&(i % 96)) && p[0] > 150 && p[1] < 100).count()
+    };
+
+    // A parent's font size and color reach its children: an em child scales
+    // the size, and a child with its own px size and color keeps both.
+    let body = "<div id='t' style='position:absolute;left:0;top:0;width:96px;height:64px;font:20px Roboto;color:white'>\
+                <p style='left:0'>I</p><p style='left:32px;font-size:0.5em'>I</p>\
+                <p style='left:64px;font-size:10px;color:rgb(0,255,0)'>I</p></div>";
+    let mut c = compile(&doc(body, "fontSize: 40, color: 'rgb(255,0,0)'"), opts()).unwrap();
+    let (before, after) = (frame(&mut c, 0.0), frame(&mut c, 1.0));
+    assert!(lit(&after, 0, 32) > lit(&before, 0, 32) * 3, "{} {}", lit(&before, 0, 32), lit(&after, 0, 32));
+    assert!(lit(&after, 32, 64) > lit(&before, 32, 64) * 3, "{} {}", lit(&before, 32, 64), lit(&after, 32, 64));
+    assert!(red(&after, 0, 64) > 0 && red(&after, 64, 96) == 0);
+    assert!(lit(&after, 64, 96).abs_diff(lit(&before, 64, 96)) * 5 < lit(&before, 64, 96), "{} {}", lit(&before, 64, 96), lit(&after, 64, 96));
+
+    // Line height keys as a multiple of the font size and spreads the lines.
+    let lowest = |p: &[u8]| p.chunks(4).enumerate().filter(|(_, p)| p[0] > 150).map(|(i, _)| i / 96).max().unwrap_or(0);
+    let body = "<div id='t' style='position:absolute;left:0;top:0;font:20px Roboto;line-height:20px;color:white'>I<br>I</div>";
+    let mut c = compile(&doc(body, "lineHeight: '30px'"), opts()).unwrap();
+    near(at(track(&c, "t", "line-height"), 0.5), 1.25, 2e-3);
+    let (before, after) = (lowest(&frame(&mut c, 0.0)), lowest(&frame(&mut c, 1.0)));
+    assert!(after >= before + 8, "{before} {after}");
+    let body = "<div id='t' style='position:absolute;left:0;top:0;font:20px Roboto;line-height:1;color:white'>I<br>I</div>";
+    let c = compile(&doc(body, "lineHeight: 1.5"), opts()).unwrap();
+    near(at(track(&c, "t", "line-height"), 0.5), 1.25, 2e-3);
+
+    // Padding grows the box, and a margin moves it.
+    let blue = |p: &[u8], x: i32, y: i32| close(pixel(p, 64, x, y), [0, 0, 255, 255]);
+    let mut c = run("window.__timelines = {main: gsap.timeline({paused: true}).to('#box', {padding: 10, duration: 1, ease: 'none'}, 0)};");
+    near(at(track(&c, "box", "padding-left"), 0.5), 5.0, 1e-3);
+    assert!(!blue(&frame(&mut c, 0.0), 50, 50) && blue(&frame(&mut c, 1.0), 50, 50));
+    let mut c = run("window.__timelines = {main: gsap.timeline({paused: true}).to('#box', {padding: '0px 10px', marginTop: 10, duration: 1, ease: 'none'}, 0)};");
+    near(at(track(&c, "box", "padding-right"), 0.5), 5.0, 1e-3);
+    near(at(track(&c, "box", "margin-top"), 0.5), 5.0, 1e-3);
+    let p = frame(&mut c, 1.0);
+    assert!(blue(&p, 55, 45) && !blue(&p, 30, 25), "{:?} {:?}", pixel(&p, 64, 55, 45), pixel(&p, 64, 30, 25));
 }
 
 #[test]
