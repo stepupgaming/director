@@ -159,3 +159,25 @@ fn a_hidden_inline_child_takes_no_space() {
     let hidden = frame(&inline_block_page("", "a<i style='display:none'>zzzz</i>"));
     assert!(count(&hidden, white) * 3 < count(&shown, white));
 }
+
+#[test]
+fn pre_keeps_its_lines_and_code_sets_monospace() {
+    let pre = ink_bottom(&frame(&text_box("", "<pre style='margin:0'>aa\nbb</pre>")));
+    assert_eq!(pre, ink_bottom(&frame(&text_box("white-space:pre;font-family:monospace", "aa\nbb"))));
+    assert!(pre > 16, "pre bottom {pre}");
+    // Monospace gives a narrow i the advance of a wide glyph.
+    let lit = |p: &[u8]| p[0] > 40;
+    let mono = bounds(&frame(&text_box("", "<code>iiii</code>")), lit);
+    let sans = bounds(&frame(&text_box("", "iiii")), lit);
+    assert!(mono[2] - mono[0] > 2 * (sans[2] - sans[0]), "{mono:?} {sans:?}");
+}
+
+#[test]
+fn font_weight_and_stretch_drive_variable_font_axes() {
+    let ink = |css: &str| count(&frame(&text_box(&format!("font-family:Archivo;{css}"), "HH")), |p| p[0] > 40);
+    let lit = |p: &[u8]| p[0] > 40;
+    assert!(ink("font-weight:900") > ink("font-weight:400") * 5 / 4, "{} {}", ink("font-weight:900"), ink("font-weight:400"));
+    let wide = bounds(&frame(&text_box("font-family:Archivo;font-stretch:125%", "HH")), lit);
+    let narrow = bounds(&frame(&text_box("font-family:Archivo;font-stretch:62%", "HH")), lit);
+    assert!(wide[2] - wide[0] > (narrow[2] - narrow[0]) * 3 / 2, "{wide:?} {narrow:?}");
+}

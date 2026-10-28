@@ -859,7 +859,7 @@ fn initial(tag: &str, prop: &str) -> &'static str {
         "opacity" => "1",
         "visibility" => "visible",
         "display" => match tag {
-            "span" | "b" | "strong" | "em" | "i" | "small" | "a" | "img" | "svg" => "inline",
+            "span" | "b" | "strong" | "em" | "i" | "small" | "code" | "a" | "img" | "svg" => "inline",
             "head" | "script" | "style" | "link" | "meta" | "title" | "template" => "none",
             _ => "block",
         },

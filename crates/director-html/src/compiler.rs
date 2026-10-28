@@ -818,7 +818,7 @@ fn label(el: ElementRef<'_>) -> String {
         .unwrap_or_else(|| el.value().name().into())
 }
 fn inline(tag: &str) -> bool {
-    matches!(tag, "span" | "b" | "strong" | "em" | "i" | "br" | "small")
+    matches!(tag, "span" | "b" | "strong" | "em" | "i" | "br" | "small" | "code")
 }
 pub fn text_content(spans: Vec<TextSpan>, paint: &PaintStyle, director: &Director) -> TextNode {
     let mut node = TextNode::new(spans, director.assets.font_collection.clone());
@@ -1693,7 +1693,7 @@ impl Builder {
                 )]))
             }
             "body" | "div" | "section" | "article" | "main" | "header" | "footer" | "h1" | "h2"
-            | "h3" | "p" | "span" | "b" | "strong" | "em" | "i" | "small" => {
+            | "h3" | "p" | "pre" | "span" | "b" | "strong" | "em" | "i" | "small" | "code" => {
                 let children: Vec<_> = el
                     .children()
                     .filter_map(ElementRef::wrap)

@@ -211,6 +211,9 @@ unsafe impl Send for Director {}
         ("Inter-Regular.ttf", &["Inter"], true),
         ("Inter-Bold.ttf", &["Inter"], true),
         ("Poppins-Bold.ttf", &["Poppins"], true),
+        // Variable fonts: weight and width resolve through their axes (OFL, licenses beside them).
+        ("Archivo-Variable.ttf", &["Archivo"], false),
+        ("JetBrainsMono-Variable.ttf", &["JetBrains Mono", "monospace"], false),
     ];
 
 impl Director {

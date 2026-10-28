@@ -408,7 +408,13 @@ impl Css {
             Some(style) => parse_inline(style)?,
             None => Vec::new(),
         };
-        let mut matched: Vec<(&Declaration, Rank)> = Vec::new();
+        // User-agent defaults rank below every author rule.
+        let agent = match el.value().name() {
+            "pre" => parse_inline("white-space: pre; font-family: monospace")?,
+            "code" => parse_inline("font-family: monospace")?,
+            _ => Vec::new(),
+        };
+        let mut matched: Vec<(&Declaration, Rank)> = agent.iter().map(|d| (d, (false, 0, 0))).collect();
         for (order, rule) in self.rules.iter().enumerate() {
             if rule.selector.matches(&el) {
                 for d in &rule.declarations {

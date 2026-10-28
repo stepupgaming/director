@@ -12,6 +12,10 @@ crates/director-core/assets/fonts/*
 !crates/director-core/assets/fonts/Inter-Regular.ttf
 !crates/director-core/assets/fonts/Inter-Bold.ttf
 !crates/director-core/assets/fonts/Poppins-Bold.ttf
+!crates/director-core/assets/fonts/Archivo-Variable.ttf
+!crates/director-core/assets/fonts/JetBrainsMono-Variable.ttf
+!crates/director-core/assets/fonts/OFL-Archivo.txt
+!crates/director-core/assets/fonts/OFL-JetBrainsMono.txt
 .director-smoke/
 out.png
 out2.png

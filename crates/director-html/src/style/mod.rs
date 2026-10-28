@@ -1946,6 +1946,10 @@ impl PaintStyle {
         if self.font_stretch != 100.0 && !out.iter().any(|v| v.axis == "wdth") {
             out.push(FontVariation { axis: "wdth".into(), value: self.font_stretch });
         }
+        // As in browsers, `font-weight` sets a variable font's weight axis.
+        if self.font_weight != 400 && !out.iter().any(|v| v.axis == "wght") {
+            out.push(FontVariation { axis: "wght".into(), value: self.font_weight as f32 });
+        }
         (!out.is_empty()).then_some(out)
     }
 }

@@ -115,7 +115,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test integration text_stroke::` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test integration shrink_wrap::` |
 | padded_text | 1 | 2026-10-20 | `cargo test -p director-html --release --test integration padded_text::` |
-| rich_text | 8 | 2026-10-27 | `cargo test -p director-html --release --test integration rich_text::` |
+| rich_text | 10 | 2026-10-28 | `cargo test -p director-html --release --test integration rich_text::` |
 | font_shorthand | 4 | 2026-10-21 | `cargo test -p director-html --release --test integration font_shorthand::` |
 | gradient_tiles | 2 | 2026-10-21 | `cargo test -p director-html --release --test integration gradient_tiles::` |
 | motion_policy | 3 | 2026-10-21 | `cargo test -p director-html --release --test integration motion_policy::` |

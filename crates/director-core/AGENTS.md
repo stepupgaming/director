@@ -220,6 +220,10 @@ rather than relying on host system fonts.
 * Roboto Regular/Bold/Italic, Inter Regular/Bold, and Poppins Bold are
   required; export fails via `ensure_required_fonts` when one is missing.
   The six files are committed; CI downloads nothing.
+* Archivo (variable `wdth` 62 to 125, `wght` 100 to 900) and JetBrains Mono
+  (variable, also the `monospace` alias) are optional display and code faces
+  with their OFL licenses beside them. Weight and width reach them through
+  their axes.
 * Emoji fallback is loaded via DefaultAssetLoader::load_font_fallback
   (assets/fonts/emoji.ttf or DIRECTOR_EMOJI_FONT env var).
 * Do NOT add host-system-font-dependent text paths; new caption/template
