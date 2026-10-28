@@ -90,13 +90,13 @@ One row per check, holding the most recent passing count. Replace the row when a
 
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
-| workspace clippy | pass | 2026-10-27 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
-| director-core release tests | 432 | 2026-10-26 | `cargo test -p director-core --release` |
+| workspace clippy | pass | 2026-10-28 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
+| director-core release tests | 433 | 2026-10-28 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test integration visual_suite::` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test integration html_export::` |
-| workspace release tests | 1087, 3 ignored | 2026-10-28 | `cargo test --workspace --release` |
+| workspace release tests | 1091, 3 ignored | 2026-10-28 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
-| director-render | 22 | 2026-10-26 | `cargo test -p director-render --release` |
+| director-render | 25 | 2026-10-28 | `cargo test -p director-render --release` |
 | director-host | 25 | 2026-10-26 | `cargo test -p director-host --release` |
 | director-cli | 52 | 2026-10-27 | `cargo test -p director-cli --release` |
 | 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
@@ -140,7 +140,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text), adaptive motion blur (one sample on frames where no track moves inside the shutter), SMIL `calcMode="spline"`, and `font-stretch`. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text), SMIL `calcMode="spline"`, and `font-stretch`. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

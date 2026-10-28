@@ -150,6 +150,13 @@ pub trait Element: std::fmt::Debug + ElementClone {
         false
     }
 
+    /// True when this element's paint or layout may change somewhere in local
+    /// time `[t0, t1]`. Motion blur paints a shutter in which nothing moves
+    /// once. The default assumes motion.
+    fn moves_between(&self, _t0: f64, _t1: f64) -> bool {
+        true
+    }
+
     /// Called after layout is computed but before rendering.
     ///
     /// Useful for elements that need to adjust their state based on their final size (e.g. `TextFit`).

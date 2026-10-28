@@ -319,6 +319,15 @@ impl Element for HtmlElement {
             .as_ref()
             .is_some_and(|content| content.varies_with_time())
     }
+    fn moves_between(&self, t0: f64, t1: f64) -> bool {
+        let edge = |t: f64| t0 < t && t <= t1;
+        let media = |t: f64| self.media_start + (t - self.start).max(0.0) * self.playback_rate;
+        let (m0, m1) = (media(t0), media(t1));
+        edge(self.start)
+            || edge(self.end)
+            || self.animations.iter().any(|animation| animation.moves_between(t0, t1))
+            || self.content.as_ref().is_some_and(|content| content.moves_between(m0.min(m1), m0.max(m1)))
+    }
     fn as_any(&self) -> &dyn Any {
         self
     }

@@ -12,7 +12,7 @@ mod depth;
 mod kinds;
 
 use director_core::director::{StaticCacheEntry, StaticCacheKey};
-use director_core::scene::SceneGraph;
+use director_core::scene::{SceneGraph, SceneNode};
 use director_core::types::NodeId;
 use director_core::RenderError;
 use skia_safe::{AlphaType, BlendMode, Canvas, Color, ColorSpace, ColorType, Font, Image, ImageInfo, Paint, Rect, TextBlob};
@@ -60,6 +60,16 @@ pub(crate) struct Painter<'a> {
 
 /// True when any node under `root`, masks included, paints differently over time.
 fn subtree_varies(scene: &SceneGraph, root: NodeId) -> bool {
+    subtree_any(scene, root, kinds::node_varies)
+}
+
+/// True when any node under `root`, masks included, may paint differently
+/// somewhere in local time `[t0, t1]`.
+pub(crate) fn subtree_moves(scene: &SceneGraph, root: NodeId, t0: f64, t1: f64) -> bool {
+    subtree_any(scene, root, |node| kinds::node_moves(node, t0, t1))
+}
+
+fn subtree_any(scene: &SceneGraph, root: NodeId, test: impl Fn(&SceneNode) -> bool) -> bool {
     let mut stack = vec![root];
     let mut seen = HashSet::new();
     while let Some(id) = stack.pop() {
@@ -69,7 +79,7 @@ fn subtree_varies(scene: &SceneGraph, root: NodeId) -> bool {
         let Some(node) = scene.get_node(id) else {
             continue;
         };
-        if kinds::node_varies(node) {
+        if test(node) {
             return true;
         }
         stack.extend(node.children.iter().copied());

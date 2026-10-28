@@ -595,6 +595,20 @@ where
     }
 }
 
+impl<T> Animated<T>
+where
+    T: Clone + keyframe::CanTween + Default + PartialEq,
+{
+    /// True when the value may change somewhere in `[t0, t1]`. It holds before
+    /// the first key and after the last, and moves only across keys whose values
+    /// differ. An expression ease always may move.
+    pub fn moves_between(&self, t0: f64, t1: f64) -> bool {
+        let keys = &self.raw_keyframes;
+        keys.iter().any(|(_, _, ease)| matches!(ease, EasingType::Expression { .. }))
+            || keys.windows(2).any(|pair| pair[0].0 != pair[1].0 && t0 < pair[1].1 && t1 >= pair[0].1)
+    }
+}
+
 impl Animated<f32> {
     /// Build an animation channel from a math expression evaluated at 60fps.
     /// The expression uses `t` in [0, 1].
@@ -776,6 +790,22 @@ where
 mod tests {
     use super::*;
     use keyframe::EasingFunction;
+
+    #[test]
+    fn moves_between_sees_only_keys_that_change() {
+        // 0 to 10 over 0..1 s, hold 10 until 2 s, step to 20 at 2 s.
+        let mut a = Animated::new(0.0_f32);
+        a.add_keyframe(10.0, 1.0, EasingType::Linear);
+        a.add_keyframe(10.0, 1.0, EasingType::Linear);
+        a.add_keyframe(20.0, 0.0, EasingType::Linear);
+        assert!(!a.moves_between(-1.0, -0.5), "holds before the first key");
+        assert!(a.moves_between(-0.1, 0.1));
+        assert!(a.moves_between(0.4, 0.6));
+        assert!(!a.moves_between(1.0, 1.9), "an equal pair holds");
+        assert!(a.moves_between(1.9, 2.0), "the step lands at 2 s");
+        assert!(!a.moves_between(2.0, 9.0), "holds after the last key");
+        assert!(!Animated::new(5.0_f32).moves_between(f64::NEG_INFINITY, f64::INFINITY));
+    }
 
     #[test]
     fn eval_linear_midpoint() {

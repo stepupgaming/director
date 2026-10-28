@@ -4,7 +4,7 @@
 //! draws into a [`FramePlan`]. [`paint`] draws a plan, and [`FrameState::render`]
 //! averages evaluated sub-frames across the shutter for motion blur.
 
-use crate::paint::{debug_overlays, Painter};
+use crate::paint::{debug_overlays, subtree_moves, Painter};
 use crate::RenderError;
 use director_core::systems::layout::LayoutEngine;
 use director_core::systems::transitions::{draw_transition, Transition, TransitionType};
@@ -130,6 +130,28 @@ fn track_layers(director: &Director, time: f64) -> Vec<Layer> {
         .collect()
 }
 
+/// True when anything the frame draws may change between `t0` and `t1`: a
+/// transition, a clip starting, ending or fading, or a moving node in an
+/// active clip at that clip's local times.
+fn moves_between(director: &Director, t0: f64, t1: f64) -> bool {
+    let overlaps = |start: f64, end: f64| t0 < end && t1 >= start;
+    if director.transitions.iter().any(|t| overlaps(t.start_time, t.start_time + t.duration)) {
+        return true;
+    }
+    let clips = director.tracks.iter().filter(|track| track.enabled).flat_map(|track| &track.clips);
+    clips.into_iter().any(|clip| {
+        let (start, end) = (clip.start_time, clip.end_time());
+        if !overlaps(start, end) {
+            return false;
+        }
+        t0 < start
+            || t1 >= end
+            || (clip.fade_in > 0.0 && t0 < start + clip.fade_in)
+            || (clip.fade_out > 0.0 && t1 > end - clip.fade_out)
+            || subtree_moves(&director.scene, clip.scene_root, clip.local_time(t0), clip.local_time(t1))
+    })
+}
+
 /// The colour every frame starts from: transparent for alpha export, opaque black otherwise.
 fn clear_color(director: &Director) -> Color {
     if director.transparent_background {
@@ -204,10 +226,13 @@ fn paint(
 impl FrameState {
     /// Evaluate and paint the frame at `time` into `target`. With more than one
     /// sample per frame, sub-frames spread across the shutter add up at equal
-    /// weight. Scratch rasters come from `target`, so they share its backend.
+    /// weight, and a shutter in which nothing moves paints once. Scratch rasters
+    /// come from `target`, so they share its backend.
     pub fn render(&mut self, director: &mut Director, time: f64, target: &mut Surface) -> Result<(), RenderError> {
         let samples = director.samples_per_frame.max(1);
-        if samples == 1 {
+        let shutter = (1.0 / director.fps) * (director.shutter_angle.clamp(0.0, 360.0) as f64 / 360.0);
+        let shutter_start = time - shutter / 2.0;
+        if samples == 1 || !moves_between(director, shutter_start, shutter_start + shutter) {
             let plan = evaluate(director, &mut self.layout, time);
             return paint(director, &plan, target, &mut self.transitions);
         }
@@ -221,8 +246,6 @@ impl FrameState {
             self.accumulation = Some((sample, sum));
         }
         let (sample_target, sum) = self.accumulation.as_mut().unwrap();
-        let shutter = (1.0 / director.fps) * (director.shutter_angle.clamp(0.0, 360.0) as f64 / 360.0);
-        let shutter_start = time - shutter / 2.0;
         let mut weight = Paint::default();
         weight.set_alpha_f(1.0 / samples as f32);
         weight.set_blend_mode(BlendMode::Plus);

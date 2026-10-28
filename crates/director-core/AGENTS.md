@@ -267,7 +267,11 @@ element sets that flag.
 Time is `Some(local_time)` otherwise, so a later frame misses. An
 incremental pass still hits a clean static node without comparing the
 key. Image-only caches (composition surfaces, captured HTML frames)
-still miss on every full pass. Acceptance: `tests/pipeline_equivalence.rs`
+still miss on every full pass. `Element::moves_between(t0, t1)` answers
+whether paint or layout may change inside a local time range; the default
+assumes motion, and `BoxNode`, `TextNode`, `ImageNode`, `ShapeNode` and
+`VectorNode` check their channels through `Animated::moves_between`, which
+moves only across keys whose values differ. Acceptance: `tests/pipeline_equivalence.rs`
 and `tests/static_reuse.rs`.
 `director-render::paint` owns the traversal and key; core owns
 `StaticCacheKey`, `StaticCacheEntry` and the `static_cache` map.

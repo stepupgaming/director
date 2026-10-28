@@ -79,6 +79,10 @@ impl Element for ImageNode {
         "image"
     }
 
+    fn moves_between(&self, t0: f64, t1: f64) -> bool {
+        self.opacity.moves_between(t0, t1) || self.border_radius.moves_between(t0, t1)
+    }
+
     fn layout_style(&self) -> Style {
         self.style.clone()
     }

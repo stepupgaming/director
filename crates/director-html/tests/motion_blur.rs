@@ -40,6 +40,23 @@ fn motion_blur_smears_a_moving_edge() {
 }
 
 #[test]
+fn a_still_shutter_matches_the_sharp_frame() {
+    // The box stops at x 32..40.
+    let held = |attrs: &str, animation: &str| {
+        let source = source(attrs).replace("data-duration='1'", "data-duration='2'");
+        source.replace("1s linear both", animation).replace("translateX(64px)", "translateX(32px)")
+    };
+    let blur = "data-motion-blur='8' data-shutter-angle='360'";
+    // After the box stops, the shutter paints one sample.
+    let still = row(&held(blur, "1s linear both"), 1.5);
+    assert_eq!(still, row(&held("", "1s linear both"), 1.5));
+    assert_eq!((still[31], still[36], still[41]), (0, 255, 0));
+    // An infinite loop keeps moving.
+    let looped = row(&held(blur, "1s linear infinite"), 1.5);
+    assert_ne!(looped, row(&held("", "1s linear infinite"), 1.5));
+}
+
+#[test]
 fn invalid_motion_blur_is_refused() {
     for attrs in ["data-motion-blur='0'", "data-motion-blur='many'", "data-shutter-angle='400'"] {
         let error = compile(&source(attrs), CompileOptions::default()).err().expect(attrs).to_string();

@@ -3,7 +3,6 @@
 //! `Element::render`.
 
 use super::{LayerCache, Painter};
-use director_core::animation::{Animated, EasingType};
 use director_core::element::Element;
 use director_core::node::{BoxNode, CompositionNode, ImageNode, ShapeNode, SpectrumVisualizerNode, TextNode, VectorNode};
 use director_core::scene::SceneNode;
@@ -24,22 +23,10 @@ const CLOCKED_KINDS: &[&str] = &[
     "html_capture",
 ];
 
-fn channel_varies<T>(anim: &Animated<T>) -> bool
-where
-    T: Clone + keyframe::CanTween + Default,
-{
-    anim.raw_keyframes.len() > 1
-        || anim.raw_keyframes.iter().any(|(_, _, ease)| matches!(ease, EasingType::Expression { .. }))
-}
+/// The whole timeline, for questions about any time at all.
+const ALL_TIME: (f64, f64) = (f64::NEG_INFINITY, f64::INFINITY);
 
-fn optional_channel_varies<T>(anim: &Option<Animated<T>>) -> bool
-where
-    T: Clone + keyframe::CanTween + Default,
-{
-    anim.as_ref().is_some_and(channel_varies)
-}
-
-fn transform_varies(transform: &Transform) -> bool {
+fn transform_moves(transform: &Transform, (t0, t1): (f64, f64)) -> bool {
     [
         &transform.scale_x,
         &transform.scale_y,
@@ -50,49 +37,21 @@ fn transform_varies(transform: &Transform) -> bool {
         &transform.translate_y,
     ]
     .into_iter()
-    .any(channel_varies)
+    .any(|channel| channel.moves_between(t0, t1))
 }
 
-/// Animated paint channels of the core leaf kinds.
+/// Path animations and morphs loop their own clock, so any motion counts.
+fn path_moves(node: &SceneNode) -> bool {
+    node.path_animation.as_ref().is_some_and(|path| path.progress.moves_between(ALL_TIME.0, ALL_TIME.1))
+        || node.path_morph.as_ref().is_some_and(|morph| morph.progress.moves_between(ALL_TIME.0, ALL_TIME.1))
+}
+
+/// Animated paint channels of the core leaf kinds, which list their own
+/// channels in `Element::moves_between`.
 fn element_varies(element: &dyn Element) -> bool {
     let any = element.as_any();
-    if let Some(node) = any.downcast_ref::<BoxNode>() {
-        return optional_channel_varies(&node.bg_color)
-            || channel_varies(&node.opacity)
-            || channel_varies(&node.blur)
-            || optional_channel_varies(&node.shadow_color)
-            || channel_varies(&node.shadow_blur)
-            || channel_varies(&node.shadow_offset_x)
-            || channel_varies(&node.shadow_offset_y)
-            || channel_varies(&node.border_radius)
-            || channel_varies(&node.border_width)
-            || optional_channel_varies(&node.border_color)
-            || channel_varies(&node.backdrop_blur)
-            || node.extra_shadows.iter().any(|shadow| {
-                channel_varies(&shadow.color)
-                    || channel_varies(&shadow.blur)
-                    || channel_varies(&shadow.offset_x)
-                    || channel_varies(&shadow.offset_y)
-            });
-    }
-    if let Some(node) = any.downcast_ref::<TextNode>() {
-        return channel_varies(&node.default_font_size)
-            || channel_varies(&node.default_color)
-            || channel_varies(&node.opacity)
-            || channel_varies(&node.counter_value)
-            || node.animators.iter().any(|animator| channel_varies(&animator.animation));
-    }
-    if let Some(node) = any.downcast_ref::<ImageNode>() {
-        return channel_varies(&node.opacity) || channel_varies(&node.border_radius);
-    }
-    if let Some(node) = any.downcast_ref::<ShapeNode>() {
-        return optional_channel_varies(&node.fill_color)
-            || optional_channel_varies(&node.stroke_color)
-            || channel_varies(&node.stroke_width)
-            || channel_varies(&node.opacity);
-    }
-    if let Some(node) = any.downcast_ref::<VectorNode>() {
-        return channel_varies(&node.opacity);
+    if any.is::<BoxNode>() || any.is::<TextNode>() || any.is::<ImageNode>() || any.is::<ShapeNode>() || any.is::<VectorNode>() {
+        return element.moves_between(ALL_TIME.0, ALL_TIME.1);
     }
     any.is::<SpectrumVisualizerNode>()
 }
@@ -102,10 +61,20 @@ pub(super) fn node_varies(node: &SceneNode) -> bool {
     node.element.varies_with_time()
         || CLOCKED_KINDS.contains(&node.element.kind())
         || !node.audio_bindings.is_empty()
-        || transform_varies(&node.transform)
-        || node.path_animation.as_ref().is_some_and(|path| channel_varies(&path.progress))
-        || node.path_morph.as_ref().is_some_and(|morph| channel_varies(&morph.progress))
+        || transform_moves(&node.transform, ALL_TIME)
+        || path_moves(node)
         || element_varies(node.element.as_ref())
+}
+
+/// True when this node's own paint may differ somewhere in local time
+/// `[t0, t1]`. Kinds this crate does not know answer through
+/// `Element::moves_between`, which assumes motion by default.
+pub(super) fn node_moves(node: &SceneNode, t0: f64, t1: f64) -> bool {
+    CLOCKED_KINDS.contains(&node.element.kind())
+        || !node.audio_bindings.is_empty()
+        || transform_moves(&node.transform, (t0, t1))
+        || path_moves(node)
+        || node.element.moves_between(t0, t1)
 }
 
 fn lock<T>(mutex: &std::sync::Mutex<T>) -> MutexGuard<'_, T> {

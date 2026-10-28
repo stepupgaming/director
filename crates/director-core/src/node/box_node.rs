@@ -105,6 +105,27 @@ impl Element for BoxNode {
         "box"
     }
 
+    fn moves_between(&self, t0: f64, t1: f64) -> bool {
+        let colors = [&self.bg_color, &self.shadow_color, &self.border_color];
+        colors.into_iter().flatten().any(|c| c.moves_between(t0, t1))
+            || [
+                &self.opacity,
+                &self.blur,
+                &self.shadow_blur,
+                &self.shadow_offset_x,
+                &self.shadow_offset_y,
+                &self.border_radius,
+                &self.border_width,
+                &self.backdrop_blur,
+            ]
+            .into_iter()
+            .any(|channel| channel.moves_between(t0, t1))
+            || self.extra_shadows.iter().any(|shadow| {
+                shadow.color.moves_between(t0, t1)
+                    || [&shadow.blur, &shadow.offset_x, &shadow.offset_y].into_iter().any(|c| c.moves_between(t0, t1))
+            })
+    }
+
     fn layout_style(&self) -> Style {
         self.style.clone()
     }

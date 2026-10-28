@@ -201,6 +201,12 @@ impl Element for ShapeNode {
         "shape"
     }
 
+    fn moves_between(&self, t0: f64, t1: f64) -> bool {
+        [&self.fill_color, &self.stroke_color].into_iter().flatten().any(|c| c.moves_between(t0, t1))
+            || self.stroke_width.moves_between(t0, t1)
+            || self.opacity.moves_between(t0, t1)
+    }
+
     fn export_body(
         &self,
         cx: &mut crate::scene_export::ExportContext,

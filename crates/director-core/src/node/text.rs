@@ -676,6 +676,15 @@ impl Element for TextNode {
         "text"
     }
 
+    fn moves_between(&self, t0: f64, t1: f64) -> bool {
+        self.default_font_size.moves_between(t0, t1)
+            || self.default_color.moves_between(t0, t1)
+            || self.opacity.moves_between(t0, t1)
+            || (self.counter.is_some() && self.counter_value.moves_between(t0, t1))
+            // Glyph animators stagger their channel per glyph.
+            || self.animators.iter().any(|a| a.animation.moves_between(f64::NEG_INFINITY, f64::INFINITY))
+    }
+
     fn needs_measure(&self) -> bool {
         true
     }

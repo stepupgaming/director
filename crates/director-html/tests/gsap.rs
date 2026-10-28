@@ -1143,6 +1143,10 @@ fn motion_blur_samples_gsap_between_frames() {
         }
         near(x(&blurred, f / fps), exact(f / fps), 0.021);
     }
+    // Mid tween the shutter smears the box, and once it rests one sample paints.
+    let (mut blurred, mut plain) = (blurred, plain);
+    assert_ne!(frame(&mut blurred, 15.0 / fps), frame(&mut plain, 15.0 / fps));
+    assert_eq!(frame(&mut blurred, 1.5), frame(&mut plain, 1.5));
 }
 
 #[test]

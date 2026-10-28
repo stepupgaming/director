@@ -88,7 +88,7 @@ impl Ease {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Value {
     Scalar(f32),
     Color(Color),
@@ -867,26 +867,11 @@ fn interpolate(a: &Value, b: &Value, t: f32) -> Result<Value, String> {
 }
 
 impl Animation {
-    /// Apply this animation at `time`. Component channels write into `parts`,
-    /// which the caller composes into the transform after every animation.
-    pub fn apply(
-        &self,
-        time: f64,
-        style: &mut taffy::Style,
-        paint: &mut PaintStyle,
-        parts: &mut Option<Parts>,
-    ) -> bool {
-        let elapsed = time - self.delay;
+    /// The iteration and the directed progress through it, `elapsed` seconds
+    /// after the delay. Past the end it holds the final progress.
+    fn phase(&self, elapsed: f64) -> (u64, f32) {
         let end = self.duration * self.count;
-        if (elapsed < 0.0 && !matches!(self.fill.as_str(), "both" | "backwards"))
-            || (elapsed >= end && !matches!(self.fill.as_str(), "both" | "forwards"))
-        {
-            return false;
-        }
-        if self.count == 0.0 {
-            return false;
-        }
-        let (iteration, mut progress) = if elapsed <= 0.0 {
+        let (iteration, progress) = if elapsed <= 0.0 {
             (0u64, 0.0)
         } else if elapsed >= end {
             let count = self.count;
@@ -908,9 +893,60 @@ impl Animation {
             "alternate-reverse" => iteration % 2 == 0,
             _ => false,
         };
-        if reverse {
-            progress = 1.0 - progress;
+        (iteration, if reverse { 1.0 - progress } else { progress })
+    }
+
+    /// True when this animation may change a value somewhere in `[t0, t1]`. It
+    /// holds outside its active interval and through its fills, and inside one
+    /// iteration it moves only across keyframes whose values differ.
+    pub fn moves_between(&self, t0: f64, t1: f64) -> bool {
+        let end = self.duration * self.count;
+        let (e0, e1) = (t0 - self.delay, t1 - self.delay);
+        if self.count == 0.0 || e1 < 0.0 || e0 >= end {
+            return false;
         }
+        let backwards = matches!(self.fill.as_str(), "both" | "backwards");
+        let forwards = matches!(self.fill.as_str(), "both" | "forwards");
+        // Crossing an unfilled edge switches between the base and the animation.
+        if (e0 < 0.0 && !backwards) || (e1 >= end && !forwards) || self.duration <= 0.0 {
+            return true;
+        }
+        let ((i0, p0), (i1, p1)) = (self.phase(e0.max(0.0)), self.phase(e1.min(end)));
+        if i0 != i1 {
+            return true;
+        }
+        let (p0, p1) = (p0.min(p1), p0.max(p1));
+        self.channels.iter().any(|channel| {
+            let points = &channel.points;
+            let Some(last) = points.len().checked_sub(1) else {
+                return false;
+            };
+            let from = points.partition_point(|p| p.offset <= p0).min(last).saturating_sub(1);
+            let to = points.partition_point(|p| p.offset <= p1).min(last);
+            points[from..=to].windows(2).any(|pair| pair[0].value != pair[1].value)
+        })
+    }
+
+    /// Apply this animation at `time`. Component channels write into `parts`,
+    /// which the caller composes into the transform after every animation.
+    pub fn apply(
+        &self,
+        time: f64,
+        style: &mut taffy::Style,
+        paint: &mut PaintStyle,
+        parts: &mut Option<Parts>,
+    ) -> bool {
+        let elapsed = time - self.delay;
+        let end = self.duration * self.count;
+        if (elapsed < 0.0 && !matches!(self.fill.as_str(), "both" | "backwards"))
+            || (elapsed >= end && !matches!(self.fill.as_str(), "both" | "forwards"))
+        {
+            return false;
+        }
+        if self.count == 0.0 {
+            return false;
+        }
+        let (_, progress) = self.phase(elapsed);
         let mut layout = false;
         for channel in &self.channels {
             let points = &channel.points;
