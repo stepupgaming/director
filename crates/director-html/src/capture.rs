@@ -299,6 +299,7 @@ pub(crate) fn compile_capture_with_assets(
             .collect(),
     };
     Ok(CompiledHtml {
+        beat_grid: None,
         director,
         element_ids: BTreeMap::new(),
         source_kind: "sampled-dom".into(),

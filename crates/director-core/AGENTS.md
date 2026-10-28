@@ -4,7 +4,7 @@
 
 ## Ownership
 
-- Sections below are the local contracts for each engine area: captions, bundled fonts, core hardening spines, video export and decoding, entities and smart captions, project round-trip, the dependency-graph compiler, the authoring stack, and named compositions.
+- Sections below are the local contracts for each engine area: captions, bundled fonts, core hardening spines, video export and decoding, beat grids, entities and smart captions, project round-trip, the dependency-graph compiler, the authoring stack, and named compositions.
 - Normative cross-crate spines live in `docs/architecture/core-contracts.md`.
 
 ## Caption system: kinetic captions for short-form video
@@ -344,6 +344,12 @@ five 640x360 premultiplied RGBA frames per workload via
 - Verify exact RGBA content, child PID reuse, eight-frame cache eviction, uncached backward and large forward seeks, EOF recovery, and worker shutdown. Cover 24, 25, 30000/1001, 30, and 60 FPS.
 - Run `cargo test -p director-core --lib video_wrapper::tests` for decoder verification. Exact VFR presentation-timestamp sampling remains unsupported.
 - `parse_video_size` reads the first two `x`-separated fields and `parse_frame_rate` the first comma field. A stream with side data, such as the ICC profile a screen recorder writes, makes ffprobe's CSV writer add an empty trailing field (`1920x1080x`, `30/1,`). Unit test: `reads_probe_output_with_a_side_data_field`.
+
+## Beat grids
+
+- `src/beats.rs` owns `BeatGrid` (tempo, beat times, the index of the first downbeat, beats per bar and the drop) and `detect`, which reads them from interleaved samples. Position 0 is the first downbeat, bar `n` is position `n * beats_per_bar`, and `time` and `position` interpolate between beats and extrapolate the edge intervals. `BeatGrid::fixed` stores a tempo and offset as two beats.
+- `detect` follows Ellis's dynamic-programming beat tracker: log spectral flux (1024-sample window, 256 hop) minus its local mean as the onset envelope, tempo from the smoothed autocorrelation with harmonics under a log-normal prior around 120 BPM (range 70 to 185), then a tightness-100 beat chain that restarts in silence. Weak beats at either end are trimmed and each beat refines to its onset peak. The downbeat phase has the most bass flux under 150 Hz. The drop is the bar where the mean power of the next two bars is at least twice that of the two before, and largest. `BeatOptions::bpm` fixes the tempo, which settles octave readings such as 87 for 174 BPM.
+- Unit tests in `src/beats.rs` cover tempo, beats within 12 ms, bars and the drop on a synthetic drum loop, a known tempo, grid mapping and silence.
 
 ## Semantic Entity Registry
 

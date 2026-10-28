@@ -66,6 +66,9 @@ pub mod audio;
 /// Audio effects (reverb, delay, EQ, compressor).
 pub mod audio_effects;
 
+/// Beat grids: tempo, beats, bars and the drop of a music track.
+pub mod beats;
+
 /// Timeline track and clip types.
 pub mod timeline;
 

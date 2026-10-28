@@ -47,6 +47,8 @@ pub(crate) struct Doc {
     /// While the timeline plays, layout answers stay at the setup state.
     pub playing: bool,
     pub viewport: (f32, f32),
+    /// The beat grid behind `director.beat`.
+    beats: Rc<crate::beats::Beats>,
 }
 
 thread_local! {
@@ -54,7 +56,7 @@ thread_local! {
 }
 
 impl Doc {
-    pub(crate) fn new(html: Html, prober: Prober, viewport: (f32, f32)) -> Self {
+    pub(crate) fn new(html: Html, prober: Prober, viewport: (f32, f32), beats: Rc<crate::beats::Beats>) -> Self {
         let mut doc = Self {
             html,
             ids: Vec::new(),
@@ -66,6 +68,7 @@ impl Doc {
             prober,
             playing: false,
             viewport,
+            beats,
         };
         let root = doc.html.tree.root().id();
         doc.register(root);
@@ -959,7 +962,7 @@ pub(crate) fn matrix_text(value: &str, size: (f32, f32)) -> String {
 /// Register the DOM natives as globals.
 pub(crate) fn register(cx: &mut Context) -> JsResult<()> {
     type Native = fn(&JsValue, &[JsValue], &mut Context) -> JsResult<JsValue>;
-    let natives: [(&str, usize, Native); 27] = [
+    let natives: [(&str, usize, Native); 30] = [
         ("__dKind", 1, kind),
         ("__dTag", 1, tag),
         ("__dNs", 1, namespace),
@@ -987,6 +990,9 @@ pub(crate) fn register(cx: &mut Context) -> JsResult<()> {
         ("__dGeneration", 0, generation),
         ("__dMedia", 1, media),
         ("__dPath", 2, path),
+        ("__dBeat", 1, beat),
+        ("__dBeatAt", 1, beat_at),
+        ("__dBeatGrid", 0, beat_grid),
     ];
     for (name, length, f) in natives {
         cx.register_global_callable(JsString::from(name), length, NativeFunction::from_fn_ptr(f))?;
@@ -997,6 +1003,27 @@ pub(crate) fn register(cx: &mut Context) -> JsResult<()> {
 fn media(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
     let query = arg_text(args, 0, cx)?;
     with_doc(|d| Ok(JsValue::from(crate::css::media_text_matches(&query, d.viewport.0, d.viewport.1)?)))
+}
+
+/// Seconds at a beat position on the composition's beat grid.
+fn beat(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let position = args.first().cloned().unwrap_or_default().to_number(cx)?;
+    with_doc(|d| Ok(JsValue::from(d.beats.grid()?.time(position))))
+}
+
+/// The beat position at a time in seconds.
+fn beat_at(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
+    let time = args.first().cloned().unwrap_or_default().to_number(cx)?;
+    with_doc(|d| Ok(JsValue::from(d.beats.grid()?.position(time))))
+}
+
+/// The grid's tempo, bar length and drop as JSON.
+fn beat_grid(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+    with_doc(|d| {
+        let grid = d.beats.grid()?;
+        let json = serde_json::json!({ "bpm": grid.bpm, "beatsPerBar": grid.beats_per_bar, "drop": grid.drop });
+        Ok(JsValue::from(JsString::from(json.to_string())))
+    })
 }
 
 fn generation(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {

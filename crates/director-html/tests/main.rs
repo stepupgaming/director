@@ -7,6 +7,7 @@ mod animation_css;
 mod authoring_slices;
 mod background_layers;
 mod background_position;
+mod beats;
 mod border_styles;
 mod clip_shapes;
 mod compatibility;

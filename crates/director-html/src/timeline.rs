@@ -3,6 +3,7 @@
 //! and each track compiles to a native animation on the element whose `id`
 //! matches its target.
 
+use crate::beats::Beats;
 use crate::CompileError;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -107,7 +108,8 @@ pub(crate) fn element_path(el: scraper::ElementRef<'_>, root: ego_tree::NodeId) 
 }
 
 /// Every timeline track in the document, grouped by target id or path.
-pub(crate) fn collect(dom: &Html) -> Result<BTreeMap<String, Vec<TimelineTrack>>, CompileError> {
+/// Keyframe times may be beat times, which resolve to seconds here.
+pub(crate) fn collect(dom: &Html, beats: &Beats) -> Result<BTreeMap<String, Vec<TimelineTrack>>, CompileError> {
     let mut tracks: BTreeMap<String, Vec<TimelineTrack>> = BTreeMap::new();
     let mut timeline = Timeline {
         format: TIMELINE_FORMAT.into(),
@@ -118,8 +120,27 @@ pub(crate) fn collect(dom: &Html) -> Result<BTreeMap<String, Vec<TimelineTrack>>
             continue;
         }
         let text: String = script.text().collect();
-        let part: Timeline = serde_json::from_str(&text)
-            .map_err(|e| CompileError::Input(format!("timeline JSON: {e}")))?;
+        let mut json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| CompileError::Input(format!("timeline JSON: {e}")))?;
+        let keys = json
+            .get_mut("tracks")
+            .and_then(|tracks| tracks.as_array_mut())
+            .into_iter()
+            .flatten()
+            .filter_map(|track| track.get_mut("keyframes").and_then(|keys| keys.as_array_mut()))
+            .flatten();
+        for key in keys {
+            if let Some(time) = key.get_mut("time").filter(|time| time.is_string()) {
+                let text = time.as_str().unwrap_or_default();
+                let seconds = beats
+                    .seconds(text)
+                    .map_err(|e| CompileError::Input(format!("timeline time {e}")))?
+                    .ok_or_else(|| CompileError::Input(format!("timeline time '{text}' must be seconds or a beat time")))?;
+                *time = seconds.into();
+            }
+        }
+        let part: Timeline =
+            serde_json::from_value(json).map_err(|e| CompileError::Input(format!("timeline JSON: {e}")))?;
         if part.format != TIMELINE_FORMAT {
             return Err(CompileError::Input(format!(
                 "unsupported timeline format '{}'",

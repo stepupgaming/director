@@ -1,6 +1,7 @@
 use crate::{
     animation,
     assets::AssetStore,
+    beats::Beats,
     computed::ComputedStyle,
     css::{diagnostic, Css, Values},
     element::{AtomicSizing, HtmlElement, InlineFlow, InlineLink},
@@ -20,6 +21,7 @@ use std::{
     any::Any,
     collections::{BTreeMap, HashMap, HashSet},
     path::Path,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -508,9 +510,17 @@ fn motion_blur(root: ElementRef<'_>) -> Result<(u32, f32), CompileError> {
     Ok(blur)
 }
 
-/// `options` with the root's size, duration and frame rate applied.
-fn resolve_options(dom: &Html, mut options: CompileOptions) -> Result<CompileOptions, CompileError> {
+/// `options` with the root's size, duration and frame rate applied. A beat
+/// time as the root's duration ends the composition on that beat.
+fn resolve_options(dom: &Html, mut options: CompileOptions, beats: &Beats) -> Result<CompileOptions, CompileError> {
     let root = composition_root(dom, &options)?;
+    let beat_end = root
+        .value()
+        .attr("data-duration")
+        .map(|v| beats.seconds(v))
+        .transpose()
+        .map_err(CompileError::Input)?
+        .flatten();
     for (attr, target) in [
         ("data-width", &mut options.width),
         ("data-height", &mut options.height),
@@ -525,11 +535,14 @@ fn resolve_options(dom: &Html, mut options: CompileOptions) -> Result<CompileOpt
         ("data-duration", &mut options.duration),
         ("data-fps", &mut options.fps),
     ] {
-        if let Some(v) = root.value().attr(attr) {
+        if let Some(v) = root.value().attr(attr).filter(|_| attr != "data-duration" || beat_end.is_none()) {
             *target = v
                 .parse()
                 .map_err(|_| CompileError::Input(format!("invalid {attr}: {v}")))?;
         }
+    }
+    if let Some(end) = beat_end {
+        options.duration = end;
     }
     validate_options(&options)?;
     Ok(options)
@@ -541,11 +554,12 @@ pub(crate) fn compile_with_assets(
     assets: Arc<AssetStore>,
 ) -> Result<CompiledHtml, CompileError> {
     let mut dom = Html::parse_document(source);
-    let options = resolve_options(&dom, options)?;
+    let beats = Rc::new(Beats::new(composition_root(&dom, &options)?, &assets).map_err(CompileError::Input)?);
+    let options = resolve_options(&dom, options, &beats)?;
     let blur = motion_blur(composition_root(&dom, &options)?)?;
-    let motion = crate::gsap::run(&mut dom, &options, blur, &assets)
+    let motion = crate::gsap::run(&mut dom, &options, blur, &assets, &beats)
         .map_err(|e| CompileError::Diagnostics(vec![diagnostic("script", e)]))?;
-    let (mut builder, root_id) = build(&dom, options, assets, motion, false)?;
+    let (mut builder, root_id) = build(&dom, options, assets, motion, false, beats.clone())?;
     if !builder.errors.is_empty() {
         return Err(CompileError::Diagnostics(builder.errors));
     }
@@ -581,7 +595,20 @@ pub(crate) fn compile_with_assets(
         source_inspection: None,
         assets: builder.assets,
         timeline,
+        beat_grid: beats.resolved().cloned(),
     })
+}
+
+/// The beat grid of the HTML page at `path`: its music track analysed, or
+/// its root's fixed tempo.
+pub fn beat_grid_file(path: &Path, mut options: CompileOptions) -> Result<director_core::beats::BeatGrid, CompileError> {
+    options.base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| CompileError::Input(format!("HTML {}: {e}", path.display())))?;
+    let dom = Html::parse_document(&source);
+    let assets = Arc::new(AssetStore::local(&options.base_dir, false));
+    let beats = Beats::new(composition_root(&dom, &options)?, &assets).map_err(CompileError::Input)?;
+    beats.grid().cloned().map_err(CompileError::Input)
 }
 
 /// Lay out `dom` at time 0 for the computed style and geometry page scripts
@@ -590,8 +617,9 @@ pub(crate) fn probe(
     dom: &Html,
     options: &CompileOptions,
     assets: &Arc<AssetStore>,
+    beats: &Rc<Beats>,
 ) -> Result<crate::gsap::Probe, CompileError> {
-    let (mut builder, root_id) = build(dom, options.clone(), assets.clone(), Default::default(), true)?;
+    let (mut builder, root_id) = build(dom, options.clone(), assets.clone(), Default::default(), true, beats.clone())?;
     if !builder.errors.is_empty() {
         return Err(CompileError::Diagnostics(builder.errors));
     }
@@ -648,6 +676,7 @@ fn build(
     assets: Arc<AssetStore>,
     motion: crate::gsap::Motion,
     probing: bool,
+    beats: Rc<Beats>,
 ) -> Result<(Builder, NodeId), CompileError> {
     let root = composition_root(dom, &options)?;
     let mut css = Css::default();
@@ -673,7 +702,7 @@ fn build(
     );
     (director.samples_per_frame, director.shutter_angle) = motion_blur(root)?;
     load_fonts(&mut director, &css.fonts, &assets)?;
-    let timeline = if probing { BTreeMap::new() } else { crate::timeline::collect(dom)? };
+    let timeline = if probing { BTreeMap::new() } else { crate::timeline::collect(dom, &beats)? };
     let mut builder = Builder {
         director,
         css,
@@ -695,6 +724,8 @@ fn build(
         flows: 0,
         inherited: Vec::new(),
         clocked: 0,
+        beats,
+        sounds: HashMap::new(),
     };
     // Compute inherited values along the full ancestor chain, including body resets.
     let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
@@ -760,6 +791,10 @@ struct Builder {
     inherited: Vec<(f32, Vec<animation::Animation>)>,
     /// Open ancestors with a `time` track.
     clocked: usize,
+    /// The beat grid that beat-valued times resolve against.
+    beats: Rc<Beats>,
+    /// Decoded `data-sfx` files by source.
+    sounds: HashMap<String, Vec<f32>>,
 }
 
 /// The HTML element on scene node `id`.
@@ -1215,6 +1250,48 @@ impl Builder {
         cached_svg_fonts(&mut self.svg_fonts, &self.assets, &self.css.fonts)
     }
 
+    /// Play `src` once from `start`, the moment the clip `el` cuts in.
+    fn sound_effect(&mut self, el: ElementRef<'_>, context: &str, src: &str, start: f64) -> Result<(), CompileError> {
+        if self.clocked > 0 {
+            return Err(CompileError::Diagnostics(vec![diagnostic(
+                context,
+                "a sound effect inside a time track plays on the composition clock".to_string(),
+            )]));
+        }
+        let samples = match self.sounds.get(src) {
+            Some(samples) => samples.clone(),
+            None => {
+                let samples = director_core::audio::load_audio_bytes(&self.assets.read(src)?, 48000)
+                    .map_err(|e| CompileError::Input(format!("sound effect '{src}': {e}")))?;
+                self.sounds.insert(src.into(), samples.clone());
+                samples
+            }
+        };
+        let volume = match el.value().attr("data-sfx-volume") {
+            None => 1.0,
+            Some(v) => v.trim().parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0).ok_or_else(|| {
+                CompileError::Diagnostics(vec![diagnostic(
+                    context,
+                    format!("data-sfx-volume must be finite and nonnegative (got '{v}')"),
+                )])
+            })?,
+        };
+        let hidden = el
+            .ancestors()
+            .filter_map(ElementRef::wrap)
+            .chain([el])
+            .any(|el| el.value().attr("data-hidden").is_some_and(|v| v != "false"));
+        let seconds = samples.len() as f64 / 96000.0;
+        let id = self.director.add_scene_audio(samples, start, seconds);
+        if let Some(track) = &mut self.director.audio_mixer.tracks[id] {
+            track.volume = director_core::animation::Animated::new(if hidden { 0.0 } else { volume });
+            if !src.starts_with("data:") {
+                track.source_path = Some(src.into());
+            }
+        }
+        Ok(())
+    }
+
     fn node(
         &mut self,
         el: ElementRef<'_>,
@@ -1332,6 +1409,12 @@ impl Builder {
                         | "data-hf-id"
                         | "data-hf-render-id"
                         | "data-label"
+                        | "data-timeline-role"
+                        | "data-bpm"
+                        | "data-beat-offset"
+                        | "data-beats-per-bar"
+                        | "data-sfx"
+                        | "data-sfx-volume"
                 )
             {
                 self.errors.push(diagnostic(
@@ -1356,15 +1439,39 @@ impl Builder {
             }
             Ok(v)
         };
+        if !root {
+            if let Some(name) = ["data-bpm", "data-beat-offset", "data-beats-per-bar"]
+                .into_iter()
+                .find(|name| el.value().attr(name).is_some())
+            {
+                return Err(CompileError::Diagnostics(vec![diagnostic(
+                    &context,
+                    format!("{name} belongs on the composition root"),
+                )]));
+            }
+        }
+        // Beat times name points on the composition's beat grid; seconds count from the composition start.
+        let beat_error = |e: String| CompileError::Diagnostics(vec![diagnostic(&context, e)]);
+        let beats = self.beats.clone();
+        let at = |name: &str| -> Result<Option<f64>, CompileError> {
+            Ok(el.value().attr(name).map(|v| beats.seconds(v)).transpose().map_err(beat_error)?.flatten())
+        };
         let start = if root {
             0.0
+        } else if let Some(start) = at("data-start")? {
+            start
         } else {
             composition_start + numeric("data-start", 0.0)?
         };
         let end = if root {
             self.options.duration
-        } else if el.value().attr("data-duration").is_some() {
-            start + numeric("data-duration", 0.0)?
+        } else if let Some(span) = el.value().attr("data-duration") {
+            match beats.span_end(start, span).map_err(beat_error)? {
+                Some(end) => end,
+                None => start + numeric("data-duration", 0.0)?,
+            }
+        } else if let Some(end) = at("data-end")? {
+            end
         } else if el.value().attr("data-end").is_some() {
             composition_start + numeric("data-end", self.options.duration)?
         } else {
@@ -1374,6 +1481,9 @@ impl Builder {
             return Err(CompileError::Input(format!(
                 "{context}: invalid clip window [{start}, {end})"
             )));
+        }
+        if let Some(src) = el.value().attr("data-sfx") {
+            self.sound_effect(el, &context, src, start)?;
         }
         let mut svg_viewport: Option<(f32, f32)> = None;
         let mut atomics = Vec::new();
@@ -1505,9 +1615,11 @@ impl Builder {
                     .value()
                     .attr("src")
                     .ok_or_else(|| CompileError::Input("audio without src".into()))?;
-                let bytes = self.assets.read(src)?;
-                let mut samples = director_core::audio::load_audio_bytes(&bytes, 48000)
-                    .map_err(|e| CompileError::Input(format!("audio '{src}': {e}")))?;
+                let mut samples = match self.beats.take_decoded(src) {
+                    Some(samples) => samples,
+                    None => director_core::audio::load_audio_bytes(&self.assets.read(src)?, 48000)
+                        .map_err(|e| CompileError::Input(format!("audio '{src}': {e}")))?,
+                };
                 let media_start = numeric("data-media-start", 0.0)?;
                 if media_start < 0.0 {
                     return Err(CompileError::Input("negative audio media start".into()));

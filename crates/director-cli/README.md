@@ -54,6 +54,7 @@ director-engine html check examples/html/native-motion.html
 director-engine html still examples/html/native-motion.html -t 1 -o target/native.png
 director-engine html render examples/html/native-motion.html -o target/native.mp4
 director-engine html benchmark examples/html/native-motion.html --export target/bench.mp4
+director-engine html beats song.wav --bpm 174 --clicks target/clicks.wav
 director-engine html capture composition.html -o target/scene.json --chrome /path/to/chrome
 director-engine html render target/scene.json -o target/captured-native.mp4
 

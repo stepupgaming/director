@@ -24,6 +24,7 @@ use ego_tree::NodeId;
 use scraper::{Html, Selector};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 pub(crate) use dom::{matrix_text, Probe, Probed};
@@ -210,6 +211,7 @@ pub(crate) fn run(
     options: &CompileOptions,
     blur: (u32, f32),
     assets: &Arc<AssetStore>,
+    beats: &Rc<crate::beats::Beats>,
 ) -> Result<Motion, String> {
     let scripts = scripts(dom, options, assets)?;
     if scripts.is_empty() {
@@ -218,10 +220,11 @@ pub(crate) fn run(
     let prober: dom::Prober = {
         let options = options.clone();
         let assets = assets.clone();
-        Box::new(move |html: &Html| crate::compiler::probe(html, &options, &assets).map_err(|e| e.to_string()))
+        let beats = beats.clone();
+        Box::new(move |html: &Html| crate::compiler::probe(html, &options, &assets, &beats).map_err(|e| e.to_string()))
     };
     let html = std::mem::replace(dom, Html::new_document());
-    let doc = dom::Doc::new(html, prober, (options.width as f32, options.height as f32));
+    let doc = dom::Doc::new(html, prober, (options.width as f32, options.height as f32), beats.clone());
     let frames = (options.duration * options.fps).ceil() as usize + 1;
     let times = sample_times(frames, options.fps, blur);
     let (recorded, mut doc) = dom::with_installed(doc, || execute(&scripts, &times));

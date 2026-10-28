@@ -24,6 +24,21 @@ enum HtmlCommand {
         #[arg(long)]
         export: Option<PathBuf>,
     },
+    /// Print the beat grid of an audio file or of an HTML page's tempo or music track as JSON
+    Beats {
+        input: PathBuf,
+        /// Known tempo of an audio file; settles octave readings such as 87 for 174 BPM
+        #[arg(long)]
+        bpm: Option<f64>,
+        /// Beats per bar of an audio file
+        #[arg(long)]
+        beats_per_bar: Option<u32>,
+        #[arg(long)]
+        composition: Option<String>,
+        /// Write the audio file with a click on every beat to this WAV, accented on downbeats and the drop
+        #[arg(long)]
+        clicks: Option<PathBuf>,
+    },
     /// Freeze dynamic JS/GSAP/Hyper CN DOM into native scene data using a compile-time browser
     Capture {
         input: PathBuf,
@@ -92,6 +107,16 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
     } = command
     {
         return benchmark(input, rendering, runs, frames, frames_dir, export);
+    }
+    if let HtmlCommand::Beats {
+        input,
+        bpm,
+        beats_per_bar,
+        composition,
+        clicks,
+    } = command
+    {
+        return beats(input, bpm, beats_per_bar, composition, clicks);
     }
     if let HtmlCommand::Capture {
         input,
@@ -166,7 +191,10 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
                 ..Default::default()
             },
         ),
-        HtmlCommand::Capture { .. } | HtmlCommand::Benchmark { .. } | HtmlCommand::Timeline(_) => {
+        HtmlCommand::Beats { .. }
+        | HtmlCommand::Capture { .. }
+        | HtmlCommand::Benchmark { .. }
+        | HtmlCommand::Timeline(_) => {
             unreachable!()
         }
     };
@@ -346,6 +374,92 @@ fn peak_memory() -> Option<usize> {
         })
 }
 
+/// Print the beat grid of an audio file or HTML page, and write the click overlay.
+fn beats(
+    input: PathBuf,
+    bpm: Option<f64>,
+    beats_per_bar: Option<u32>,
+    composition: Option<String>,
+    clicks: Option<PathBuf>,
+) -> Result<(), (i32, String)> {
+    let page = input
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"));
+    let grid = if page {
+        if bpm.is_some() || beats_per_bar.is_some() || clicks.is_some() {
+            return Err((1, "a page sets its grid with data-bpm and data-beats-per-bar; --bpm, --beats-per-bar and --clicks read audio files".into()));
+        }
+        let options = director_html::CompileOptions {
+            composition,
+            ..Default::default()
+        };
+        director_html::beat_grid_file(&input, options).map_err(|e| (1, e.to_string()))?
+    } else {
+        let bytes = std::fs::read(&input).map_err(|e| (1, format!("{}: {e}", input.display())))?;
+        let samples = director_core::audio::load_audio_bytes(&bytes, 48000).map_err(|e| (1, e.to_string()))?;
+        let options = director_core::beats::BeatOptions {
+            bpm,
+            beats_per_bar: beats_per_bar.unwrap_or(4),
+            ..Default::default()
+        };
+        let grid = director_core::beats::detect(&samples, 2, 48000, &options).map_err(|e| (1, e.to_string()))?;
+        if let Some(clicks) = clicks {
+            std::fs::write(&clicks, click_overlay(samples, &grid)).map_err(|e| (1, format!("{}: {e}", clicks.display())))?;
+        }
+        grid
+    };
+    let ms = |t: f64| (t * 10000.0).round() / 10000.0;
+    let json = serde_json::json!({
+        "bpm": (grid.bpm * 100.0).round() / 100.0,
+        "beats_per_bar": grid.beats_per_bar,
+        "beats": grid.beats.iter().map(|&t| ms(t)).collect::<Vec<_>>(),
+        "downbeats": grid.downbeats().into_iter().map(ms).collect::<Vec<_>>(),
+        "drop": grid.drop.map(|beat| serde_json::json!({ "beat": beat, "time": ms(grid.time(beat)) })),
+    });
+    println!("{}", serde_json::to_string_pretty(&json).map_err(|e| (1, e.to_string()))?);
+    Ok(())
+}
+
+/// 16-bit stereo 48 kHz WAV bytes of `samples` with a short click on every
+/// beat: high on downbeats, highest on the drop.
+fn click_overlay(mut samples: Vec<f32>, grid: &director_core::beats::BeatGrid) -> Vec<u8> {
+    const RATE: f64 = 48000.0;
+    let bar = grid.beats_per_bar as i64;
+    for (i, &time) in grid.beats.iter().enumerate() {
+        let position = i as i64 - grid.origin as i64;
+        let pitch = match position {
+            p if grid.drop == Some(p as f64) => 2640.0,
+            p if p.rem_euclid(bar) == 0 => 1760.0,
+            _ => 1100.0,
+        };
+        let start = (time * RATE).round() as usize;
+        for n in 0..(0.04 * RATE) as usize {
+            let t = n as f64 / RATE;
+            let click = (0.5 * (std::f64::consts::TAU * pitch * t).sin() * (-t * 120.0).exp()) as f32;
+            for channel in 0..2 {
+                if let Some(sample) = samples.get_mut((start + n) * 2 + channel) {
+                    *sample += click;
+                }
+            }
+        }
+    }
+    let data: Vec<u8> = samples
+        .iter()
+        .flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
+        .collect();
+    let mut wav = Vec::with_capacity(44 + data.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    for (value, bytes) in [(16, 4), (1, 2), (2, 2), (48000, 4), (48000 * 4, 4), (4, 2), (16, 2)] {
+        wav.extend_from_slice(&u32::to_le_bytes(value)[..bytes]);
+    }
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    wav.extend(data);
+    wav
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,6 +474,7 @@ mod tests {
         for args in [
             vec!["test", "check", "scene.html"],
             vec!["test", "timeline", "scene.html"],
+            vec!["test", "beats", "song.wav", "--bpm", "174", "--clicks", "clicks.wav"],
             vec!["test", "still", "scene.json", "-t", ".5", "-o", "frame.png"],
             vec!["test", "render", "scene.html", "-o", "movie.mp4"],
             vec![

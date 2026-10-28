@@ -12,11 +12,13 @@ const N = {
   markup: __dMarkup, select: __dSelect, matches: __dMatches, layout: __dLayout,
   viewport: __dViewport, computed: __dComputed, matrix: __dMatrix,
   generation: __dGeneration, media: __dMedia, path: __dPath,
+  beat: __dBeat, beatAt: __dBeatAt, beatGrid: __dBeatGrid,
 };
 for (const name of ["__dKind", "__dTag", "__dNs", "__dParent", "__dChildren", "__dConnected", "__dAttr",
   "__dAttrs", "__dSetAttr", "__dText", "__dSetText", "__dCreate", "__dCreateText", "__dInsert", "__dRemove",
   "__dClone", "__dSetInner", "__dMarkup", "__dSelect", "__dMatches", "__dLayout", "__dViewport",
-  "__dComputed", "__dMatrix", "__dGeneration", "__dMedia", "__dPath"]) delete G[name];
+  "__dComputed", "__dMatrix", "__dGeneration", "__dMedia", "__dPath", "__dBeat", "__dBeatAt",
+  "__dBeatGrid"]) delete G[name];
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -1118,6 +1120,23 @@ function setSteps(sets, before, t) {
   }
   return out;
 }
+
+// ---- beat grid ----
+// Positions count beats from the first downbeat; the grid resolves on first use.
+let beatGrid;
+const grid = () => (beatGrid ??= JSON.parse(N.beatGrid()));
+G.director = {
+  beat: (position) => N.beat(+position),
+  bar: (bar) => N.beat(bar * grid().beatsPerBar),
+  position: (seconds) => N.beatAt(+seconds),
+  get bpm() { return grid().bpm; },
+  get beatsPerBar() { return grid().beatsPerBar; },
+  get drop() {
+    const drop = grid().drop;
+    if (drop === null) fail("the music has no drop: no bar raises its energy enough over the bars before it");
+    return drop;
+  },
+};
 
 G.__director = {
   loaded() {

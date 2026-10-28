@@ -4,6 +4,7 @@ use std::path::PathBuf;
 mod animation;
 mod assets;
 mod background_box;
+mod beats;
 mod background_tiles;
 mod box_edges;
 mod calc_len;
@@ -31,7 +32,7 @@ pub use capture::{
     compile_capture, compile_capture_file, Capture, CapturedFrame, CapturedMedia, CapturedNode,
     CapturedShader, CapturedShaderImage, CAPTURE_FORMAT,
 };
-pub use compiler::{compile, compile_file};
+pub use compiler::{beat_grid_file, compile, compile_file};
 pub use import::register_import;
 pub use project::{ElementEdit, NativeProject, ProjectSource, PROJECT_FORMAT};
 pub use timeline::{
@@ -49,6 +50,8 @@ pub struct CompiledHtml {
     /// The `director-timeline/1` tracks this compile attached, from timeline
     /// JSON and translated GSAP. `None` when nothing is animated by a timeline.
     pub timeline: Option<Timeline>,
+    /// The beat grid, when a beat time or script used it.
+    pub beat_grid: Option<director_core::beats::BeatGrid>,
 }
 
 #[derive(Debug, Clone, Serialize)]
