@@ -109,6 +109,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | HTML beats (beat grid, beat times, `data-sfx`) | 7 | 2026-10-28 | `cargo test -p director-html --release --test integration beats::` |
 | beat detection, `html beats --clicks` wall time | 30 s WAV 223 ms (100.01 BPM, interval sd 1.7 ms); 60 s WAV 376 ms (120.18 BPM, drop at 54.38 s) | 2026-10-28 | `director-engine html beats C:/Projects/gemmy/outputs/<song>.wav --clicks <out>.wav` |
 | HTML reels (`data-reel`, positioned boxes beside text, hidden spans) | 6 | 2026-10-28 | `cargo test -p director-html --release --test integration reel::` |
+| HTML sub-compositions (`data-composition-src`) | 4 | 2026-10-28 | `cargo test -p director-html --release --test integration compose::` |
 | HTML gsap (phase 5 GSAP gate) | 44 | 2026-10-28 | `cargo test -p director-html --release --test integration gsap::` |
 | GSAP Chromium parity, 30fps every frame | entrance SSIM .999317 MAE .0519; loop .999945 / .0073; stagger .999140 / .0790; gsap-motion 1080p .995709 / .3758; all pass on the recording-shim pipeline; rerun pending for real GSAP | 2026-10-27 | `node crates/director-html/tools/parity.mjs --input <fixture> --output target/gsap-parity/final/<name> --director target/release/director-engine.exe --chrome <chromium_headless_shell-1248>` (`--root .` for the example) |
 | Vulkan engine clippy | pass | 2026-10-25 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |

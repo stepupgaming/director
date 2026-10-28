@@ -10,6 +10,7 @@
 - `src/element/mod.rs` owns `HtmlElement`, its layout hooks, and the paint order: transform, clip path, effect layer, outer shadows, background, inset shadows, content and children, borders, mask. `src/element/background.rs` owns box shadows, background colors and layers, and `background-clip: text`. `src/element/borders.rs` owns border sides, styles, and corner joins. `src/element/text.rs` owns text decoration lines.
 - `src/beats.rs` owns the composition's beat grid and beat-time parsing (see Beat grid). `director_core::beats` detects grids from audio.
 - `src/reel.rs` owns slot-reel expansion (see Slot reels).
+- `src/compose.rs` owns sub-composition mounting (see Sub-compositions).
 - `src/timeline.rs` owns `director-timeline/1`: the serde document, its validation and collection from the page. `animation::from_track` turns one track into a native `Animation`.
 - `src/gsap/mod.rs` owns page-script execution: it loads the scripts, runs them in Boa against the DOM in `src/gsap/dom.rs` and the browser globals in `src/gsap/dom.js`, seeks every frame, and turns the recorded changes into baked HTML and `director-timeline/1` tracks. `compiler::probe` answers its layout reads. `src/gsap/ease.rs` owns the GSAP ease names and curves. `animation::Parts` owns the transform component channels.
 - `src/project.rs` owns `director-native-project/1`, editable source and validated element overrides; `src/assets.rs` owns asset recording, deduplicated SHA-256 blobs and temporary media-file leases.
@@ -158,6 +159,16 @@
 - GSAP scripts read the grid through `director.beat(position)` and `director.bar(n)` (seconds), `director.position(seconds)`, `director.bpm`, `director.beatsPerBar` and `director.drop` (a position, failing when the music has none).
 - `data-sfx` on a clip plays its file once from the clip's start on the composition clock, at `data-sfx-volume` (default 1), silent when the clip or an ancestor is `data-hidden`. A sound effect inside a `time` track fails.
 - `tests/beats.rs` covers clip windows and the root duration on beats and bars, seconds without a grid, timeline keyframes, the GSAP API, a synthesized music track setting the grid and drop, sound effects and refusals. `examples/html/kinetic-beats.html` cuts words on bars, kicks a ring on every beat and fires a sound on the end card.
+
+### Sub-compositions
+
+- A host clip with `data-composition-src` and `data-composition-id` mounts that HTML file before anything else reads the document. A file with a `<template>` mounts the template contents. A file without one mounts its head `style` and `link[rel=stylesheet]` elements and its body children, so a standalone composition also mounts. The mounted markup must hold exactly one root whose `data-composition-id` matches the host.
+- The mounted root drops `data-width`, `data-height`, `data-fps`, `data-motion-blur` and `data-shutter-angle`; the host document's root sets them for the whole film. The root keeps its own `data-duration` and other attributes.
+- Relative `src`, `href`, `data-composition-src` and CSS `url()` values (in `<style>` text and `style` attributes) rebase from the file's directory onto the host document's. A script `src` or stylesheet `href` the document already loads mounts once.
+- The host keeps `data-composition-src`, so a timeline the file registers in `window.__timelines` seeks on the clip's clock. Files mount files up to 8 levels deep.
+- A document whose every composition root sits inside a `<template>` compiles that template's contents, so a sub-composition file also renders on its own.
+- A host without `data-composition-id`, an empty src, a host with element children, a missing file, a file that is not UTF-8, and a file without exactly one matching root fail.
+- `tests/compose.rs` covers a template on the clip clock, a standalone page with rebased links, a template file on its own and refusals.
 
 ### Slot reels
 

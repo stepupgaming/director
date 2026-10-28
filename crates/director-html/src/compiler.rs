@@ -554,6 +554,7 @@ pub(crate) fn compile_with_assets(
     assets: Arc<AssetStore>,
 ) -> Result<CompiledHtml, CompileError> {
     let mut dom = Html::parse_document(source);
+    crate::compose::mount(&mut dom, &assets)?;
     let beats = Rc::new(Beats::new(composition_root(&dom, &options)?, &assets).map_err(CompileError::Input)?);
     let options = resolve_options(&dom, options, &beats)?;
     let root = composition_root(&dom, &options)?.id();
@@ -607,8 +608,9 @@ pub fn beat_grid_file(path: &Path, mut options: CompileOptions) -> Result<direct
     options.base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let source = std::fs::read_to_string(path)
         .map_err(|e| CompileError::Input(format!("HTML {}: {e}", path.display())))?;
-    let dom = Html::parse_document(&source);
+    let mut dom = Html::parse_document(&source);
     let assets = Arc::new(AssetStore::local(&options.base_dir, false));
+    crate::compose::mount(&mut dom, &assets)?;
     let beats = Beats::new(composition_root(&dom, &options)?, &assets).map_err(CompileError::Input)?;
     beats.grid().cloned().map_err(CompileError::Input)
 }
@@ -1408,6 +1410,7 @@ impl Builder {
                 && !matches!(
                     name,
                     "data-composition-id"
+                        | "data-composition-src"
                         | "data-width"
                         | "data-height"
                         | "data-duration"

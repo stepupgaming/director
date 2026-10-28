@@ -11,6 +11,7 @@ mod beats;
 mod border_styles;
 mod clip_shapes;
 mod compatibility;
+mod compose;
 mod css_media;
 mod css_nesting;
 mod depth_nested;

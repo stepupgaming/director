@@ -10,6 +10,7 @@ mod box_edges;
 mod calc_len;
 mod capture;
 mod compiler;
+mod compose;
 mod computed;
 mod css;
 mod decoration_marks;
