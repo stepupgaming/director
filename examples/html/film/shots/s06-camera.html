@@ -1,0 +1,299 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s06 { background:#111216; }
+  #s06-bg { position:absolute; inset:0;
+    background: radial-gradient(ellipse 70% 75% at 50% 48%, rgba(26,27,32,1) 0%, rgba(17,18,22,1) 55%, rgba(6,6,7,1) 100%); }
+  #s06-stage { position:absolute; left:0; top:0; width:1920px; height:1080px;
+    perspective:1000px; perspective-origin:960px 540px; transform-style:preserve-3d; }
+  .s06-p { position:absolute; left:960px; top:540px; height:2px; background:#e9e6e2; opacity:0; }
+  .s06-card { position:absolute; transform-style:preserve-3d; }
+  .s06-card svg { position:absolute; left:0; top:0; overflow:visible; }
+  .s06-tx { position:absolute; left:-1500px; margin:0; text-align:center; white-space:nowrap;
+    font-family:Archivo; font-weight:900; font-stretch:125%; line-height:1; letter-spacing:-1px; }
+  .s06-face-w { color:#fbf8f4; }
+  .s06-face-r { color:#f04a2a; text-shadow:0 0 18px rgba(240,74,42,.55); }
+  #s06-beam { position:absolute; left:-200px; width:2320px; height:4px; top:538px; opacity:0;
+    background: linear-gradient(90deg, rgba(239,74,44,0) 0%, #ef4a2c 6%, #ff9a78 50%, #ef4a2c 94%, rgba(239,74,44,0) 100%);
+    box-shadow: 0 0 12px 3px rgba(239,74,44,.55); border-radius:2px; clip-path:inset(0% 100% 0% 0%); }
+  #s06 .caption .w { position:relative; z-index:1; }
+  #s06-chip, #s06-chip2 { position:absolute; display:block; left:0; top:0; width:0; height:44px;
+    background:#ef4a2c; border-radius:4px; z-index:0; }
+  #s06-cap2 { opacity:0; }
+</style></head><body>
+<div id="s06" class="film" data-composition-id="s06" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="3.8" data-motion-blur="8" data-shutter-angle="270">
+  <div id="s06-bg"></div>
+  <div id="s06-stage">
+    <div class="s06-card" id="s06-c3"></div>
+    <div class="s06-card" id="s06-c2"></div>
+    <div class="s06-card" id="s06-c1"></div>
+    <div class="s06-card" id="s06-c0"></div>
+    <div id="s06-parts"></div>
+  </div>
+  <div id="s06-beam"></div>
+  <div class="vignette"></div>
+  <p class="caption" id="s06-cap"><span id="s06-chip"></span><span class="w">A</span> <span class="w">camera</span> <span class="w">that</span> <span class="w">flies</span> <span class="w">through</span> <span class="w">the</span> <span class="w">type.</span></p>
+  <p class="caption" id="s06-cap2"><span id="s06-chip2"></span><span class="w" id="s06-and">And</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s06-frame">1244</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s06-tc" style="right:62px;bottom:48px">00:00:20:44</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 1244 / 60, FRAMES = 228, DURATION = FRAMES / 60;
+  const F = 1 / 60, P = 1000;
+  const tl = gsap.timeline({ paused: true });
+  const $ = (id) => document.getElementById(id);
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const SVG = "http://www.w3.org/2000/svg";
+
+  // Monotone cubic interpolation over [frame, value] keys.
+  const spline = (k) => {
+    const n = k.length, d = [], m = [];
+    for (let i = 0; i < n - 1; i++) d.push((k[i + 1][1] - k[i][1]) / (k[i + 1][0] - k[i][0]));
+    for (let i = 0; i < n; i++) {
+      if (i === 0) m.push(n > 1 ? d[0] : 0);
+      else if (i === n - 1) m.push(d[n - 2]);
+      else m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2);
+    }
+    for (let i = 0; i < n - 1; i++) {
+      if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+      const a = m[i] / d[i], b = m[i + 1] / d[i], s = a * a + b * b;
+      if (s > 9) { const t = 3 / Math.sqrt(s); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+    }
+    return (f) => {
+      if (f <= k[0][0]) return k[0][1];
+      if (f >= k[n - 1][0]) return k[n - 1][1];
+      let i = 0; while (f > k[i + 1][0]) i++;
+      const h = k[i + 1][0] - k[i][0], t = (f - k[i][0]) / h, t2 = t * t, t3 = t2 * t;
+      return (2 * t3 - 3 * t2 + 1) * k[i][1] + (t3 - 2 * t2 + t) * h * m[i]
+        + (-2 * t3 + 3 * t2) * k[i + 1][1] + (t3 - t2) * h * m[i + 1];
+    };
+  };
+
+  // Cards: native size, word, face style, depth path (relative to the eye), position, roll, yaw.
+  const CARDS = [
+    { id: "s06-c0", w: 1100, h: 590, word: "CAMERA", fs: 188, face: "w", tdx: 20, tdy: 0, tr: 1.5,
+      z: [[0,-330],[6,-305],[20,-143],[33,102],[42,283],[48,470],[54,730],[58,880],[62,990]],
+      x: [[0,-95],[20,-82],[42,-39],[62,10]], y: [[0,-12],[62,-12]],
+      r: [[0,0.5],[4,1],[6,4.5],[20,6.3],[42,7],[62,8]], ry: [[0,0]] },
+    { id: "s06-c1", w: 700, h: 370, word: "FLIES", fs: 115, face: "r", tdx: 50, tdy: 0, tr: -3,
+      z: [[0,-560],[20,-520],[42,-470],[51,-40],[57,13],[66,225],[75,490],[81,760],[84,880],[88,990]],
+      x: [[0,-20],[57,-15],[66,13],[75,30],[88,45]], y: [[0,-10],[88,-10]],
+      r: [[0,8],[88,8]], ry: [[0,0]] },
+    { id: "s06-c2", w: 700, h: 370, word: "THROUGH", fs: 116, vis: -150, face: "w", tdx: -30, tdy: 0, tr: 5,
+      z: [[0,-760],[42,-660],[57,-520],[66,-420],[75,-300],[81,-200],[84,10],[95,374],[105,620],[114,850],[121,990]],
+      x: [[0,-40],[121,-40]], y: [[0,15],[121,15]],
+      r: [[0,-13],[121,-13]], ry: [[0,0]] },
+    { id: "s06-c3", w: 1000, h: 480, word: "THE TYPE.", fs: 156, vis: 250, inner: [600, 240, -300], face: "r", tdx: 0, tdy: 0, tr: 1,
+      z: [[0,-1500],[84,-1150],[105,-800],[114,-618],[120,-508],[126,-377],[144,-94],[160,68],[178,137],
+          [195,140],[210,175],[222,190],[228,200]],
+      x: [[0,30],[178,25],[184,12],[195,-80],[210,-102],[222,-114],[224,-118],[228,-230]], y: [[0,0],[228,0]],
+      r: [[0,-9],[129,-9],[144,-5],[160,-1.5],[178,0]], ry: [[182,0],[195,22],[210,30],[222,32],[228,34]] },
+  ];
+  const DZ = 25, LAYERS = 9, LSTEP = 7;
+  const EXT = { w: ["#d0391d", "#5c1408"], r: ["#a82a14", "#3a0c06"] };
+  const mix = (a, b, t) => {
+    const p = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+    const A = p(a), B = p(b);
+    return "rgb(" + A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(",") + ")";
+  };
+
+  CARDS.forEach((c) => {
+    const el = $(c.id);
+    el.style.left = (960 - c.w / 2) + "px";
+    el.style.top = (540 - c.h / 2) + "px";
+    el.style.width = c.w + "px";
+    el.style.height = c.h + "px";
+    const svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("width", c.w); svg.setAttribute("height", c.h);
+    svg.setAttribute("viewBox", "0 0 " + c.w + " " + c.h);
+    const ch = 24, W = c.w - 1.5, H = c.h - 1.5, o = 1.5;
+    const pts = [[ch,o],[W-ch,o],[W,ch],[W,H-ch],[W-ch,H],[ch,H],[o,H-ch],[o,ch]].map((p) => p.join(",")).join(" ");
+    const grey = document.createElementNS(SVG, "polygon");
+    grey.setAttribute("points", pts); grey.setAttribute("fill", "none");
+    grey.setAttribute("stroke", "#8e9096"); grey.setAttribute("stroke-width", "2");
+    const red = document.createElementNS(SVG, "polygon");
+    red.setAttribute("points", pts); red.setAttribute("fill", "none");
+    red.setAttribute("stroke", "#ef4a2c"); red.setAttribute("stroke-width", "3");
+    svg.appendChild(grey); svg.appendChild(red);
+    el.appendChild(svg);
+    if (c.inner) {
+      // A faint panel floating behind the word, deeper in the card.
+      const iw = c.inner[0], ih = c.inner[1];
+      const isvg = document.createElementNS(SVG, "svg");
+      isvg.setAttribute("width", iw); isvg.setAttribute("height", ih);
+      isvg.setAttribute("viewBox", "0 0 " + iw + " " + ih);
+      isvg.style.left = ((c.w - iw) / 2) + "px"; isvg.style.top = ((c.h - ih) / 2) + "px";
+      isvg.style.transform = "translateZ(" + c.inner[2] + "px)";
+      const q = 16, IW = iw - 1, IH = ih - 1;
+      const ip = document.createElementNS(SVG, "polygon");
+      ip.setAttribute("points", [[q,1],[IW-q,1],[IW,q],[IW,IH-q],[IW-q,IH],[q,IH],[1,IH-q],[1,q]].map((p) => p.join(",")).join(" "));
+      ip.setAttribute("fill", "none"); ip.setAttribute("stroke", "#8e9096"); ip.setAttribute("stroke-width", "2");
+      isvg.appendChild(ip);
+      el.appendChild(isvg);
+      c.innerEl = ip;
+    }
+    const txt = document.createElement("div");
+    txt.className = "s06-card";
+    txt.style.left = "0px"; txt.style.top = "0px"; txt.style.width = c.w + "px"; txt.style.height = c.h + "px";
+    txt.style.transform = "translate3d(" + c.tdx + "px," + c.tdy + "px,0px) rotateZ(" + c.tr + "deg)";
+    const layers = [];
+    for (let i = LAYERS; i >= 0; i--) {
+      const p = document.createElement("p");
+      p.className = "s06-tx" + (i === 0 ? " s06-face-" + c.face : "");
+      p.textContent = c.word;
+      p.style.width = (c.w + 3000) + "px";
+      p.style.fontSize = c.fs + "px";
+      p.style.top = (c.h / 2 - c.fs * 0.5) + "px";
+      p.style.transform = "translateZ(" + (DZ - i * LSTEP) + "px)";
+      if (i > 0) p.style.color = mix(EXT[c.face][0], EXT[c.face][1], (i - 1) / (LAYERS - 1));
+      txt.appendChild(p);
+      layers.push(p);
+    }
+    el.appendChild(txt);
+    c.el = el; c.grey = grey; c.red = red; c.layers = layers; c.txt = txt;
+    c.fz = spline(c.z); c.fx = spline(c.x); c.fy = spline(c.y); c.fr = spline(c.r); c.fry = spline(c.ry);
+  });
+
+  // Entry of the first card: it drifts in from the right under a horizontal smear. The smear is a
+  // triangle-wave jitter one frame long, so the motion-blur shutter integrates it into a streak.
+  const whip0 = spline([[0,700],[1,650],[2,300],[3,200],[4,60],[5,30],[6,10],[7,0]]);
+  const smear0 = spline([[0,450],[2,400],[4,200],[5,110],[6,50],[7,0]]);
+  const tri = (u) => Math.abs(2 * (u - Math.floor(u)) - 1) - 0.5;
+
+  // Camera travel speed (world units per frame) drives the speed particles.
+  const SPEED = [[0,40],[6,14],[36,16],[42,30],[50,46],[57,28],[75,32],[81,46],[86,40],[95,26],[110,36],
+    [120,26],[130,14],[178,7],[190,9],[228,12]];
+  const sp = spline(SPEED), TRAVEL = [0];
+  for (let i = 1; i <= FRAMES + 2; i++) TRAVEL.push(TRAVEL[i - 1] + sp(i - 0.5));
+  const travel = (f) => {
+    const i = Math.max(0, Math.min(FRAMES + 1, Math.floor(f)));
+    return TRAVEL[i] + (TRAVEL[i + 1] - TRAVEL[i]) * (f - i);
+  };
+
+  // Speed particles: thin streaks aligned with the depth axis.
+  const parts = $("s06-parts"), PARTS = [], ZFAR = -2600, ZNEAR = 960;
+  for (let i = 0; i < 160; i++) {
+    const a = Math.random() * Math.PI * 2, r = 160 + Math.pow(Math.random(), 0.7) * 1500;
+    const d = document.createElement("div");
+    d.className = "s06-p";
+    const red = Math.random() < 0.35;
+    const L = 20 + Math.random() * 100;
+    d.style.width = L.toFixed(0) + "px";
+    d.style.marginLeft = (-L / 2).toFixed(0) + "px";
+    d.style.height = (Math.random() < 0.5 ? 1.5 : 2.5) + "px";
+    if (red) d.style.background = "#ef4a2c";
+    parts.appendChild(d);
+    PARTS.push({ d, x: Math.cos(a) * r, y: Math.sin(a) * r * 0.8, z0: ZFAR + Math.random() * (ZNEAR - ZFAR),
+      rot: Math.atan2(Math.sin(a) * 0.8, Math.cos(a)) * 180 / Math.PI, op: 0.45 + Math.random() * 0.55 });
+  }
+
+  tl.to({}, { duration: DURATION, ease: "none" }, 0);
+
+  // Red light beams streaking left to right: head sweeps, then the tail follows.
+  const beam = $("s06-beam");
+  const BEAMS = [
+    { y: 540, rot: -4.2, h0: 55, h1: 60, t0: 60, t1: 72 },
+    { y: 578, rot: -3.4, h0: 84, h1: 88, t0: 88, t1: 102 },
+    { y: 544, rot: 2.8, h0: 114, h1: 119, t0: 122, t1: 138, te: "none" },
+  ];
+  BEAMS.forEach((b) => {
+    tl.set(beam, { opacity: 1, top: b.y - 2, rotation: b.rot, transformOrigin: "50% 50%",
+      clipPath: "inset(0% 100% 0% 0%)" }, b.h0 * F);
+    tl.to(beam, { clipPath: "inset(0% 0% 0% 0%)", duration: (b.h1 - b.h0) * F, ease: "power1.out" }, b.h0 * F);
+    tl.to(beam, { clipPath: "inset(0% 0% 0% 100%)", duration: (b.t1 - b.t0) * F, ease: b.te || "power1.in" }, b.t0 * F);
+    tl.set(beam, { opacity: 0 }, b.t1 * F);
+  });
+
+  // Shot exit: the last card whips left and dims.
+  tl.to("#s06-stage", { opacity: 0.7, duration: 3 * F, ease: "none" }, 224 * F);
+
+  // Caption: the chip slides onto each new word.
+  const cap = $("s06-cap"), chip = $("s06-chip");
+  const words = Array.from(cap.querySelectorAll(".w"));
+  const ARRIVE = [1, 14, 39, 54, 72, 95, 107];
+  const INK = "#ffffff", CHIPINK = "#1a0c0a";
+  const box = (w) => ({ left: w.offsetLeft - 7, width: w.offsetWidth + 14 });
+  gsap.set(words, { opacity: 0 });
+  words.forEach((w, i) => {
+    const a = ARRIVE[i] * F, b = box(w);
+    if (i === 0) {
+      gsap.set(chip, { left: b.left, width: 0 });
+      gsap.set(w, { color: CHIPINK, opacity: 1, clipPath: "inset(0% 100% 0% 0%)" });
+      tl.to(w, { clipPath: "inset(0% 0% 0% 0%)", duration: 3 * F, ease: "none" }, a - F);
+      tl.to(chip, { width: b.width, duration: 3 * F, ease: "none" }, a - F);
+      return;
+    }
+    gsap.set(w, { color: CHIPINK });
+    tl.to(w, { opacity: 0.45, duration: F, ease: "none" }, a - 2 * F);
+    tl.to(chip, { left: b.left, width: b.width, duration: 3.5 * F, ease: "power2.out" }, a);
+    tl.to(words[i - 1], { color: INK, duration: 2 * F, ease: "none" }, a + F);
+    tl.to(w, { opacity: 1, duration: 3 * F, ease: "none" }, a + F);
+  });
+  tl.to(cap, { opacity: 0, duration: 3 * F, ease: "none" }, 222 * F);
+  // The next shot's caption starts two frames early: "And" arrives, then its chip opens.
+  const and = $("s06-and"), chip2 = $("s06-chip2"), b2 = box(and);
+  gsap.set(chip2, { left: b2.left, width: 0 });
+  tl.set("#s06-cap2", { opacity: 1 }, 226 * F);
+  tl.fromTo(and, { color: INK, opacity: 0.45 }, { color: CHIPINK, opacity: 1, duration: 1.5 * F, ease: "none" }, 227 * F);
+  tl.to(chip2, { width: b2.width, duration: 1.5 * F, ease: "none" }, 227 * F);
+
+  tl.eventCallback("onUpdate", () => {
+    const t = tl.time(), f = t * 60;
+    const fr = Math.round((FILM_START + t) * 60);
+    $("s06-frame").textContent = pad(fr, 4);
+    $("s06-tc").textContent = "00:00:" + pad(Math.floor(fr / 60)) + ":" + pad(fr % 60);
+
+    CARDS.forEach((c, k) => {
+      const z = c.fz(f), zt = z + DZ;
+      const s = P / (P - Math.min(z, 990));
+      let x = c.fx(f);
+      if (k === 0) x += (whip0(f) + smear0(f) * tri(f)) / s;
+      const near = clamp((985 - zt) / 260, 0, 1);
+      const shown = z < 990;
+      if (k === 3) {
+        // During the final swing the word turns further than its card and slides toward the hinge.
+        const sw = clamp(c.fry(f) / 30, 0, 1.2);
+        c.txt.style.transform = "translate3d(" + (c.tdx + 110 * sw).toFixed(2) + "px," + (c.tdy + 45 * sw).toFixed(2) + "px,0px) rotateZ(" +
+          c.tr + "deg) rotateY(" + (20 * sw).toFixed(3) + "deg)";
+      }
+      c.el.style.transform = "translate3d(" + x.toFixed(2) + "px," + c.fy(f).toFixed(2) + "px," +
+        Math.min(z, 990).toFixed(2) + "px) rotateZ(" + c.fr(f).toFixed(3) + "deg) rotateY(" + c.fry(f).toFixed(3) + "deg)";
+      const zv = z + (c.vis || 0);
+      const early = k === 0 ? 1 : clamp((f - 6) / 10, 0, 1);
+      const redA = clamp((zv + 640) / 450, 0, 1);
+      const greyA = clamp((zv + 1700) / 600, 0, 1) * (1 - redA) * 0.45;
+      c.red.style.opacity = (shown ? early * redA * clamp((990 - z) / 200, 0, 1) : 0).toFixed(3);
+      c.grey.style.opacity = (shown ? early * greyA : 0).toFixed(3);
+      // Opacity on a preserve-3d group is ignored by Director, so each text layer carries it.
+      // A passing word turns into a translucent face: the extrusion fades first.
+      const ta = shown ? early * clamp((zv + 520) / 250, 0, 1) * (0.3 + 0.7 * near) * clamp((975 - zt) / 120, 0, 1) : 0;
+      const ea = ta * clamp((760 - zt) / 140, 0, 1) * (k === 0 ? clamp(1 - smear0(f) / 120, 0, 1) : 1);
+      if (c.innerEl) c.innerEl.style.opacity = (ta * 0.4).toFixed(3);
+      c.layers.forEach((l, i) => { l.style.opacity = (i === LAYERS ? ta : ea).toFixed(3); });
+    });
+
+    const T = travel(f), dim = clamp(sp(f) / 28, 0.4, 1);
+    const span = ZNEAR - ZFAR;
+    PARTS.forEach((p) => {
+      let z = p.z0 + T;
+      z = ZFAR + ((((z - ZFAR) % span) + span) % span);
+      const a = clamp((z - ZFAR) / 700, 0, 1) * clamp((ZNEAR - z) / 80, 0, 1) * p.op * dim;
+      p.d.style.opacity = a.toFixed(3);
+      p.d.style.transform = "translate3d(" + p.x.toFixed(1) + "px," + p.y.toFixed(1) + "px," + z.toFixed(1) +
+        "px) rotateZ(" + p.rot.toFixed(2) + "deg) rotateY(90deg)";
+    });
+  });
+
+  window.__timelines["s06"] = tl;
+})();
+</script>
+</body></html>

@@ -1,0 +1,528 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s09 { background: #121317; }
+  /* Dot grid on a slight camera roll. */
+  #s09-grid { position:absolute; left:-200px; top:-200px; width:2320px; height:1480px; transform:rotate(-0.57deg);
+    background-image: radial-gradient(circle, rgba(255,255,255,.1) 1.4px, transparent 2.4px);
+    background-size:128px 128px; background-position:4px 19px; }
+
+  /* The code floor: an editor page lying back into the distance, fogged toward the horizon. */
+  #s09-floor { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin:915px 365px; }
+  #s09-plane { position:absolute; left:515px; top:365px; width:800px; height:1500px; overflow:hidden;
+    transform-origin:50% 0; transform:perspective(1000px) rotateX(49.6deg);
+    background:rgba(24,26,31,.92); border:1px solid rgba(255,255,255,.13); border-radius:6px;
+    -webkit-mask-image:linear-gradient(rgba(0,0,0,.35), #000 40%); mask-image:linear-gradient(rgba(0,0,0,.35), #000 40%); }
+  #s09-tab { position:absolute; left:14px; top:10px; margin:0; font-family:"JetBrains Mono"; font-size:13px;
+    letter-spacing:1px; color:#8b8f96; white-space:pre; }
+  #s09-gut { position:absolute; left:44px; top:36px; width:1px; height:1464px; background:rgba(255,255,255,.1); }
+  #s09-code { position:absolute; left:0; top:40px; margin:0; font-family:"JetBrains Mono"; font-size:12px;
+    line-height:16px; color:#cfd2d8; white-space:pre; }
+  .s09-ln { color:#4a4e56; }
+  .s09-k { color:#ef5a3c; }
+  .s09-s { color:#d9c39a; }
+  .s09-c { color:#626670; }
+  .s09-f { color:#e9e4dc; }
+  #s09-bar { position:absolute; left:-20px; top:410px; width:840px; height:6px;
+    background:linear-gradient(90deg, rgba(255,75,43,.95), rgba(255,75,43,.55) 30%, rgba(255,75,43,.35) 100%);
+    box-shadow:0 0 18px rgba(255,75,43,.7); }
+
+  #s09-flash { position:absolute; left:0; top:0; width:1920px; height:1080px; background:#ef4a2c; opacity:0; }
+  #s09-vig { position:absolute; left:0; top:0; width:1920px; height:1080px;
+    background:radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 40%, rgba(0,0,0,.62) 100%); }
+
+  /* Counters: slot-reel digits on one line, the label below. */
+  .s09-num { position:absolute; left:0; top:257px; width:1920px; text-align:center; font-size:395px;
+    font-stretch:108%; line-height:0.96; letter-spacing:0; color:#f04b2d; opacity:0;
+    white-space:normal; }
+  .s09-label { position:absolute; left:0; top:671px; width:1920px; text-align:center; font-size:118px;
+    letter-spacing:2px; color:#ffffff; opacity:0; text-shadow:0 6px 24px rgba(0,0,0,.65); }
+  /* Reel digits drop text-shadow, so the glow is a drop-shadow on the group. */
+  #s09-nums { position:absolute; left:0; top:0; width:1920px; height:1080px;
+    filter:drop-shadow(0 0 22px rgba(255,75,43,.6)) drop-shadow(0 0 80px rgba(255,75,43,.32)); }
+  #s09-spark { position:absolute; left:860px; top:345px; width:200px; height:200px; opacity:0; }
+
+  #s09-cap .w { padding:0 6px; margin:0 -6px; border-radius:4px; opacity:0; }
+</style></head><body>
+<div id="s09" class="film" data-composition-id="s09" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="3.8" data-motion-blur="8" data-shutter-angle="270">
+  <div id="s09-grid"></div>
+  <div id="s09-floor"><div id="s09-plane">
+    <p id="s09-tab">&#9679; &#9679; &#9679;   film / scenes.html</p>
+    <div id="s09-gut"></div>
+    <pre id="s09-code"><span class="s09-ln">   1  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#flash&quot;</span>, { opacity: 0.01, duration: 0.33, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 4.202);
+<span class="s09-ln">   2  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#spark&quot;</span>, { x: 360, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln">   3  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#fly&quot;</span>, { scale: -290, duration: 0.53, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 3.293);
+<span class="s09-ln">   4  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#notes&quot;</span>, { opacity: 230, duration: 0.54, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 13.870);
+<span class="s09-ln">   5  </span>
+<span class="s09-ln">   6  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#card&quot;</span>, { rotation: -70, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln">   7  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#intro&quot;</span>, { scale: 330, duration: 0.11, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 0.201);
+<span class="s09-ln">   8  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#chip&quot;</span>, { rotation: 0.21 }, { rotation: 0.80, duration: 0.37 }, 27.955);
+<span class="s09-ln">   9  </span>
+<span class="s09-ln">  10  </span><span class="s09-k">const</span> chip = (t) => {
+<span class="s09-ln">  11  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#grid&quot;</span>, { scale: 1.53, duration: 0.08, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 35.528);
+<span class="s09-ln">  12  </span>  <span class="s09-f">floor</span>.<span class="s09-k">forEach</span>((el, i) => width[i] = 160 + i * 0.191);
+<span class="s09-ln">  13  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#spark&quot;</span>, { backgroundColor: 140, duration: 0.37, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 35.761);
+<span class="s09-ln">  14  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#notes&quot;</span>, { width: -240 }, { width: 1.19, duration: 0.26 }, 31.603);
+<span class="s09-ln">  15  </span>  <span class="s09-k">const</span> notes = (at) => {
+<span class="s09-ln">  16  </span>
+<span class="s09-ln">  17  </span>    <span class="s09-c">// the reel lands on the beat</span>
+<span class="s09-ln">  18  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#card&quot;</span>, { x: 0.69 }, { x: 220, duration: 0.36 }, 3.447);
+<span class="s09-ln">  19  </span>    <span class="s09-k">const</span> notesEase = 130;
+<span class="s09-ln">  20  </span>  }
+<span class="s09-ln">  21  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#card&quot;</span>, { scale: -300, duration: 0.13, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 3.167);
+<span class="s09-ln">  22  </span>
+<span class="s09-ln">  23  </span>  <span class="s09-f">spark</span>.<span class="s09-k">forEach</span>((el, i) => x[i] = -290 + i * 0.121);
+<span class="s09-ln">  24  </span>});
+<span class="s09-ln">  25  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#notes&quot;</span>, { y: 50 }, { y: 0.94, duration: 0.49 }, 34.486);
+<span class="s09-ln">  26  </span><span class="s09-k">const</span> sparkAt = 0.44;
+<span class="s09-ln">  27  </span>
+<span class="s09-ln">  28  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#word&quot;</span>, { scale: -390, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln">  29  </span>
+<span class="s09-ln">  30  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#elastic&quot;</span>, { backgroundColor: -10 }, { backgroundColor: 0.86, duration: 0.57 }, 1.496);
+<span class="s09-ln">  31  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#fly&quot;</span>, { backgroundColor: 1.03 }, { backgroundColor: 1.40, duration: 0.37 }, 49.683);
+<span class="s09-ln">  32  </span><span class="s09-k">const</span> reel = (t) => {
+<span class="s09-ln">  33  </span>});
+<span class="s09-ln">  34  </span><span class="s09-f">card</span>.<span class="s09-k">forEach</span>((el, i) => letterSpacing[i] = 1.09 + i * 0.025);
+<span class="s09-ln">  35  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { rotation: 0.92 }, { rotation: -210, duration: 0.39 }, 4.401);
+<span class="s09-ln">  36  </span><span class="s09-k">const</span> fly = (el) => {
+<span class="s09-ln">  37  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#word&quot;</span>, { rotation: 0.14, duration: 0.07, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 24.453);
+<span class="s09-ln">  38  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#title&quot;</span>, { y: 0.01 }, { y: 0.94, duration: 0.59 }, 51.288);
+<span class="s09-ln">  39  </span>  <span class="s09-c">// every frame is code</span>
+<span class="s09-ln">  40  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#chip&quot;</span>, { rotation: -340, duration: 0.40, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 19.366);
+<span class="s09-ln">  41  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { backgroundColor: 0.13, duration: 0.05, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 26.927);
+<span class="s09-ln">  42  </span>
+<span class="s09-ln">  43  </span>  <span class="s09-f">spark</span>.<span class="s09-k">forEach</span>((el, i) => x[i] = 0.67 + i * 0.182);
+<span class="s09-ln">  44  </span>  <span class="s09-f">hud</span>.<span class="s09-k">forEach</span>((el, i) => width[i] = 1.09 + i * 0.044);
+<span class="s09-ln">  45  </span>  <span class="s09-k">const</span> strip = (el) => {
+<span class="s09-ln">  46  </span>    <span class="s09-f">stretch</span>.<span class="s09-k">forEach</span>((el, i) => x[i] = 1.55 + i * 0.037);
+<span class="s09-ln">  47  </span>    <span class="s09-c">// every frame is code</span>
+<span class="s09-ln">  48  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { fontStretch: -30, duration: 0.39, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 23.707);
+<span class="s09-ln">  49  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#hud&quot;</span>, { fontStretch: -150, duration: 0.06, ease: <span class="s09-s">&quot;power3.inOut&quot;</span> }, 37.003);
+<span class="s09-ln">  50  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#burst&quot;</span>, { y: 90 }, { y: 1.41, duration: 0.45 }, 10.984);
+<span class="s09-ln">  51  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#hud&quot;</span>, { y: 0.75, duration: 0.53, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 39.725);
+<span class="s09-ln">  52  </span>    <span class="s09-k">const</span> briefAt = 30;
+<span class="s09-ln">  53  </span>  });
+<span class="s09-ln">  54  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#card&quot;</span>, { y: -320, duration: 0.50, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 33.758);
+<span class="s09-ln">  55  </span>  <span class="s09-f">grid</span>.<span class="s09-k">forEach</span>((el, i) => backgroundColor[i] = 0.57 + i * 0.190);
+<span class="s09-ln">  56  </span>
+<span class="s09-ln">  57  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#grid&quot;</span>, { scale: 0.29, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln">  58  </span>}
+<span class="s09-ln">  59  </span><span class="s09-k">const</span> floorX = 1.21;
+<span class="s09-ln">  60  </span><span class="s09-k">const</span> burstLen = -280;
+<span class="s09-ln">  61  </span><span class="s09-k">const</span> sparkY = -250;
+<span class="s09-ln">  62  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#notes&quot;</span>, { letterSpacing: 30, duration: 0.55, ease: <span class="s09-s">&quot;power3.inOut&quot;</span> }, 26.799);
+<span class="s09-ln">  63  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#grid&quot;</span>, { fontStretch: 0.08, duration: 0.48, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 25.803);
+<span class="s09-ln">  64  </span><span class="s09-k">const</span> stretch = (el) => {
+<span class="s09-ln">  65  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#chip&quot;</span>, { backgroundColor: 70, duration: 0.54, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 46.203);
+<span class="s09-ln">  66  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#brief&quot;</span>, { scale: 130, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln">  67  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#reel&quot;</span>, { scale: 0.94, duration: 0.58, ease: <span class="s09-s">&quot;none&quot;</span> }, 43.280);
+<span class="s09-ln">  68  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#burst&quot;</span>, { filter: -80, duration: 0.48, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 24.144);
+<span class="s09-ln">  69  </span>  <span class="s09-f">hud</span>.<span class="s09-k">forEach</span>((el, i) => scale[i] = 1.14 + i * 0.135);
+<span class="s09-ln">  70  </span>  <span class="s09-f">grid</span>.<span class="s09-k">forEach</span>((el, i) => fontStretch[i] = 1.48 + i * 0.047);
+<span class="s09-ln">  71  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { scale: -260, duration: 0.52, ease: <span class="s09-s">&quot;none&quot;</span> }, 32.088);
+<span class="s09-ln">  72  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#intro&quot;</span>, { backgroundColor: 220, duration: 0.52, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 0.725);
+<span class="s09-ln">  73  </span>
+<span class="s09-ln">  74  </span>  <span class="s09-k">const</span> brief = (el) => {
+<span class="s09-ln">  75  </span>    <span class="s09-f">notes</span>.<span class="s09-k">forEach</span>((el, i) => rotation[i] = 180 + i * 0.066);
+<span class="s09-ln">  76  </span>    <span class="s09-c">// one web page</span>
+<span class="s09-ln">  77  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#flash&quot;</span>, { filter: 0.88 }, { filter: 190, duration: 0.17 }, 2.439);
+<span class="s09-ln">  78  </span>  }
+<span class="s09-ln">  79  </span>  <span class="s09-k">const</span> flashAt = -70;
+<span class="s09-ln">  80  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#strip&quot;</span>, { x: 60, duration: 0.28, ease: <span class="s09-s">&quot;none&quot;</span> }, 34.446);
+<span class="s09-ln">  81  </span>  <span class="s09-k">const</span> flashX = 380;
+<span class="s09-ln">  82  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { opacity: 0.85, duration: 0.46, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 2.962);
+<span class="s09-ln">  83  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#reel&quot;</span>, { fontStretch: -350, duration: 0.57, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 26.440);
+<span class="s09-ln">  84  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#word&quot;</span>, { y: 0.68, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln">  85  </span>  <span class="s09-k">const</span> fly = (at) => {
+<span class="s09-ln">  86  </span>    <span class="s09-f">chip</span>.<span class="s09-k">forEach</span>((el, i) => width[i] = 0.27 + i * 0.025);
+<span class="s09-ln">  87  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { backgroundColor: 0.32, duration: 0.39, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 26.322);
+<span class="s09-ln">  88  </span>    <span class="s09-k">const</span> stripY = 200;
+<span class="s09-ln">  89  </span>    <span class="s09-k">const</span> chipX = 0.81;
+<span class="s09-ln">  90  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#brief&quot;</span>, { letterSpacing: 1.13, duration: 0.50, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 21.200);
+<span class="s09-ln">  91  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#hud&quot;</span>, { y: 360, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln">  92  </span>    <span class="s09-k">const</span> introAt = 0.02;
+<span class="s09-ln">  93  </span>    <span class="s09-f">grid</span>.<span class="s09-k">forEach</span>((el, i) => y[i] = 0.42 + i * 0.120);
+<span class="s09-ln">  94  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#hud&quot;</span>, { backgroundColor: 1.52, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln">  95  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#hud&quot;</span>, { scale: 1.11, duration: 0.23, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 4.263);
+<span class="s09-ln">  96  </span>    <span class="s09-f">caption</span>.<span class="s09-k">forEach</span>((el, i) => y[i] = 240 + i * 0.130);
+<span class="s09-ln">  97  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#word&quot;</span>, { opacity: 250 }, { opacity: -370, duration: 0.17 }, 43.240);
+<span class="s09-ln">  98  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#grid&quot;</span>, { y: 1.39, duration: 0.21, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 46.243);
+<span class="s09-ln">  99  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { scale: 330, duration: 0.10, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 44.542);
+<span class="s09-ln"> 100  </span>  }
+<span class="s09-ln"> 101  </span>  <span class="s09-k">const</span> chipEase = 370;
+<span class="s09-ln"> 102  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { rotation: -190 }, { rotation: 190, duration: 0.46 }, 31.500);
+<span class="s09-ln"> 103  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { letterSpacing: 90, duration: 0.27, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 17.277);
+<span class="s09-ln"> 104  </span>
+<span class="s09-ln"> 105  </span>  <span class="s09-k">const</span> reelAt = -400;
+<span class="s09-ln"> 106  </span>  <span class="s09-c">// slam, then settle</span>
+<span class="s09-ln"> 107  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { letterSpacing: 0.25, duration: 0.08, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 10.741);
+<span class="s09-ln"> 108  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { y: 1.29, duration: 0.06, ease: <span class="s09-s">&quot;none&quot;</span> }, 9.411);
+<span class="s09-ln"> 109  </span>  <span class="s09-k">const</span> stretch = (at) => {
+<span class="s09-ln"> 110  </span>    <span class="s09-c">// the reel lands on the beat</span>
+<span class="s09-ln"> 111  </span>    <span class="s09-c">// cut the intro in half</span>
+<span class="s09-ln"> 112  </span>  }
+<span class="s09-ln"> 113  </span>  <span class="s09-k">const</span> notes = (t) => {
+<span class="s09-ln"> 114  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#caption&quot;</span>, { y: 1.40, duration: 0.46, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 34.304);
+<span class="s09-ln"> 115  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#floor&quot;</span>, { rotation: -390, duration: 0.18, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 9.956);
+<span class="s09-ln"> 116  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { letterSpacing: 1.09, duration: 0.46, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 9.887);
+<span class="s09-ln"> 117  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#caption&quot;</span>, { backgroundColor: 1.28, duration: 0.42, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 10.650);
+<span class="s09-ln"> 118  </span>  });
+<span class="s09-ln"> 119  </span>  <span class="s09-k">const</span> strip = (t) => {
+<span class="s09-ln"> 120  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#floor&quot;</span>, { width: 0.88 }, { width: 200, duration: 0.13 }, 2.123);
+<span class="s09-ln"> 121  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#burst&quot;</span>, { filter: 1.48, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 122  </span>    <span class="s09-k">const</span> stripX = 120;
+<span class="s09-ln"> 123  </span>    <span class="s09-f">burst</span>.<span class="s09-k">forEach</span>((el, i) => rotation[i] = 0.90 + i * 0.103);
+<span class="s09-ln"> 124  </span>    <span class="s09-c">// more punch</span>
+<span class="s09-ln"> 125  </span>
+<span class="s09-ln"> 126  </span>    <span class="s09-k">const</span> cutsLen = -270;
+<span class="s09-ln"> 127  </span>  }
+<span class="s09-ln"> 128  </span>
+<span class="s09-ln"> 129  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#notes&quot;</span>, { x: 0.11, duration: 0.19, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 13.418);
+<span class="s09-ln"> 130  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { fontStretch: 0.64, duration: 0.21, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 43.139);
+<span class="s09-ln"> 131  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#hud&quot;</span>, { filter: -360, duration: 0.08, ease: <span class="s09-s">&quot;none&quot;</span> }, 46.409);
+<span class="s09-ln"> 132  </span>  <span class="s09-c">// fog the floor</span>
+<span class="s09-ln"> 133  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#hud&quot;</span>, { scale: 0.41, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 134  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#floor&quot;</span>, { letterSpacing: 330, duration: 0.27, ease: <span class="s09-s">&quot;power3.inOut&quot;</span> }, 22.302);
+<span class="s09-ln"> 135  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { y: 10 }, { y: -380, duration: 0.31 }, 8.192);
+<span class="s09-ln"> 136  </span>
+<span class="s09-ln"> 137  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#fly&quot;</span>, { fontStretch: 1.17 }, { fontStretch: 1.52, duration: 0.44 }, 17.740);
+<span class="s09-ln"> 138  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { filter: -90, duration: 0.24, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 30.967);
+<span class="s09-ln"> 139  </span>  <span class="s09-k">const</span> fly = (el) => {
+<span class="s09-ln"> 140  </span>    <span class="s09-f">chip</span>.<span class="s09-k">forEach</span>((el, i) => filter[i] = 50 + i * 0.086);
+<span class="s09-ln"> 141  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#caption&quot;</span>, { y: -30 }, { y: 0.62, duration: 0.33 }, 16.831);
+<span class="s09-ln"> 142  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#elastic&quot;</span>, { filter: 200, duration: 0.51, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 44.282);
+<span class="s09-ln"> 143  </span>    <span class="s09-k">const</span> sparkY = 0.92;
+<span class="s09-ln"> 144  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#flash&quot;</span>, { x: -300, duration: 0.06, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 49.389);
+<span class="s09-ln"> 145  </span>
+<span class="s09-ln"> 146  </span>    <span class="s09-f">stretch</span>.<span class="s09-k">forEach</span>((el, i) => rotation[i] = -320 + i * 0.030);
+<span class="s09-ln"> 147  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#reel&quot;</span>, { backgroundColor: -110, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 148  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#card&quot;</span>, { x: 300 }, { x: 1.54, duration: 0.11 }, 16.177);
+<span class="s09-ln"> 149  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#title&quot;</span>, { letterSpacing: 0.73, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 150  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { rotation: 0.51, duration: 0.06, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 37.427);
+<span class="s09-ln"> 151  </span>  }
+<span class="s09-ln"> 152  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#spark&quot;</span>, { x: 0.13, duration: 0.08, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 48.674);
+<span class="s09-ln"> 153  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#elastic&quot;</span>, { x: 0.94 }, { x: 390, duration: 0.56 }, 51.223);
+<span class="s09-ln"> 154  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#reel&quot;</span>, { x: -330, duration: 0.35, ease: <span class="s09-s">&quot;power3.inOut&quot;</span> }, 46.361);
+<span class="s09-ln"> 155  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#fly&quot;</span>, { y: 350, duration: 0.10, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 16.417);
+<span class="s09-ln"> 156  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#reel&quot;</span>, { fontStretch: 0.03, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 157  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { scale: 1.21, duration: 0.14, ease: <span class="s09-s">&quot;none&quot;</span> }, 12.663);
+<span class="s09-ln"> 158  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#card&quot;</span>, { filter: 70, duration: 0.05, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 18.176);
+<span class="s09-ln"> 159  </span>  <span class="s09-f">intro</span>.<span class="s09-k">forEach</span>((el, i) => fontStretch[i] = 1.52 + i * 0.036);
+<span class="s09-ln"> 160  </span>  <span class="s09-f">hud</span>.<span class="s09-k">forEach</span>((el, i) => filter[i] = 150 + i * 0.044);
+<span class="s09-ln"> 161  </span>}
+<span class="s09-ln"> 162  </span><span class="s09-f">chip</span>.<span class="s09-k">forEach</span>((el, i) => scale[i] = -10 + i * 0.048);
+<span class="s09-ln"> 163  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { x: 0.39 }, { x: 310, duration: 0.46 }, 39.944);
+<span class="s09-ln"> 164  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#card&quot;</span>, { x: 0.51, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 165  </span><span class="s09-f">burst</span>.<span class="s09-k">forEach</span>((el, i) => y[i] = 0.10 + i * 0.146);
+<span class="s09-ln"> 166  </span><span class="s09-c">// every frame is code</span>
+<span class="s09-ln"> 167  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#flash&quot;</span>, { opacity: 1.21, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 168  </span><span class="s09-f">intro</span>.<span class="s09-k">forEach</span>((el, i) => letterSpacing[i] = 20 + i * 0.190);
+<span class="s09-ln"> 169  </span><span class="s09-k">const</span> strip = (t) => {
+<span class="s09-ln"> 170  </span>  <span class="s09-f">title</span>.<span class="s09-k">forEach</span>((el, i) => letterSpacing[i] = -180 + i * 0.116);
+<span class="s09-ln"> 171  </span>  <span class="s09-k">const</span> fly = (at) => {
+<span class="s09-ln"> 172  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#fly&quot;</span>, { rotation: 0.91 }, { rotation: 0.01, duration: 0.33 }, 44.509);
+<span class="s09-ln"> 173  </span>    <span class="s09-k">const</span> chipAt = 310;
+<span class="s09-ln"> 174  </span>    <span class="s09-f">burst</span>.<span class="s09-k">forEach</span>((el, i) => width[i] = 120 + i * 0.177);
+<span class="s09-ln"> 175  </span>  });
+<span class="s09-ln"> 176  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#word&quot;</span>, { fontStretch: 0.30, duration: 0.23, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 6.470);
+<span class="s09-ln"> 177  </span>  <span class="s09-f">flash</span>.<span class="s09-k">forEach</span>((el, i) => fontStretch[i] = 1.38 + i * 0.119);
+<span class="s09-ln"> 178  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { backgroundColor: 370, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 179  </span>  <span class="s09-f">burst</span>.<span class="s09-k">forEach</span>((el, i) => fontStretch[i] = 1.20 + i * 0.051);
+<span class="s09-ln"> 180  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#notes&quot;</span>, { x: 60 }, { x: 0.03, duration: 0.36 }, 7.816);
+<span class="s09-ln"> 181  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { fontStretch: -200, duration: 0.59, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 26.323);
+<span class="s09-ln"> 182  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#reel&quot;</span>, { scale: 1.55, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 183  </span>  <span class="s09-c">// stretch the word</span>
+<span class="s09-ln"> 184  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#reel&quot;</span>, { y: 0.54, duration: 0.28, ease: <span class="s09-s">&quot;none&quot;</span> }, 25.980);
+<span class="s09-ln"> 185  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#brief&quot;</span>, { fontStretch: 1.50 }, { fontStretch: 290, duration: 0.43 }, 22.892);
+<span class="s09-ln"> 186  </span>  <span class="s09-k">const</span> intro = (t) => {
+<span class="s09-ln"> 187  </span>  });
+<span class="s09-ln"> 188  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#elastic&quot;</span>, { backgroundColor: 0.30 }, { backgroundColor: -210, duration: 0.47 }, 5.405);
+<span class="s09-ln"> 189  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#reel&quot;</span>, { y: 0.86 }, { y: 150, duration: 0.55 }, 32.842);
+<span class="s09-ln"> 190  </span>  <span class="s09-c">// slam, then settle</span>
+<span class="s09-ln"> 191  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#flash&quot;</span>, { opacity: 0.01, duration: 0.33, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 4.202);
+<span class="s09-ln"> 192  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#spark&quot;</span>, { x: 360, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 193  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#fly&quot;</span>, { scale: -290, duration: 0.53, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 3.293);
+<span class="s09-ln"> 194  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#notes&quot;</span>, { opacity: 230, duration: 0.54, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 13.870);
+<span class="s09-ln"> 195  </span>
+<span class="s09-ln"> 196  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#card&quot;</span>, { rotation: -70, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 197  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#intro&quot;</span>, { scale: 330, duration: 0.11, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 0.201);
+<span class="s09-ln"> 198  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#chip&quot;</span>, { rotation: 0.21 }, { rotation: 0.80, duration: 0.37 }, 27.955);
+<span class="s09-ln"> 199  </span>
+<span class="s09-ln"> 200  </span><span class="s09-k">const</span> chip = (t) => {
+<span class="s09-ln"> 201  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#grid&quot;</span>, { scale: 1.53, duration: 0.08, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 35.528);
+<span class="s09-ln"> 202  </span>  <span class="s09-f">floor</span>.<span class="s09-k">forEach</span>((el, i) => width[i] = 160 + i * 0.191);
+<span class="s09-ln"> 203  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#spark&quot;</span>, { backgroundColor: 140, duration: 0.37, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 35.761);
+<span class="s09-ln"> 204  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#notes&quot;</span>, { width: -240 }, { width: 1.19, duration: 0.26 }, 31.603);
+<span class="s09-ln"> 205  </span>  <span class="s09-k">const</span> notes = (at) => {
+<span class="s09-ln"> 206  </span>
+<span class="s09-ln"> 207  </span>    <span class="s09-c">// the reel lands on the beat</span>
+<span class="s09-ln"> 208  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#card&quot;</span>, { x: 0.69 }, { x: 220, duration: 0.36 }, 3.447);
+<span class="s09-ln"> 209  </span>    <span class="s09-k">const</span> notesEase = 130;
+<span class="s09-ln"> 210  </span>  }
+<span class="s09-ln"> 211  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#card&quot;</span>, { scale: -300, duration: 0.13, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 3.167);
+<span class="s09-ln"> 212  </span>
+<span class="s09-ln"> 213  </span>  <span class="s09-f">spark</span>.<span class="s09-k">forEach</span>((el, i) => x[i] = -290 + i * 0.121);
+<span class="s09-ln"> 214  </span>});
+<span class="s09-ln"> 215  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#notes&quot;</span>, { y: 50 }, { y: 0.94, duration: 0.49 }, 34.486);
+<span class="s09-ln"> 216  </span><span class="s09-k">const</span> sparkAt = 0.44;
+<span class="s09-ln"> 217  </span>
+<span class="s09-ln"> 218  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#word&quot;</span>, { scale: -390, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 219  </span>
+<span class="s09-ln"> 220  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#elastic&quot;</span>, { backgroundColor: -10 }, { backgroundColor: 0.86, duration: 0.57 }, 1.496);
+<span class="s09-ln"> 221  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#fly&quot;</span>, { backgroundColor: 1.03 }, { backgroundColor: 1.40, duration: 0.37 }, 49.683);
+<span class="s09-ln"> 222  </span><span class="s09-k">const</span> reel = (t) => {
+<span class="s09-ln"> 223  </span>});
+<span class="s09-ln"> 224  </span><span class="s09-f">card</span>.<span class="s09-k">forEach</span>((el, i) => letterSpacing[i] = 1.09 + i * 0.025);
+<span class="s09-ln"> 225  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { rotation: 0.92 }, { rotation: -210, duration: 0.39 }, 4.401);
+<span class="s09-ln"> 226  </span><span class="s09-k">const</span> fly = (el) => {
+<span class="s09-ln"> 227  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#word&quot;</span>, { rotation: 0.14, duration: 0.07, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 24.453);
+<span class="s09-ln"> 228  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#title&quot;</span>, { y: 0.01 }, { y: 0.94, duration: 0.59 }, 51.288);
+<span class="s09-ln"> 229  </span>  <span class="s09-c">// every frame is code</span>
+<span class="s09-ln"> 230  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#chip&quot;</span>, { rotation: -340, duration: 0.40, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 19.366);
+<span class="s09-ln"> 231  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { backgroundColor: 0.13, duration: 0.05, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 26.927);
+<span class="s09-ln"> 232  </span>
+<span class="s09-ln"> 233  </span>  <span class="s09-f">spark</span>.<span class="s09-k">forEach</span>((el, i) => x[i] = 0.67 + i * 0.182);
+<span class="s09-ln"> 234  </span>  <span class="s09-f">hud</span>.<span class="s09-k">forEach</span>((el, i) => width[i] = 1.09 + i * 0.044);
+<span class="s09-ln"> 235  </span>  <span class="s09-k">const</span> strip = (el) => {
+<span class="s09-ln"> 236  </span>    <span class="s09-f">stretch</span>.<span class="s09-k">forEach</span>((el, i) => x[i] = 1.55 + i * 0.037);
+<span class="s09-ln"> 237  </span>    <span class="s09-c">// every frame is code</span>
+<span class="s09-ln"> 238  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { fontStretch: -30, duration: 0.39, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 23.707);
+<span class="s09-ln"> 239  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#hud&quot;</span>, { fontStretch: -150, duration: 0.06, ease: <span class="s09-s">&quot;power3.inOut&quot;</span> }, 37.003);
+<span class="s09-ln"> 240  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#burst&quot;</span>, { y: 90 }, { y: 1.41, duration: 0.45 }, 10.984);
+<span class="s09-ln"> 241  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#hud&quot;</span>, { y: 0.75, duration: 0.53, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 39.725);
+<span class="s09-ln"> 242  </span>    <span class="s09-k">const</span> briefAt = 30;
+<span class="s09-ln"> 243  </span>  });
+<span class="s09-ln"> 244  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#card&quot;</span>, { y: -320, duration: 0.50, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 33.758);
+<span class="s09-ln"> 245  </span>  <span class="s09-f">grid</span>.<span class="s09-k">forEach</span>((el, i) => backgroundColor[i] = 0.57 + i * 0.190);
+<span class="s09-ln"> 246  </span>
+<span class="s09-ln"> 247  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#grid&quot;</span>, { scale: 0.29, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 248  </span>}
+<span class="s09-ln"> 249  </span><span class="s09-k">const</span> floorX = 1.21;
+<span class="s09-ln"> 250  </span><span class="s09-k">const</span> burstLen = -280;
+<span class="s09-ln"> 251  </span><span class="s09-k">const</span> sparkY = -250;
+<span class="s09-ln"> 252  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#notes&quot;</span>, { letterSpacing: 30, duration: 0.55, ease: <span class="s09-s">&quot;power3.inOut&quot;</span> }, 26.799);
+<span class="s09-ln"> 253  </span><span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#grid&quot;</span>, { fontStretch: 0.08, duration: 0.48, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 25.803);
+<span class="s09-ln"> 254  </span><span class="s09-k">const</span> stretch = (el) => {
+<span class="s09-ln"> 255  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#chip&quot;</span>, { backgroundColor: 70, duration: 0.54, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 46.203);
+<span class="s09-ln"> 256  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#brief&quot;</span>, { scale: 130, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 257  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#reel&quot;</span>, { scale: 0.94, duration: 0.58, ease: <span class="s09-s">&quot;none&quot;</span> }, 43.280);
+<span class="s09-ln"> 258  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#burst&quot;</span>, { filter: -80, duration: 0.48, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 24.144);
+<span class="s09-ln"> 259  </span>  <span class="s09-f">hud</span>.<span class="s09-k">forEach</span>((el, i) => scale[i] = 1.14 + i * 0.135);
+<span class="s09-ln"> 260  </span>  <span class="s09-f">grid</span>.<span class="s09-k">forEach</span>((el, i) => fontStretch[i] = 1.48 + i * 0.047);
+<span class="s09-ln"> 261  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { scale: -260, duration: 0.52, ease: <span class="s09-s">&quot;none&quot;</span> }, 32.088);
+<span class="s09-ln"> 262  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#intro&quot;</span>, { backgroundColor: 220, duration: 0.52, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 0.725);
+<span class="s09-ln"> 263  </span>
+<span class="s09-ln"> 264  </span>  <span class="s09-k">const</span> brief = (el) => {
+<span class="s09-ln"> 265  </span>    <span class="s09-f">notes</span>.<span class="s09-k">forEach</span>((el, i) => rotation[i] = 180 + i * 0.066);
+<span class="s09-ln"> 266  </span>    <span class="s09-c">// one web page</span>
+<span class="s09-ln"> 267  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#flash&quot;</span>, { filter: 0.88 }, { filter: 190, duration: 0.17 }, 2.439);
+<span class="s09-ln"> 268  </span>  }
+<span class="s09-ln"> 269  </span>  <span class="s09-k">const</span> flashAt = -70;
+<span class="s09-ln"> 270  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#strip&quot;</span>, { x: 60, duration: 0.28, ease: <span class="s09-s">&quot;none&quot;</span> }, 34.446);
+<span class="s09-ln"> 271  </span>  <span class="s09-k">const</span> flashX = 380;
+<span class="s09-ln"> 272  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { opacity: 0.85, duration: 0.46, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 2.962);
+<span class="s09-ln"> 273  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#reel&quot;</span>, { fontStretch: -350, duration: 0.57, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 26.440);
+<span class="s09-ln"> 274  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#word&quot;</span>, { y: 0.68, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 275  </span>  <span class="s09-k">const</span> fly = (at) => {
+<span class="s09-ln"> 276  </span>    <span class="s09-f">chip</span>.<span class="s09-k">forEach</span>((el, i) => width[i] = 0.27 + i * 0.025);
+<span class="s09-ln"> 277  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { backgroundColor: 0.32, duration: 0.39, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 26.322);
+<span class="s09-ln"> 278  </span>    <span class="s09-k">const</span> stripY = 200;
+<span class="s09-ln"> 279  </span>    <span class="s09-k">const</span> chipX = 0.81;
+<span class="s09-ln"> 280  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#brief&quot;</span>, { letterSpacing: 1.13, duration: 0.50, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 21.200);
+<span class="s09-ln"> 281  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#hud&quot;</span>, { y: 360, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 282  </span>    <span class="s09-k">const</span> introAt = 0.02;
+<span class="s09-ln"> 283  </span>    <span class="s09-f">grid</span>.<span class="s09-k">forEach</span>((el, i) => y[i] = 0.42 + i * 0.120);
+<span class="s09-ln"> 284  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#hud&quot;</span>, { backgroundColor: 1.52, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 285  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#hud&quot;</span>, { scale: 1.11, duration: 0.23, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 4.263);
+<span class="s09-ln"> 286  </span>    <span class="s09-f">caption</span>.<span class="s09-k">forEach</span>((el, i) => y[i] = 240 + i * 0.130);
+<span class="s09-ln"> 287  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#word&quot;</span>, { opacity: 250 }, { opacity: -370, duration: 0.17 }, 43.240);
+<span class="s09-ln"> 288  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#grid&quot;</span>, { y: 1.39, duration: 0.21, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 46.243);
+<span class="s09-ln"> 289  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { scale: 330, duration: 0.10, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 44.542);
+<span class="s09-ln"> 290  </span>  }
+<span class="s09-ln"> 291  </span>  <span class="s09-k">const</span> chipEase = 370;
+<span class="s09-ln"> 292  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { rotation: -190 }, { rotation: 190, duration: 0.46 }, 31.500);
+<span class="s09-ln"> 293  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { letterSpacing: 90, duration: 0.27, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 17.277);
+<span class="s09-ln"> 294  </span>
+<span class="s09-ln"> 295  </span>  <span class="s09-k">const</span> reelAt = -400;
+<span class="s09-ln"> 296  </span>  <span class="s09-c">// slam, then settle</span>
+<span class="s09-ln"> 297  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { letterSpacing: 0.25, duration: 0.08, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 10.741);
+<span class="s09-ln"> 298  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { y: 1.29, duration: 0.06, ease: <span class="s09-s">&quot;none&quot;</span> }, 9.411);
+<span class="s09-ln"> 299  </span>  <span class="s09-k">const</span> stretch = (at) => {
+<span class="s09-ln"> 300  </span>    <span class="s09-c">// the reel lands on the beat</span>
+<span class="s09-ln"> 301  </span>    <span class="s09-c">// cut the intro in half</span>
+<span class="s09-ln"> 302  </span>  }
+<span class="s09-ln"> 303  </span>  <span class="s09-k">const</span> notes = (t) => {
+<span class="s09-ln"> 304  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#caption&quot;</span>, { y: 1.40, duration: 0.46, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 34.304);
+<span class="s09-ln"> 305  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#floor&quot;</span>, { rotation: -390, duration: 0.18, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 9.956);
+<span class="s09-ln"> 306  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { letterSpacing: 1.09, duration: 0.46, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 9.887);
+<span class="s09-ln"> 307  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#caption&quot;</span>, { backgroundColor: 1.28, duration: 0.42, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 10.650);
+<span class="s09-ln"> 308  </span>  });
+<span class="s09-ln"> 309  </span>  <span class="s09-k">const</span> strip = (t) => {
+<span class="s09-ln"> 310  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#floor&quot;</span>, { width: 0.88 }, { width: 200, duration: 0.13 }, 2.123);
+<span class="s09-ln"> 311  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#burst&quot;</span>, { filter: 1.48, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 312  </span>    <span class="s09-k">const</span> stripX = 120;
+<span class="s09-ln"> 313  </span>    <span class="s09-f">burst</span>.<span class="s09-k">forEach</span>((el, i) => rotation[i] = 0.90 + i * 0.103);
+<span class="s09-ln"> 314  </span>    <span class="s09-c">// more punch</span>
+<span class="s09-ln"> 315  </span>
+<span class="s09-ln"> 316  </span>    <span class="s09-k">const</span> cutsLen = -270;
+<span class="s09-ln"> 317  </span>  }
+<span class="s09-ln"> 318  </span>
+<span class="s09-ln"> 319  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#notes&quot;</span>, { x: 0.11, duration: 0.19, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 13.418);
+<span class="s09-ln"> 320  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#cuts&quot;</span>, { fontStretch: 0.64, duration: 0.21, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 43.139);
+<span class="s09-ln"> 321  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#hud&quot;</span>, { filter: -360, duration: 0.08, ease: <span class="s09-s">&quot;none&quot;</span> }, 46.409);
+<span class="s09-ln"> 322  </span>  <span class="s09-c">// fog the floor</span>
+<span class="s09-ln"> 323  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#hud&quot;</span>, { scale: 0.41, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 324  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#floor&quot;</span>, { letterSpacing: 330, duration: 0.27, ease: <span class="s09-s">&quot;power3.inOut&quot;</span> }, 22.302);
+<span class="s09-ln"> 325  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { y: 10 }, { y: -380, duration: 0.31 }, 8.192);
+<span class="s09-ln"> 326  </span>
+<span class="s09-ln"> 327  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#fly&quot;</span>, { fontStretch: 1.17 }, { fontStretch: 1.52, duration: 0.44 }, 17.740);
+<span class="s09-ln"> 328  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { filter: -90, duration: 0.24, ease: <span class="s09-s">&quot;elastic.out(1, 0.45)&quot;</span> }, 30.967);
+<span class="s09-ln"> 329  </span>  <span class="s09-k">const</span> fly = (el) => {
+<span class="s09-ln"> 330  </span>    <span class="s09-f">chip</span>.<span class="s09-k">forEach</span>((el, i) => filter[i] = 50 + i * 0.086);
+<span class="s09-ln"> 331  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#caption&quot;</span>, { y: -30 }, { y: 0.62, duration: 0.33 }, 16.831);
+<span class="s09-ln"> 332  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#elastic&quot;</span>, { filter: 200, duration: 0.51, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 44.282);
+<span class="s09-ln"> 333  </span>    <span class="s09-k">const</span> sparkY = 0.92;
+<span class="s09-ln"> 334  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#flash&quot;</span>, { x: -300, duration: 0.06, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 49.389);
+<span class="s09-ln"> 335  </span>
+<span class="s09-ln"> 336  </span>    <span class="s09-f">stretch</span>.<span class="s09-k">forEach</span>((el, i) => rotation[i] = -320 + i * 0.030);
+<span class="s09-ln"> 337  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#reel&quot;</span>, { backgroundColor: -110, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 338  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#card&quot;</span>, { x: 300 }, { x: 1.54, duration: 0.11 }, 16.177);
+<span class="s09-ln"> 339  </span>    <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#title&quot;</span>, { letterSpacing: 0.73, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 340  </span>    <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { rotation: 0.51, duration: 0.06, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 37.427);
+<span class="s09-ln"> 341  </span>  }
+<span class="s09-ln"> 342  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#spark&quot;</span>, { x: 0.13, duration: 0.08, ease: <span class="s09-s">&quot;expo.out&quot;</span> }, 48.674);
+<span class="s09-ln"> 343  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#elastic&quot;</span>, { x: 0.94 }, { x: 390, duration: 0.56 }, 51.223);
+<span class="s09-ln"> 344  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#reel&quot;</span>, { x: -330, duration: 0.35, ease: <span class="s09-s">&quot;power3.inOut&quot;</span> }, 46.361);
+<span class="s09-ln"> 345  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#fly&quot;</span>, { y: 350, duration: 0.10, ease: <span class="s09-s">&quot;back.out(2)&quot;</span> }, 16.417);
+<span class="s09-ln"> 346  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#reel&quot;</span>, { fontStretch: 0.03, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 347  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { scale: 1.21, duration: 0.14, ease: <span class="s09-s">&quot;none&quot;</span> }, 12.663);
+<span class="s09-ln"> 348  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#card&quot;</span>, { filter: 70, duration: 0.05, ease: <span class="s09-s">&quot;power2.in&quot;</span> }, 18.176);
+<span class="s09-ln"> 349  </span>  <span class="s09-f">intro</span>.<span class="s09-k">forEach</span>((el, i) => fontStretch[i] = 1.52 + i * 0.036);
+<span class="s09-ln"> 350  </span>  <span class="s09-f">hud</span>.<span class="s09-k">forEach</span>((el, i) => filter[i] = 150 + i * 0.044);
+<span class="s09-ln"> 351  </span>}
+<span class="s09-ln"> 352  </span><span class="s09-f">chip</span>.<span class="s09-k">forEach</span>((el, i) => scale[i] = -10 + i * 0.048);
+<span class="s09-ln"> 353  </span><span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { x: 0.39 }, { x: 310, duration: 0.46 }, 39.944);
+<span class="s09-ln"> 354  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#card&quot;</span>, { x: 0.51, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 355  </span><span class="s09-f">burst</span>.<span class="s09-k">forEach</span>((el, i) => y[i] = 0.10 + i * 0.146);
+<span class="s09-ln"> 356  </span><span class="s09-c">// every frame is code</span>
+<span class="s09-ln"> 357  </span><span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#flash&quot;</span>, { opacity: 1.21, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 358  </span><span class="s09-f">intro</span>.<span class="s09-k">forEach</span>((el, i) => letterSpacing[i] = 20 + i * 0.190);
+<span class="s09-ln"> 359  </span><span class="s09-k">const</span> strip = (t) => {
+<span class="s09-ln"> 360  </span>  <span class="s09-f">title</span>.<span class="s09-k">forEach</span>((el, i) => letterSpacing[i] = -180 + i * 0.116);
+<span class="s09-ln"> 361  </span>  <span class="s09-k">const</span> fly = (at) => {
+<span class="s09-ln"> 362  </span>    <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#fly&quot;</span>, { rotation: 0.91 }, { rotation: 0.01, duration: 0.33 }, 44.509);
+<span class="s09-ln"> 363  </span>    <span class="s09-k">const</span> chipAt = 310;
+<span class="s09-ln"> 364  </span>    <span class="s09-f">burst</span>.<span class="s09-k">forEach</span>((el, i) => width[i] = 120 + i * 0.177);
+<span class="s09-ln"> 365  </span>  });
+<span class="s09-ln"> 366  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#word&quot;</span>, { fontStretch: 0.30, duration: 0.23, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 6.470);
+<span class="s09-ln"> 367  </span>  <span class="s09-f">flash</span>.<span class="s09-k">forEach</span>((el, i) => fontStretch[i] = 1.38 + i * 0.119);
+<span class="s09-ln"> 368  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#stretch&quot;</span>, { backgroundColor: 370, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 369  </span>  <span class="s09-f">burst</span>.<span class="s09-k">forEach</span>((el, i) => fontStretch[i] = 1.20 + i * 0.051);
+<span class="s09-ln"> 370  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#notes&quot;</span>, { x: 60 }, { x: 0.03, duration: 0.36 }, 7.816);
+<span class="s09-ln"> 371  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#title&quot;</span>, { fontStretch: -200, duration: 0.59, ease: <span class="s09-s">&quot;sine.inOut&quot;</span> }, 26.323);
+<span class="s09-ln"> 372  </span>  <span class="s09-k">gsap</span>.<span class="s09-k">set</span>(<span class="s09-s">&quot;#reel&quot;</span>, { scale: 1.55, transformOrigin: <span class="s09-s">&quot;50% 50%&quot;</span> });
+<span class="s09-ln"> 373  </span>  <span class="s09-c">// stretch the word</span>
+<span class="s09-ln"> 374  </span>  <span class="s09-f">tl</span>.<span class="s09-k">to</span>(<span class="s09-s">&quot;#reel&quot;</span>, { y: 0.54, duration: 0.28, ease: <span class="s09-s">&quot;none&quot;</span> }, 25.980);
+<span class="s09-ln"> 375  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#brief&quot;</span>, { fontStretch: 1.50 }, { fontStretch: 290, duration: 0.43 }, 22.892);
+<span class="s09-ln"> 376  </span>  <span class="s09-k">const</span> intro = (t) => {
+<span class="s09-ln"> 377  </span>  });
+<span class="s09-ln"> 378  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#elastic&quot;</span>, { backgroundColor: 0.30 }, { backgroundColor: -210, duration: 0.47 }, 5.405);
+<span class="s09-ln"> 379  </span>  <span class="s09-f">tl</span>.<span class="s09-k">fromTo</span>(<span class="s09-s">&quot;#reel&quot;</span>, { y: 0.86 }, { y: 150, duration: 0.55 }, 32.842);
+<span class="s09-ln"> 380  </span>  <span class="s09-c">// slam, then settle</span></pre>
+    <div id="s09-bar"></div>
+  </div></div>
+  <div id="s09-flash"></div>
+  <div id="s09-vig"></div>
+
+  <div id="s09-nums">
+  <h2 class="display s09-num" id="s09-n1"><span id="s09-a0" data-reel data-reel-start="0.7" data-reel-duration="0.75" data-reel-spins="2" data-reel-ease="power2.out">1</span></h2>
+  <h2 class="display s09-num" id="s09-n2"><span id="s09-b0" data-reel data-reel-start="1.733" data-reel-duration="0.75" data-reel-spins="2" data-reel-ease="power2.out">2</span>,<span id="s09-b1" data-reel data-reel-start="1.8" data-reel-duration="0.75" data-reel-spins="2" data-reel-ease="power2.out">1</span><span id="s09-b2" data-reel data-reel-start="1.867" data-reel-duration="0.75" data-reel-spins="2" data-reel-ease="power2.out">5</span><span id="s09-b3" data-reel data-reel-start="1.933" data-reel-duration="0.75" data-reel-spins="2" data-reel-ease="power2.out">5</span></h2>
+  <h2 class="display s09-num" id="s09-n3"><span id="s09-c0" data-reel data-reel-start="2.767" data-reel-duration="0.75" data-reel-spins="2" data-reel-ease="power2.out">3</span>,<span id="s09-c1" data-reel data-reel-start="2.833" data-reel-duration="0.75" data-reel-spins="2" data-reel-ease="power2.out">1</span><span id="s09-c2" data-reel data-reel-start="2.9" data-reel-duration="0.75" data-reel-spins="2" data-reel-ease="power2.out">0</span><span id="s09-c3" data-reel data-reel-start="2.967" data-reel-duration="0.75" data-reel-spins="2" data-reel-ease="power2.out">8</span></h2>
+  </div>
+  <p class="display s09-label" id="s09-l1">WEB PAGE</p>
+  <p class="display s09-label" id="s09-l2">LINES OF CODE</p>
+  <p class="display s09-label" id="s09-l3">FRAMES. ALL CODE.</p>
+
+  <svg id="s09-spark" viewBox="-100 -100 200 200" width="200" height="200">
+    <g stroke="#ff7a52" stroke-width="1.6" stroke-linecap="round">
+      <line x1="0" y1="-30" x2="0" y2="-92"/><line x1="0" y1="30" x2="0" y2="92"/>
+      <line x1="-30" y1="0" x2="-92" y2="0"/><line x1="30" y1="0" x2="92" y2="0"/>
+      <line x1="21" y1="21" x2="62" y2="62"/><line x1="-21" y1="-21" x2="-62" y2="-62"/>
+      <line x1="21" y1="-21" x2="62" y2="-62"/><line x1="-21" y1="21" x2="-62" y2="62"/>
+      <line x1="11" y1="-27" x2="33" y2="-80"/><line x1="-11" y1="27" x2="-33" y2="80"/>
+      <line x1="27" y1="11" x2="80" y2="33"/><line x1="-27" y1="-11" x2="-80" y2="-33"/>
+    </g>
+    <polygon fill="#ffffff" points="0,-16 3,-3 16,0 3,3 0,16 -3,3 -16,0 -3,-3"/>
+  </svg>
+
+  <p class="caption" id="s09-cap"><span class="w">The</span> <span class="w">whole</span> <span class="w">film</span> <span class="w">is</span> <span class="w">one</span> <span class="w">web</span> <span class="w">page.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s09-frame">1927</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s09-tc" style="right:62px;bottom:48px">00:00:32:07</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 32.1167, DURATION = 3.8;
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const $ = (id) => document.getElementById(id);
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const f = Math.round((FILM_START + tl.time()) * 60);
+    $("s09-frame").textContent = pad(f, 4);
+    $("s09-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+  } }, 0);
+
+  // Caption: each word slides in, then the red chip moves onto it.
+  const words = gsap.utils.toArray("#s09-cap .w");
+  const CHIP = "#ef4a2c", CLEAR = "rgba(239,74,44,0)";
+  gsap.set(words, { backgroundColor: CLEAR, color: "#ffffff" });
+  [0.083, 0.283, 0.533, 0.683, 0.767, 0.9, 1.05].forEach((at, i) => {
+    tl.fromTo(words[i], { opacity: 0, x: 10 }, { opacity: 1, x: 0, duration: 0.05, ease: "power2.out" }, at);
+    tl.to(words[i], { backgroundColor: CHIP, color: "#1a0c0a", duration: 0.033, ease: "none" }, at + 0.033);
+    if (i > 0) tl.to(words[i - 1], { backgroundColor: CLEAR, color: "#ffffff", duration: 0.033, ease: "none" }, at + 0.033);
+  });
+
+  // The code floor fades in out of a blur, drifts up and scrolls the whole shot.
+  tl.fromTo("#s09-floor", { opacity: 0, rotation: -1.8, filter: "blur(10px)" },
+    { opacity: 1, rotation: -1.8, filter: "blur(0px)", duration: 0.1, ease: "power1.out" }, 0);
+  tl.fromTo("#s09-floor", { y: 50 }, { y: 8, duration: 0.7, ease: "sine.out" }, 0);
+  tl.fromTo("#s09-code", { y: 0 }, { y: -3800, duration: DURATION, ease: "none" }, 0);
+  tl.to("#s09-floor", { opacity: 0.45, duration: 0.1, ease: "none" }, 0.683);
+
+  // Each counter slams in on a red flash and a spark, its digits roll, the label follows.
+  const slam = (num, label, at) => {
+    tl.set(num, { opacity: 1 }, at);
+    tl.fromTo(num, { scale: 1.35, filter: "blur(18px)" }, { scale: 1, filter: "blur(0px)", duration: 0.22, ease: "expo.out" }, at);
+    tl.set("#s09-flash", { opacity: 0.3 }, at);
+    tl.to("#s09-flash", { opacity: 0, duration: 0.35, ease: "power2.out" }, at + 0.017);
+    tl.set("#s09-spark", { opacity: 1, scale: 0.3, rotation: 0 }, at + 0.017);
+    tl.to("#s09-spark", { scale: 1.5, rotation: 20, duration: 0.25, ease: "power2.out" }, at + 0.017);
+    tl.to("#s09-spark", { opacity: 0, duration: 0.15, ease: "power1.in" }, at + 0.12);
+    tl.set(label, { opacity: 1 }, at + 0.1);
+    tl.fromTo(label, { y: 30, letterSpacing: "24px", filter: "blur(10px)" },
+      { y: 0, letterSpacing: "2px", filter: "blur(0px)", duration: 0.3, ease: "expo.out" }, at + 0.1);
+  };
+  const leave = (num, label, at) => {
+    tl.to(num, { y: -70, opacity: 0, filter: "blur(14px)", duration: 0.05, ease: "power2.in" }, at);
+    tl.to(label, { y: 50, opacity: 0, filter: "blur(14px)", duration: 0.05, ease: "power2.in" }, at);
+  };
+  slam("#s09-n1", "#s09-l1", 0.683);
+  leave("#s09-n1", "#s09-l1", 1.667);
+  slam("#s09-n2", "#s09-l2", 1.717);
+  leave("#s09-n2", "#s09-l2", 2.7);
+  slam("#s09-n3", "#s09-l3", 2.75);
+  // Out: the last count smears off to the left.
+  tl.to(["#s09-n3", "#s09-l3"], { x: -480, y: 50, opacity: 0, filter: "blur(30px)", duration: 0.1, ease: "power2.in" }, 3.65);
+  tl.to("#s09-cap", { x: -60, opacity: 0, filter: "blur(12px)", duration: 0.1, ease: "power2.in" }, 3.65);
+  tl.to("#s09-floor", { x: -200, opacity: 0.2, filter: "blur(16px)", duration: 0.1, ease: "power2.in" }, 3.65);
+
+  window.__timelines["s09"] = tl;
+})();
+</script>
+</body></html>

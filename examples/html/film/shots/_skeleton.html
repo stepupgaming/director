@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s00-title { position:absolute; left:0; top:400px; width:1920px; text-align:center; font-size:220px; }
+</style></head><body>
+<div id="s00" class="film" data-composition-id="s00" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="2" data-motion-blur="8" data-shutter-angle="270">
+  <div class="dots"></div>
+  <h1 id="s00-title" class="display accent glow">CODE.</h1>
+  <div class="vignette"></div>
+  <p class="caption"><span class="w">Every</span> <span class="w">frame</span> <span class="w hl">code.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s00-frame">0120</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s00-tc" style="right:62px;bottom:48px">00:00:02:00</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 2.0, DURATION = 2;
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const f = Math.round((FILM_START + tl.time()) * 60);
+    document.getElementById("s00-frame").textContent = pad(f, 4);
+    document.getElementById("s00-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+  } }, 0);
+  tl.fromTo("#s00-title", { scale: 1.3, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: "expo.out" }, 0);
+  window.__timelines["s00"] = tl;
+})();
+</script>
+</body></html>

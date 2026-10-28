@@ -1076,7 +1076,7 @@ const SET_CHANNELS = {
   xPercent: ["translate-x-percent"], yPercent: ["translate-y-percent"],
   rotation: ["rotate-z"], rotate: ["rotate-z"], rotationZ: ["rotate-z"], rotateZ: ["rotate-z"],
   rotationX: ["rotate-x"], rotateX: ["rotate-x"], rotationY: ["rotate-y"], rotateY: ["rotate-y"],
-  skewX: ["skew-x"], skewY: ["skew-y"],
+  skewX: ["skew-x"], skewY: ["skew-y"], transformPerspective: ["transform-perspective"],
   scale: ["scale-x", "scale-y"], scaleX: ["scale-x"], scaleY: ["scale-y"],
   autoAlpha: ["opacity", "visibility"],
   text: ["#text"], textContent: ["#text"],

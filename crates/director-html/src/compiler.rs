@@ -17,6 +17,7 @@ use director_core::{
     Director, Element, RenderError,
 };
 use scraper::{node::Node, ElementRef, Html, Selector};
+use skia_safe::textlayout::FontCollection;
 use std::{
     any::Any,
     collections::{BTreeMap, HashMap, HashSet},
@@ -878,22 +879,23 @@ fn span_font_style(weight: u16, italic: bool) -> skia_safe::FontStyle {
 
 fn build_paragraph(
     node: &TextNode,
+    fonts: &FontCollection,
     paint: &PaintStyle,
     width: f32,
 ) -> skia_safe::textlayout::Paragraph {
-    let wrap = wrap_width(node, paint, width);
-    build_paragraph_colored(node, paint, width, wrap, false, TextPass::Combined)
+    let wrap = wrap_width(node, fonts, paint, width);
+    build_paragraph_colored(node, fonts, paint, width, wrap, false, TextPass::Combined)
 }
 
 /// The width `append_wrapped` breaks lines at. It adds up unkerned token
 /// advances, which run wider than the shaped line, and the gap grows with font
 /// size. Text whose shaped lines already fit `width` keeps its own breaks, so a
 /// box sized to its max-content width holds the same lines it was measured with.
-fn wrap_width(node: &TextNode, paint: &PaintStyle, width: f32) -> f32 {
+fn wrap_width(node: &TextNode, fonts: &FontCollection, paint: &PaintStyle, width: f32) -> f32 {
     if paint.no_wrap || !width.is_finite() || width <= 0.0 {
         return width;
     }
-    let mut probe = build_paragraph_colored(node, paint, width, f32::INFINITY, false, TextPass::Fill);
+    let mut probe = build_paragraph_colored(node, fonts, paint, width, f32::INFINITY, false, TextPass::Fill);
     probe.layout(f32::INFINITY);
     if probe.longest_line() <= width + WRAP_SLACK {
         f32::INFINITY
@@ -927,6 +929,7 @@ fn separate_stroke(node: &TextNode, paint: &PaintStyle) -> bool {
 /// Builds the fill paragraph, plus the stroke paragraph when the stroke paints on its own.
 fn text_paragraphs(
     node: &TextNode,
+    fonts: &FontCollection,
     paint: &PaintStyle,
     width: f32,
 ) -> (
@@ -934,18 +937,19 @@ fn text_paragraphs(
     Option<skia_safe::textlayout::Paragraph>,
 ) {
     if separate_stroke(node, paint) {
-        let wrap = wrap_width(node, paint, width);
+        let wrap = wrap_width(node, fonts, paint, width);
         (
-            build_paragraph_colored(node, paint, width, wrap, false, TextPass::Fill),
-            Some(build_paragraph_colored(node, paint, width, wrap, false, TextPass::Stroke)),
+            build_paragraph_colored(node, fonts, paint, width, wrap, false, TextPass::Fill),
+            Some(build_paragraph_colored(node, fonts, paint, width, wrap, false, TextPass::Stroke)),
         )
     } else {
-        (build_paragraph(node, paint, width), None)
+        (build_paragraph(node, fonts, paint, width), None)
     }
 }
 
 fn build_paragraph_colored(
     node: &TextNode,
+    fonts: &FontCollection,
     paint: &PaintStyle,
     width: f32,
     wrap: f32,
@@ -985,7 +989,7 @@ fn build_paragraph_colored(
         default_text.add_font_feature("tnum", 1);
     }
     paragraph.set_text_style(&default_text);
-    let mut collection = node.font_collection.lock().unwrap().clone();
+    let mut collection = fonts.clone();
     let normal_height = collection
         .find_typefaces(&[paint.font_family.as_str()], font_style)
         .first()
@@ -1154,14 +1158,20 @@ pub fn glyph_mask(
     paint: &PaintStyle,
     width: f32,
 ) -> skia_safe::textlayout::Paragraph {
-    let wrap = wrap_width(node, paint, width);
-    let mut paragraph = build_paragraph_colored(node, paint, width, wrap, true, TextPass::Combined);
+    let fonts = node.font_collection.lock().unwrap();
+    let wrap = wrap_width(node, &fonts, paint, width);
+    let mut paragraph = build_paragraph_colored(node, &fonts, paint, width, wrap, true, TextPass::Combined);
     fit_paragraph(&mut paragraph, paint, width);
     paragraph
 }
 
+/// Skia's font collection caches typefaces without a lock, and elements update
+/// on several threads, so every paragraph build and layout holds the
+/// collection's mutex. Take it before a paragraph's own lock.
 pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
-    let (paragraph, stroke) = text_paragraphs(node, paint, f32::INFINITY);
+    let shared = node.font_collection.clone();
+    let fonts = shared.lock().unwrap();
+    let (paragraph, stroke) = text_paragraphs(node, &fonts, paint, f32::INFINITY);
     *node.paragraph.lock().unwrap() = Some(paragraph);
     *node.stroke_paragraph.lock().unwrap() = stroke;
     node.stroke_over_fill = paint.stroke_over_fill;
@@ -1181,7 +1191,8 @@ const WRAP_SLACK: f32 = 1.0;
 /// ellipsized nowrap line, and a line-clamp, keep `width`, so the ellipsis stays
 /// inside the box.
 pub fn layout_paragraph(node: &TextNode, paint: &PaintStyle, width: f32) -> f32 {
-    let (mut paragraph, stroke) = text_paragraphs(node, paint, width);
+    let fonts = node.font_collection.lock().unwrap();
+    let (mut paragraph, stroke) = text_paragraphs(node, &fonts, paint, width);
     let used = fit_paragraph(&mut paragraph, paint, width);
     *node.paragraph.lock().unwrap() = Some(paragraph);
     *node.stroke_paragraph.lock().unwrap() = stroke;

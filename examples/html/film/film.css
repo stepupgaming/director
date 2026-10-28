@@ -1,0 +1,61 @@
+/* Shared look of the director film: palette, type and the camera HUD.
+   Archivo (variable width and weight) and JetBrains Mono are bundled with
+   Director, so no @font-face is needed. */
+html, body { margin: 0; background: #0b0909; }
+* { box-sizing: border-box; }
+
+.film {
+  position: relative; width: 1920px; height: 1080px; overflow: hidden;
+  color: #f4f1ee; background: #0e0c0c; font-family: Archivo;
+}
+.film.light { color: #141010; background: #f2efea; }
+.film.red { color: #141010; background: #ef4a2c; }
+
+/* Display type: the wide, heavy face of every title card. */
+.display {
+  margin: 0; font-family: Archivo; font-weight: 900; font-stretch: 125%;
+  line-height: 0.9; letter-spacing: -2px; text-transform: uppercase; white-space: nowrap;
+}
+.accent { color: #ff4b2b; }
+.glow { text-shadow: 0 0 24px rgba(255, 75, 43, .55), 0 0 90px rgba(255, 75, 43, .3); }
+.mono { font-family: "JetBrains Mono"; }
+
+/* Caption: the running sentence top left, its newest word on a red chip. */
+.caption {
+  position: absolute; left: 132px; top: 78px; margin: 0; white-space: nowrap;
+  font-family: Archivo; font-weight: 700; font-size: 36px; letter-spacing: -1px; color: #fff;
+}
+.light .caption, .red .caption { color: #141010; }
+.caption .w { display: inline-block; }
+.caption .hl {
+  display: inline-block; background: #ef4a2c; color: #1a0c0a;
+  padding: 0 6px; border-radius: 4px;
+}
+
+/* Camera HUD: corner brackets, frame counter, slate, REC and timecode. */
+.hud {
+  position: absolute; margin: 0; font-family: "JetBrains Mono"; font-size: 13px;
+  letter-spacing: 4px; color: #8d8a88; white-space: nowrap;
+}
+.light .hud, .red .hud { color: #6d6560; }
+.hud .rec { color: #ff4b2b; }
+.corner {
+  position: absolute; width: 26px; height: 26px; border-style: solid; border-width: 0;
+  border-color: rgba(255, 255, 255, .35);
+}
+.light .corner, .red .corner { border-color: rgba(0, 0, 0, .35); }
+.corner.tl { left: 42px; top: 38px; border-left-width: 2px; border-top-width: 2px; }
+.corner.tr { right: 42px; top: 38px; border-right-width: 2px; border-top-width: 2px; }
+.corner.bl { left: 42px; bottom: 38px; border-left-width: 2px; border-bottom-width: 2px; }
+.corner.br { right: 42px; bottom: 38px; border-right-width: 2px; border-bottom-width: 2px; }
+
+/* Faint dot grid and vignette behind dark shots. */
+.dots {
+  position: absolute; inset: 0;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, .09) 1.5px, transparent 2.5px);
+  background-size: 26px 26px;
+}
+.vignette {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 50%, transparent 45%, rgba(0, 0, 0, .65) 100%);
+}

@@ -1,0 +1,137 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s14 { background: #0f1013; }
+  #s14-flash { position:absolute; inset:0; opacity:0;
+    background: radial-gradient(ellipse at 50% 50%, #34363a 0%, #2a2c30 45%, #1c1d21 100%); }
+  #s14-stars { position:absolute; inset:0; }
+  .s14-star { position:absolute; border-radius:50%; background:#c9c7c4;
+    box-shadow: 0 0 6px 2px rgba(255,255,255,.18); }
+  #s14-dot { position:absolute; left:955px; top:528px; width:16px; height:16px; border-radius:50%;
+    background:#ff5a36; box-shadow: 0 0 14px 4px rgba(255,75,43,.7); }
+  #s14-line { position:absolute; left:380px; top:537px; width:1160px; height:5px; border-radius:3px;
+    background: linear-gradient(90deg, #ff4b2b 0%, #ff7a52 50%, #ff4b2b 100%);
+    box-shadow: 0 0 10px 2px rgba(255,75,43,.65), 0 0 28px 6px rgba(255,75,43,.25);
+    transform: scaleX(0); }
+  #s14-burst { position:absolute; left:860px; top:440px; width:200px; height:200px; opacity:0; }
+  #s14-logo { position:absolute; left:519px; top:425px; width:206px; height:120px; }
+  .s14-layer { position:absolute; left:0; top:0; width:206px; height:120px; }
+  .s14-layer svg { position:absolute; left:0; top:0; }
+  #s14-l0 { filter: drop-shadow(0 0 16px rgba(255,255,255,.45)); }
+  #s14-word { position:absolute; left:780px; top:398px; margin:0; white-space:nowrap;
+    font-family: Archivo; font-weight:300; font-stretch:100%; font-size:166px; line-height:1;
+    letter-spacing:9px; color:#fbfaf8; text-shadow: 0 0 22px rgba(255,255,255,.28);
+    clip-path: polygon(-6% -30%, -6% -30%, -6% 130%, -6% 130%); }
+  #s14-sub { position:absolute; left:0; top:648px; width:1920px; margin:0; text-align:center;
+    font-family: Inter; font-weight:400; font-size:44px; letter-spacing:-0.5px; color:#ebe8e4; opacity:0; }
+  #s14-made { position:absolute; left:0; top:732px; width:1920px; margin:0; text-align:center;
+    font-family:"JetBrains Mono"; font-size:15px; letter-spacing:7px; color:#8d8a88; opacity:0; }
+</style></head><body>
+<div id="s14" class="film" data-composition-id="s14" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="3.6" data-motion-blur="8" data-shutter-angle="270">
+  <div id="s14-flash"></div>
+  <div class="dots"></div>
+  <div id="s14-stars"></div>
+  <div id="s14-line"></div>
+  <div id="s14-dot"></div>
+  <div id="s14-burst">
+    <svg width="200" height="200" viewBox="-100 -100 200 200" id="s14-burst-svg"></svg>
+  </div>
+  <div id="s14-logo">
+    <div class="s14-layer" id="s14-l3"><svg width="206" height="120"><polygon points="1,60 103,1 205,60 103,119" fill="#ffffff" fill-opacity="0.22"/></svg></div>
+    <div class="s14-layer" id="s14-l2"><svg width="206" height="120"><polygon points="1,60 103,1 205,60 103,119" fill="#ffffff" fill-opacity="0.36"/></svg></div>
+    <div class="s14-layer" id="s14-l1"><svg width="206" height="120"><polygon points="1,60 103,1 205,60 103,119" fill="#ffffff" fill-opacity="0.55"/></svg></div>
+    <div class="s14-layer" id="s14-l0"><svg width="206" height="120">
+      <defs><radialGradient id="s14-g" cx="50%" cy="45%" r="60%">
+        <stop offset="0%" stop-color="#ffffff"/><stop offset="70%" stop-color="#f4f4f4"/><stop offset="100%" stop-color="#dcdcdc"/>
+      </radialGradient></defs>
+      <polygon points="1,60 103,1 205,60 103,119" fill="url(#s14-g)"/></svg></div>
+  </div>
+  <p id="s14-word">director</p>
+  <p id="s14-sub">Motion design, written in code.</p>
+  <p id="s14-made">MADE WITH DIRECTOR</p>
+  <div class="vignette"></div>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s14-frame">2892</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s14-tc" style="right:62px;bottom:48px">00:00:48:12</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 48.2, DURATION = 3.6;
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const f = Math.round((FILM_START + tl.time()) * 60);
+    document.getElementById("s14-frame").textContent = pad(f, 4);
+    document.getElementById("s14-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+  } }, 0);
+
+  // Spark burst: short red strokes around the line's centre.
+  const svgNS = "http://www.w3.org/2000/svg";
+  const burst = document.getElementById("s14-burst-svg");
+  for (let i = 0; i < 22; i++) {
+    const a = (i / 22) * Math.PI * 2 + (Math.random() - 0.5) * 0.25;
+    const r0 = 30 + Math.random() * 25, r1 = r0 + 14 + Math.random() * 16;
+    const ln = document.createElementNS(svgNS, "line");
+    ln.setAttribute("x1", (Math.cos(a) * r0).toFixed(1)); ln.setAttribute("y1", (Math.sin(a) * r0).toFixed(1));
+    ln.setAttribute("x2", (Math.cos(a) * r1).toFixed(1)); ln.setAttribute("y2", (Math.sin(a) * r1).toFixed(1));
+    ln.setAttribute("stroke", "#ff5a36"); ln.setAttribute("stroke-width", "2.5"); ln.setAttribute("stroke-linecap", "round");
+    burst.appendChild(ln);
+  }
+
+  // Starfield: glowing dust that fades in after the flash and drifts.
+  const stars = document.getElementById("s14-stars");
+  for (let i = 0; i < 70; i++) {
+    const s = document.createElement("div");
+    s.className = "s14-star";
+    s.id = "s14-star" + i;
+    const big = Math.random() < 0.3;
+    const d = big ? 5 + Math.random() * 3 : 2 + Math.random() * 2;
+    s.style.width = d + "px"; s.style.height = d + "px";
+    s.style.left = (Math.random() * 1920).toFixed(0) + "px";
+    s.style.top = (Math.random() * 1080).toFixed(0) + "px";
+    s.style.opacity = "0";
+    stars.appendChild(s);
+    const peak = big ? 0.45 + Math.random() * 0.3 : 0.25 + Math.random() * 0.35;
+    tl.to(s, { opacity: peak, duration: 0.6, ease: "power1.out" }, 0.32 + Math.random() * 0.35);
+    tl.fromTo(s, { x: 0, y: 0 }, { x: (Math.random() - 0.5) * 50, y: -10 - Math.random() * 40,
+      duration: DURATION, ease: "none" }, 0);
+  }
+
+  // Red dot left by CODE.'s period, then the line draws out from it.
+  tl.to("#s14-dot", { opacity: 0, scale: 0.4, duration: 0.04, ease: "power2.in" }, 0);
+  tl.fromTo("#s14-line", { scaleX: 0, opacity: 1 }, { scaleX: 1, duration: 0.2, ease: "expo.out" }, 0.06);
+  tl.to("#s14-flash", { opacity: 1, duration: 0.05, ease: "none" }, 0.09);
+  tl.to("#s14-flash", { opacity: 0, duration: 0.15, ease: "power1.in" }, 0.22);
+  tl.fromTo("#s14-burst", { opacity: 1, scale: 0.25 }, { scale: 1.5, duration: 0.35, ease: "expo.out" }, 0.12);
+  tl.to("#s14-burst", { opacity: 0, duration: 0.22, ease: "power1.in" }, 0.2);
+  // The line retracts toward its right end and thins out.
+  tl.set("#s14-line", { transformOrigin: "100% 50%" }, 0.3);
+  tl.to("#s14-line", { scaleX: 0, scaleY: 0.4, duration: 0.28, ease: "power2.in" }, 0.3);
+  tl.to("#s14-line", { opacity: 0, duration: 0.06, ease: "none" }, 0.54);
+
+  // Logo: the stack settles, drops onto the line, then slides to centre the lockup.
+  gsap.set("#s14-l1", { y: -30 }); gsap.set("#s14-l2", { y: -60 }); gsap.set("#s14-l3", { y: -90 });
+  tl.to("#s14-l3", { y: -64, duration: 0.14, ease: "power2.out" }, 0.12);
+  tl.to("#s14-logo", { y: 62, duration: 0.12, ease: "power2.in" }, 0.26);
+  tl.to(["#s14-l1", "#s14-l2", "#s14-l3"], { y: 0, duration: 0.12, ease: "power2.in" }, 0.26);
+  tl.to("#s14-l3", { y: -98, duration: 0.45, ease: "back.out(2)" }, 0.4);
+  tl.to("#s14-l2", { y: -64, duration: 0.45, ease: "back.out(2)" }, 0.42);
+  tl.to("#s14-l1", { y: -31, duration: 0.45, ease: "back.out(2)" }, 0.44);
+  tl.to("#s14-logo", { x: -8, duration: 1.6, ease: "power2.out" }, 0.7);
+
+  // Wordmark wipes in left to right, then the subtitle and the mono credit.
+  tl.fromTo("#s14-word", { clipPath: "polygon(-6% -30%, -6% -30%, -6% 130%, -6% 130%)", x: -24 },
+    { clipPath: "polygon(-6% -30%, 106% -30%, 106% 130%, -6% 130%)", x: -8, duration: 0.45, ease: "power2.out" }, 0.72);
+  tl.fromTo("#s14-sub", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.55, ease: "power2.out" }, 0.95);
+  tl.fromTo("#s14-made", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "power1.inOut" }, 1.35);
+
+  window.__timelines["s14"] = tl;
+})();
+</script>
+</body></html>

@@ -387,6 +387,7 @@ impl Element for HtmlElement {
             if !self.paint.no_wrap {
                 crate::compiler::layout_paragraph(text, &self.paint, width);
             }
+            let _fonts = text.font_collection.lock().unwrap();
             if let Some(paragraph) = text.paragraph.lock().unwrap().as_mut() {
                 if self.paint.no_wrap {
                     paragraph.layout(width);
@@ -395,8 +396,14 @@ impl Element for HtmlElement {
                         paragraph.layout(paragraph.max_intrinsic_width().ceil());
                     }
                 }
+                // `longest_line` drops trailing spaces, which `white-space: pre` keeps.
+                let natural = if self.paint.no_wrap && self.paint.preserve_space {
+                    paragraph.longest_line().max(paragraph.max_intrinsic_width())
+                } else {
+                    paragraph.longest_line()
+                };
                 return Size {
-                    width: known.width.unwrap_or(paragraph.longest_line()),
+                    width: known.width.unwrap_or(natural),
                     height: self
                         .paint
                         .line_height
@@ -422,6 +429,7 @@ impl Element for HtmlElement {
                 .downcast_ref::<director_core::node::TextNode>()
             {
                 if let Some((css_baseline, _)) = self.line_box(text) {
+                    let _fonts = text.font_collection.lock().unwrap();
                     if let Some(paragraph) = text.paragraph.lock().unwrap().as_mut() {
                         paragraph.layout(rect.width());
                         self.baseline_offset = css_baseline - paragraph.alphabetic_baseline();
@@ -441,6 +449,7 @@ impl Element for HtmlElement {
             // Lay out at the width `TextNode::render` uses.
             let mut boxes = text
                 .and_then(|text| {
+                    let _fonts = text.font_collection.lock().unwrap();
                     let mut paragraph = text.paragraph.lock().unwrap();
                     paragraph.as_mut().map(|p| {
                         p.layout(content.width());
@@ -593,7 +602,15 @@ impl Element for HtmlElement {
         changed
     }
     fn shares_3d(&self) -> bool {
-        self.paint.preserve_3d
+        // Grouping properties make the used `transform-style` flat, so the
+        // element paints as one plane through its own layer.
+        let grouped = self.paint.opacity < 1.0
+            || self.paint.filter.is_some()
+            || self.paint.mask.is_some()
+            || self.paint.blend_mode != skia_safe::BlendMode::SrcOver
+            || self.paint.box_node.clip_path.is_some()
+            || self.paint.box_node.overflow == "hidden";
+        self.paint.preserve_3d && !grouped
     }
     fn view_depth(&self, width: f32, height: f32) -> f32 {
         let origin = (

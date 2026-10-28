@@ -23,6 +23,7 @@ pub(super) fn paint_text_lines(canvas: &Canvas, element: &HtmlElement, rect: Rec
     let auto = (element.paint.font_size / 16.0).max(1.0).round();
     let requested = element.paint.decoration_thickness;
     let spans = {
+        let _fonts = text.font_collection.lock();
         let mut guard = match text.paragraph.lock() {
             Ok(guard) => guard,
             Err(_) => return,

@@ -1703,18 +1703,18 @@ pub(crate) fn clip_points(s: &str, values: &Values, m: Metrics) -> Result<Option
     let Some(content) = s.strip_prefix("polygon(").and_then(|s| s.strip_suffix(')')) else {
         return clip_shape_points(s, values, m).map(Some);
     };
+    let box_width = definite_px(values, "width", m).unwrap_or(m.width);
+    let box_height = definite_px(values, "height", m).unwrap_or(m.height);
     let mut points = Vec::new();
     for point in split(content, true) {
         let xy = split(&point, false);
         if xy.len() != 2 {
             return Err("invalid polygon point".into());
         };
-        let x = length(&xy[0], m)?;
-        let y = length(&xy[1], m)?;
-        if !x.is_percent() || !y.is_percent() {
-            return Err("polygon points must be percentages".into());
-        };
-        points.push((x.value(), y.value()));
+        let parse = |s: &str| CssLength::parse_string(s).map_err(|e| format!("polygon point '{s}': {e:?}"));
+        let x = axis_fraction(&parse(&xy[0])?, m, box_width)?;
+        let y = axis_fraction(&parse(&xy[1])?, m, box_height)?;
+        points.push((x, y));
     }
     Ok(Some(points))
 }

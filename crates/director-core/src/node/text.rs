@@ -454,6 +454,8 @@ impl TextNode {
     /// Must be called after layout to get accurate positions.
     pub fn get_glyph_rects(&self, layout_width: f32) -> Vec<GlyphInfo> {
         self.ensure_paragraph_ready();
+        // Shaping reads the shared font collection, which Skia does not lock.
+        let _fonts = self.font_collection.lock();
         let mut p_guard = match self.paragraph.lock() {
             Ok(g) => g,
             Err(_) => return Vec::new(),
@@ -735,6 +737,7 @@ impl Element for TextNode {
         available_space: Size<AvailableSpace>,
     ) -> Size<f32> {
         self.ensure_paragraph_ready();
+        let _fonts = self.font_collection.lock();
         let mut p_guard = match self.paragraph.lock() {
             Ok(g) => g,
             Err(_) => return Size { width: 0.0, height: 0.0 },
@@ -846,6 +849,7 @@ impl Element for TextNode {
                 self.fitted_font_size = Some(mid);
                 self.init_paragraph();
 
+                let _fonts = self.font_collection.lock();
                 let mut p_guard = match self.paragraph.lock() {
                     Ok(g) => g,
                     Err(_) => continue,
@@ -877,6 +881,7 @@ impl Element for TextNode {
         opacity: f32,
         draw_children: &mut dyn FnMut(&Canvas),
     ) -> Result<(), crate::RenderError> {
+        let fonts = self.font_collection.lock();
         let mut p_guard = match self.paragraph.lock() {
             Ok(g) => g,
             Err(_) => return Ok(()),
@@ -1027,6 +1032,8 @@ impl Element for TextNode {
 
             canvas.restore();
         }
+        drop(p_guard);
+        drop(fonts);
 
         draw_children(canvas);
         Ok(())

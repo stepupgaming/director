@@ -1,0 +1,298 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s03-bg { position:absolute; inset:0;
+    background: radial-gradient(ellipse 70% 60% at 52% 48%, #161b1f 0%, #101315 45%, #0a0a0b 100%); }
+  #s03-flash { position:absolute; inset:0; opacity:0;
+    background: radial-gradient(ellipse 75% 70% at 52% 52%, #6a2416 0%, #3e160f 45%, #1c0d0a 100%); }
+  #s03-parts { position:absolute; inset:0; }
+  .s03-p { position:absolute; width:5px; height:5px; border-radius:50%; background:#ff4b2b;
+    box-shadow: 0 0 8px rgba(255, 75, 43, .8); }
+  #s03-rig { position:absolute; left:0; top:0; width:1920px; height:1080px; }
+  #s03-stage { position:absolute; inset:0; perspective:1400px; }
+  #s03-cam { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-style:preserve-3d; }
+
+  #s03-written { position:absolute; left:0; top:205px; width:1884px; text-align:center;
+    font-size:124px; color:#fbf8f5; letter-spacing:-2px;
+    text-shadow: 0 0 18px rgba(255, 255, 255, .18); }
+  .s03-l { display:inline-block; }
+  .s03-sp { display:inline-block; width:40px; }
+
+  #s03-arc { position:absolute; left:0; top:0; width:1920px; height:1080px; }
+
+  #s03-burst { position:absolute; left:960px; top:560px; width:0; height:0; }
+  .s03-ray { position:absolute; left:0; top:0; height:2px; transform-origin:0 50%;
+    background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(240,236,232,.9) 55%, rgba(255,255,255,.2) 100%); }
+  .s03-ray.s03-spark { background:#ff4b2b; box-shadow: 0 0 6px rgba(255, 75, 43, .8); }
+  #s03-ring { position:absolute; left:610px; top:210px; width:700px; height:700px; border-radius:50%;
+    border:9px solid rgba(239, 74, 44, .75); opacity:0;
+    box-shadow: 0 0 40px rgba(239, 74, 44, .55), inset 0 0 40px rgba(239, 74, 44, .45); }
+
+  #s03-opus { position:absolute; left:0; top:470px; width:1920px; height:240px; transform-style:preserve-3d; }
+  .s03-ol { position:absolute; left:0; top:0; width:1920px; margin:0; text-align:center;
+    font-size:252px; font-stretch:108%; letter-spacing:-5px; }
+  .s03-ol.s03-front { color:#fffaf6; text-shadow: 0 0 22px rgba(255, 150, 120, .35); }
+  .s03-ol.s03-ghost { color:rgba(0,0,0,0); -webkit-text-stroke: 2px rgba(255, 75, 43, .55); }
+
+  .s03-streak { position:absolute; height:4px; border-radius:2px;
+    background: linear-gradient(90deg, rgba(255,75,43,0) 0%, #ff5a36 12%, #ffd2c4 50%, #ff5a36 88%, rgba(255,75,43,0) 100%);
+    box-shadow: 0 0 10px rgba(255, 80, 50, .9), 0 0 26px rgba(255, 75, 43, .6); }
+  #s03-streak1 { left:800px; top:668px; width:770px; transform:rotate(-27deg); transform-origin:0 50%; }
+  #s03-streak2 { left:-40px; top:600px; width:2000px; height:3px; transform:rotate(-4.5deg); transform-origin:0 50%; }
+
+  #s03-term { position:absolute; left:700px; top:880px; margin:0; font-family:"JetBrains Mono"; font-size:50px;
+    font-weight:600; line-height:64px; color:#ebe6e2; white-space:pre; }
+  #s03-prompt { position:absolute; left:700px; top:880px; margin:0; font-family:"JetBrains Mono"; font-size:50px;
+    font-weight:600; line-height:64px; color:#ff4b2b; }
+  #s03-cur { position:absolute; left:810px; top:887px; width:25px; height:50px; background:#ff3b24;
+    box-shadow: 0 0 10px rgba(255, 60, 36, .6); }
+
+  #s03-chip { position:absolute; left:128px; top:79px; width:0; height:45px; background:#ef4a2c; border-radius:4px;
+    box-shadow: 0 0 14px rgba(239, 74, 44, .45); }
+  #s03 .caption { color:#fff; }
+</style></head><body>
+<div id="s03" class="film" data-composition-id="s03" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="2.7667" data-motion-blur="8" data-shutter-angle="270">
+  <div id="s03-bg"></div>
+  <div id="s03-flash"></div>
+  <div class="dots"></div>
+  <div id="s03-parts"></div>
+  <div class="vignette"></div>
+  <div id="s03-rig">
+    <div id="s03-stage"><div id="s03-cam">
+      <h1 id="s03-written" class="display"><span class="s03-l">W</span><span class="s03-l">R</span><span class="s03-l">I</span><span class="s03-l">T</span><span class="s03-l">T</span><span class="s03-l">E</span><span class="s03-l">N</span><span class="s03-sp"></span><span class="s03-l">B</span><span class="s03-l">Y</span></h1>
+      <svg id="s03-arc" viewBox="0 0 1920 1080">
+        <defs>
+          <filter id="s03-blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="7"/></filter>
+          <filter id="s03-blur2" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="12"/></filter>
+        </defs>
+        <path id="s03-trace" d="M0 0" fill="none" stroke="#ff5a36" stroke-opacity="0.32" stroke-width="2.5" stroke-linecap="round"/>
+        <path id="s03-glow" d="M0 0" fill="none" stroke="#ff4b2b" stroke-width="10" stroke-linecap="round" filter="url(#s03-blur)" opacity="0.75"/>
+        <path id="s03-tail3" d="M0 0" fill="none" stroke="#c8321c" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.75"/>
+        <path id="s03-tail2" d="M0 0" fill="none" stroke="#ff5a36" stroke-width="5" stroke-linecap="round"/>
+        <path id="s03-tail1" d="M0 0" fill="none" stroke="#ffe2d8" stroke-width="2.5" stroke-linecap="round"/>
+        <circle id="s03-halo" cx="0" cy="0" r="22" fill="#ff5a36" filter="url(#s03-blur2)" opacity="0"/>
+        <circle id="s03-head" cx="0" cy="0" r="6" fill="#fff1ea" opacity="0"/>
+      </svg>
+      <div id="s03-burst"></div>
+      <div id="s03-ring"></div>
+      <div id="s03-opus"></div>
+      <div id="s03-streak1" class="s03-streak"></div>
+      <div id="s03-streak2" class="s03-streak"></div>
+    </div></div>
+    <p id="s03-prompt">&gt;</p>
+    <p id="s03-term"> </p>
+    <div id="s03-cur"></div>
+
+  </div>
+  <div id="s03-chip"></div>
+    <p class="caption" id="s03-cap"><span class="w" id="s03-w0">Claude</span> <span class="w" id="s03-w1">Opus</span> <span class="w" id="s03-w2">5.5</span> <span class="w" id="s03-w3">wrote</span> <span class="w" id="s03-w4">it.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s03-frame">0518</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec" id="s03-rec">&#9679;</span> REC</p>
+  <p class="hud" id="s03-tc" style="right:62px;bottom:48px">00:00:08:38</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 518 / 60, DURATION = 166 / 60;
+  const T = (film) => film - FILM_START;           // film seconds -> shot seconds
+  const $ = (id) => document.getElementById(id);
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+
+  // HUD: frame counter, timecode, REC blink (on during even half seconds of film time).
+  const rec = $("s03-rec");
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const f = Math.round((FILM_START + tl.time()) * 60);
+    $("s03-frame").textContent = pad(f, 4);
+    $("s03-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+  } }, 0);
+  for (let k = Math.ceil(FILM_START * 2); k / 2 < FILM_START + DURATION; k++) {
+    tl.set(rec, { opacity: k % 2 === 0 ? 1 : 0.25 }, Math.max(0, T(k / 2)));
+  }
+  tl.set(rec, { opacity: Math.floor(FILM_START * 2) % 2 === 0 ? 1 : 0.25 }, 0);
+
+  // Red dust particles, seeded.
+  const parts = $("s03-parts");
+  for (let i = 0; i < 46; i++) {
+    const p = document.createElement("div");
+    p.className = "s03-p";
+    const s = 2 + Math.random() * 4;
+    p.style.left = (Math.random() * 1920).toFixed(0) + "px";
+    p.style.top = (Math.random() * 1080).toFixed(0) + "px";
+    p.style.width = s.toFixed(1) + "px"; p.style.height = s.toFixed(1) + "px";
+    p.style.opacity = (0.35 + Math.random() * 0.55).toFixed(2);
+    parts.appendChild(p);
+    tl.to(p, { x: (Math.random() - 0.5) * 60, y: -20 - Math.random() * 50, duration: DURATION, ease: "none" }, 0);
+  }
+
+  // Caption: words arrive one at a time, the red chip slides to the newest word.
+  const chip = $("s03-chip");
+  const words = [0, 1, 2, 3, 4].map((i) => $("s03-w" + i));
+  const cap = $("s03-cap");
+  const wordTimes = [8.683, 9.03, 9.30, 9.885, 10.115];
+  words.forEach((w, i) => {
+    const t = T(wordTimes[i]);
+    const left = 132 + w.offsetLeft - 5, width = w.offsetWidth + 10;
+    tl.fromTo(w, { opacity: 0, y: 9, color: "#8a8786" }, { opacity: 1, y: 0, duration: 0.08, ease: "power2.out" }, Math.max(0, t - 0.08));
+    tl.to(w, { color: "#ffffff", duration: 0.05, ease: "none" }, t + 0.02);
+    if (i === 0) {
+      tl.fromTo(chip, { left: left, width: 0 }, { width: width, duration: 0.07, ease: "power2.out" }, t + 0.01);
+    } else {
+      tl.to(chip, { left: left, width: width, duration: 0.09, ease: "power3.inOut" }, t + 0.02);
+    }
+  });
+
+  // WRITTEN BY: letters drop in from above right, rolling into place.
+  const letters = Array.from(document.querySelectorAll("#s03-written .s03-l"));
+  letters.forEach((l, i) => {
+    const t = Math.max(0, T(8.64) + i * 0.028);
+    tl.fromTo(l, { x: 70 + i * 4, y: -170, rotation: 28, rotationX: 70, opacity: 0 },
+      { x: 0, y: 0, rotation: 0, rotationX: 0, opacity: 1, duration: 0.17, ease: "power3.out" }, t);
+  });
+
+  // Comet: a glowing head on a Catmull-Rom path that sweeps under the title and spirals into the center.
+  const P = [[675,390],[690,395],[855,370],[1020,362],[1175,378],[1330,430],[1425,525],[1420,640],[1335,720],
+             [1100,785],[825,765],[690,690],[684,555],[780,505],[965,525],[972,548]];
+  let d = "M" + P[0][0] + " " + P[0][1];
+  for (let i = 0; i < P.length - 1; i++) {
+    const p0 = P[Math.max(0, i - 1)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(P.length - 1, i + 2)];
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+    const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    d += " C" + c1[0].toFixed(1) + " " + c1[1].toFixed(1) + " " + c2[0].toFixed(1) + " " + c2[1].toFixed(1) + " " + p2[0] + " " + p2[1];
+  }
+  const ids = ["s03-trace", "s03-glow", "s03-tail1", "s03-tail2", "s03-tail3"];
+  ids.forEach((id) => $(id).setAttribute("d", d));
+  const path = $("s03-trace");
+  const total = path.getTotalLength();
+  const cum = [0];
+  for (let i = 1; i < P.length; i++) cum.push(cum[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+  const keys = [[8.75, 0], [8.86, 1], [8.95, 2], [9.0, 3], [9.05, 4], [9.10, 6], [9.15, 8], [9.20, 10], [9.25, 12], [9.30, 14], [9.345, 15]];
+  const head = $("s03-head"), halo = $("s03-halo");
+  const seg = (el, a, b) => {
+    a = Math.max(0, a); b = Math.max(a + 0.01, b);
+    el.setAttribute("stroke-dasharray", (b - a).toFixed(1) + " " + (total + 10).toFixed(0));
+    el.setAttribute("stroke-dashoffset", (-a).toFixed(1));
+  };
+  const comet = { L: 0 };
+  const drawComet = () => {
+    const L = comet.L;
+    seg($("s03-tail1"), L - 420, L);
+    seg($("s03-tail2"), L - 1100, L - 30);
+    seg($("s03-tail3"), L - 1700, L - 600);
+    seg($("s03-glow"), L - 900, L);
+    seg(path, Math.max(0, L - 2300), L);
+    const pt = path.getPointAtLength(L);
+    head.setAttribute("cx", pt.x.toFixed(1)); head.setAttribute("cy", pt.y.toFixed(1));
+    halo.setAttribute("cx", pt.x.toFixed(1)); halo.setAttribute("cy", pt.y.toFixed(1));
+  };
+  drawComet();
+  for (let k = 1; k < keys.length; k++) {
+    const [t0] = keys[k - 1], [t1, v1] = keys[k];
+    tl.to(comet, { L: cum[v1] / cum[cum.length - 1] * total, duration: t1 - t0, ease: k === 1 ? "sine.in" : "none", onUpdate: drawComet }, T(t0));
+  }
+  tl.fromTo([head, halo], { attr: { opacity: 0 } }, { attr: { opacity: 1 }, duration: 0.05 }, T(8.73));
+  tl.to("#s03-arc", { opacity: 0, duration: 0.08, ease: "none" }, T(9.36));
+
+  // Impact: red flash, ring, radial speed lines.
+  tl.to("#s03-flash", { opacity: 1, duration: 0.04, ease: "none" }, T(9.35));
+  tl.to("#s03-flash", { opacity: 0, duration: 0.16, ease: "power1.in" }, T(9.40));
+  tl.fromTo("#s03-ring", { scale: 0.5, opacity: 0 }, { scale: 1.4, opacity: 0.7, duration: 0.06, ease: "power2.out" }, T(9.345));
+  tl.to("#s03-ring", { scale: 2.6, opacity: 0, duration: 0.28, ease: "power2.out" }, T(9.405));
+  const burst = $("s03-burst");
+  const ray = (cls, a, r0, r1, len, t0, life, op, thick) => {
+    const r = document.createElement("div");
+    r.className = cls;
+    r.style.width = len.toFixed(0) + "px";
+    r.style.height = thick.toFixed(1) + "px";
+    burst.appendChild(r);
+    const c = Math.cos(a * Math.PI / 180), sn = Math.sin(a * Math.PI / 180);
+    gsap.set(r, { rotation: a, x: c * r0, y: sn * r0, opacity: 0 });
+    tl.to(r, { opacity: op, duration: 0.03, ease: "none" }, t0);
+    tl.to(r, { x: c * r1, y: sn * r1, duration: life, ease: "power1.out" }, t0);
+    tl.to(r, { opacity: 0, duration: 0.15, ease: "none" }, t0 + life - 0.15);
+  };
+  for (let i = 0; i < 110; i++) {
+    const a = Math.random() * 360;
+    ray("s03-ray", a, 120 + Math.random() * 240, 760 + Math.random() * 420, 220 + Math.random() * 380,
+      T(9.37) + Math.random() * 0.05, 0.5 + Math.random() * 0.1, 0.5 + Math.random() * 0.45, 1.5 + Math.random() * 1.2);
+  }
+  for (let i = 0; i < 26; i++) {
+    const a = Math.random() * 360;
+    ray("s03-ray s03-spark", a, 60 + Math.random() * 80, 200 + Math.random() * 160, 14 + Math.random() * 18,
+      T(9.38) + Math.random() * 0.1, 0.45, 0.9, 2);
+  }
+
+  // OPUS 5.5: real extruded type, a stack of planes along Z, flying in and flipping once.
+  const opus = $("s03-opus");
+  const DEPTH = 18;
+  for (let i = DEPTH; i >= 0; i--) {
+    const l = document.createElement("p");
+    l.className = "s03-ol display" + (i === 0 ? " s03-front" : "");
+    l.textContent = "OPUS 5.5";
+    const k = i / DEPTH;
+    if (i > 0) {
+      const r = Math.round(200 - 150 * k), g = Math.round(58 - 44 * k), b = Math.round(32 - 24 * k);
+      l.style.color = "rgb(" + r + "," + g + "," + b + ")";
+    }
+    l.style.transform = "translateZ(" + (-i * 3).toFixed(1) + "px)";
+    opus.appendChild(l);
+  }
+  const ghost = document.createElement("p");
+  ghost.className = "s03-ol display s03-ghost";
+  ghost.textContent = "OPUS 5.5";
+  ghost.style.transform = "translate3d(-60px, -4px, -90px)";
+  ghost.style.opacity = "0";
+  opus.appendChild(ghost);
+
+  tl.fromTo(opus, { opacity: 0, scale: 0.18, rotation: -70, rotationY: 180, x: 0, y: -40 },
+    { opacity: 1, duration: 0.03, ease: "none" }, T(9.335));
+  tl.to(opus, { scale: 1.0, rotation: -6, rotationY: -14, rotationX: 4, x: 100, y: 0, duration: 0.22, ease: "power3.out" }, T(9.34));
+  tl.to(opus, { scale: 1.01, rotation: -5, rotationY: -13, rotationX: 2, x: 95, duration: 0.5, ease: "sine.inOut" }, T(9.56));
+  tl.to(opus, { rotationX: 360, rotationY: 22, rotation: 0, x: 140, y: -15, scale: 1.0, duration: 0.2, ease: "power2.inOut" }, T(10.065));
+  tl.set(opus, { rotationX: 0 }, T(10.27));
+  tl.to(opus, { rotationY: 24, x: 130, y: -18, scale: 1.03, duration: 1.0, ease: "sine.inOut" }, T(10.27));
+  tl.to(ghost, { opacity: 1, duration: 0.3, ease: "none" }, T(10.3));
+
+  // Light streaks across OPUS.
+  tl.fromTo("#s03-streak1", { scaleX: 0, opacity: 1 }, { scaleX: 1, duration: 0.07, ease: "power2.out" }, T(9.36));
+  tl.to("#s03-streak1", { opacity: 0, duration: 0.15, ease: "none" }, T(9.72));
+  tl.fromTo("#s03-streak2", { scaleX: 0, opacity: 1, transformOrigin: "0% 50%" }, { scaleX: 1, duration: 0.09, ease: "power2.out" }, T(10.5));
+  tl.to("#s03-streak2", { x: 1700, y: -134, scaleX: 0.1, duration: 0.16, ease: "power2.in" }, T(10.7));
+  tl.set("#s03-streak2", { opacity: 0 }, T(10.87));
+  gsap.set(["#s03-streak1", "#s03-streak2"], { opacity: 0 });
+
+  // Terminal line types with a red block cursor.
+  const term = $("s03-term"), cur = $("s03-cur");
+  const line = "  in Claude Code";
+  const ADV = 50 * 0.6, CX = 940;
+  gsap.set(["#s03-prompt", term, cur], { opacity: 0 });
+  tl.set("#s03-prompt", { opacity: 1 }, T(10.28));
+  tl.set([term, cur], { opacity: 1 }, T(10.37));
+  const ty = { n: 2 };
+  const drawType = () => {
+    const n = Math.round(ty.n);
+    term.textContent = line.slice(0, n) || " ";
+    const w = (n + 1) * ADV + 25, left = CX - w / 2;
+    $("s03-prompt").style.left = left.toFixed(1) + "px";
+    term.style.left = left.toFixed(1) + "px";
+    cur.style.left = (left + (n + 1) * ADV).toFixed(1) + "px";
+  };
+  drawType();
+  tl.to(ty, { n: line.length, duration: 0.45, ease: "none", onUpdate: drawType }, T(10.36));
+  tl.set(cur, { opacity: 0 }, T(10.86));
+  tl.set(cur, { opacity: 1 }, T(11.18));
+
+  // Camera drift: slow push and pan left, then whip up out of frame.
+  tl.to("#s03-cam", { x: -225, z: 80, rotationY: 3, duration: T(11.28) - T(9.0), ease: "sine.inOut" }, T(9.0));
+  tl.to("#s03-rig", { y: -1180, duration: 0.1, ease: "power2.in" }, T(11.27));
+  tl.to(["#s03-cap", "#s03-chip"], { opacity: 0, duration: 0.1, ease: "none" }, T(11.28));
+
+  window.__timelines["s03"] = tl;
+})();
+</script>
+</body></html>

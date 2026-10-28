@@ -1,0 +1,223 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s13 { background: #0e0d0e; }
+  /* Backgrounds for the three looks: dark, red, white. */
+  #s13-red { position:absolute; inset:0; opacity:0;
+    background: radial-gradient(ellipse at 50% 48%, #f2512f 0%, #ee4a2a 55%, #d63a1e 100%); }
+  #s13-white { position:absolute; inset:0; opacity:0;
+    background: radial-gradient(ellipse at 50% 50%, #ffffff 0%, #faf8f5 45%, #e6e1da 100%); }
+  .s13-echo { position:absolute; margin:0; color:transparent; font-size:222px;
+    -webkit-text-stroke: 2px rgba(255,255,255,.2); }
+  #s13-echo1 { right:70px; top:-2px; }
+  #s13-echo2 { left:80px; top:846px; }
+  #s13-every { position:absolute; left:0; top:226px; width:1920px; text-align:center; font-size:322px; color:#fff;
+    text-shadow: 0 0 22px rgba(255,255,255,.18); }
+  #s13-frame { position:absolute; left:0; top:528px; width:1920px; text-align:center; font-size:322px; color:#f04a2a;
+    text-shadow: 0 0 18px rgba(255,75,43,.75), 0 0 60px rgba(255,75,43,.35); }
+  #s13-just { position:absolute; left:0; top:264px; width:1920px; text-align:center; font-size:548px;
+    color:#140c0a; letter-spacing:0px; opacity:0; }
+  .s13-jl { display:inline-block; }
+  /* CODE.: four letters, a glyph slot for the scramble, and the red square period. */
+  .s13-cecho { position:absolute; margin:0; color:transparent; font-size:400px; opacity:0;
+    -webkit-text-stroke: 2px rgba(60,40,30,.16); }
+  #s13-cecho1 { right:330px; top:-62px; }
+  #s13-cecho2 { left:280px; top:722px; }
+  .s13-decho { -webkit-text-stroke: 2px rgba(255,255,255,.22); }
+  #s13-rays { position:absolute; left:0; top:0; width:1920px; height:1080px; opacity:0; }
+  #s13-ring { position:absolute; left:400px; top:-20px; width:1120px; height:1120px; border-radius:50%;
+    border: 16px solid rgba(240,110,80,.42); opacity:0; }
+  #s13-spark { position:absolute; left:1070px; top:460px; width:200px; height:200px; opacity:0; }
+  #s13-code { position:absolute; left:0; top:0; width:1920px; height:1080px; opacity:0; }
+  .s13-cs { position:absolute; left:0; top:338px; font-stretch:110%; width:1920px; margin:0; text-align:center; font-size:452px;
+    color:#120d0c; opacity:0; white-space:nowrap; }
+  .s13-red { color:#ef4a2c; }
+  .s13-sq { display:inline-block; width:104px; height:94px; margin-left:44px; background:#ef4a2c; }
+  #s13-cd { top:321px; font-stretch:107%; font-size:477px; color:#ffffff; text-shadow: 0 0 26px rgba(255,255,255,.3); }
+  #s13-cd .s13-sq { width:108px; height:98px; box-shadow: 0 0 22px rgba(255,75,43,.6); }
+  #s13-dot { position:absolute; left:955px; top:528px; width:16px; height:16px; border-radius:50%;
+    background:#ff5a36; box-shadow: 0 0 14px 4px rgba(255,75,43,.7); opacity:0; }
+  #s13-logo { position:absolute; left:519px; top:425px; width:206px; height:120px; opacity:0; }
+  .s13-layer { position:absolute; left:0; top:0; width:206px; height:120px; }
+  .s13-layer svg { position:absolute; left:0; top:0; }
+  #s13-l0 { filter: drop-shadow(0 0 16px rgba(255,255,255,.45)); }
+  #s13-chip { position:absolute; left:126px; top:80px; width:10px; height:46px; border-radius:4px; background:#ef4a2c; }
+  #s13-cap .w { color:#f4f1ee; opacity:0; }
+</style></head><body>
+<div id="s13" class="film" data-composition-id="s13" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="2.2667" data-motion-blur="8" data-shutter-angle="270">
+  <div class="dots"></div>
+  <p id="s13-echo1" class="display s13-echo">EVERY FRAME.</p>
+  <p id="s13-echo2" class="display s13-echo">EVERY FRAME.</p>
+  <h1 id="s13-every" class="display">EVERY</h1>
+  <h1 id="s13-frame" class="display">FRAME.</h1>
+  <div id="s13-red"></div>
+  <h1 id="s13-just" class="display"><span class="s13-jl" id="s13-j1">J</span><span class="s13-jl" id="s13-j2">U</span><span class="s13-jl" id="s13-j3">S</span><span class="s13-jl" id="s13-j4">T</span></h1>
+  <div id="s13-white"></div>
+  <svg id="s13-rays" width="1920" height="1080" viewBox="0 0 1920 1080"></svg>
+  <div id="s13-ring"></div>
+  <p id="s13-cecho1" class="display s13-cecho">CODE.</p>
+  <p id="s13-cecho2" class="display s13-cecho">CODE</p>
+  <p id="s13-decho1" class="display s13-cecho s13-decho" style="right:330px;top:-62px">CODE.</p>
+  <p id="s13-decho2" class="display s13-cecho s13-decho" style="left:280px;top:722px">CODE</p>
+  <div id="s13-code"></div>
+  <svg id="s13-spark" width="200" height="200" viewBox="-100 -100 200 200"></svg>
+  <div id="s13-dot"></div>
+  <div id="s13-logo">
+    <div class="s13-layer" id="s13-l3"><svg width="206" height="120"><polygon points="1,60 103,1 205,60 103,119" fill="#ffffff" fill-opacity="0.22"/></svg></div>
+    <div class="s13-layer" id="s13-l2"><svg width="206" height="120"><polygon points="1,60 103,1 205,60 103,119" fill="#ffffff" fill-opacity="0.36"/></svg></div>
+    <div class="s13-layer" id="s13-l1"><svg width="206" height="120"><polygon points="1,60 103,1 205,60 103,119" fill="#ffffff" fill-opacity="0.55"/></svg></div>
+    <div class="s13-layer" id="s13-l0"><svg width="206" height="120">
+      <defs><radialGradient id="s13-g" cx="50%" cy="45%" r="60%">
+        <stop offset="0%" stop-color="#ffffff"/><stop offset="70%" stop-color="#f4f4f4"/><stop offset="100%" stop-color="#dcdcdc"/>
+      </radialGradient></defs>
+      <polygon points="1,60 103,1 205,60 103,119" fill="url(#s13-g)"/></svg></div>
+  </div>
+  <div class="vignette" id="s13-vig"></div>
+  <div id="s13-chip"></div>
+  <p class="caption" id="s13-cap"><span class="w">Every</span> <span class="w">frame.</span> <span class="w">Just</span> <span class="w">code.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s13-frame-n">2756</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s13-tc" style="right:62px;bottom:48px">00:00:45:56</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 2756 / 60, DURATION = 2.2667;
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const $ = (id) => document.getElementById(id);
+  const $$ = (q) => Array.from(document.querySelectorAll(q));
+  const NS = "http://www.w3.org/2000/svg";
+
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const f = Math.round((FILM_START + tl.time()) * 60);
+    $("s13-frame-n").textContent = pad(f, 4);
+    $("s13-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+  } }, 0);
+
+  // ---------- EVERY / FRAME. on dark ----------
+  tl.fromTo("#s13-every", { x: -1500, rotation: -2 }, { x: -60, rotation: -1.2, duration: 0.09, ease: "expo.out" }, 0);
+  tl.to("#s13-every", { x: 0, rotation: 0, duration: 0.5, ease: "power1.out" }, 0.09);
+  tl.fromTo("#s13-frame", { x: 2200 }, { x: 0, duration: 0.09, ease: "expo.out", immediateRender: true }, 0.15);
+  tl.to(["#s13-every", "#s13-frame"], { y: -1300, duration: 0.07, ease: "power3.in", stagger: 0.01 }, 0.6);
+  tl.fromTo("#s13-echo1", { x: 0 }, { x: -130, duration: 0.7, ease: "none" }, 0);
+  tl.fromTo("#s13-echo2", { x: 0 }, { x: 120, duration: 0.7, ease: "none" }, 0);
+
+  // ---------- JUST on red: letters rise and swing in one after another ----------
+  tl.set(["#s13-red", "#s13-just"], { opacity: 1 }, 0.6917);
+  tl.set(["#s13-echo1", "#s13-echo2"], { opacity: 0 }, 0.6917);
+  const rot = [-14, 10, -12, 16];
+  for (let i = 1; i <= 4; i++) {
+    tl.fromTo("#s13-j" + i, { y: 640, rotation: rot[i - 1] },
+      { y: 0, rotation: 0, duration: 0.17, ease: "back.out(1.3)", immediateRender: true }, 0.67 + (i - 1) * 0.04);
+  }
+  tl.fromTo("#s13-just", { scaleX: 0.96 }, { scaleX: 1.0, duration: 0.3, ease: "power2.out" }, 0.8);
+
+  // ---------- CODE. on white: one element per scramble state ----------
+  // [local time, four glyphs, tail ("." draws the red square)]
+  const SCR = [
+    [1.0333, "CODE", "."], [1.4, "(ODE", "."], [1.4333, "CODE", "."], [1.4667, "C<DE", "."], [1.5, "{{DE", "."],
+    [1.5167, "{{>E", "."], [1.5333, "*O;E", "."], [1.5667, ">}{E", "."], [1.6, "<[{E", "."],
+    [1.6333, "CODE", "."], [1.6667, "C}}E", "<"], [1.7, "{<</", "}"]
+  ];
+  const codeBox = $("s13-code");
+  const esc = (c) => c.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  SCR.forEach((st, i) => {
+    const h = document.createElement("h1");
+    h.className = "display s13-cs";
+    h.id = "s13-cs" + i;
+    h.innerHTML = esc(st[1]) + (st[2] === "." ? '<span class="s13-sq"></span>' : '<span class="s13-red">' + esc(st[2]) + "</span>");
+    codeBox.appendChild(h);
+    tl.set(h, { opacity: 1 }, st[0] - 1 / 120);
+    tl.set(h, { opacity: 0 }, (i + 1 < SCR.length ? SCR[i + 1][0] : 1.7333) - 1 / 120);
+  });
+  const dark = document.createElement("h1");
+  dark.className = "display s13-cs";
+  dark.id = "s13-cd";
+  dark.innerHTML = 'CODE<span class="s13-sq"></span>';
+  codeBox.appendChild(dark);
+
+  tl.set(["#s13-white", "#s13-code", "#s13-rays", "#s13-ring", "#s13-cecho1", "#s13-cecho2"], { opacity: 1 }, 1.025);
+  tl.set(["#s13-red", "#s13-just"], { opacity: 0 }, 1.025);
+  tl.fromTo("#s13-code", { scale: 1.45, x: -160 }, { scale: 1, x: 0, duration: 0.07, ease: "expo.out", immediateRender: false }, 1.0333);
+  tl.fromTo("#s13-ring", { scale: 0.75 }, { scale: 1.3, duration: 0.3, ease: "power2.out", immediateRender: false }, 1.0333);
+  tl.to("#s13-ring", { opacity: 0, duration: 0.18, ease: "power1.in" }, 1.17);
+  tl.fromTo("#s13-rays", { scale: 1.1 }, { scale: 1, duration: 0.3, ease: "power2.out", immediateRender: false }, 1.0333);
+  tl.to("#s13-rays", { opacity: 0.3, duration: 0.3, ease: "power1.in" }, 1.25);
+  tl.fromTo("#s13-spark", { opacity: 1, scale: 0.3 }, { scale: 1.4, duration: 0.2, ease: "expo.out", immediateRender: false }, 1.0333);
+  tl.to("#s13-spark", { opacity: 0, duration: 0.12, ease: "none" }, 1.12);
+  tl.fromTo("#s13-cecho1", { x: 160 }, { x: -300, duration: 0.7, ease: "none", immediateRender: false }, 1.0333);
+  tl.fromTo("#s13-cecho2", { x: 0 }, { x: 420, duration: 0.7, ease: "none", immediateRender: false }, 1.0333);
+
+  // ---------- Dark CODE.: white letters with a glow, faint white echoes ----------
+  tl.set(["#s13-white", "#s13-rays", "#s13-ring", "#s13-cecho1", "#s13-cecho2"], { opacity: 0 }, 1.725);
+  tl.set(["#s13-cd", "#s13-decho1", "#s13-decho2"], { opacity: 1 }, 1.725);
+  tl.fromTo("#s13-code", { scale: 1.0 }, { scale: 1.03, duration: 0.33, ease: "none", immediateRender: false }, 1.7333);
+  tl.fromTo("#s13-decho1", { x: -200 }, { x: -330, duration: 0.5, ease: "none", immediateRender: false }, 1.7333);
+  tl.fromTo("#s13-decho2", { x: 320 }, { x: 420, duration: 0.5, ease: "none", immediateRender: false }, 1.7333);
+
+  // The logo mark pops in, then CODE. shrinks into the red dot at centre.
+  gsap.set("#s13-l1", { y: -30 }); gsap.set("#s13-l2", { y: -60 }); gsap.set("#s13-l3", { y: -90 });
+  tl.fromTo("#s13-logo", { opacity: 0, scale: 0.6, y: -30 }, { opacity: 1, scale: 1, y: 0, duration: 0.06, ease: "power2.out" }, 2.0667);
+  tl.to("#s13-code", { scale: 0.04, duration: 0.12, ease: "power3.in" }, 2.07);
+  tl.to("#s13-code", { opacity: 0, duration: 0.03, ease: "none" }, 2.16);
+  tl.to(["#s13-decho1", "#s13-decho2"], { opacity: 0, scale: 0.6, duration: 0.12, ease: "power2.in" }, 2.07);
+  tl.set("#s13-dot", { opacity: 1 }, 2.17);
+
+  // ---------- caption with the moving chip ----------
+  const words = $$("#s13-cap .w");
+  const cw = [0.0, 0.15, 0.65, 1.067];
+  const inv = (t) => t >= 0.7 && t < 1.7333;
+  cw.forEach((t, i) => {
+    const r = words[i].getBoundingClientRect();
+    tl.fromTo(words[i], { opacity: 0, x: 14, filter: "blur(6px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: 0.05, ease: "power2.out" }, Math.max(0, t - 0.017));
+    tl.to("#s13-chip", { left: r.left - 6, top: r.top - 2, width: r.width + 12, height: r.height + 4, duration: i ? 0.05 : 0.01, ease: "power3.out" }, t + (i ? 0.017 : 0));
+    tl.set(words[i], { color: inv(t + 0.05) ? "#f04a2c" : "#1a0c0a" }, t + (i ? 0.017 : 0));
+    if (i) tl.set(words[i - 1], { color: inv(t) ? "#141010" : "#f4f1ee" }, t + 0.017);
+  });
+  const flip = (t, on) => {
+    tl.set("#s13-chip", { backgroundColor: on ? "#1d1412" : "#ef4a2c" }, t);
+    const last = cw.filter((c) => c <= t + 0.034).length - 1;
+    words.forEach((w, i) => {
+      if (i < last) tl.set(w, { color: on ? "#141010" : "#f4f1ee" }, t);
+      if (i === last) tl.set(w, { color: on ? "#f04a2c" : "#1a0c0a" }, t);
+    });
+    $$("#s13 .hud").forEach((h) => tl.set(h, { color: on ? "#6d6560" : "#8d8a88" }, t));
+    $$("#s13 .corner").forEach((c) => tl.set(c, { borderColor: on ? "rgba(0,0,0,.35)" : "rgba(255,255,255,.35)" }, t));
+  };
+  flip(0.7, true);
+  flip(1.7333, false);
+  tl.set("#s13-vig", { opacity: 0.35 }, 0.6917);
+  tl.set("#s13-vig", { opacity: 1 }, 1.725);
+  tl.to(["#s13-cap", "#s13-chip"], { opacity: 0, duration: 0.05, ease: "power1.in" }, 2.07);
+
+  // ---------- procedural rays and sparks ----------
+  const rays = $("s13-rays");
+  for (let i = 0; i < 80; i++) {
+    const a = Math.random() * Math.PI * 2, r0 = 300 + Math.random() * 160, r1 = r0 + 260 + Math.random() * 700;
+    const l = document.createElementNS(NS, "line");
+    l.setAttribute("x1", (960 + Math.cos(a) * r0).toFixed(1)); l.setAttribute("y1", (540 + Math.sin(a) * r0).toFixed(1));
+    l.setAttribute("x2", (960 + Math.cos(a) * r1).toFixed(1)); l.setAttribute("y2", (540 + Math.sin(a) * r1).toFixed(1));
+    l.setAttribute("stroke", "#6a6460"); l.setAttribute("stroke-opacity", (0.35 + Math.random() * 0.45).toFixed(2));
+    l.setAttribute("stroke-width", (1 + Math.random() * 2).toFixed(1));
+    rays.appendChild(l);
+  }
+  const spark = $("s13-spark");
+  for (let i = 0; i < 26; i++) {
+    const a = Math.random() * Math.PI * 2, r0 = 10 + Math.random() * 30, r1 = r0 + 20 + Math.random() * 45;
+    const l = document.createElementNS(NS, "line");
+    l.setAttribute("x1", (Math.cos(a) * r0).toFixed(1)); l.setAttribute("y1", (Math.sin(a) * r0).toFixed(1));
+    l.setAttribute("x2", (Math.cos(a) * r1).toFixed(1)); l.setAttribute("y2", (Math.sin(a) * r1).toFixed(1));
+    l.setAttribute("stroke", "#ff4b2b"); l.setAttribute("stroke-width", "2.5"); l.setAttribute("stroke-linecap", "round");
+    spark.appendChild(l);
+  }
+
+  window.__timelines["s13"] = tl;
+})();
+</script>
+</body></html>

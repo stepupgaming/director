@@ -123,3 +123,10 @@ fn perspective_origin_z_still_fails() {
     .to_string();
     assert!(error.contains("perspective-origin"), "{error}");
 }
+
+#[test]
+fn opacity_flattens_a_preserve_3d_group() {
+    let html = "<style>body{margin:0}.stage{position:relative;width:64px;height:64px;perspective:200px;transform-style:preserve-3d}.group{position:absolute;top:0;right:0;bottom:0;left:0;transform-style:preserve-3d;opacity:0.5}.card{position:absolute;top:0;right:0;bottom:0;left:0;background:red;transform:translateZ(10px)}</style><div class='stage'><div class='group'><div class='card'></div></div></div>";
+    let red = pixel(&frame(html, 0.0), 32, 32)[0];
+    assert!((110..=145).contains(&red), "the group fades its 3D child: red {red}");
+}

@@ -228,6 +228,11 @@ rather than relying on host system fonts.
   (assets/fonts/emoji.ttf or DIRECTOR_EMOJI_FONT env var).
 * Do NOT add host-system-font-dependent text paths; new caption/template
   fonts must be added to BUNDLED_FONTS and force-kept in .gitignore.
+* A Director's text nodes share one `FontCollection` behind a mutex, and
+  Skia's collection caches typefaces without a lock. Every paragraph build
+  and layout holds that mutex, taken before the paragraph's own lock, because
+  `Director::update` runs elements on Rayon threads. `TextNode::render`
+  releases both before drawing children.
 
 ## Visual golden corpus
 
@@ -245,6 +250,11 @@ rather than relying on host system fonts.
   any working directory.
 
 ## Core hardening
+
+`VectorNode` rasterizes at the size the canvas shows (the local-to-device
+scale of its rect, from 1 to 8 in half-octave steps, at most 4096 px a side)
+and draws with linear sampling, so a zoom or perspective camera keeps SVG
+edges sharp.
 
 Engine solidity work is specified under `docs/plans/` (index `00`). Local
 spines that this crate owns: time/timeline (`director`/`timeline`/`lifecycle`),

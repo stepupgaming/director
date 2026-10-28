@@ -1,0 +1,408 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  .s01-full { position:absolute; left:0; top:0; width:1920px; height:1080px; }
+  #s01-bgred { opacity:0;
+    background:radial-gradient(ellipse farthest-corner at 50% 50%, #f04c2d 0%, #ee4a2c 52%, #d8442a 72%, #a3361f 100%); }
+  #s01-bglight { opacity:0;
+    background:radial-gradient(ellipse farthest-corner at 50% 50%, #fdfefe 0%, #fcfcfa 62%, #f1ede2 72%, #d2cec4 86%, #a5a39e 100%); }
+  #s01-flash { opacity:0; background:#5c1d12; }
+  #s01-wash { opacity:0; background:#fff3ee; }
+  #s01-dark { opacity:0; background:#0e0c0c; }
+
+  .s01-ray { position:absolute; left:960px; top:540px; width:0; height:0; }
+  .s01-streak { position:absolute; left:0; top:-1px; height:2px; border-radius:1px; }
+  .s01-streak.s01-red { background:linear-gradient(90deg, rgba(255,75,43,0) 0%, rgba(255,90,55,.9) 60%, #ff9a78 100%); }
+  .s01-streak.s01-white { background:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.95) 25%, #ffffff 75%, rgba(255,255,255,0) 100%); }
+  .s01-streak.s01-spark { height:3px; background:linear-gradient(90deg, rgba(255,200,170,0) 0%, #ffd2bd 100%); }
+  .s01-streak.s01-redlong { background:linear-gradient(90deg, rgba(255,75,43,0) 0%, rgba(255,80,48,.9) 30%, rgba(255,75,43,.45) 100%); }
+
+  #s01-core { position:absolute; left:920px; top:500px; width:80px; height:80px; border-radius:40px;
+    background:radial-gradient(circle at 50% 50%, #ffffff 0%, #ffe0d2 10%, rgba(255,100,64,.9) 24%, rgba(255,75,43,.25) 52%, rgba(255,75,43,0) 100%); }
+
+  #s01-ring { position:absolute; left:610px; top:190px; width:700px; height:700px; border-radius:50%;
+    border:14px solid rgba(255,75,43,.38); opacity:0; filter:blur(2px); }
+
+  .s01-ewrap { position:absolute; left:0; top:0; width:1920px; height:1080px; perspective:1400px; opacity:0; }
+  .s01-e3d { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-style:preserve-3d; transform-origin:960px 540px; }
+  .s01-every { position:absolute; left:0; top:387px; width:1920px; text-align:center; font-size:360px; margin:0; }
+  #s01-every { color:#ffffff; }
+  .s01-ex { color:#b52c1a; }
+  #s01-everyghost { color:rgba(255,255,255,0); -webkit-text-stroke:2px rgba(255,255,255,.2); }
+
+  #s01-frameseg { opacity:0; }
+  .s01-frow { position:absolute; left:-60px; margin:0; font-size:430px; letter-spacing:-20px; color:rgba(0,0,0,0);
+    -webkit-text-stroke:2px rgba(60,12,6,.32); }
+  #s01-frowtop { top:-14px; }
+  #s01-frowbot { top:694px; }
+  #s01-fword { position:absolute; left:0; top:344px; width:1920px; text-align:center; margin:0; font-size:445px; font-stretch:110%; color:#141010; letter-spacing:0px; }
+  .s01-fl { display:inline-block; transform-origin:50% 80%; }
+
+  #s01-filmseg { opacity:0; }
+  #s01-ofthis { position:absolute; left:0; top:208px; width:1920px; text-align:center; margin:0; font-size:189px; color:#141010; letter-spacing:-3px; }
+  #s01-film { position:absolute; left:0; top:374px; width:1920px; text-align:center; margin:0; font-size:508px; font-stretch:100%; color:#141010; letter-spacing:0px; }
+  .s01-ol { display:inline-block; transform-origin:50% 60%; }
+  .s01-sp { display:inline-block; width:48px; }
+  #s01-uline { position:absolute; left:295px; top:798px; width:1316px; height:32px; background:#ef4a2c; transform-origin:0 50%; }
+
+  #s01-codeseg { opacity:0; }
+  #s01-fieldwrap { perspective:1200px; }
+  #s01-field { position:absolute; left:-260px; top:-140px; width:2600px; height:1500px; margin:0;
+    font-family:"JetBrains Mono", monospace; font-size:27px; line-height:44px; color:rgba(220,222,232,.2);
+    white-space:pre; transform:rotateY(-14deg) rotateX(10deg) rotateZ(-9deg); filter:blur(1.3px); }
+  #s01-halftone { position:absolute; left:0; top:180px; width:1920px; height:900px; opacity:0;
+    background-image:radial-gradient(circle at 50% 50%, rgba(255,120,90,.55) 0px, rgba(255,120,90,.55) 2px, rgba(255,120,90,0) 3px);
+    background-size:26px 26px;
+    mask-image:radial-gradient(ellipse 60% 55% at 45% 55%, #ffffff 0%, rgba(255,255,255,.4) 55%, rgba(255,255,255,0) 100%); }
+  #s01-tint { opacity:0;
+    background:radial-gradient(ellipse farthest-corner at 48% 55%, rgba(120,30,16,.95) 0%, rgba(70,18,12,.9) 60%, rgba(30,10,8,.9) 100%); }
+  #s01-camera { transform-origin:690px 579px; }
+  #s01-is { position:absolute; left:192px; top:252px; margin:0; font-size:172px; color:#f4f1ee; }
+  #s01-code { position:absolute; left:186px; top:384px; margin:0; font-size:431px; font-stretch:106%; letter-spacing:0px; color:#f04a2c; }
+  .s01-ch { display:inline-block;
+    text-shadow:0 0 24px rgba(255,75,43,.55), 0 0 90px rgba(255,75,43,.3), 0 0 0 rgba(60,205,225,0), 0 0 0 rgba(150,10,30,0); }
+  #s01-orbit { position:absolute; left:1185px; top:610px; width:0; height:0; }
+  .s01-gl { position:absolute; left:0; top:0; width:0; height:0; }
+  .s01-gt { position:absolute; left:-14px; top:-18px; width:28px; text-align:center; margin:0;
+    font-family:"JetBrains Mono", monospace; font-weight:700; font-size:28px; line-height:36px; color:#fff4ee;
+    text-shadow:0 0 8px rgba(255,140,110,.8); }
+  .s01-pt { position:absolute; width:6px; height:6px; border-radius:3px; background:#ff5a3a; opacity:0; }
+  #s01-type { position:absolute; left:0; top:846px; width:1920px; text-align:center; margin:0;
+    font-family:"JetBrains Mono", monospace; font-size:22px; letter-spacing:1px; color:#cfccc9; white-space:pre; }
+
+  #s01-chip { position:absolute; left:126px; top:80px; width:10px; height:46px; border-radius:4px; background:#ef4a2c; opacity:0; }
+  #s01-cap { margin:0; }
+  #s01-cap .w { color:#f4f1ee; opacity:0; }
+</style></head><body>
+<div id="s01" class="film" data-composition-id="s01" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="3.1166666" data-motion-blur="8" data-shutter-angle="270">
+  <div class="dots"></div>
+  <div id="s01-bgred" class="s01-full"></div>
+  <div id="s01-bglight" class="s01-full"></div>
+  <div class="vignette" id="s01-vig"></div>
+  <div id="s01-flash" class="s01-full"></div>
+
+  <div id="s01-burst"></div>
+  <div id="s01-core"></div>
+
+  <div id="s01-ring"></div>
+  <div id="s01-ewrapA" class="s01-ewrap"><div id="s01-e3dA" class="s01-e3d">
+    <h1 id="s01-everyghost" class="display s01-every">EVERY</h1>
+  </div></div>
+  <div id="s01-wrays"></div>
+  <div id="s01-ewrapB" class="s01-ewrap"><div id="s01-e3dB" class="s01-e3d">
+    <h1 id="s01-every" class="display s01-every">EVERY</h1>
+  </div></div>
+  <div id="s01-sparks"></div>
+
+  <div id="s01-frameseg" class="s01-full">
+    <h1 id="s01-frowtop" class="display s01-frow">FRAMEFRAME</h1>
+    <h1 id="s01-frowbot" class="display s01-frow">FRAMEFRAME</h1>
+    <h1 id="s01-fword" class="display"><span class="s01-fl">F</span><span class="s01-fl">R</span><span class="s01-fl">A</span><span class="s01-fl">M</span><span class="s01-fl">E</span></h1>
+  </div>
+
+  <div id="s01-filmseg" class="s01-full">
+    <h2 id="s01-ofthis" class="display"><span class="s01-ol">O</span><span class="s01-ol">F</span><span class="s01-sp"></span><span class="s01-ol">T</span><span class="s01-ol">H</span><span class="s01-ol">I</span><span class="s01-ol">S</span></h2>
+    <h1 id="s01-film" class="display"><span class="s01-ol">F</span><span class="s01-ol">I</span><span class="s01-ol">L</span><span class="s01-ol">M</span></h1>
+    <div id="s01-uline"></div>
+  </div>
+
+  <div id="s01-codeseg" class="s01-full">
+    <div id="s01-tint" class="s01-full"></div>
+    <div id="s01-fieldwrap" class="s01-full"><pre id="s01-field"></pre></div>
+    <div id="s01-halftone"></div>
+    <div id="s01-crays"></div>
+    <div id="s01-parts"></div>
+    <div id="s01-camera" class="s01-full">
+      <h2 id="s01-is" class="display">IS</h2>
+      <h1 id="s01-code" class="display"><span class="s01-ch">C</span><span class="s01-ch">O</span><span class="s01-ch">D</span><span class="s01-ch">E</span><span class="s01-ch">.</span></h1>
+      <div id="s01-orbit"></div>
+    </div>
+    <p id="s01-type"> </p>
+  </div>
+
+  <div id="s01-wash" class="s01-full"></div>
+  <div id="s01-dark" class="s01-full"></div>
+
+  <div id="s01-chip"></div>
+  <p class="caption" id="s01-cap"><span class="w">Every</span> <span class="w">frame</span> <span class="w">of</span> <span class="w">this</span> <span class="w">film</span> <span class="w">is</span> <span class="w">code.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s01-frame">0000</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s01-tc" style="right:62px;bottom:48px">00:00:00:00</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 0, DURATION = 187 / 60;
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  // discrete changes land between frames so no shutter sample straddles them
+  const H = (t) => (Math.round(t * 60) - 0.5) / 60;
+
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const f = Math.round((FILM_START + tl.time()) * 60);
+    document.getElementById("s01-frame").textContent = pad(f, 4);
+    document.getElementById("s01-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+  } }, 0);
+
+  // radial streaks: a rotated holder whose child travels outward along the holder's x axis
+  function rays(parentSel, n, cls, cx, cy, len) {
+    const parent = $(parentSel);
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const holder = document.createElement("div");
+      holder.className = "s01-ray";
+      holder.style.left = cx + "px";
+      holder.style.top = cy + "px";
+      holder.style.transform = "rotate(" + rnd(0, 360).toFixed(2) + "deg)";
+      const s = document.createElement("div");
+      s.className = "s01-streak " + cls;
+      s.style.width = rnd(len[0], len[1]).toFixed(0) + "px";
+      holder.appendChild(s);
+      parent.appendChild(holder);
+      out.push(s);
+    }
+    return out;
+  }
+
+  // ---------- A: warp starburst 0 - 0.35 ----------
+  rays("#s01-burst", 150, "s01-red", 960, 540, [90, 340]).forEach((s) => {
+    const D = rnd(0.7, 1.1), far = 1250, near = rnd(10, 60), ph = rnd(0, 1);
+    const op = rnd(0.6, 1);
+    // continuous emission: finish the current pass, then start a fresh one from the core
+    tl.fromTo(s, { x: near + (far - near) * Math.sqrt(ph), opacity: op, scaleX: 0.6 + ph },
+      { x: far, scaleX: 1.4, duration: D * (1 - ph), ease: "none" }, 0);
+    if (D * (1 - ph) < 0.35)
+      tl.fromTo(s, { x: near, scaleX: 0.3 }, { x: far, scaleX: 1.4, duration: D, ease: "power1.in", immediateRender: false }, D * (1 - ph));
+  });
+  tl.fromTo("#s01-core", { scale: 0.5, opacity: 0.9 }, { scale: 1.15, opacity: 1, duration: 0.33, ease: "power2.in" }, 0);
+  tl.to("#s01-core", { scale: 5, opacity: 0, duration: 0.07, ease: "power2.out" }, 0.34);
+  tl.set("#s01-burst", { opacity: 0 }, H(0.35));
+
+  // ---------- B: EVERY 0.35 - 0.70 ----------
+  tl.set("#s01-flash", { opacity: 0.95 }, H(0.35));
+  tl.to("#s01-flash", { opacity: 0, duration: 0.18, ease: "power2.out" }, 0.37);
+  rays("#s01-wrays", 150, "s01-white", 960, 540, [300, 1100]).forEach((s) => {
+    const r0 = rnd(40, 380);
+    tl.fromTo(s, { x: r0 * 0.4 }, { x: r0 + rnd(150, 420), duration: 0.42, ease: "power2.out" }, 0.355);
+    tl.fromTo(s, { opacity: 0 }, { opacity: rnd(0.55, 1), duration: 0.03, ease: "none" }, 0.355);
+    tl.to(s, { opacity: 0, duration: 0.12, ease: "none" }, 0.76);
+  });
+  tl.set("#s01-sparks", { opacity: 0 }, 0);
+  tl.set("#s01-sparks", { opacity: 1 }, H(0.36));
+  rays("#s01-sparks", 26, "s01-spark", 960, 540, [10, 40]).forEach((s) => {
+    tl.fromTo(s, { x: 5, opacity: 1 }, { x: rnd(80, 330), opacity: 0, duration: rnd(0.15, 0.3), ease: "power2.out", immediateRender: false }, 0.36);
+  });
+  tl.set("#s01-ring", { opacity: 1 }, H(0.36));
+  tl.fromTo("#s01-ring", { left: 610, top: 190, width: 700, height: 700 },
+    { left: 0, top: -420, width: 1920, height: 1920, duration: 0.36, ease: "power1.out" }, 0.36);
+  tl.to("#s01-ring", { opacity: 0, duration: 0.08 }, 0.64);
+
+  // extruded EVERY: red copies stepping back in z toward the vanishing point
+  const e3dA = $("#s01-e3dA");
+  for (let k = 12; k >= 1; k--) {
+    const h = document.createElement("h1");
+    h.className = "display s01-every s01-ex";
+    h.textContent = "EVERY";
+    const f = k / 12;
+    const r = Math.round(200 - 120 * f), g = Math.round(52 - 30 * f), b = Math.round(32 - 20 * f);
+    h.style.color = "rgb(" + r + "," + g + "," + b + ")";
+    h.style.transform = "translateZ(" + (-k * 13) + "px)";
+    e3dA.appendChild(h);
+  }
+  tl.set([".s01-ewrap"], { opacity: 1 }, H(0.35));
+  // the blur sits on the perspective wrapper: a filter on the preserve-3d box would flatten it
+  tl.fromTo([".s01-ewrap"], { filter: "blur(16px)" }, { filter: "blur(0px)", duration: 0.13, ease: "power2.out" }, 0.35);
+  tl.fromTo([".s01-e3d"], { scale: 0.4, rotationY: 18, rotationX: -6 },
+    { scale: 0.99, rotationY: 8, rotationX: -3, duration: 0.15, ease: "power2.out" }, 0.35);
+  tl.to([".s01-e3d"], { scale: 1.1, rotationY: 4, rotationX: -2, duration: 0.2, ease: "none" }, 0.50);
+  tl.fromTo("#s01-everyghost", { scale: 0.8, opacity: 0 }, { scale: 1.3, opacity: 1, duration: 0.35, ease: "power1.out" }, 0.35);
+  tl.set([".s01-ewrap", "#s01-sparks"], { opacity: 0 }, H(0.70));
+
+  // ---------- C: FRAME 0.70 - 1.0667 ----------
+  tl.set("#s01-bgred", { opacity: 1 }, H(0.70));
+  tl.set("#s01-vig", { opacity: 0.3 }, H(0.70));
+  tl.set("#s01-wash", { opacity: 0.45 }, H(0.70));
+  tl.to("#s01-wash", { opacity: 0, duration: 0.1, ease: "power2.out" }, H(0.70) + 0.005);
+  tl.set("#s01-frameseg", { opacity: 1 }, H(0.70));
+  tl.fromTo("#s01-frowtop", { x: -40 }, { x: -160, duration: 0.37, ease: "none" }, 0.70);
+  tl.fromTo("#s01-frowbot", { x: -220 }, { x: -90, duration: 0.37, ease: "none" }, 0.70);
+  const frot = [-4, 3, -12, 9, 16];
+  $$(".s01-fl").forEach((el, i) => {
+    tl.fromTo(el, { y: -460, x: 60, rotation: frot[i] * 3, opacity: 0, filter: "blur(10px)" },
+      { y: 0, x: 0, rotation: frot[i] * 0.35, opacity: 1, filter: "blur(0px)", duration: 0.075, ease: "power3.out" }, 0.70 + i * 0.016);
+    tl.to(el, { rotation: 0, duration: 0.1, ease: "back.out(2)" }, 0.80 + i * 0.012);
+  });
+  tl.fromTo("#s01-fword", { rotation: -2.5, scale: 1.06 }, { rotation: -1, scale: 1, duration: 0.16, ease: "power2.out" }, 0.70);
+  tl.to("#s01-fword", { rotation: 0, duration: 0.08 }, 0.87);
+  tl.to("#s01-fword", { x: -2300, duration: 0.11, ease: "power3.in" }, 0.955);
+  tl.set(["#s01-frameseg", "#s01-bgred"], { opacity: 0 }, H(1.0667));
+
+  // ---------- D: OF THIS FILM 1.0667 - 1.5667 ----------
+  tl.set(["#s01-bglight", "#s01-filmseg"], { opacity: 1 }, H(1.0667));
+  tl.set("#s01-vig", { opacity: 0 }, H(1.0667));
+  $$("#s01-ofthis .s01-ol").forEach((el, i) => {
+    const t0 = 1.06 + (i < 2 ? 0.01 * i : 0.05 + (i - 2) * 0.035);
+    tl.fromTo(el, { x: 520 - i * 40, y: -170, rotation: rnd(-40, 25), skewX: -35, opacity: 0, filter: "blur(9px)" },
+      { x: 0, y: 0, rotation: 0, skewX: 0, opacity: 1, filter: "blur(0px)", duration: 0.16, ease: "back.out(1.4)" }, t0);
+  });
+  $$("#s01-film .s01-ol").forEach((el, i) => {
+    tl.fromTo(el, { y: 380, scaleY: 1.8, rotation: rnd(-12, 12), opacity: 0, filter: "blur(10px)" },
+      { y: 0, scaleY: 1, rotation: 0, opacity: 1, filter: "blur(0px)", duration: 0.12, ease: "back.out(1.6)" }, 1.215 + i * 0.012);
+  });
+  tl.fromTo(["#s01-ofthis", "#s01-film"], { rotation: -4 }, { rotation: 0, duration: 0.12, ease: "back.out(2)" }, 1.22);
+  tl.fromTo("#s01-uline", { scaleX: 0 }, { scaleX: 1, duration: 0.07, ease: "power2.out" }, 1.335);
+  tl.to("#s01-filmseg", { y: -1100, duration: 0.11, ease: "power2.in" }, 1.42);
+  tl.set(["#s01-filmseg", "#s01-bglight"], { opacity: 0 }, H(1.5667));
+
+  // ---------- E: IS CODE. 1.5667 - 3.1167 ----------
+  tl.set(["#s01-vig", "#s01-codeseg"], { opacity: 1 }, H(1.5667));
+  const code = [
+    "// slot-reel number: every digit is a column of 0-9 that spins down and settles on its target",
+    "function reel(parent, text, o) {",
+    "  const row = el('div', parent, 'abs reel');",
+    "  for (const ch of text) {",
+    "    const cell = el('span', row, 'cell');",
+    "    if (!/\\d/.test(ch)) { cell.textContent = ch; continue; }",
+    "    const inner = el('span', cell, 'rib');",
+    "    inner.textContent = [...Array(20)].map((_, k) => k % 10).join('\\n');",
+    "  }",
+    "  return row;",
+    "}",
+    "function spinReel(row, t, t0, dur = .7, stagger = .08) {",
+    "  row.querySelectorAll('.rib').forEach((r, i) => {",
+    "    const p = clamp01((t - t0 - i * stagger) / dur);",
+    "    r.style.transform = `translateY(${(-pos).toFixed(2)}em)`;",
+    "  });",
+    "}",
+    "// a bright band that sweeps across a face (background-clip text)",
+    "function sheen(face, base) {",
+    "  Object.assign(face.style, { backgroundImage: `linear-gradient(100deg, ${base} 40%, #FFFFFF 47%, #FFD9C8 50%, ${base} 57%)`,",
+    "    backgroundSize: '300% 100%', backgroundClip: 'text', color: 'transparent' });",
+    "}",
+    "function spring(t, k = 180, c = 12) { return 1 - Math.exp(-c * t) * Math.cos(Math.sqrt(k) * t); }",
+    "const probe = el('span', stage, 'probe'); probe.textContent = ch; c.style.width = probe.offsetWidth + 'px';",
+    "export function render(t) { scenes.forEach((s) => s.update(t - s.start)); }",
+    "this.t1 = B(k1); this.post || 0; this.dir = o.dir || 1;",
+    "ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`; ctx.fillRect(x, y, w, h);",
+    "const ease = (k) => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;",
+    "for (let i = 0; i < 60; i++) sparks.push({ x: cx, y: cy, a: rnd(TAU), v: rnd(4, 9) });",
+    "frame.querySelectorAll('[data-at]').forEach((n) => n.classList.toggle('on', t >= +n.dataset.at));"
+  ];
+  $("#s01-field").textContent = code.join("\n");
+  tl.fromTo("#s01-field", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power1.out" }, 1.74);
+  tl.fromTo("#s01-field", { x: 40, y: 30 }, { x: -70, y: -45, duration: 1.38, ease: "none" }, 1.70);
+
+  tl.fromTo("#s01-is", { x: -300, y: 300, opacity: 0, filter: "blur(10px)" },
+    { x: 0, y: 0, opacity: 1, filter: "blur(0px)", duration: 0.075, ease: "power2.out" }, 1.575);
+  tl.fromTo("#s01-code", { x: 620, scale: 1.25, opacity: 0, filter: "blur(12px) brightness(0.45)" },
+    { x: 0, scale: 1, opacity: 1, filter: "blur(0px) brightness(1)", duration: 0.07, ease: "power3.out" }, 1.683);
+  const chs = $$(".s01-ch");
+  tl.fromTo(chs[4], { opacity: 0 }, { opacity: 1, duration: 0.02 }, 1.745);
+  tl.fromTo("#s01-camera", { scale: 1 }, { scale: 1.045, duration: 1.15, ease: "none" }, 1.70);
+
+  tl.set("#s01-tint", { opacity: 1 }, H(1.733));
+  tl.to("#s01-tint", { opacity: 0, duration: 0.22, ease: "power2.out" }, 1.75);
+  rays("#s01-crays", 130, "s01-redlong", 980, 600, [500, 1300]).forEach((s) => {
+    const r0 = rnd(120, 360);
+    tl.fromTo(s, { x: r0 * 0.4, opacity: 0 }, { x: r0, opacity: rnd(0.4, 0.95), duration: 0.06, ease: "power2.out" }, 1.733);
+    tl.to(s, { x: r0 + rnd(150, 400), opacity: 0, duration: 0.35, ease: "power1.in" }, 1.80);
+  });
+  tl.fromTo("#s01-halftone", { opacity: 0 }, { opacity: 0.9, duration: 0.08 }, 1.75);
+  tl.to("#s01-halftone", { opacity: 0.35, duration: 0.6 }, 1.85);
+
+  // code glyphs orbiting the D
+  const orbit = $("#s01-orbit");
+  ["*", ";", "(", "=", "{", "]", "/", "<", "+", ")"].forEach((g, i) => {
+    const h = document.createElement("div");
+    h.className = "s01-gl";
+    const p = document.createElement("p");
+    p.className = "s01-gt";
+    p.textContent = g;
+    h.appendChild(p);
+    orbit.appendChild(h);
+    const r = rnd(45, 150), a0 = rnd(0, 360), spin = rnd(140, 280) * (i % 2 ? 1 : -1);
+    gsap.set(p, { x: r, fontSize: rnd(20, 34) });
+    tl.fromTo(h, { rotation: a0, scaleY: 1.3, opacity: 0 }, { rotation: a0 + spin, duration: 1.35, ease: "none" }, 1.733);
+    tl.to(h, { opacity: 1, duration: 0.05 }, 1.733 + i * 0.01);
+    tl.fromTo(p, { rotation: -a0 }, { rotation: -a0 - spin, duration: 1.35, ease: "none" }, 1.733);
+  });
+
+  // drifting red particles
+  const parts = $("#s01-parts");
+  for (let i = 0; i < 18; i++) {
+    const d = document.createElement("div");
+    d.className = "s01-pt";
+    d.style.left = rnd(100, 1800).toFixed(0) + "px";
+    d.style.top = rnd(150, 1000).toFixed(0) + "px";
+    parts.appendChild(d);
+    tl.fromTo(d, { x: 0, y: 0 }, { x: rnd(-60, 60), y: rnd(-120, -30), duration: 1.3, ease: "none" }, 1.75);
+    tl.to(d, { opacity: rnd(0.3, 0.8), duration: 0.1 }, 1.75);
+  }
+
+  // typing "// film.html · render(t)" with a block caret
+  const typed = "// film.html · render(t)";
+  const typeEl = $("#s01-type");
+  [[2.10, 2], [2.15, 4], [2.20, 5], [2.25, 6], [2.30, 8], [2.35, 10], [2.40, 13], [2.45, 16], [2.50, 20], [2.55, 24]]
+    .forEach(([t, n]) => tl.set(typeEl, { textContent: typed.slice(0, n) + (n < typed.length ? "▌" : "") }, H(t)));
+  tl.fromTo(typeEl, { opacity: 0 }, { opacity: 1, duration: 0.03 }, 2.09);
+
+  // scramble CODE. into code glyphs with an RGB split, then resolve
+  const seq = [
+    [2.30, "[ODE."], [2.35, "{ODE."], [2.40, "*=DE."], [2.45, ";<DE."], [2.50, "=O<E."], [2.55, "]O)E."],
+    [2.583, "{*+;+"], [2.617, "]({;."], [2.65, "}/D;."], [2.70, "*+D(."], [2.75, "C*>/."], [2.80, "CODE."]
+  ];
+  const glow = "0 0 24px rgba(255,75,43,.55), 0 0 90px rgba(255,75,43,.3), ";
+  seq.forEach(([t, s], k) => {
+    const on = s !== "CODE.";
+    const dx = on ? (k % 2 ? -8 : -5) : 0;
+    chs.forEach((el, i) => {
+      tl.set(el, { textContent: s[i],
+        textShadow: glow + dx + "px 0px 0px rgba(60,205,225," + (on ? 0.85 : 0) + "), " + (-dx) + "px 2px 0px rgba(150,10,30," + (on ? 0.8 : 0) + ")" }, H(t));
+    });
+  });
+
+  // exit: push through the O, red fill, fade to dark
+  tl.to("#s01-camera", { scale: 7.5, x: 240, y: -39, duration: 0.2, ease: "power4.in" }, 2.88);
+  tl.to(["#s01-type", "#s01-field", "#s01-halftone", "#s01-parts"], { opacity: 0, duration: 0.12 }, 2.92);
+  tl.to("#s01-dark", { opacity: 1, duration: 0.04, ease: "none" }, 3.067);
+
+  // ---------- caption: words arrive, the chip slides to the newest ----------
+  const words = $$("#s01-cap .w");
+  const cw = [0.37, 0.70, 1.03, 1.12, 1.22, 1.60, 1.73];
+  const inv = (t) => t >= 0.70 && t < 1.5667;
+  cw.forEach((t, i) => {
+    const r = words[i].getBoundingClientRect();
+    tl.fromTo(words[i], { opacity: 0, x: 14, filter: "blur(6px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: 0.07, ease: "power2.out" }, t - 0.03);
+    tl.to("#s01-chip", { left: r.left - 6, top: r.top - 2, width: r.width + 12, height: r.height + 4, duration: i ? 0.07 : 0.01, ease: "power3.out" }, t - 0.02);
+    tl.set(words[i], { color: inv(t) ? "#f04a2c" : "#1a0c0a" }, H(t - 0.03));
+    if (i) tl.set(words[i - 1], { color: inv(t) ? "#141010" : "#f4f1ee" }, H(t - 0.02));
+  });
+  tl.set("#s01-chip", { opacity: 1 }, H(0.34));
+  const flip = (t, dark) => {
+    tl.set("#s01-chip", { backgroundColor: dark ? "#ef4a2c" : "#2a1814" }, t);
+    const last = cw.filter((c) => c <= t + 0.031).length - 1;
+    words.forEach((w, i) => {
+      if (i < last) tl.set(w, { color: dark ? "#f4f1ee" : "#141010" }, t);
+      if (i === last) tl.set(w, { color: dark ? "#1a0c0a" : "#f04a2c" }, t);
+    });
+    $$("#s01 .hud").forEach((h) => tl.set(h, { color: dark ? "#8d8a88" : "#6d6560" }, t));
+    $$("#s01 .corner").forEach((c) => tl.set(c, { borderColor: dark ? "rgba(255,255,255,.35)" : "rgba(0,0,0,.35)" }, t));
+  };
+  flip(H(0.70), false);
+  flip(H(1.5667), true);
+  tl.to("#s01-chip", { opacity: 0, duration: 0.03 }, 3.025);
+  tl.to(words[6], { color: "#f04a2c", duration: 0.03 }, 3.025);
+  tl.to("#s01-cap", { opacity: 0, duration: 0.04 }, 3.067);
+
+  window.__timelines["s01"] = tl;
+})();
+</script>
+</body></html>

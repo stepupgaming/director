@@ -94,7 +94,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 437 | 2026-10-28 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test integration visual_suite::` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test integration html_export::` |
-| workspace release tests | 1115, 3 ignored | 2026-10-28 | `cargo test --workspace --release` |
+| workspace release tests | 1134, 3 ignored | 2026-10-28 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 25 | 2026-10-28 | `cargo test -p director-render --release` |
 | director-host | 25 | 2026-10-26 | `cargo test -p director-host --release` |
@@ -110,13 +110,13 @@ One row per check, holding the most recent passing count. Replace the row when a
 | beat detection, `html beats --clicks` wall time | 30 s WAV 223 ms (100.01 BPM, interval sd 1.7 ms); 60 s WAV 376 ms (120.18 BPM, drop at 54.38 s) | 2026-10-28 | `director-engine html beats C:/Projects/gemmy/outputs/<song>.wav --clicks <out>.wav` |
 | HTML reels (`data-reel`, positioned boxes beside text, hidden spans, staggered starts, any line height) | 8 | 2026-10-28 | `cargo test -p director-html --release --test integration reel::` |
 | HTML sub-compositions (`data-composition-src`) | 4 | 2026-10-28 | `cargo test -p director-html --release --test integration compose::` |
-| HTML gsap (phase 5 GSAP gate) | 46 | 2026-10-28 | `cargo test -p director-html --release --test integration gsap::` |
+| HTML gsap (phase 5 GSAP gate) | 48 | 2026-10-28 | `cargo test -p director-html --release --test integration gsap::` |
 | GSAP Chromium parity, 30fps every frame | entrance SSIM .999317 MAE .0519; loop .999945 / .0073; stagger .999140 / .0790; gsap-motion 1080p .995709 / .3758; all pass on the recording-shim pipeline; rerun pending for real GSAP | 2026-10-27 | `node crates/director-html/tools/parity.mjs --input <fixture> --output target/gsap-parity/final/<name> --director target/release/director-engine.exe --chrome <chromium_headless_shell-1248>` (`--root .` for the example) |
 | Vulkan engine clippy | pass | 2026-10-25 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test integration text_stroke::` |
 | shrink_wrap | 1 | 2026-10-20 | `cargo test -p director-html --release --test integration shrink_wrap::` |
 | padded_text | 1 | 2026-10-20 | `cargo test -p director-html --release --test integration padded_text::` |
-| rich_text | 11 | 2026-10-28 | `cargo test -p director-html --release --test integration rich_text::` |
+| rich_text | 12 | 2026-10-28 | `cargo test -p director-html --release --test integration rich_text::` |
 | font_shorthand | 4 | 2026-10-21 | `cargo test -p director-html --release --test integration font_shorthand::` |
 | gradient_tiles | 2 | 2026-10-21 | `cargo test -p director-html --release --test integration gradient_tiles::` |
 | motion_policy | 3 | 2026-10-21 | `cargo test -p director-html --release --test integration motion_policy::` |
@@ -125,12 +125,13 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-html lib | 120 | 2026-10-28 | `cargo test -p director-html --release --lib` |
 | Hyper CN registry smoke, typed style path | original 238/239, portrait 238/239; `github-stars` has no input file in the local checkout | 2026-10-26 | `node crates/director-html/tools/registry-audit.mjs --registry C:/Projects/hypercn/registry --output F:/hypercn-smoke-typed2-<profile> --director <engine> --chrome <chromium_headless_shell-1248> --fps 2 [--portrait]` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
-| object_position_css, gradient_hints, project, shader | 9, 8, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |
+| object_position_css, project, shader | 9, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |
+| gradient_hints, clip_shapes | 9, 4 | 2026-10-28 | `cargo test -p director-html --release --test integration -- gradient_hints:: clip_shapes::` |
 | mixed_calc, gradient_calc | 12, 3 | 2026-10-18 | `cargo test -p director-html --release --test integration -- mixed_calc:: gradient_calc::` |
 | subgrid filter | lib 8, grid_lines 1 | 2026-10-18 | `cargo test -p director-html --release --lib --test integration subgrid` |
 | fixed_position, css_media, css_nesting | 5, 6, 12 | 2026-10-18 | `cargo test -p director-html --release --test integration -- fixed_position:: css_media:: css_nesting::` |
-| svg_presentation, svg_markers | 13, 12 | 2026-10-28 | `cargo test -p director-html --release --test integration -- svg_presentation:: svg_markers::` |
-| depth_sort, depth_nested | 8, 1 | 2026-10-18 | `cargo test -p director-html --release --test integration -- depth_sort:: depth_nested::` |
+| svg_presentation, svg_markers | 14, 12 | 2026-10-28 | `cargo test -p director-html --release --test integration -- svg_presentation:: svg_markers::` |
+| depth_sort, depth_nested | 11, 1 | 2026-10-28 | `cargo test -p director-html --release --test integration -- depth_sort:: depth_nested::` |
 | capture extractor | 6 | 2026-10-17 | `node --test crates/director-html/tools/tools.test.mjs` |
 | static_reuse, pipeline_equivalence | 7, 8 | 2026-10-17 | `cargo test -p director-core --release --test integration -- static_reuse:: pipeline_equivalence::` |
 | agent commands | 15 | 2026-10-17 | `cargo test -p director-cli --release --bin director-engine agent_` |

@@ -1,0 +1,225 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s08 { background: #0b0d10; }
+  /* The camera: a rig that swings in 3D, holding a stage that the whips pan and zoom. */
+  #s08-persp { position:absolute; left:0; top:0; width:1920px; height:1080px; perspective:1600px; }
+  #s08-rig { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin:50% 50%; }
+  #s08-stage { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin:0 0; }
+  #s08-grid { position:absolute; left:-1784px; top:-1312px; width:5760px; height:3584px;
+    background-image: radial-gradient(circle, rgba(255,255,255,.13) 1.6px, transparent 2.6px);
+    background-size:128px 128px; }
+
+  /* Preview card. */
+  #s08-card { position:absolute; left:145px; top:217px; width:985px; height:551px; overflow:hidden;
+    border-radius:6px; background:#ee4f33; box-shadow:0 24px 70px rgba(0,0,0,.55); }
+  #s08-shade { position:absolute; left:0; top:0; width:985px; height:551px;
+    background:radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 55%, rgba(70,0,0,.1) 100%); }
+  #s08-plabel { position:absolute; left:20px; top:16px; margin:0; font-family:"JetBrains Mono"; font-size:12px;
+    letter-spacing:3px; color:rgba(90,10,0,.5); white-space:nowrap; }
+  #s08-burst { position:absolute; left:142px; top:-70px; width:700px; height:700px; }
+  #s08-elastic { position:absolute; left:0; top:211px; width:985px; text-align:center; font-size:144px;
+    color:#1a0f0c; }
+  .s08-streak { position:absolute; left:-90px; top:0; width:64px; height:551px;
+    background:linear-gradient(90deg, rgba(255,170,150,0) 0%, rgba(255,170,150,.28) 25%, rgba(255,255,255,.8) 37%,
+      rgba(255,190,170,.35) 41%, rgba(255,255,255,.85) 46%, rgba(255,190,170,.35) 51%, rgba(255,255,255,.8) 56%,
+      rgba(255,190,170,.3) 61%, rgba(255,170,150,.22) 75%, rgba(255,170,150,0) 100%); }
+
+  /* Scene strip with its playhead. */
+  .s08-chip { position:absolute; top:790px; height:45px; border-radius:4px; background:#1f1e23;
+    border:1px solid rgba(255,255,255,.1); }
+  .s08-chip p { position:absolute; left:13px; top:15px; margin:0; font-family:"JetBrains Mono"; font-size:11.5px;
+    font-weight:600; letter-spacing:1.5px; color:#8f9196; white-space:nowrap; }
+  #s08-c0 { background:#4a1915; border-color:rgba(239,74,44,.55); }
+  #s08-c0 p { color:#e9dcd8; }
+  #s08-head { position:absolute; left:149px; top:782px; width:2px; height:62px; background:#e8e8e8; }
+  #s08-cut { position:absolute; left:250px; top:772px; width:4px; height:82px; background:#ff4b2b; opacity:0;
+    box-shadow:0 0 12px rgba(255,75,43,.9); }
+
+  /* Notes panel. */
+  #s08-panel { position:absolute; left:1188px; top:217px; width:576px; height:631px; border-radius:10px;
+    background:rgba(15,19,23,.86); border:1px solid rgba(255,255,255,.16); box-shadow:0 24px 60px rgba(0,0,0,.5); }
+  #s08-pc { position:absolute; left:1188px; top:217px; width:576px; height:631px; }
+  #s08-ntitle { position:absolute; left:23px; top:20px; margin:0; font-family:"JetBrains Mono"; font-size:13px;
+    font-weight:700; letter-spacing:3px; color:#d6d6d6; }
+  #s08-nfile { position:absolute; right:24px; top:21px; margin:0; font-family:"JetBrains Mono"; font-size:13px;
+    font-style:italic; color:#5c6066; }
+  .s08-note { position:absolute; right:23px; bottom:103px; padding:13px 18px 12px 18px; border-radius:7px;
+    background:#191c21; border:1px solid rgba(255,255,255,.14); border-left:3px solid #ef4a2c; opacity:0; }
+  .s08-note p { margin:0; white-space:nowrap; }
+  .s08-nt { font-family:Inter; font-size:24px; color:#eeeeee; letter-spacing:-.3px; }
+  .s08-nr { margin-top:5px; font-family:"JetBrains Mono"; font-size:12px; letter-spacing:1.5px; color:#ef4a2c; }
+  #s08-input { position:absolute; left:25px; top:548px; width:470px; height:60px; border-radius:8px;
+    background:#101418; border:1px solid rgba(255,255,255,.2); }
+  #s08-tline { position:absolute; left:17px; top:17px; margin:0; font-family:"JetBrains Mono"; font-size:21px;
+    font-weight:600; color:#f0eeec; white-space:pre; }
+  #s08-caret { display:inline-block; width:10px; height:24px; margin-left:1px; background:#ef4a2c; }
+  #s08-send { position:absolute; left:507px; top:546px; width:46px; height:57px; border-radius:7px; background:#ef4a2c; }
+
+  /* Big outlined reaction words drifting behind the notes. */
+  .s08-word { position:absolute; left:0; top:340px; margin:0; font-size:290px; font-stretch:112%; color:rgba(0,0,0,0);
+    -webkit-text-stroke:2px rgba(255,255,255,.36); opacity:0; }
+
+  #s08-vig { position:absolute; left:0; top:0; width:1920px; height:1080px;
+    background:radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 60%, rgba(0,0,0,.22) 100%); }
+  #s08-cap .w { display:inline-block; padding:0 6px; margin:0 -6px; border-radius:4px; opacity:0; }
+</style></head><body>
+<div id="s08" class="film" data-composition-id="s08" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="5.5167" data-motion-blur="8" data-shutter-angle="270">
+  <div id="s08-persp"><div id="s08-rig"><div id="s08-stage">
+    <div id="s08-grid"></div>
+    <div class="s08-chip" id="s08-c0" style="left:145px;width:213px"><p>INTRO</p></div>
+    <div class="s08-chip" id="s08-c1" style="left:366px;width:181px"><p>BRIEF</p></div>
+    <div class="s08-chip" id="s08-c2" style="left:554px;width:110px"><p>STRETCH</p></div>
+    <div class="s08-chip" id="s08-c3" style="left:672px;width:140px"><p>FLY</p></div>
+    <div class="s08-chip" id="s08-c4" style="left:820px;width:80px"><p>CUTS</p></div>
+    <div class="s08-chip" id="s08-c5" style="left:907px;width:216px"><p>NOTES</p></div>
+    <div id="s08-head"></div>
+    <div id="s08-cut"></div>
+    <div id="s08-card">
+      <svg id="s08-burst" viewBox="0 0 700 700" width="700" height="700">
+        <polygon fill="#fbf7f2" points="350,36 381,194 468,66 436,222 566,134 471,269 683,212 491,322 689,350 496,379 652,475 475,433 570,570 437,480 467,632 378,492 350,651 322,493 226,650 262,481 122,578 232,429 59,471 193,381 46,350 201,320 52,227 223,265 124,124 265,222 224,45 320,200"/>
+      </svg>
+      <h2 id="s08-elastic" class="display">ELASTIC.</h2>
+      <div id="s08-shade"></div>
+      <p id="s08-plabel">PREVIEW &#183; 00:18</p>
+      <div class="s08-streak" id="s08-streak0"></div>
+      <div class="s08-streak" id="s08-streak1"></div>
+      <div class="s08-streak" id="s08-streak2"></div>
+    </div>
+    <div id="s08-panel"></div>
+    <h2 id="s08-hot" class="display s08-word">HOT</h2>
+    <h2 id="s08-cutw" class="display s08-word">CUT</h2>
+    <h2 id="s08-more" class="display s08-word">MORE</h2>
+    <div id="s08-pc">
+      <p id="s08-ntitle">NOTES</p>
+      <p id="s08-nfile">film.html</p>
+      <div class="s08-note" id="s08-n0"><p class="s08-nt">hotter orange</p><p class="s08-nr">&#10003; re-rendered</p></div>
+      <div class="s08-note" id="s08-n1"><p class="s08-nt">cut the intro in half</p><p class="s08-nr">&#10003; re-rendered</p></div>
+      <div class="s08-note" id="s08-n2"><p class="s08-nt">more punch</p><p class="s08-nr">&#10003; re-rendered</p></div>
+      <div id="s08-input"><p id="s08-tline"><span id="s08-typed"></span><span id="s08-caret"></span></p></div>
+      <div id="s08-send">
+        <svg viewBox="0 0 46 57" width="46" height="57"><path d="M23 41 V17 M13 27 L23 17 L33 27" fill="none" stroke="#1a0c0a" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+    </div>
+  </div></div></div>
+  <div id="s08-vig"></div>
+  <p class="caption" id="s08-cap"><span class="w">Notes?</span> <span class="w">Just</span> <span class="w">type</span> <span class="w">them.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s08-frame">1596</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s08-tc" style="right:62px;bottom:48px">00:00:26:36</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 26.6, DURATION = 5.5167;
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const $ = (id) => document.getElementById(id);
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const f = Math.round((FILM_START + tl.time()) * 60);
+    $("s08-frame").textContent = pad(f, 4);
+    $("s08-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+  } }, 0);
+
+  // Caption: words land one at a time and the red chip follows the newest.
+  const words = gsap.utils.toArray("#s08-cap .w");
+  const CHIP = "#ef4a2c", CLEAR = "rgba(239,74,44,0)";
+  gsap.set(words, { backgroundColor: CLEAR, color: "#ffffff" });
+  [0.05, 0.53, 0.73, 0.93].forEach((at, i) => {
+    tl.fromTo(words[i], { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.08, ease: "power2.out" }, at);
+    tl.to(words[i], { backgroundColor: CHIP, color: "#1a0c0a", duration: 0.05, ease: "none" }, at);
+    if (i > 0) tl.to(words[i - 1], { backgroundColor: CLEAR, color: "#ffffff", duration: 0.05, ease: "none" }, at);
+  });
+  tl.to("#s08-cap", { opacity: 0, duration: 0.1, ease: "power1.in" }, 5.37);
+
+  // Camera views: stage x, y and scale for each framing.
+  const V0 = { x: 0, y: 0, scale: 1, rotation: 0 };
+  const V1 = { x: -1194, y: -477, scale: 1.51, rotation: 0 };
+  const V2 = { x: -39, y: -167, scale: 1.485, rotation: -0.6 };
+  const V1b = { x: -1226, y: -491, scale: 1.52, rotation: 0 };
+  const V3 = { x: -181, y: -932, scale: 1.8, rotation: 0 };
+  const V4 = { x: -343, y: -415, scale: 1.95, rotation: 0 };
+  gsap.set("#s08-stage", V0);
+  // Swing in: the editor turns toward camera and brightens.
+  tl.fromTo("#s08-rig", { rotationY: 24, scale: 0.8, x: 30, opacity: 0.4 },
+    { rotationY: 0, scale: 1, x: 0, opacity: 1, duration: 0.3, ease: "expo.out" }, 0);
+  const whip = (view, at, dur) => tl.to("#s08-stage", { ...view, duration: dur, ease: "expo.inOut" }, at);
+  whip(V1, 0.2, 0.17);
+  whip(V2, 0.85, 0.2);
+  whip(V1, 1.5, 0.17);
+  whip(V3, 2.55, 0.2);
+  whip(V1b, 3.22, 0.17);
+  whip(V4, 3.93, 0.18);
+  // Out: the camera pulls back and the whole editor drops into the dark.
+  tl.to("#s08-stage", { x: 15, y: 53, scale: 1.0, rotation: 0, duration: 0.183, ease: "sine.in" }, 5.3);
+  tl.to("#s08-rig", { rotationY: -10, opacity: 0, duration: 0.2, ease: "power2.in" }, 5.32);
+
+  // Playhead runs through the whole shot.
+  tl.fromTo("#s08-head", { x: 0 }, { x: 860, duration: DURATION, ease: "none" }, 0);
+
+  // Outlined reaction words drift left behind the notes.
+  [["#s08-hot", 0.12, 1.55, 1524 + 520 * 0.167], ["#s08-cutw", 1.52, 3.3, 1420 + 530 * 1.733],
+   ["#s08-more", 3.28, DURATION, 1320 + 530 * 3.65]].forEach(([w, a, b, x0]) => {
+    tl.fromTo(w, { x: x0 - 530 * a }, { x: x0 - 530 * b, duration: b - a, ease: "none" }, a);
+    tl.fromTo(w, { opacity: 0 }, { opacity: 1, duration: 0.08, ease: "none" }, a);
+    if (b < DURATION) tl.to(w, { opacity: 0, duration: 0.06, ease: "none" }, b - 0.06);
+  });
+
+  // Typing: two frames per character, then the note is sent and pops into the list.
+  const NOTES = [["hotter orange", 0.25, 0.817], ["cut the intro in half", 1.567, 2.483], ["more punch", 3.383, 3.85]];
+  // Each keystroke is a set half a frame early, so the whole centered shutter of its frame sees it.
+  const HALF = 1 / 120;
+  for (const [text, a, sent] of NOTES) {
+    for (let k = 1; k <= text.length; k++) {
+      tl.set("#s08-typed", { textContent: text.slice(0, k).replace(/ /g, " ") }, a + (k - 1) / 30 - HALF);
+    }
+    tl.set("#s08-typed", { textContent: "" }, sent - HALF);
+  }
+  const send = (note, at) => {
+    tl.fromTo(note, { opacity: 0, x: -36, scale: 0.9 },
+      { opacity: 1, x: 0, scale: 1, duration: 0.22, ease: "back.out(2)" }, at);
+    tl.to("#s08-send", { scale: 0.86, duration: 0.03, ease: "none" }, at - 0.03);
+    tl.to("#s08-send", { scale: 1, duration: 0.2, ease: "back.out(3)" }, at);
+  };
+  send("#s08-n0", 0.817);
+  tl.to("#s08-n0", { y: -97, duration: 0.2, ease: "power3.out" }, 2.483);
+  send("#s08-n1", 2.483);
+  tl.to("#s08-n0", { y: -194, duration: 0.2, ease: "power3.out" }, 3.85);
+  tl.to("#s08-n1", { y: -97, duration: 0.2, ease: "power3.out" }, 3.85);
+  send("#s08-n2", 3.85);
+
+  // Each note re-renders the preview: a light bar scans across the card.
+  [0.873, 2.54, 3.917].forEach((at, i) => {
+    tl.to("#s08-streak" + i, { x: 1110, duration: 0.55, ease: "none" }, at);
+  });
+  // Hotter orange.
+  tl.to("#s08-card", { backgroundColor: "#ec280e", duration: 0.25, ease: "power1.inOut" }, 1.08);
+  // Cut the intro in half: a red cut line, then the intro chip halves and the strip closes up.
+  tl.fromTo("#s08-cut", { opacity: 0, scaleY: 0 }, { opacity: 1, scaleY: 1, duration: 0.08, ease: "power3.out" }, 2.767);
+  tl.to("#s08-c0", { width: 106, duration: 0.12, ease: "power3.inOut" }, 2.833);
+  tl.to(["#s08-c1", "#s08-c2", "#s08-c3", "#s08-c4", "#s08-c5"], { x: -107, duration: 0.12, ease: "power3.inOut" }, 2.833);
+  tl.to("#s08-cut", { opacity: 0, duration: 0.1, ease: "none" }, 3.08);
+  // More punch: a starburst blooms and the word kicks on every beat.
+  gsap.set("#s08-burst", { scale: 0, rotation: -40, transformOrigin: "50% 50%" });
+  tl.to("#s08-burst", { scale: 1, duration: 0.12, ease: "back.out(1.6)" }, 4.15);
+  tl.to("#s08-burst", { rotation: 0, duration: 1.4, ease: "power1.out" }, 4.15);
+  [[4.133, -2.5], [4.483, 3], [4.833, -3], [5.167, 3]].forEach(([at, r], i) => {
+    // The word jumps big and tilted, the tilt snaps back, and the size settles slowly into the next beat.
+    tl.to("#s08-elastic", { scaleX: 1.3, scaleY: 1.2, rotation: r * 1.5, duration: 0.033, ease: "power2.out" }, at - 0.017);
+    tl.to("#s08-elastic", { rotation: 0, duration: 0.15, ease: "power2.out" }, at + 0.017);
+    tl.to("#s08-elastic", { scaleX: 1.03, scaleY: 1.03, duration: 0.32, ease: "power2.out" }, at + 0.017);
+    if (i > 0) {
+      tl.to("#s08-burst", { scale: 1.1, duration: 0.017, ease: "none" }, at - 0.017);
+      tl.to("#s08-burst", { scale: 1, duration: 0.18, ease: "power2.out" }, at);
+    }
+  });
+
+  window.__timelines["s08"] = tl;
+})();
+</script>
+</body></html>

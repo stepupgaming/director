@@ -48,6 +48,16 @@ fn circle_clip_keeps_the_center_and_drops_the_corner() {
 }
 
 #[test]
+fn polygon_points_take_lengths_and_percentages() {
+    // A triangle over the top-left half: 64px is the box edge.
+    for clip in ["polygon(0 0, 64px 0, 0 64px)", "polygon(0% 0%, 100% 0, 0px 100%)", "polygon(0 0, 4em 0, 0 calc(100%))"] {
+        let pixels = frame(&red_box(clip).replace("div{", "div{font-size:16px;"));
+        assert!(pixel(&pixels, 10, 10)[0] > 200, "{clip}");
+        assert!(pixel(&pixels, 54, 54)[0] < 20, "{clip}");
+    }
+}
+
+#[test]
 fn inset_clip_keeps_the_center_and_drops_the_outside() {
     let pixels = frame(&red_box("inset(25%)"));
     let center = pixel(&pixels, 32, 32);

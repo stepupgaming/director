@@ -323,6 +323,48 @@ fn transform_components_compose_over_the_css_transform() {
     let c = compile(&skewed, opts()).unwrap();
     near(at(track(&c, "box", "translate-x"), 0.5), 15.0, 1e-3);
     assert!(tracks(&c).iter().all(|t| t.property == "translate-x"));
+    // A 3D base decomposes the same way, so x moves it without changing its shape.
+    let tilted = source.replace("translate(-50%,-50%)", "rotateY(-40deg) rotate(-12deg)").replace("x: 30", "x: 10");
+    let mut c = compile(&tilted, opts()).unwrap();
+    assert!(tracks(&c).iter().all(|t| t.property == "translate-x"));
+    let mut still = compile(&tilted.replace("x: 10", "x: 0"), opts()).unwrap();
+    let (start, base) = (frame(&mut c, 0.0), frame(&mut still, 0.0));
+    let differs = start.chunks(4).zip(base.chunks(4)).filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 8)).count();
+    assert!(differs <= 4, "{differs} pixels differ at the start");
+    let blue = |p: &[u8]| p.chunks(4).filter(|p| p[2] > 200 && p[0] < 80).count();
+    assert!(blue(&base) > 150, "the tilted box paints");
+    let end = frame(&mut c, 1.5);
+    assert!(blue(&end).abs_diff(blue(&base)) <= 12, "the box keeps its shape");
+    assert!(close(pixel(&base, 64, 25, 30), [0, 0, 255, 255]));
+    assert!(!close(pixel(&end, 64, 25, 30), [0, 0, 255, 255]));
+    assert!(close(pixel(&end, 64, 42, 30), [0, 0, 255, 255]));
+}
+
+#[test]
+fn transform_perspective_projects_like_css() {
+    let page = |transform: &str, script: &str| {
+        format!(
+            "<style>body{{margin:0;background:white}}#box{{position:absolute;left:20px;top:20px;width:20px;height:20px;background:rgb(0,0,255);transform:{transform}}}</style>\
+            <div id='root' data-composition-id='main' data-width='64' data-height='64' data-duration='2'><div id='box'></div></div>{GSAP}<script>{script}</script>"
+        )
+    };
+    let differs = |a: &[u8], b: &[u8]| {
+        a.chunks(4).zip(b.chunks(4)).filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 8)).count()
+    };
+    let idle = "gsap.to('#root', {opacity: 1, duration: 1});";
+    let css = frame(&mut compile(&page("perspective(60px) rotateY(50deg)", idle), opts()).unwrap(), 1.5);
+    let flat = frame(&mut compile(&page("rotateY(50deg)", idle), opts()).unwrap(), 1.5);
+    assert!(differs(&css, &flat) > 20, "the perspective shows");
+    // GSAP writes transformPerspective first, as CSS perspective().
+    let tween = "gsap.fromTo('#box', {transformPerspective: 60, rotationY: 0}, {rotationY: 50, duration: 1, ease: 'none'});";
+    let mut c = compile(&page("none", tween), opts()).unwrap();
+    let end = frame(&mut c, 1.5);
+    assert!(differs(&end, &css) <= 4, "{} pixels differ from CSS", differs(&end, &css));
+    // A cascade perspective reads back as GSAP's transformPerspective and stays while x moves.
+    let mut c = compile(&page("perspective(60px) rotateY(50deg)", "gsap.to('#box', {x: 10, duration: 1});"), opts()).unwrap();
+    let start = frame(&mut c, 0.0);
+    assert!(differs(&start, &css) <= 4, "{} pixels differ at the start", differs(&start, &css));
+    assert!(tracks(&c).iter().all(|t| t.property == "translate-x"));
 }
 
 #[test]
@@ -935,6 +977,19 @@ fn clip_path_tweens_move_shape_corners() {
     let p = frame(&mut c, 1.0);
     assert!(close(pixel(&p, 64, 30, 37), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 30, 37));
     assert!(close(pixel(&p, 64, 21, 21), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 21, 21));
+}
+
+#[test]
+fn a_clip_tween_shows_nowrap_text() {
+    let source = "<style>.a{position:absolute;left:0;width:1920px;text-align:center;font:900 120px Archivo;line-height:1.3;margin:0;color:#141010}</style>        <div id='r' data-composition-id='r' data-width='1920' data-height='1080' data-duration='1' style='position:relative;width:1920px;height:1080px;background:#fff'>        <h1 class='a' style='top:0'>PLAIN</h1><h1 class='a' style='top:600px;white-space:nowrap'>PLAIN</h1></div>"
+        .to_string()
+        + GSAP
+        + "<script>window.__timelines = {r: gsap.timeline({paused: true}).fromTo('.a', {clipPath: 'inset(0px 1900px 0px 0px)'},           {clipPath: 'inset(0px 0px 0px 0px)', duration: 1, ease: 'none'}, 0)};</script>";
+    let mut c = compile(&source, opts()).unwrap();
+    let p = frame(&mut c, 0.6);
+    let ink = |rows: std::ops::Range<usize>| p[rows.start * 1920 * 4..rows.end * 1920 * 4].chunks(4).filter(|p| p[0] < 100).count();
+    let (wrapped, nowrap) = (ink(0..200), ink(600..800));
+    assert!(wrapped > 1000 && nowrap.abs_diff(wrapped) * 20 < wrapped, "{wrapped} vs {nowrap}");
 }
 
 #[test]

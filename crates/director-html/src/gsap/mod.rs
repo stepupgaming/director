@@ -1179,6 +1179,9 @@ fn sample(channel: &str, text: &str) -> Result<Val, String> {
 /// GSAP's component form of a 2D `matrix(...)`: rotate, skewX and scale
 /// recompose it in that order.
 fn components(matrix: &str) -> Option<String> {
+    if let Some(inner) = matrix.trim().strip_prefix("matrix3d(").and_then(|m| m.strip_suffix(')')) {
+        return components_3d(inner);
+    }
     let inner = matrix.trim().strip_prefix("matrix(")?.strip_suffix(')')?;
     let v: Vec<f64> = inner.split(',').map(|n| n.trim().parse().ok()).collect::<Option<_>>()?;
     let [a, b, mut c, mut d, e, f] = v[..] else { return None };
@@ -1197,6 +1200,54 @@ fn components(matrix: &str) -> Option<String> {
     }
     Some(format!(
         "translate({e}px, {f}px) rotate({rotation}deg) skewX({skew}deg) scale({sx}, {sy})"
+    ))
+}
+
+/// GSAP's decomposition of a `matrix3d` into transformPerspective, rotationX, rotationY,
+/// rotation, skewX and scales.
+fn components_3d(inner: &str) -> Option<String> {
+    let m: Vec<f64> = inner.split(',').map(|n| n.trim().parse().ok()).collect::<Option<_>>()?;
+    let [mut a, mut b, mut c, d, mut a12, mut a22, mut a32, a42, mut a13, mut a23, mut a33, mut a43, x, y, z, _] =
+        m[..]
+    else {
+        return None;
+    };
+    let mut rx = a32.atan2(a33);
+    if rx != 0.0 {
+        let (sin, cos) = (-rx).sin_cos();
+        let (t1, t2, t3) = (a12 * cos + a13 * sin, a22 * cos + a23 * sin, a32 * cos + a33 * sin);
+        a13 = a12 * -sin + a13 * cos;
+        a23 = a22 * -sin + a23 * cos;
+        a33 = a32 * -sin + a33 * cos;
+        a43 = a42 * -sin + a43 * cos;
+        (a12, a22, a32) = (t1, t2, t3);
+    }
+    let mut ry = (-c).atan2(a33);
+    if ry != 0.0 {
+        let (sin, cos) = (-ry).sin_cos();
+        let (t1, t2, t3) = (a * cos - a13 * sin, b * cos - a23 * sin, c * cos - a33 * sin);
+        a43 = d * sin + a43 * cos;
+        (a, b, c) = (t1, t2, t3);
+    }
+    let mut rz = b.atan2(a);
+    if rz != 0.0 {
+        let (sin, cos) = rz.sin_cos();
+        let (t1, t2) = (a * cos + b * sin, a12 * cos + a22 * sin);
+        b = b * cos - a * sin;
+        a22 = a22 * cos - a12 * sin;
+        (a, a12) = (t1, t2);
+    }
+    let perspective = if a43.abs() > 1e-9 { format!("perspective({}px) ", 1.0 / a43.abs()) } else { String::new() };
+    (rx, ry, rz) = (rx.to_degrees(), ry.to_degrees(), rz.to_degrees());
+    if rx != 0.0 && rx.abs() + rz.abs() > 359.9 {
+        (rx, rz, ry) = (0.0, 0.0, 180.0 - ry);
+    }
+    let sx = (a * a + b * b + c * c).sqrt();
+    let sy = (a22 * a22 + a32 * a32).sqrt();
+    let skew = a12.atan2(a22).to_degrees();
+    let skew = if skew.abs() > 0.0002_f64.to_degrees() { skew } else { 0.0 };
+    Some(format!(
+        "{perspective}translate3d({x}px, {y}px, {z}px) rotate({rz}deg) rotateY({ry}deg) rotateX({rx}deg) skewX({skew}deg) scale({sx}, {sy})"
     ))
 }
 

@@ -196,3 +196,15 @@ fn corner_linear_gradient_hits_the_opposite_corners() {
         }
     }
 }
+
+#[test]
+fn stops_past_the_gradient_line_keep_their_falloff() {
+    // The circle reaches 64px at 200%, so 28px out sits 0.44 of the way to blue.
+    let p = frame(&html("radial-gradient(circle closest-side at 50% 50%, red 0%, blue 200%)"), 0.0);
+    let edge = pixel(&p, 60, 32);
+    assert!((125..165).contains(&edge[0]) && (90..130).contains(&edge[2]), "{edge:?}");
+    // A stop before the start leaves its interpolated colour at the start.
+    let p = frame(&html("linear-gradient(to right, red -100%, blue 100%)"), 0.0);
+    let start = pixel(&p, 0, 32);
+    assert!((110..145).contains(&start[0]) && (110..145).contains(&start[2]), "{start:?}");
+}

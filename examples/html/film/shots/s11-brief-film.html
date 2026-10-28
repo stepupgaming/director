@@ -1,0 +1,347 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s11 { background:radial-gradient(ellipse 70% 75% at 50% 46%, #12161a 0%, #0f1114 55%, #0a0b0d 100%); }
+  #s11-world { position:absolute; left:0; top:0; width:10px; height:10px; transform-origin:0px 0px; }
+  #s11-dotgrid { position:absolute; left:-2232px; top:-1872px; width:8640px; height:3744px; opacity:.4;
+    background-image:radial-gradient(circle, rgba(200,200,205,.30) 0px, rgba(200,200,205,.30) 1.6px, rgba(200,200,205,0) 2.4px);
+    background-size:144px 144px; }
+  .s11-pt { position:absolute; width:5px; height:5px; border-radius:50%; background:#ff5434;
+    box-shadow:0 0 6px 2px rgba(255,70,40,.5); }
+  .s11-word { position:absolute; top:-167px; width:4000px; margin:0; text-align:center;
+    font-size:313px; font-stretch:112%; line-height:340px; }
+  .s11-word span { display:inline-block; }
+  .s11-white { color:#fbfaf8; text-shadow:0 0 18px rgba(255,255,255,.35), 0 0 60px rgba(255,255,255,.12); }
+  #s11-brief { left:-2000px; }
+  #s11-code { left:50px; }
+  #s11-film { left:2100px; color:#f04a2c; }
+  .s11-lab { position:absolute; top:192px; width:2000px; margin:0; text-align:center; white-space:pre;
+    font-family:"JetBrains Mono"; font-weight:500; font-size:28px; line-height:40px; letter-spacing:4px; color:#b3afab; opacity:0;
+    text-shadow:0 0 10px rgba(255,255,255,.15); }
+  #s11-lab0 { left:-1000px; }
+  #s11-lab1 { left:1050px; }
+  #s11-lab2 { left:3100px; }
+  .s11-ring { position:absolute; left:0; top:0; width:0; height:0; border-radius:50%; opacity:0;
+    border:4px solid rgba(239,74,44,.9);
+    box-shadow:0 0 0 3px rgba(239,74,44,.2), 0 0 22px 3px rgba(239,74,44,.4), inset 0 0 22px 3px rgba(239,74,44,.4); }
+  .s11-svg { position:absolute; overflow:visible; }
+  #s11-head { position:absolute; left:-9px; top:-9px; width:18px; height:18px; border-radius:50%; background:#fff4ee; opacity:0;
+    box-shadow:0 0 8px 4px rgba(255,120,80,.95), 0 0 30px 12px rgba(255,70,40,.55), 0 0 70px 26px rgba(255,60,30,.22); }
+  .s11-spk { position:absolute; left:0; top:0; height:3px; transform-origin:0px 1.5px; opacity:0; border-radius:2px; }
+  #s11-flare { position:absolute; left:-110px; top:-110px; width:220px; height:220px; border-radius:50%; opacity:0;
+    background:radial-gradient(circle, rgba(255,240,225,1) 0%, rgba(255,140,90,.8) 14%, rgba(255,70,40,.3) 40%, rgba(255,60,30,0) 70%); }
+  #s11-flash { position:absolute; left:0; top:0; width:1920px; height:1080px; opacity:0;
+    background:radial-gradient(ellipse 70% 70% at 50% 50%, rgba(120,36,26,.55) 0%, rgba(80,24,18,.55) 100%); }
+  #s11-chip { position:absolute; left:126px; top:80px; width:10px; height:46px; border-radius:4px; background:#ef4a2c; opacity:0; }
+  #s11-cap .w { color:#f4f1ee; opacity:0; }
+</style></head><body>
+<div id="s11" class="film" data-composition-id="s11" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="4.133333" data-motion-blur="8" data-shutter-angle="270">
+  <div id="s11-flash"></div>
+  <div class="vignette"></div>
+  <div id="s11-world">
+    <div id="s11-dotgrid"></div>
+    <div id="s11-pts"></div>
+    <div class="s11-ring" id="s11-ring0"></div>
+    <div class="s11-ring" id="s11-ring1"></div>
+    <div class="s11-ring" id="s11-ring2"></div>
+    <div id="s11-paths"></div>
+    <h1 id="s11-brief" class="display s11-word s11-white"><span>B</span><span>R</span><span>I</span><span>E</span><span>F</span></h1>
+    <h1 id="s11-code" class="display s11-word s11-white"><span>C</span><span>O</span><span>D</span><span>E</span></h1>
+    <h1 id="s11-film" class="display s11-word"><span>F</span><span>I</span><span>L</span><span>M</span><span>.</span></h1>
+    <p class="s11-lab" id="s11-lab0">brief.md &#183; 142 chars</p>
+    <p class="s11-lab" id="s11-lab1">film.html &#183; 2,155 lines</p>
+    <p class="s11-lab" id="s11-lab2">4K &#183; 60 FPS &#183; 52 S</p>
+    <div id="s11-flare"></div>
+    <div id="s11-sparks"></div>
+    <div id="s11-head"></div>
+  </div>
+  <div id="s11-chip"></div>
+  <p class="caption" id="s11-cap"><span class="w">Brief</span> <span class="w">in.</span> <span class="w">Film</span> <span class="w">out.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s11-frame">2342</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec" id="s11-rec">&#9679;</span> REC</p>
+  <p class="hud" id="s11-tc" style="right:62px;bottom:48px">00:00:39:02</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 2342 / 60, DURATION = 248 / 60;
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const $ = (id) => document.getElementById(id);
+  const $$ = (q) => Array.from(document.querySelectorAll(q));
+  const T = (f) => (f - 2342) / 60;
+  const SVGNS = "http://www.w3.org/2000/svg";
+
+  // World space: BRIEF at (0,0), CODE at (2050,0), FILM. at (4100,0); words are 313px Archivo.
+  // ---------- comet paths: chains of cubic beziers in world space ----------
+  const PATHS = [
+    // intro: streaks left across the top, turns off-frame and drops onto the B of BRIEF
+    [[[470, -392], [-100, -382], [-650, -372], [-1236, -362]],
+     [[-1236, -362], [-830, -362], [-650, -230], [-628, 0]]],
+    // BRIEF -> CODE arcs up
+    [[[590, 0], [770, -250], [1290, -250], [1460, 0]]],
+    // CODE -> FILM. dips down
+    [[[2615, 0], [2800, 265], [3390, 265], [3575, 0]]],
+  ];
+  const bez = (p, u) => {
+    const a = 1 - u;
+    return [0, 1].map((k) => a * a * a * p[0][k] + 3 * a * a * u * p[1][k] + 3 * a * u * u * p[2][k] + u * u * u * p[3][k]);
+  };
+  const N = 160;
+  const tables = PATHS.map((segs) => {
+    const pts = [];
+    segs.forEach((p, si) => { for (let i = si ? 1 : 0; i <= N; i++) pts.push(bez(p, i / N)); });
+    const len = [0];
+    for (let i = 1; i < pts.length; i++) len.push(len[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+    return { pts, len, L: len[len.length - 1], box: [Math.min(...xs) - 60, Math.min(...ys) - 60, Math.max(...xs) + 60, Math.max(...ys) + 60] };
+  });
+  const at = (tb, d) => {
+    d = Math.max(0, Math.min(tb.L, d));
+    let i = 1;
+    while (i < tb.len.length - 1 && tb.len[i] < d) i++;
+    const f = (d - tb.len[i - 1]) / Math.max(1e-6, tb.len[i] - tb.len[i - 1]);
+    return [tb.pts[i - 1][0] + (tb.pts[i][0] - tb.pts[i - 1][0]) * f, tb.pts[i - 1][1] + (tb.pts[i][1] - tb.pts[i - 1][1]) * f];
+  };
+  const dstr = (segs) => segs.map((p, i) => (i ? "" : `M ${p[0][0]} ${p[0][1]} `) + `C ${p[1][0]} ${p[1][1]}, ${p[2][0]} ${p[2][1]}, ${p[3][0]} ${p[3][1]}`).join(" ");
+  // One small SVG per path: a persistent guide line plus a three-layer glowing tail.
+  const TAILS = [["g", 420, 16, "#ff5030", 0.22], ["m", 230, 7, "#ff6a44", 0.6], ["c", 90, 3, "#ffe2d4", 0.95]];
+  const pathBox = $("s11-paths");
+  const svgs = tables.map((tb, i) => {
+    const [x0, y0, x1, y1] = tb.box, w = Math.ceil(x1 - x0), h = Math.ceil(y1 - y0);
+    const svg = document.createElementNS(SVGNS, "svg");
+    svg.setAttribute("id", "s11-svg" + i);
+    svg.setAttribute("class", "s11-svg");
+    svg.setAttribute("width", String(w));
+    svg.setAttribute("height", String(h));
+    svg.setAttribute("viewBox", `${x0} ${y0} ${w} ${h}`);
+    svg.style.left = x0 + "px";
+    svg.style.top = y0 + "px";
+    const mk = (id, width, color, op) => {
+      const p = document.createElementNS(SVGNS, "path");
+      p.setAttribute("id", id);
+      p.setAttribute("d", dstr(PATHS[i]));
+      p.setAttribute("fill", "none");
+      p.setAttribute("stroke", color);
+      p.setAttribute("stroke-width", String(width));
+      p.setAttribute("stroke-opacity", String(op));
+      p.setAttribute("stroke-linecap", "round");
+      svg.appendChild(p);
+      return p;
+    };
+    const line = mk("s11-line" + i, 3, "#e8462a", 0.7);
+    const tails = TAILS.map(([k, len, wd, col, op]) => ({ el: mk("s11-tail" + i + k, wd, col, op), len }));
+    pathBox.appendChild(svg);
+    return { line, tails };
+  });
+
+  // ---------- keyed curves (frames are film frames) ----------
+  const key = (list) => (f) => {
+    if (f <= list[0][0]) return list[0][1];
+    for (let i = 1; i < list.length; i++) {
+      if (f <= list[i][0]) {
+        const [f0, v0] = list[i - 1], [f1, v1, e] = list[i];
+        const k = gsap.parseEase(e || "none")((f - f0) / (f1 - f0));
+        return v0 + (v1 - v0) * k;
+      }
+    }
+    return list[list.length - 1][1];
+  };
+  // Head distance along each path (world px).
+  const LA = Math.hypot(470 + 1236, 392 - 362);
+  const d0 = key([[2338, 0], [2345.5, LA], [2354, tables[0].L, "power1.out"]]);
+  const d1 = key([[2397, 0], [2421, tables[1].L, "power2.inOut"]]);
+  const d2 = key([[2459, 0], [2484, tables[2].L, "power2.inOut"]]);
+  // Camera scale and rotation.
+  const camS = key([[2342, 0.97], [2362, 1.0, "power1.out"], [2370, 1.037], [2380, 1.08, "power1.out"], [2398, 1.1], [2402, 1.08],
+    [2410, 0.97], [2418, 0.91], [2424, 0.905, "power1.out"], [2430, 0.92], [2442, 1.0, "power1.out"], [2460, 1.08],
+    [2464, 1.06], [2468, 1.0], [2472, 0.95], [2476, 0.94], [2480, 0.96], [2487, 0.99, "power1.out"], [2494, 1.02, "power1.out"],
+    [2512, 1.0], [2521, 0.97], [2524, 0.94], [2527, 0.9], [2530, 0.88], [2533, 0.84], [2536, 0.78], [2539, 0.7], [2542, 0.65],
+    [2545, 0.57], [2548, 0.505], [2551, 0.45], [2554, 0.41], [2557, 0.38], [2560, 0.36], [2563, 0.353], [2566, 0.343],
+    [2569, 0.337], [2572, 0.333], [2583, 0.331]]);
+  const camR = key([[2342, -0.8], [2362, -0.2, "power1.out"], [2380, 0, "power1.out"], [2512, 0], [2530, -0.5, "power1.in"],
+    [2545, -1.5], [2560, -2.3], [2572, -2.5, "power1.out"], [2590, -2.6]]);
+  // Screen position of a world anchor outside the comet whips: [frame, worldX, screenX, screenY].
+  const ANCH = [[2342, 0, 1050, 522], [2362, 0, 1020, 520], [2370, 0, 980, 506], [2380, 0, 922, 514], [2398, 0, 892, 512],
+    [2424, 2050, 966, 516], [2430, 2050, 970, 518], [2442, 2050, 990, 520], [2459, 2050, 893, 520],
+    [2486, 4100, 957, 520], [2494, 4100, 960, 520], [2512, 4100, 970, 520], [2521, 2050, -950, 520], [2524, 2050, -837, 520],
+    [2527, 2050, -675, 521], [2530, 2050, -544, 522], [2533, 2050, -362, 523], [2536, 2050, -129, 525], [2539, 2050, 145, 527],
+    [2542, 2050, 350, 528], [2545, 2050, 550, 530], [2548, 2050, 690, 532], [2551, 2050, 790, 534], [2554, 2050, 850, 536],
+    [2557, 2050, 894, 537], [2560, 2050, 924, 538], [2563, 2050, 940, 539], [2566, 2050, 954, 540], [2569, 2050, 958, 540],
+    [2572, 2050, 958, 540], [2583, 2050, 958, 540]];
+  // Head screen positions during the whips: the camera rides the comet.
+  const W1 = [[2398, 1544, 520], [2400, 1430, 505], [2402, 1300, 482], [2404, 1145, 460], [2406, 1030, 440], [2408, 975, 425],
+    [2410, 960, 422], [2412, 900, 440], [2414, 720, 455], [2416, 560, 478], [2418, 470, 495], [2420, 440, 510], [2422, 432, 516], [2424, 432, 516]];
+  const W2 = [[2459, 1490, 522], [2462, 1420, 535], [2464, 1300, 545], [2466, 1145, 565], [2468, 1025, 590], [2470, 965, 615],
+    [2472, 960, 620], [2474, 940, 605], [2476, 720, 588], [2478, 560, 565], [2480, 480, 540], [2482, 450, 522], [2484, 440, 520], [2486, 437, 520]];
+  const lerpTab = (tab, f, col) => {
+    if (f <= tab[0][0]) return tab[0][col];
+    for (let i = 1; i < tab.length; i++) if (f <= tab[i][0]) {
+      const k = (f - tab[i - 1][0]) / (tab[i][0] - tab[i - 1][0]);
+      return tab[i - 1][col] + (tab[i][col] - tab[i - 1][col]) * k;
+    }
+    return tab[tab.length - 1][col];
+  };
+  // Camera origin: the screen position of world (0,0).
+  const origin = (f) => {
+    const s = camS(f), r = camR(f) * Math.PI / 180, c = Math.cos(r), sn = Math.sin(r);
+    const whip = (W, tb, d) => {
+      const [hx, hy] = at(tb, d(f));
+      return [lerpTab(W, f, 1) - s * (c * hx - sn * hy), lerpTab(W, f, 2) - s * (sn * hx + c * hy)];
+    };
+    if (f > 2398 && f < 2424) return whip(W1, tables[1], d1);
+    if (f > 2459 && f < 2486) return whip(W2, tables[2], d2);
+    let i = 1;
+    while (i < ANCH.length - 1 && ANCH[i][0] < f) i++;
+    const a = ANCH[i - 1], b = ANCH[i];
+    const o = (k) => [k[2] - s * c * k[1], k[3] - s * sn * k[1]];
+    const k = f <= a[0] ? 0 : f >= b[0] ? 1 : (f - a[0]) / (b[0] - a[0]);
+    const oa = o(a), ob = o(b);
+    return [oa[0] + (ob[0] - oa[0]) * k, oa[1] + (ob[1] - oa[1]) * k];
+  };
+  const exitY = key([[2583, 0], [2590, 420, "power3.in"]]);
+
+  // Guide lines draw in behind the head; the intro line starts where the comet turns into frame.
+  const drawLine = (i, d) => {
+    const L = tables[i].L, s0 = i === 0 ? LA : 0, p = Math.max(0.5, Math.min(L, d) - s0);
+    svgs[i].line.setAttribute("stroke-dasharray", `${p.toFixed(1)} ${(L * 2).toFixed(1)}`);
+    if (i === 0) svgs[i].line.setAttribute("stroke-dashoffset", (-s0).toFixed(1));
+  };
+  const drawTail = (i, d) => {
+    const L = tables[i].L;
+    d = Math.max(0.5, Math.min(L, d));
+    svgs[i].tails.forEach(({ el, len }) => {
+      const a = Math.max(0, d - len);
+      el.setAttribute("stroke-dasharray", `${(d - a).toFixed(1)} ${(L * 2).toFixed(1)}`);
+      el.setAttribute("stroke-dashoffset", (-a).toFixed(1));
+    });
+  };
+
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const t = tl.time();
+    const ff = 2342 + t * 60;
+    const f = Math.round((FILM_START + t) * 60);
+    $("s11-frame").textContent = pad(f, 4);
+    $("s11-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+    const [ox, oy] = origin(ff);
+    gsap.set("#s11-world", { x: ox, y: oy + exitY(ff), scale: camS(ff), rotation: camR(ff) });
+    // the comet head rides whichever path is live
+    let hp;
+    if (ff < 2397) hp = at(tables[0], d0(ff));
+    else if (ff < 2458) hp = at(tables[1], d1(ff));
+    else hp = at(tables[2], d2(ff));
+    gsap.set("#s11-head", { x: hp[0], y: hp[1] });
+    drawTail(0, d0(ff)); drawTail(1, d1(ff)); drawTail(2, d2(ff));
+    drawLine(0, d0(ff)); drawLine(1, d1(ff)); drawLine(2, d2(ff));
+  } }, 0);
+
+  // REC dot blinks.
+  for (let f = 2340; f < 2600; f += 30) tl.set("#s11-rec", { opacity: Math.floor((f - 2160) / 30) % 2 === 0 ? 1 : 0.35 }, T(Math.max(2342, f)));
+
+  // ---------- drifting red particles ----------
+  const ptBox = $("s11-pts");
+  let seed = 11;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  for (let i = 0; i < 110; i++) {
+    const p = document.createElement("div");
+    p.className = "s11-pt";
+    const px = -1700 + rnd() * 7600, py = -1500 + rnd() * 3000, sz = 2.5 + rnd() * 4;
+    p.style.left = px.toFixed(0) + "px";
+    p.style.top = py.toFixed(0) + "px";
+    p.style.width = sz.toFixed(1) + "px";
+    p.style.height = sz.toFixed(1) + "px";
+    ptBox.appendChild(p);
+    gsap.set(p, { opacity: 0.3 + rnd() * 0.6 });
+    tl.to(p, { x: (rnd() - 0.5) * 120, y: -40 - rnd() * 120, duration: DURATION, ease: "none" }, 0);
+  }
+
+  // ---------- comet visibility ----------
+  const tailEls = (i) => svgs[i].tails.map((x) => x.el);
+  gsap.set("#s11-head", { opacity: 1 });
+  tl.to("#s11-head", { opacity: 0, duration: T(2360) - T(2355), ease: "power1.in" }, T(2355));
+  tl.to([...tailEls(0), svgs[0].line], { opacity: 0, duration: T(2363) - T(2354), ease: "power1.in" }, T(2354));
+  gsap.set([...tailEls(1), ...tailEls(2)], { opacity: 0 });
+  tl.fromTo("#s11-head", { opacity: 0, scale: 0.3 }, { opacity: 1, scale: 1, duration: T(2397) - T(2395), ease: "power2.out", immediateRender: false }, T(2395));
+  tl.set(tailEls(1), { opacity: 1 }, T(2398));
+  tl.to("#s11-head", { opacity: 0, scale: 0.4, duration: T(2428) - T(2423), ease: "power1.in" }, T(2423));
+  tl.to(tailEls(1), { opacity: 0, duration: T(2432) - T(2422), ease: "power1.in" }, T(2422));
+  tl.fromTo("#s11-head", { opacity: 0, scale: 0.3 }, { opacity: 1, scale: 1, duration: T(2458) - T(2456), ease: "power2.out", immediateRender: false }, T(2456));
+  tl.set(tailEls(2), { opacity: 1 }, T(2459));
+  tl.to("#s11-head", { opacity: 0, scale: 0.4, duration: T(2493) - T(2488), ease: "power1.in" }, T(2488));
+  tl.to(tailEls(2), { opacity: 0, duration: T(2498) - T(2487), ease: "power1.in" }, T(2487));
+
+  // ---------- words: letters stagger in, a ring blooms ----------
+  const enter = (id, f0) => {
+    $$("#" + id + " span").forEach((l, i) => {
+      gsap.set(l, { opacity: 0 });
+      tl.fromTo(l, { opacity: 0, x: 70, scale: 1.2, filter: "blur(12px)" },
+        { opacity: 1, x: 0, scale: 1, filter: "blur(0px)", duration: 0.1, ease: "power3.out", immediateRender: false }, T(f0 + i * 1.5));
+    });
+  };
+  const ring = (id, cx, f0, fade0, fade1) => {
+    const o = { r: 60 };
+    gsap.set("#" + id, { left: cx - 60, top: -60, width: 120, height: 120 });
+    tl.set("#" + id, { opacity: 1 }, T(f0));
+    tl.to(o, { r: 800, duration: T(f0 + 28) - T(f0), ease: "power2.out", onUpdate() {
+      gsap.set("#" + id, { left: cx - o.r, top: -o.r, width: o.r * 2, height: o.r * 2 });
+    } }, T(f0));
+    tl.to("#" + id, { opacity: 0.55, duration: T(f0 + 18) - T(f0 + 7), ease: "power1.in" }, T(f0 + 7));
+    tl.to("#" + id, { opacity: 0, duration: T(fade1) - T(fade0), ease: "power1.inOut" }, T(fade0));
+  };
+  enter("s11-brief", 2352);
+  ring("s11-ring0", 20, 2353.5, 2368, 2388);
+  tl.to("#s11-lab0", { opacity: 1, duration: T(2369) - T(2364), ease: "power1.out" }, T(2364));
+  enter("s11-code", 2423);
+  ring("s11-ring1", 2100, 2423, 2448, 2470);
+  tl.to("#s11-lab1", { opacity: 1, duration: T(2445) - T(2439), ease: "power1.out" }, T(2439));
+
+  // FILM.: dim letters under the flare, then a red pop scaled from where the comet lands.
+  $$("#s11-film span").forEach((l, i) => {
+    gsap.set(l, { opacity: 0 });
+    tl.fromTo(l, { opacity: 0, x: 60 }, { opacity: 0.4, x: 0, duration: 0.04, ease: "power2.out", immediateRender: false }, T(2483.5) + i * 0.005);
+    tl.set(l, { opacity: 1 }, T(2487.5));
+  });
+  gsap.set("#s11-film", { color: "#5a2219", transformOrigin: "1510px 167px" });
+  tl.set("#s11-film", { color: "#f04a2c", textShadow: "0 0 24px rgba(255,75,43,.9), 0 0 90px rgba(255,75,43,.5)" }, T(2487.5));
+  tl.fromTo("#s11-film", { scale: 1.22, filter: "blur(5px)" }, { scale: 1, filter: "blur(0px)", duration: T(2494) - T(2487.5), ease: "power2.out", immediateRender: false }, T(2487.5));
+  tl.to("#s11-film", { textShadow: "0 0 18px rgba(255,75,43,.6), 0 0 60px rgba(255,75,43,.28)", duration: 0.3, ease: "power1.out" }, T(2496));
+  gsap.set("#s11-flare", { x: 4080, y: 0, scale: 0.3 });
+  tl.to("#s11-flare", { opacity: 1, scale: 1, duration: T(2487) - T(2485), ease: "power2.out" }, T(2485));
+  tl.to("#s11-flare", { opacity: 0, scale: 1.5, duration: T(2493) - T(2487.5), ease: "power2.in" }, T(2487.5));
+  tl.set("#s11-flash", { opacity: 1 }, T(2487.5));
+  tl.to("#s11-flash", { opacity: 0, duration: T(2500) - T(2489), ease: "power1.in" }, T(2489));
+  ring("s11-ring2", 4100, 2487, 2505, 2530);
+  tl.to("#s11-lab2", { opacity: 1, duration: T(2505) - T(2500), ease: "power1.out" }, T(2500));
+  const spBox = $("s11-sparks");
+  for (let i = 0; i < 18; i++) {
+    const sp = document.createElement("div");
+    sp.className = "s11-spk";
+    spBox.appendChild(sp);
+    const a = (i / 18) * 360 + (i % 3) * 11 - 15, rad = a * Math.PI / 180;
+    const r0 = 15 + (i % 4) * 8, r1 = 110 + (i * 41) % 100;
+    gsap.set(sp, { width: 30 + (i * 29) % 50, rotation: a, backgroundColor: i % 3 === 0 ? "#ffd2a0" : "#ff7a40" });
+    tl.fromTo(sp, { x: 4060 + Math.cos(rad) * r0, y: Math.sin(rad) * r0, opacity: 1, scaleX: 0.3 },
+      { x: 4060 + Math.cos(rad) * r1, y: Math.sin(rad) * r1, opacity: 0, scaleX: 1, duration: T(2499) - T(2488), ease: "power2.out", immediateRender: false }, T(2488));
+  }
+
+  // ---------- caption: words arrive, the chip slides to the newest ----------
+  const words = $$("#s11-cap .w");
+  const cw = [2352.5, 2366.5, 2437, 2487.5];
+  cw.forEach((f, i) => {
+    const r = words[i].getBoundingClientRect();
+    tl.fromTo(words[i], { opacity: 0, x: 14, filter: "blur(6px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: 0.07, ease: "power2.out", immediateRender: false }, T(f) - 0.03);
+    tl.to("#s11-chip", { left: r.left - 6, top: r.top - 2, width: r.width + 12, height: r.height + 4, duration: i ? 0.07 : 0.01, ease: "power3.out" }, T(f) - 0.02);
+    tl.set(words[i], { color: "#1a0c0a" }, T(f) - 0.03);
+    if (i) tl.set(words[i - 1], { color: "#f4f1ee" }, T(f) - 0.02);
+  });
+  tl.set("#s11-chip", { opacity: 1 }, T(2352.5) - 0.03);
+
+  window.__timelines["s11"] = tl;
+})();
+</script>
+</body></html>

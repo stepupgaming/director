@@ -254,3 +254,23 @@ fn a_drop_shadow_with_a_color_function_paints_its_shadow() {
         assert!(shadow[0] > 200 && shadow[2] < 60, "{class} {rules}{svg_rules}: shadow {shadow:?}");
     }
 }
+
+#[test]
+fn a_scaled_up_svg_rasterizes_at_its_shown_size() {
+    // An 8px circle shown 8x: a sharp edge leaves a one-pixel antialiased ring.
+    let partial = |transform: &str| {
+        let pixels = frame(
+            &format!(
+                "<style>body{{margin:0;background:#000}}svg{{position:absolute;left:0;top:0;width:8px;height:8px;transform-origin:0 0;transform:{transform}}}</style>\
+                 <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><circle cx='4' cy='4' r='3.5' fill='#f00'/></svg>"
+            ),
+            0.0,
+        );
+        pixels.chunks(4).filter(|p| (40..215).contains(&p[0])).count()
+    };
+    let flat = partial("scale(8)");
+    assert!(flat < 400, "{flat} partial pixels under scale(8)");
+    // A perspective camera that brings it 8x closer does the same.
+    let near = partial("perspective(64px) translateZ(56px)");
+    assert!(near < 400, "{near} partial pixels under perspective");
+}

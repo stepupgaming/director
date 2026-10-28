@@ -171,7 +171,8 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
 
 /// Transform components a timeline drives one number at a time. They compose
 /// in GSAP order over the element's own decomposed transform.
-pub(crate) const COMPONENTS: [&str; 12] = [
+pub(crate) const COMPONENTS: [&str; 13] = [
+    "transform-perspective",
     "translate-x",
     "translate-y",
     "translate-z",
@@ -438,7 +439,9 @@ fn set_clip(points: &mut Option<Vec<(f32, f32)>>, i: usize, field: &str, v: f32)
 fn component(name: &str, s: &str) -> Result<f32, String> {
     let s = s.trim();
     let (n, unit) = match name {
-        "translate-x" | "translate-y" | "translate-z" => (s.strip_suffix("px").unwrap_or(s), 1.0),
+        "translate-x" | "translate-y" | "translate-z" | "transform-perspective" => {
+            (s.strip_suffix("px").unwrap_or(s), 1.0)
+        }
         "translate-x-percent" | "translate-y-percent" => (s.strip_suffix('%').unwrap_or(s), 1.0),
         "scale-x" | "scale-y" => (s, 1.0),
         _ => {
@@ -1310,10 +1313,12 @@ impl TimeMap {
     }
 }
 
-/// A transform split into GSAP components: px and percent translation,
-/// rotations and skews in degrees, and scale factors.
+/// A transform split into GSAP components: a leading perspective distance
+/// in px (0 is none), px and percent translation, rotations and skews in
+/// degrees, and scale factors.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Parts {
+    persp: f32,
     tx: f32,
     ty: f32,
     tz: f32,
@@ -1330,6 +1335,7 @@ pub struct Parts {
 impl Default for Parts {
     fn default() -> Self {
         Self {
+            persp: 0.0,
             tx: 0.0,
             ty: 0.0,
             tz: 0.0,
@@ -1346,9 +1352,9 @@ impl Default for Parts {
     }
 }
 impl Parts {
-    /// Split a transform written as translations, then rotate, rotateY,
-    /// rotateX, one skew and scales, in that order. Anything else has no
-    /// component form.
+    /// Split a transform written as an optional leading perspective,
+    /// translations, then rotate, rotateY, rotateX, one skew and scales, in
+    /// that order. Anything else has no component form.
     pub(crate) fn decompose(list: &TransformList) -> Option<Self> {
         let mut parts = Self::default();
         let mut rank = 0;
@@ -1368,7 +1374,12 @@ impl Parts {
             Some(())
         };
         let zero = LengthPercentage::px(0.0);
-        for t in &list.0 {
+        let mut list = list.0.as_slice();
+        if let [Transform::Perspective(d), rest @ ..] = list {
+            parts.persp = d.to_px()?;
+            list = rest;
+        }
+        for t in list {
             let next = match t {
                 Transform::Translate(x, y) => {
                     translate(&mut parts, x, y)?;
@@ -1438,6 +1449,7 @@ impl Parts {
 
     pub(crate) fn set(&mut self, name: &str, v: f32) {
         let slot = match name {
+            "transform-perspective" => &mut self.persp,
             "translate-x" => &mut self.tx,
             "translate-y" => &mut self.ty,
             "translate-z" => &mut self.tz,
@@ -1457,6 +1469,7 @@ impl Parts {
 
     pub(crate) fn get(&self, name: &str) -> Option<f32> {
         Some(match name {
+            "transform-perspective" => self.persp,
             "translate-x" => self.tx,
             "translate-y" => self.ty,
             "translate-z" => self.tz,
@@ -1477,6 +1490,9 @@ impl Parts {
     pub(crate) fn compose(&self) -> TransformList {
         use lightningcss::values::percentage::Percentage;
         let mut list = Vec::new();
+        if self.persp > 0.0 {
+            list.push(Transform::Perspective(Length::px(self.persp)));
+        }
         if self.xp != 0.0 || self.yp != 0.0 {
             list.push(Transform::Translate(
                 LengthPercentage::Percentage(Percentage(self.xp / 100.0)),

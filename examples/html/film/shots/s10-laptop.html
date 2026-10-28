@@ -1,0 +1,240 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s10 { background:#fdfefe; }
+  #s10-vig { position:absolute; left:0; top:0; width:1920px; height:1080px;
+    background:radial-gradient(ellipse 1440px 810px at 50% 50%, rgba(253,255,255,0) 0%, rgba(253,255,255,0) 64.7%, rgba(250,246,232,.9) 68%, rgb(220,214,205) 75.3%, rgb(178,176,167) 90%, rgb(160,160,152) 100%); }
+  #s10-cam { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin:960px 780px; }
+  .s10-head { position:absolute; left:0; top:0; width:1920px; text-align:center; white-space:normal; font-size:168px; font-stretch:105%; line-height:1.3; margin:0; }
+  #s10-h1o { top:156px; color:rgba(20,16,16,0); -webkit-text-stroke:2px #9a948e; opacity:0; }
+  #s10-h1f { top:156px; color:#141010; clip-path:inset(0px 1477px 0px 0px); }
+  #s10-scan { position:absolute; left:436px; top:185px; width:5px; height:185px; background:#ff4a26; opacity:0;
+    box-shadow:0 0 8px 2px rgba(255,70,38,.75), 0 0 26px 6px rgba(255,70,38,.35); }
+  #s10-h2 { top:313px; color:#f0573a; opacity:0; }
+  .s10-spk { position:absolute; left:1215px; top:530px; height:2px; transform-origin:0px 1px; opacity:0; }
+  .s10-clip { position:absolute; top:540px; height:180px; overflow:hidden; }
+  #s10-solid { left:-700px; width:1660px; }
+  #s10-ghost { left:960px; width:1700px; }
+  .s10-track { position:absolute; top:0; width:10px; height:180px; }
+  #s10-trackA { left:700px; }
+  #s10-trackB { left:-960px; }
+  .s10-chip { position:absolute; top:22px; width:242px; height:133px; border-radius:4px; overflow:hidden; }
+  .s10-chip p { position:absolute; left:-140px; top:0; width:522px; margin:0; text-align:center; line-height:133px;
+    font-family:"Archivo"; font-weight:900; font-stretch:125%; font-size:52px; letter-spacing:-1px; white-space:nowrap; }
+  .s10-w { background:#ffffff; border:2px solid #e2ded8; width:238px; height:129px; }
+  .s10-w p { color:#141010; left:-142px; line-height:129px; }
+  .s10-kr { background:#141012; }
+  .s10-kr p { color:#f0573a; }
+  .s10-kw { background:#141012; }
+  .s10-kw p { color:#f6f3f0; }
+  .s10-r { background:#f0573a; }
+  .s10-r p { color:#1a0c0a; }
+  .s10-gh { border-top:2px dashed rgba(0,0,0,.11); border-bottom:2px dashed rgba(0,0,0,.11); height:129px; border-radius:0; }
+  .s10-gh p { color:#ffffff; -webkit-text-stroke:1.5px rgba(40,30,25,.05); line-height:129px; }
+  #s10-play { position:absolute; left:958px; top:528px; width:3px; height:188px; background:#f0573a; opacity:0;
+    box-shadow:0 0 6px 1px rgba(240,87,58,.55); }
+  #s10-rule { position:absolute; left:205px; top:772px; width:1515px; height:10px; border-radius:5px; background:#efebe6; opacity:0; overflow:hidden; }
+  #s10-fill { position:absolute; left:0; top:0; width:0px; height:10px; border-radius:5px; background:#f0573a; }
+  .s10-lab { position:absolute; top:808px; margin:0; font-family:"JetBrains Mono"; font-size:17px; letter-spacing:4px; color:#6d6560; white-space:pre; opacity:0; }
+  #s10-labl { left:205px; }
+  #s10-labr { left:1320px; width:404px; text-align:right; }
+  #s10-count { position:absolute; left:0; top:834px; width:1920px; margin:0; text-align:center; white-space:pre;
+    font-family:"JetBrains Mono"; font-weight:700; font-size:112px; line-height:150px; color:#1a1514; opacity:0; }
+  #s10-chipbg { position:absolute; left:126px; top:80px; width:0px; height:46px; border-radius:4px; background:#231d1b; opacity:0; }
+  #s10-cap .w { color:#141010; opacity:0; }
+</style></head><body>
+<div id="s10" class="film light" data-composition-id="s10" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="3.116667" data-motion-blur="8" data-shutter-angle="270">
+  <div id="s10-cam">
+    <h1 id="s10-h1o" class="display s10-head">RENDERED</h1>
+    <h1 id="s10-h1f" class="display s10-head">RENDERED</h1>
+    <div id="s10-scan"></div>
+    <h1 id="s10-h2" class="display s10-head">ON A LAPTOP.</h1>
+    <div id="s10-sparks">
+      <div class="s10-spk"></div><div class="s10-spk"></div><div class="s10-spk"></div><div class="s10-spk"></div>
+      <div class="s10-spk"></div><div class="s10-spk"></div><div class="s10-spk"></div><div class="s10-spk"></div>
+      <div class="s10-spk"></div><div class="s10-spk"></div><div class="s10-spk"></div><div class="s10-spk"></div>
+      <div class="s10-spk"></div><div class="s10-spk"></div><div class="s10-spk"></div><div class="s10-spk"></div>
+    </div>
+    <div id="s10-conv" style="opacity:0">
+      <div id="s10-solid" class="s10-clip"><div id="s10-trackA" class="s10-track">
+        <div class="s10-chip s10-w" style="left:-134px"><p>FILM</p></div>
+        <div class="s10-chip s10-kr" style="left:131px"><p>CODE.</p></div>
+        <div class="s10-chip s10-kr" style="left:396px"><p>NO</p></div>
+        <div class="s10-chip s10-w" style="left:661px"><p>0</p></div>
+        <div class="s10-chip s10-kw" style="left:926px"><p>OPUS 5.5</p></div>
+        <div class="s10-chip s10-r" style="left:1191px"><p>ELASTIC</p></div>
+        <div class="s10-chip s10-kr" style="left:1456px"><p>FLIES</p></div>
+        <div class="s10-chip s10-kw" style="left:1721px"><p>CUT</p></div>
+        <div class="s10-chip s10-w" style="left:1986px"><p>BEAT.</p></div>
+        <div class="s10-chip s10-r" style="left:2251px"><p>ON</p></div>
+        <div class="s10-chip s10-kr" style="left:2516px"><p>FILM.</p></div>
+        <div class="s10-chip s10-r" style="left:2781px"><p>JUST</p></div>
+        <div class="s10-chip s10-kw" style="left:3046px"><p>EVERY</p></div>
+        <div class="s10-chip s10-r" style="left:3311px"><p>FRAME</p></div>
+        <div class="s10-chip s10-w" style="left:3576px"><p>BRIEF</p></div>
+        <div class="s10-chip s10-kr" style="left:3841px"><p>CODE.</p></div>
+        <div class="s10-chip s10-kw" style="left:4106px"><p>4K</p></div>
+        <div class="s10-chip s10-r" style="left:4371px"><p>60 FPS</p></div>
+        <div class="s10-chip s10-kr" style="left:4636px"><p>LAPTOP.</p></div>
+        <div class="s10-chip s10-w" style="left:4901px"><p>DONE.</p></div>
+      </div></div>
+      <div id="s10-ghost" class="s10-clip"><div id="s10-trackB" class="s10-track">
+        <div class="s10-chip s10-gh" style="left:-134px"><p class="s10-gt">FILM</p></div>
+        <div class="s10-chip s10-gh" style="left:131px"><p class="s10-gt">CODE.</p></div>
+        <div class="s10-chip s10-gh" style="left:396px"><p class="s10-gt">NO</p></div>
+        <div class="s10-chip s10-gh" style="left:661px"><p class="s10-gt">0</p></div>
+        <div class="s10-chip s10-gh" style="left:926px"><p class="s10-gt">OPUS 5.5</p></div>
+        <div class="s10-chip s10-gh" style="left:1191px"><p class="s10-gt">ELASTIC</p></div>
+        <div class="s10-chip s10-gh" style="left:1456px"><p class="s10-gt">FLIES</p></div>
+        <div class="s10-chip s10-gh" style="left:1721px"><p class="s10-gt">CUT</p></div>
+        <div class="s10-chip s10-gh" style="left:1986px"><p class="s10-gt">BEAT.</p></div>
+        <div class="s10-chip s10-gh" style="left:2251px"><p class="s10-gt">ON</p></div>
+        <div class="s10-chip s10-gh" style="left:2516px"><p class="s10-gt">FILM.</p></div>
+        <div class="s10-chip s10-gh" style="left:2781px"><p class="s10-gt">JUST</p></div>
+        <div class="s10-chip s10-gh" style="left:3046px"><p class="s10-gt">EVERY</p></div>
+        <div class="s10-chip s10-gh" style="left:3311px"><p class="s10-gt">FRAME</p></div>
+        <div class="s10-chip s10-gh" style="left:3576px"><p class="s10-gt">BRIEF</p></div>
+        <div class="s10-chip s10-gh" style="left:3841px"><p class="s10-gt">CODE.</p></div>
+        <div class="s10-chip s10-gh" style="left:4106px"><p class="s10-gt">4K</p></div>
+        <div class="s10-chip s10-gh" style="left:4371px"><p class="s10-gt">60 FPS</p></div>
+        <div class="s10-chip s10-gh" style="left:4636px"><p class="s10-gt">LAPTOP.</p></div>
+        <div class="s10-chip s10-gh" style="left:4901px"><p class="s10-gt">DONE.</p></div>
+      </div></div>
+    </div>
+    <div id="s10-play"></div>
+    <div id="s10-rule"><div id="s10-fill"></div></div>
+    <p id="s10-labl" class="s10-lab">RENDER   4K &#183; 60 FPS</p>
+    <p id="s10-labr" class="s10-lab">0%</p>
+    <p id="s10-count">0000 / 3108</p>
+  </div>
+  <div id="s10-vig"></div>
+  <div id="s10-chipbg"></div>
+  <p class="caption" id="s10-cap"><span class="w">Rendered</span> <span class="w">on</span> <span class="w">a</span> <span class="w">laptop.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s10-frame">2155</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec" id="s10-rec">&#9679;</span> REC</p>
+  <p class="hud" id="s10-tc" style="right:62px;bottom:48px">00:00:35:55</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 2155 / 60, DURATION = 187 / 60;
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const $ = (id) => document.getElementById(id);
+  const $$ = (q) => Array.from(document.querySelectorAll(q));
+  // shot-local time of an absolute film frame
+  const T = (f) => (f - 2155) / 60;
+
+  // Counter value per absolute frame (measured from the reference), linear between keys.
+  const CK = [[2199, 0], [2200, 1], [2202, 2], [2203, 4], [2204, 6], [2205, 8], [2206, 11], [2207, 15], [2208, 19],
+    [2209, 25], [2211, 38], [2215, 76], [2219, 133], [2223, 226], [2227, 338], [2231, 488], [2235, 655], [2239, 895],
+    [2243, 1159], [2247, 1484], [2251, 1826], [2255, 2135], [2259, 2363], [2263, 2558], [2267, 2729], [2271, 2859],
+    [2275, 2946], [2279, 3012], [2283, 3058], [2287, 3085], [2291, 3101], [2295, 3107], [2297, 3108]];
+  const countAt = (f) => {
+    if (f <= CK[0][0]) return 0;
+    for (let i = 1; i < CK.length; i++) {
+      if (f <= CK[i][0]) {
+        const [f0, v0] = CK[i - 1], [f1, v1] = CK[i];
+        return v0 + (v1 - v0) * (f - f0) / (f1 - f0);
+      }
+    }
+    return 3108;
+  };
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const f = Math.round((FILM_START + tl.time()) * 60);
+    $("s10-frame").textContent = pad(f, 4);
+    $("s10-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+    const v = Math.floor(countAt(f));
+    $("s10-count").textContent = pad(v, 4) + " / 3108";
+    $("s10-fill").style.width = (1515 * v / 3108).toFixed(1) + "px";
+    const done = f >= 2300;
+    $("s10-labr").textContent = done ? "ON A LAPTOP" : Math.round(100 * v / 3108) + "%";
+    $("s10-labl").textContent = done ? "RENDER  ✓ DONE" : "RENDER   4K · 60 FPS";
+  } }, 0);
+
+  // REC dot blinks black/grey every 30 frames.
+  for (let f = 2160; f < 2342; f += 30) {
+    tl.set("#s10-rec", { color: ((f - 2160) / 30) % 2 === 0 ? "#141010" : "#a39d97" }, T(f));
+  }
+  gsap.set("#s10-rec", { color: "#a39d97" });
+
+  // ---------- caption with the moving dark chip ----------
+  const words = $$("#s10-cap .w");
+  const rect = (el) => el.getBoundingClientRect();
+  const cw = [[2158, 2159, 0.0667], [2176, 2177, 0.05], [2183, 2184, 0.0167], [2189, 2190, 0.0333]];
+  cw.forEach(([fw, fc, dur], i) => {
+    const r = rect(words[i]);
+    tl.to(words[i], { opacity: 1, duration: 0.03, ease: "none" }, T(fw));
+    if (i === 0) {
+      tl.set("#s10-chipbg", { left: r.left - 6, top: r.top - 2, height: r.height + 4, width: 0, opacity: 1 }, T(fc));
+      tl.to("#s10-chipbg", { width: r.width + 12, duration: dur, ease: "power2.out" }, T(fc));
+    } else {
+      tl.to("#s10-chipbg", { left: r.left - 6, width: r.width + 12, duration: dur, ease: "power3.out" }, T(fc));
+      tl.set(words[i - 1], { color: "#141010" }, T(fc));
+    }
+    tl.set(words[i], { color: "#f0573a" }, T(fc));
+  });
+  tl.to(["#s10-cap", "#s10-chipbg"], { opacity: 0, duration: 0.0333, ease: "none" }, T(2335));
+
+  // ---------- RENDERED: outline, red scan bar, fill wipe ----------
+  const L = 443, WD = 1027;
+  tl.set("#s10-h1o", { opacity: 1 }, T(2160));
+  tl.set("#s10-scan", { opacity: 1 }, T(2161));
+  const WIPE = T(2183.5) - T(2164.5);
+  tl.fromTo("#s10-h1f", { clipPath: "inset(0px " + (1920 - L) + "px 0px 0px)" }, { clipPath: "inset(0px 400px 0px 0px)", duration: WIPE, ease: "power2.inOut" }, T(2164.5));
+  tl.fromTo("#s10-scan", { left: L - 4 }, { left: L + WD - 4, duration: WIPE, ease: "power2.inOut" }, T(2164.5));
+  tl.to("#s10-scan", { opacity: 0, duration: 0.0167, ease: "none" }, T(2186));
+
+  // ---------- ON A LAPTOP. slam from the right, sparks, camera punch ----------
+  tl.fromTo("#s10-h2", { x: 420, opacity: 0 }, { x: 0, opacity: 1, duration: T(2195) - T(2190), ease: "expo.out" }, T(2189.5));
+  const spk = $$(".s10-spk");
+  spk.forEach((s, i) => {
+    const a = (i / spk.length) * 360 + (i % 3) * 9 - 12;
+    const rad = a * Math.PI / 180;
+    const len = 50 + (i * 37) % 90;
+    const r0 = 30 + (i % 4) * 12, r1 = 170 + (i * 53) % 130;
+    gsap.set(s, { width: len, rotation: a, backgroundColor: i % 3 === 0 ? "#ff9a5a" : "#f0573a" });
+    tl.fromTo(s, { x: Math.cos(rad) * r0, y: Math.sin(rad) * r0, opacity: 0.9, scaleX: 0.3 },
+      { x: Math.cos(rad) * r1, y: Math.sin(rad) * r1, scaleX: 1, opacity: 0, duration: T(2201) - T(2190), ease: "power2.out", immediateRender: false }, T(2190));
+  });
+
+  // ---------- camera drift, punch at impact and at done ----------
+  gsap.set("#s10-cam", { scale: 1.0, rotation: -0.8 });
+  tl.to("#s10-cam", { rotation: -0.7, duration: T(2169), ease: "none" }, 0);
+  tl.to("#s10-cam", { scale: 1.022, x: -10, duration: 0.0333, ease: "power2.out" }, T(2190.5));
+  tl.to("#s10-cam", { scale: 1.008, x: 0, duration: T(2197) - T(2192.5), ease: "power2.out" }, T(2192.5));
+  tl.to("#s10-cam", { rotation: -0.1, duration: T(2205) - T(2169), ease: "none" }, T(2169));
+  tl.to("#s10-cam", { scale: 1.01, duration: T(2205) - T(2197), ease: "none" }, T(2197));
+  tl.to("#s10-cam", { scale: 1.076, rotation: 0, duration: T(2271) - T(2205), ease: "none" }, T(2205));
+  tl.to("#s10-cam", { scale: 1.09, rotation: 0.45, duration: T(2299.5) - T(2271), ease: "none" }, T(2271));
+  tl.to("#s10-cam", { scale: 1.12, rotation: 0.5, duration: 0.0167, ease: "power2.out" }, T(2299.5));
+  tl.to("#s10-cam", { scale: 1.10, rotation: 0.4, duration: T(2318) - T(2307), ease: "power2.inOut" }, T(2307));
+
+  // ---------- conveyor ----------
+  tl.to(["#s10-conv", "#s10-play", "#s10-rule", ".s10-lab", "#s10-count"], { opacity: 1, duration: T(2197.5) - T(2193.5), ease: "power1.out" }, T(2193.5));
+  // chip i left = 396 + (i-2)*265 - 13.85*(frame-2205); track x carries the shift
+  const SPEED = 13.85 * 60;
+  const x0 = SPEED * T(2205);
+  tl.fromTo(["#s10-trackA", "#s10-trackB"], { x: x0 }, { x: x0 - SPEED * T(2334), duration: T(2334), ease: "none" }, 0);
+  tl.to(["#s10-trackA", "#s10-trackB"], { x: x0 - SPEED * T(2334) - 2600, duration: T(2342) - T(2334), ease: "power3.in" }, T(2334));
+
+  // ---------- done at 2300: everything solid, counter red, labels swap ----------
+  tl.set("#s10-solid", { width: 3600 }, T(2299.5));
+  tl.set("#s10-ghost", { opacity: 0 }, T(2299.5));
+  tl.set("#s10-count", { color: "#f0573a" }, T(2299.5));
+  gsap.set("#s10-count", { transformOrigin: "960px 75px" });
+  tl.to("#s10-count", { scale: 1.1, duration: 0.0167, ease: "power2.out" }, T(2299.5));
+  tl.to("#s10-count", { scale: 1.0, duration: T(2318) - T(2304), ease: "power2.inOut" }, T(2304));
+
+  // ---------- exit: whip left ----------
+  tl.to("#s10-cam", { x: -1500, duration: T(2342) - T(2334), ease: "power3.in" }, T(2334));
+
+  window.__timelines["s10"] = tl;
+})();
+</script>
+</body></html>

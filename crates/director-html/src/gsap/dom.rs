@@ -699,6 +699,17 @@ fn computed(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue
 fn px(v: f32) -> String {
     format!("{}px", round(v))
 }
+/// Six significant digits, as browsers serialize a `matrix3d`, so GSAP reads
+/// a small perspective term back at full distance.
+fn significant(v: f32) -> f64 {
+    let v = v as f64;
+    if v == 0.0 {
+        return 0.0;
+    }
+    let scale = 10f64.powi(5 - v.abs().log10().floor() as i32);
+    let r = (v * scale).round() / scale;
+    if r == 0.0 { 0.0 } else { r }
+}
 fn round(v: f32) -> f32 {
     let r = (v * 1e4).round() / 1e4;
     if r == 0.0 {
@@ -963,7 +974,7 @@ pub(crate) fn matrix_text(value: &str, size: (f32, f32)) -> String {
             let mut v = Vec::with_capacity(16);
             for c in 0..4 {
                 for r in 0..4 {
-                    v.push(round(m.rc(r, c)).to_string());
+                    v.push(significant(m.rc(r, c)).to_string());
                 }
             }
             format!("matrix3d({})", v.join(", "))

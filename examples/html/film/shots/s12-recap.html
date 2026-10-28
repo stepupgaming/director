@@ -1,0 +1,254 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s12 { background: #0e0d10; }
+  #s12-stage { position:absolute; left:0; top:0; width:1920px; height:1080px;
+    perspective: 2000px; perspective-origin: 50% 50%; }
+  #s12-rig { position:absolute; left:320px; top:180px; width:1280px; height:720px; transform-style: preserve-3d; }
+  #s12-panel { position:absolute; left:0; top:0; width:1280px; height:720px; overflow:hidden; background:#121114;
+    border:1.5px solid rgba(235,230,225,.38); box-shadow: 0 0 40px rgba(0,0,0,.6); }
+  #s12-screen { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin: 0 0; transform: scale(0.6667); }
+  .s12-scr { position:absolute; left:0; top:0; width:1920px; height:1080px; opacity:0; overflow:hidden; }
+  .s12-in { position:absolute; left:0; top:0; width:1920px; height:1080px; }
+  .s12-big { position:absolute; left:0; width:1920px; margin:0; text-align:center; white-space:nowrap; }
+  .s12-mono { font-family:"JetBrains Mono"; }
+  .s12-dk { color:#141010; }
+  .s12-rd { color:#ef4a2c; }
+  .s12-wh { color:#f4f1ee; }
+  .s12-glass { position:absolute; left:0; top:0; width:1280px; height:720px;
+    background: linear-gradient(115deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,0) 38%, rgba(255,255,255,0) 70%, rgba(255,255,255,.04) 100%); }
+  #s12-bar { position:absolute; left:-4px; top:742px; width:1210px; height:4px; background:rgba(150,145,140,.35); }
+  #s12-fill { position:absolute; left:0; top:0; width:1210px; height:4px; background:#ef4a2c; transform-origin: 0 50%;
+    box-shadow: 0 0 8px rgba(255,75,43,.6); }
+  #s12-clock { position:absolute; right:0; top:772px; margin:0; font-family:"JetBrains Mono"; font-size:17px;
+    letter-spacing:3px; color:#b9b4b0; white-space:nowrap; }
+  #s12-label { position:absolute; left:40px; top:-44px; margin:0; font-family:"JetBrains Mono"; font-size:14px;
+    letter-spacing:4px; color:#a7a29e; }
+  #s12-rate { position:absolute; right:110px; top:-66px; margin:0; font-family:"JetBrains Mono"; font-size:15px;
+    letter-spacing:3px; color:#ef4a2c; white-space:nowrap; }
+  #s12-chip { position:absolute; left:126px; top:80px; width:10px; height:46px; border-radius:4px; background:#ef4a2c; opacity:0; }
+  #s12-cap { margin:0; }
+  #s12-cap .w { color:#f4f1ee; opacity:0; }
+  /* mini HUD inside the panel, in film coordinates */
+  #s12-mhud .hud { color:#9a9592; }
+  .s12-card { position:absolute; border-radius:14px; }
+  .s12-bub { position:absolute; right:520px; height:110px; padding:0 34px; border-radius:12px; background:#24222a;
+    border-left:6px solid #ef4a2c; font-family:Inter; font-weight:700; font-size:40px; color:#e9e6e2; line-height:110px; }
+</style></head><body>
+<div id="s12" class="film" data-composition-id="s12" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="2.7667" data-motion-blur="8" data-shutter-angle="270">
+  <div class="dots"></div>
+  <div id="s12-stage"><div id="s12-rig">
+    <p id="s12-label">PLAYBACK</p>
+    <p id="s12-rate">&#9664;&#9664; 17&#215;</p>
+    <div id="s12-panel">
+      <div id="s12-screen">
+        <div id="s12-screens"></div>
+        <div id="s12-mhud">
+          <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+          <p class="hud" style="left:62px;top:50px">FRAME <span id="s12-mframe">2609</span></p>
+          <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+          <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+          <p class="hud" id="s12-mtc" style="right:62px;bottom:48px">00:00:43:29</p>
+        </div>
+      </div>
+      <div class="s12-glass"></div>
+    </div>
+    <div id="s12-bar"><div id="s12-fill"></div></div>
+    <p id="s12-clock">00:43:29 &#160;/&#160; 00:51:47</p>
+  </div></div>
+  <div class="vignette"></div>
+  <div id="s12-chip"></div>
+  <p class="caption" id="s12-cap"><span class="w">Everything</span> <span class="w">you</span> <span class="w">just</span> <span class="w">watched.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s12-frame">2590</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s12-tc" style="right:62px;bottom:48px">00:00:43:10</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 2590 / 60, DURATION = 2.7667, FILM_LEN = 51.78;
+  const tl = gsap.timeline({ paused: true });
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const $ = (id) => document.getElementById(id);
+  const $$ = (q) => Array.from(document.querySelectorAll(q));
+  const NS = "http://www.w3.org/2000/svg";
+  const rnd = (a, b) => a + Math.random() * (b - a);
+
+  // Playback clock of the rewinding film inside the panel (seconds of the film).
+  const play = (t) => Math.max(0.25, 43.49 - 16.47 * t);
+  const clock = (s) => { const f = Math.round(s * 60); return pad(Math.floor(f / 60)) + ":" + pad(f % 60); };
+
+  // ---------- recap screens, in film coordinates (1920x1080), shown in the panel ----------
+  const RED = "#ef4a2c", SALMON = "#f0816d", PAPER = "#f2efea";
+  const D = 'class="display s12-big"';
+  const cap = (words, chip, dark) => {
+    const ws = words.split(" ");
+    const html = ws.map((w, i) => i === ws.length - 1
+      ? `<span class="w hl"${chip ? ` style="background:${chip};color:${dark ? "#f04a2c" : "#1a0c0a"}"` : ""}>${w}</span>`
+      : `<span class="w">${w}</span>`).join(" ");
+    return `<p class="caption"${dark ? ' style="color:#141010"' : ""}>${html}</p>`;
+  };
+  const capL = (words) => cap(words).replace('<p class="caption"', '<p class="caption" style="color:#141010"');
+  const rays = (n, color, cx, cy, r0a, r0b, r1a, r1b, wa, wb, op) => {
+    let s = `<svg width="1920" height="1080" style="position:absolute;left:0;top:0">`;
+    for (let i = 0; i < n; i++) {
+      const a = rnd(0, Math.PI * 2), r0 = rnd(r0a, r0b), r1 = r0 + rnd(r1a, r1b);
+      s += `<line x1="${(cx + Math.cos(a) * r0).toFixed(1)}" y1="${(cy + Math.sin(a) * r0).toFixed(1)}" x2="${(cx + Math.cos(a) * r1).toFixed(1)}" y2="${(cy + Math.sin(a) * r1).toFixed(1)}" stroke="${color}" stroke-width="${rnd(wa, wb).toFixed(1)}" stroke-opacity="${rnd(op, 1).toFixed(2)}"/>`;
+    }
+    return s + "</svg>";
+  };
+  const curve = `<svg width="1920" height="1080" style="position:absolute;left:0;top:0;filter:drop-shadow(0 0 14px rgba(255,75,43,.7))"><path d="M 260 820 C 700 820, 820 240, 1660 250" fill="none" stroke="${RED}" stroke-width="14" stroke-linecap="round"/></svg>`;
+  const grid = (() => {
+    let s = `<svg width="1920" height="1080" style="position:absolute;left:0;top:0">`;
+    for (let x = 0; x <= 1920; x += 120) s += `<line x1="${x}" y1="0" x2="${x}" y2="1080" stroke="#3a3638" stroke-width="1.5"/>`;
+    for (let y = 0; y <= 1080; y += 120) s += `<line x1="0" y1="${y}" x2="1920" y2="${y}" stroke="#3a3638" stroke-width="1.5"/>`;
+    return s + "</svg>";
+  })();
+  const tunnel = (() => {
+    let s = `<svg width="1920" height="1080" style="position:absolute;left:0;top:0">`;
+    for (let i = 0; i < 46; i++) {
+      const a = rnd(0, Math.PI * 2);
+      s += `<line x1="${(1000 + Math.cos(a) * 90).toFixed(1)}" y1="${(560 + Math.sin(a) * 70).toFixed(1)}" x2="${(1000 + Math.cos(a) * 1500).toFixed(1)}" y2="${(560 + Math.sin(a) * 1200).toFixed(1)}" stroke="#ff4b2b" stroke-opacity="${rnd(.25, .7).toFixed(2)}" stroke-width="${rnd(1, 2.5).toFixed(1)}"/>`;
+    }
+    for (let k = 0; k < 5; k++) {
+      const w = 170 + k * 60, h = 120 + k * 44;
+      s += `<rect x="${1000 - w / 2}" y="${560 - h / 2}" width="${w}" height="${h}" rx="${22 + k * 6}" fill="none" stroke="#ff4b2b" stroke-opacity="${(0.9 - k * 0.15).toFixed(2)}" stroke-width="${k ? 2 : 4}"/>`;
+    }
+    s += `<circle cx="1000" cy="560" r="190" fill="none" stroke="#ff4b2b" stroke-opacity=".35" stroke-width="2"/>`;
+    s += `<circle cx="1000" cy="560" r="900" fill="none" stroke="#ff4b2b" stroke-opacity=".18" stroke-width="2"/>`;
+    // wire cube to the right
+    const c = [[1430, 360], [1820, 380], [1800, 830], [1440, 800]], o = [70, 60];
+    const q = (p) => p.map((v) => v.join(",")).join(" ");
+    s += `<polygon points="${q(c)}" fill="none" stroke="#ff4b2b" stroke-opacity=".75" stroke-width="2.5"/>`;
+    s += `<polygon points="${q(c.map(([x, y]) => [x + o[0], y + o[1]]))}" fill="none" stroke="#ff4b2b" stroke-opacity=".55" stroke-width="2"/>`;
+    c.forEach(([x, y]) => { s += `<line x1="${x}" y1="${y}" x2="${x + o[0]}" y2="${y + o[1]}" stroke="#ff4b2b" stroke-opacity=".55" stroke-width="2"/>`; });
+    return s + "</svg>";
+  })();
+
+  const SCREENS = [
+    [0.000, RED, `<h1 ${D} style="top:330px;font-size:400px;color:#141010">FILM.</h1>`],
+    [0.100, "#0e0d10", `<h1 ${D} style="top:360px;font-size:340px;color:#f4f1ee">CODE</h1>`],
+    [0.167, "#0e0d10", curve],
+    [0.200, "#0e0d10", `<h1 ${D} style="top:360px;font-size:340px;color:#f4f1ee">BRIEF.</h1>`],
+    [0.267, PAPER, `<h1 ${D} style="top:220px;font-size:150px;color:#141010">RENDERED</h1>
+      <h1 ${D} style="top:370px;font-size:160px;color:${RED}">ON A LAPTOP.</h1>
+      <div style="position:absolute;left:30px;top:590px;width:600px;height:70px;background:linear-gradient(90deg,#141010,#7a7270 40%,#141010 70%,#d8d2cc);filter:blur(3px)"></div>
+      <div style="position:absolute;left:180px;top:720px;width:1600px;height:3px;background:rgba(20,16,16,.15)"></div>
+      <div style="position:absolute;left:180px;top:715px;width:40px;height:12px;border-radius:6px;background:${RED}"></div>
+      <p class="s12-big s12-mono" style="top:790px;font-size:96px;letter-spacing:4px;color:#141010"><span id="s12-rcount">3108</span> / 3108</p>` + capL("Rendered on a laptop.")],
+    [0.467, "#0e0d10", `<h1 ${D} style="top:300px;font-size:200px;color:#f4f1ee">3,108 FRAMES.</h1>
+      <h1 ${D} style="top:540px;font-size:200px;color:${RED}">ALL CODE.</h1>`],
+    [0.533, "#0e0d10", `<h1 ${D} style="top:250px;font-size:400px;color:${RED};filter:blur(9px);text-shadow:0 0 30px rgba(255,75,43,.6)" id="s12-lines">2,155</h1>
+      <h1 ${D} style="top:640px;font-size:150px;color:#f4f1ee">LINES OF CODE</h1>` + cap("The whole film is one web page.")],
+    [0.600, "#0e0d10", `<h1 ${D} style="top:380px;font-size:250px;color:#f4f1ee"><span style="color:${RED}">1</span> WEB PAGE</h1>`],
+    [0.667, "#0e0d10", grid],
+    [0.700, RED, rays(60, "#ffffff", 960, 540, 120, 260, 200, 900, 1.5, 4, .5) + `<h1 ${D} style="top:380px;font-size:300px;color:#141010">ELASTIC.</h1>`],
+    [0.800, "#0e0d10", `<div class="s12-card" style="left:-40px;top:0;width:620px;height:820px;background:${RED}"></div>
+      <h1 class="display" style="position:absolute;left:-180px;top:200px;margin:0;font-size:300px;color:#141010">TIC.</h1>
+      <div class="s12-card" style="left:620px;top:70px;width:1120px;height:880px;background:#18161b;border:2px solid #2c2a31"></div>
+      <div class="s12-bub" style="top:340px">hotter orange</div>
+      <div class="s12-bub" style="top:500px">cut the intro in half</div>
+      <div class="s12-card" style="left:700px;top:700px;width:720px;height:96px;background:#1f1d23;border:2px solid #3a3740"></div>
+      <p style="position:absolute;left:740px;top:722px;margin:0;font-family:Inter;font-weight:700;font-size:40px;color:#bdb8b3">more punch</p>
+      <div class="s12-card" style="left:1460px;top:690px;width:110px;height:110px;background:${RED}"></div>` + cap("Notes? Just type them.")],
+    [0.967, RED, `<h1 ${D} style="top:380px;font-size:300px;color:#141010">ELASTIC.</h1>`],
+    [1.033, SALMON, `<h1 class="display" style="position:absolute;left:60px;top:300px;margin:0;font-size:470px;color:rgba(80,70,70,.82);transform:rotate(-6deg)">BEAT.</h1>
+      <h1 class="display" style="position:absolute;left:300px;top:320px;margin:0;font-size:300px;color:rgba(255,60,50,.75);transform:rotate(-3deg)">BEAT.</h1>` + cap("And a cut on every beat.", "#2a1814", true)],
+    [1.100, "#0e0d10", `<h1 ${D} style="top:360px;font-size:340px;color:#f4f1ee">CUT</h1>`],
+    [1.133, RED, `<h1 ${D} style="top:330px;font-size:420px;color:#141010">ON</h1>`],
+    [1.167, "#0e0d10", `<h1 ${D} style="top:380px;font-size:280px;color:${RED}">THE TYPE</h1>`],
+    [1.267, "#0e0d10", `<h1 ${D} style="top:250px;font-size:230px;color:#f4f1ee;filter:blur(8px)">THROUGH</h1>
+      <h1 ${D} style="top:520px;font-size:230px;color:#f4f1ee;filter:blur(8px)">CAMERA</h1>`],
+    [1.367, "#0e0d10", `<h1 ${D} style="top:400px;font-size:280px;color:#f4f1ee">CAMERA</h1>`],
+    [1.400, RED, `<h1 ${D} style="top:380px;font-size:300px;color:#141010">ELASTIC.</h1>`],
+    [1.567, "#1a0b09", tunnel + `<p style="position:absolute;left:965px;top:520px;margin:0;font-family:Inter;font-weight:700;font-size:64px;color:#ffd9cf">&#8629;</p>` + cap("It got one brief.")],
+    [1.633, "#121116", `<div class="s12-card" style="left:180px;top:180px;width:1560px;height:760px;background:#19181e;border:2px solid #2c2a31"></div>
+      <pre style="position:absolute;left:240px;top:240px;margin:0;font-size:30px;line-height:52px;color:#8d8a88">const tl = gsap.timeline();\ntl.to(".word", { fontStretch: "125%" });\ntl.from(".card", { y: 80, ease: "expo.out" });</pre>
+      <h1 style="position:absolute;left:1180px;top:430px;margin:0;font-family:Archivo;font-weight:900;font-size:340px;color:#f4f1ee">Aa</h1>`],
+    [1.700, "#0e0d10", `<div style="position:absolute;left:-200px;top:534px;width:2300px;height:10px;background:linear-gradient(90deg, rgba(255,75,43,0), #ff7a5a 40%, #ffffff 55%, rgba(255,75,43,0));filter:blur(3px)"></div>`],
+    [1.833, "#0e0d10", `<div style="position:absolute;left:300px;top:538px;width:1320px;height:3px;background:rgba(255,255,255,.12)"></div>`],
+    [1.933, "#2a0f0c", rays(70, "#ff4b2b", 960, 600, 40, 200, 300, 1100, 1, 2.5, .3) + `<h1 ${D} style="top:150px;font-size:130px;color:#f4f1ee">WRITTEN BY</h1>
+      <h1 ${D} style="top:380px;font-size:300px;color:#f4f1ee;text-shadow:-10px 0 0 rgba(255,75,43,.6)">OPUS 5.5</h1>
+      <div style="position:absolute;left:-60px;top:560px;width:2100px;height:5px;background:${RED};transform:rotate(-7deg);box-shadow:0 0 12px rgba(255,75,43,.8)"></div>
+      <p class="s12-big s12-mono" style="top:860px;font-size:40px;color:#bdb8b3"><span style="color:${RED}">&gt;</span> in Claude Code</p>` + cap("Claude Opus 5.5 wrote it.")],
+    [2.067, "#c9c5c0", `<h1 ${D} style="top:400px;font-size:230px;color:#2a2626">KEYFRAMES</h1>`],
+    [2.133, "#0e0d10", `<svg width="1920" height="1080" style="position:absolute;left:0;top:0">
+      <path d="M 200 900 L 1800 900 M 200 900 L 200 220" stroke="#8d8a88" stroke-width="3" fill="none"/>
+      <path d="M 200 900 C 400 890, 300 260, 260 230" stroke="#b9b4b0" stroke-width="4" fill="none"/>
+      ${[200, 420, 640, 860, 1080, 1300, 1520, 1740].map((x) => `<circle cx="${x}" cy="900" r="7" fill="#b9b4b0"/>`).join("")}
+      <circle cx="560" cy="900" r="11" fill="${RED}"/></svg>`],
+    [2.200, "#0e0d10", `<h1 ${D} style="top:380px;font-size:220px;color:#f4f1ee"><span style="color:${RED}">NO</span> RENDER FARM</h1>`],
+    [2.267, PAPER, `<h1 ${D} style="top:400px;font-size:200px;color:#141010"><span style="color:${RED}">NO</span> PLUGINS</h1>`],
+    [2.333, "#0e0d10", `<h1 ${D} style="top:380px;font-size:240px;color:#f4f1ee"><span style="color:${RED}">NO</span> TIMELINE</h1>`],
+    [2.400, RED, `<h1 ${D} style="top:220px;font-size:260px;color:#141010">IS</h1><h1 ${D} style="top:480px;font-size:320px;color:#141010">CODE.</h1>`],
+    [2.467, "#8f8a86", `<h1 ${D} style="top:330px;font-size:420px;color:#f4f1ee">IS</h1>`],
+    [2.483, PAPER, `<h1 ${D} style="top:240px;font-size:220px;color:#141010">OF THIS</h1><h1 ${D} style="top:480px;font-size:340px;color:#141010">FILM</h1>`],
+    [2.500, SALMON, `<h1 ${D} style="top:360px;font-size:330px;color:#141010">FRAME</h1>`],
+    [2.517, "#2e0f0b", rays(110, "#ffffff", 960, 540, 60, 300, 250, 900, 1.5, 3.5, .45) +
+      `<svg width="1920" height="1080" style="position:absolute;left:0;top:0;filter:drop-shadow(0 0 10px rgba(255,75,43,.8))"><circle cx="960" cy="540" r="560" fill="none" stroke="${RED}" stroke-width="9"/></svg>
+      <h1 ${D} style="top:350px;font-size:350px;color:#fff3ee;text-shadow:8px 8px 0 rgba(255,75,43,.55)">EVERY</h1>` + cap("Every")],
+  ];
+  const host = $("s12-screens");
+  SCREENS.forEach(([t0, bg, html], i) => {
+    const d = document.createElement("div");
+    d.className = "s12-scr";
+    d.id = "s12-scr" + i;
+    d.style.background = bg;
+    d.innerHTML = `<div class="s12-in" id="s12-in${i}">${html}</div>`;
+    host.appendChild(d);
+    const t1 = i + 1 < SCREENS.length ? SCREENS[i + 1][0] : DURATION;
+    // Cuts land between frames so the shutter never blends two screens.
+    const cut = (t) => (Math.round(t * 60) - 0.5) / 60;
+    tl.set(d, { opacity: 1 }, i ? cut(t0) : 0);
+    if (t1 < DURATION) tl.set(d, { opacity: 0 }, cut(t1));
+    // Each screen plays backwards: its push-in unwinds while it is on.
+    tl.fromTo("#s12-in" + i, { scale: 1.0 }, { scale: 1.06, duration: Math.max(t1 - t0, 0.02), ease: "none", immediateRender: false }, t0);
+  });
+
+  // ---------- clocks: film HUD, panel HUD, rewind rate, progress ----------
+  tl.to({}, { duration: DURATION, ease: "none", onUpdate() {
+    const t = tl.time();
+    const f = Math.round((FILM_START + t) * 60);
+    $("s12-frame").textContent = pad(f, 4);
+    $("s12-tc").textContent = "00:00:" + pad(Math.floor(f / 60)) + ":" + pad(f % 60);
+    const p = play(t), pf = Math.round(p * 60);
+    $("s12-mframe").textContent = pad(pf, 4);
+    $("s12-mtc").textContent = "00:00:" + clock(p);
+    $("s12-clock").textContent = "00:" + clock(p) + "  /  00:51:47";
+    $("s12-rate").textContent = "◀◀ " + Math.round(17 + 5 * t / DURATION) + "×";
+    const rc = $("s12-rcount"); if (rc) rc.textContent = pad(Math.max(0, Math.round(3108 * (1 - (t - 0.267) / 0.2))), 4);
+    const ln = $("s12-lines");
+    if (ln) { const n = Math.round(2155 - Math.max(0, t - 0.533) / 0.067 * 300); ln.textContent = Math.floor(n / 1000) + "," + pad(n % 1000, 3); }
+  } }, 0);
+  tl.fromTo("#s12-fill", { scaleX: play(0) / FILM_LEN }, { scaleX: play(DURATION) / FILM_LEN, duration: DURATION, ease: "none" }, 0);
+
+  // ---------- the panel: swings in from above, turns from right-near to left-near, then fills the frame ----------
+  gsap.set("#s12-rig", { transformOrigin: "50% 50%" });
+  tl.fromTo("#s12-rig", { x: 120, y: -760, rotationX: -62, rotationY: -26, rotationZ: 8, scale: 0.9 },
+    { x: 66, y: 30, rotationX: 10, rotationY: -15, rotationZ: 1.2, scale: 0.96, duration: 0.09, ease: "power3.out" }, 0);
+  tl.to("#s12-rig", { x: -46, y: 24, rotationX: 4, rotationY: 8, rotationZ: -1, scale: 1.04, duration: 2.62, ease: "sine.inOut" }, 0.09);
+  tl.to("#s12-rig", { x: -40, y: 10, rotationX: 0, rotationY: 0, rotationZ: 0, scale: 1.5, duration: 0.05, ease: "power2.out" }, 2.717);
+  tl.to(["#s12-label", "#s12-rate", "#s12-bar", "#s12-clock"], { opacity: 0, duration: 0.03 }, 2.72);
+
+  // ---------- caption with the moving chip ----------
+  const words = $$("#s12-cap .w");
+  const cw = [0.017, 0.533, 0.733, 0.933];
+  cw.forEach((t, i) => {
+    const r = words[i].getBoundingClientRect();
+    tl.fromTo(words[i], { opacity: 0, x: 14, filter: "blur(6px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: 0.07, ease: "power2.out" }, t - 0.017);
+    tl.to("#s12-chip", { left: r.left - 6, top: r.top - 2, width: r.width + 12, height: r.height + 4, duration: i ? 0.06 : 0.01, ease: "power3.out" }, t + 0.017);
+    tl.set(words[i], { color: "#1a0c0a" }, t + 0.03);
+    if (i) tl.set(words[i - 1], { color: "#f4f1ee" }, t + 0.03);
+  });
+  tl.set("#s12-chip", { opacity: 1 }, 0.04);
+  tl.to(["#s12-cap", "#s12-chip"], { opacity: 0, duration: 0.02 }, 2.712);
+
+  window.__timelines["s12"] = tl;
+})();
+</script>
+</body></html>

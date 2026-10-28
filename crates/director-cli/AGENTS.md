@@ -20,6 +20,7 @@
 
 - CLI behavior must remain consistent with `README.md`.
 - User-facing errors should distinguish script failures (exit 1) from render failures (exit 2).
+- Logs filter by `RUST_LOG` when set, else by the log level with `tiny_skia` at `error`, because tiny-skia warns for each SVG dash pattern that has no visible dash.
 - HTML compile/extraction failures exit 1; native paint/export/output failures exit 2. Capture JSON declares its FPS and sample rate; stored metadata controls playback.
 - `sheet` prints one JSON object and writes one PNG. Frames are `i * timeline_duration / n`, painted at full size, then scaled into the cell. Frame count is capped at 64 and the raster at 16777216 pixels. Load or a rejected plan exits 1; paint or write failure exits 2.
 - `audio` prints `{"tracks":[...]}` with integrated LUFS, true peak, loudness range, `clipped_samples`, and `silent`. Non-finite levels are JSON null. A non-finite sample or more than 57600000 samples sets `error` and skips analysis. It exits 0 when the report prints, including silence or clipping, and 1 on load failure.

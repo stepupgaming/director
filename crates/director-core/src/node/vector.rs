@@ -102,6 +102,21 @@ impl VectorNode {
     }
 }
 
+/// How many device pixels one layout pixel of `rect` covers, from 1 to 8 in
+/// half-octave steps, and at most 4096 pixels on a side.
+fn device_scale(canvas: &Canvas, rect: Rect) -> f32 {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return 1.0;
+    }
+    let shown = canvas.local_to_device_as_3x3().map_rect(rect).0;
+    let raw = (shown.width() / rect.width()).max(shown.height() / rect.height());
+    if !raw.is_finite() || raw <= 1.0 {
+        return 1.0;
+    }
+    let stepped = 2f32.powf((raw.log2() * 2.0).ceil() / 2.0).min(8.0);
+    stepped.min(4096.0 / rect.width().max(rect.height()))
+}
+
 impl Element for VectorNode {
     fn export_body(
         &self,
@@ -149,8 +164,11 @@ impl Element for VectorNode {
         parent_opacity: f32,
         draw_children: &mut dyn FnMut(&Canvas),
     ) -> Result<(), crate::RenderError> {
-        let width = rect.width().ceil() as u32;
-        let height = rect.height().ceil() as u32;
+        // Rasterize at the size the canvas shows, so a scaled or perspective
+        // camera keeps the vector sharp. Steps of a half octave bound re-rasters.
+        let scale = device_scale(canvas, rect);
+        let width = (rect.width() * scale).ceil() as u32;
+        let height = (rect.height() * scale).ceil() as u32;
 
         if width == 0 || height == 0 {
             draw_children(canvas);
@@ -215,7 +233,8 @@ impl Element for VectorNode {
         paint.set_alpha_f(final_opacity);
 
         if let Some((_, _, img)) = cache_guard.as_ref() {
-            canvas.draw_image_rect(img, None, rect, &paint);
+            let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
+            canvas.draw_image_rect_with_sampling_options(img, None, rect, sampling, &paint);
         }
 
         draw_children(canvas);

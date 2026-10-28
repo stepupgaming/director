@@ -1,0 +1,250 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s07 { background:#0d0e11; }
+  #s07-bg { position:absolute; inset:0; background:#0d0e11; }
+  #s07-dots { opacity:.45; }
+  .s07-card { position:absolute; left:0; top:0; width:1920px; height:1080px; opacity:0; }
+  .s07-g { position:absolute; left:960px; top:540px; width:0; height:0; }
+  .s07-t { position:absolute; left:-2000px; width:4000px; margin:0; text-align:center;
+    font-family:Archivo; font-weight:900; font-stretch:100%; line-height:1; letter-spacing:-0.01em; white-space:nowrap; }
+  .s07-echo { color:transparent; -webkit-text-stroke:2px rgba(255,255,255,.09); }
+  .s07-echo-red { -webkit-text-stroke:2px rgba(70,10,0,.22); }
+  .s07-echo-ember { -webkit-text-stroke:2px rgba(239,74,44,.17); }
+  .s07-echo-ink { -webkit-text-stroke:2px rgba(0,0,0,.12); }
+  .s07-white { color:#fdfcfa; text-shadow:0 0 16px rgba(255,255,255,.3); }
+  .s07-black { color:#141010; }
+  .s07-ember { color:#ef4a2c; text-shadow:0 0 22px rgba(239,74,44,.6), 0 0 70px rgba(239,74,44,.25); }
+  .s07-halo { color:#141010; text-shadow:0 0 14px rgba(239,74,44,.55); }
+  .s07-pink { color:#f39a85; -webkit-text-stroke:3px #2a100b; filter:blur(1.6px);
+    text-shadow:0 0 18px rgba(239,74,44,.5); }
+  .s07-ca-r { color:rgba(255,40,70,.9); }
+  .s07-ca-c { color:rgba(40,210,255,.9); }
+  #s07-flash { position:absolute; inset:0; background:#fdffff; opacity:0; }
+  #s07-vig { position:absolute; inset:0;
+    background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 70%, rgba(0,0,0,.36) 100%); }
+  #s07 .caption .w { position:relative; z-index:1; }
+  #s07-chip { position:absolute; display:block; left:0; top:0; width:0; height:44px;
+    background:#ef4a2c; border-radius:4px; z-index:0; }
+</style></head><body>
+<div id="s07" class="film" data-composition-id="s07" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="2.0666" data-motion-blur="8" data-shutter-angle="270">
+  <div id="s07-bg"></div>
+  <div class="dots" id="s07-dots"></div>
+  <div id="s07-cards"></div>
+  <div id="s07-vig"></div>
+  <p class="caption" id="s07-cap"><span id="s07-chip"></span><span class="w">And</span> <span class="w">a</span> <span class="w">cut</span> <span class="w">on</span> <span class="w">every</span> <span class="w">beat.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" id="s07-h0" style="left:62px;top:50px">FRAME <span id="s07-frame">1472</span></p>
+  <p class="hud" id="s07-h1" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" id="s07-h2" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s07-tc" style="right:62px;bottom:48px">00:00:24:32</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 1472 / 60, FRAMES = 124, DURATION = FRAMES / 60;
+  const F = 1 / 60;
+  const tl = gsap.timeline({ paused: true });
+  const $ = (id) => document.getElementById(id);
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+
+  // Monotone cubic through [frame, value] keys.
+  const spline = (k) => {
+    if (typeof k === "number") return () => k;
+    const n = k.length, d = [], m = [];
+    for (let i = 0; i < n - 1; i++) d.push((k[i + 1][1] - k[i][1]) / (k[i + 1][0] - k[i][0]));
+    for (let i = 0; i < n; i++) {
+      if (i === 0) m.push(n > 1 ? d[0] : 0);
+      else if (i === n - 1) m.push(d[n - 2]);
+      else m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2);
+    }
+    for (let i = 0; i < n - 1; i++) {
+      if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+      const a = m[i] / d[i], b = m[i + 1] / d[i], s = a * a + b * b;
+      if (s > 9) { const t = 3 / Math.sqrt(s); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+    }
+    return (f) => {
+      if (f <= k[0][0]) return k[0][1];
+      if (f >= k[n - 1][0]) return k[n - 1][1];
+      let i = 0; while (f > k[i + 1][0]) i++;
+      const h = k[i + 1][0] - k[i][0], t = (f - k[i][0]) / h, t2 = t * t, t3 = t2 * t;
+      return (2 * t3 - 3 * t2 + 1) * k[i][1] + (t3 - 2 * t2 + t) * h * m[i]
+        + (-2 * t3 + 3 * t2) * k[i + 1][1] + (t3 - t2) * h * m[i + 1];
+    };
+  };
+
+  // Themes: background, caption ink, chip and HUD colors.
+  const THEMES = {
+    dark:  { bg: "#0d0e11", dots: .45, ink: "#ffffff", chip: "#ef4a2c", chipInk: "#1a0c0a", hud: "#8d8a88", corner: "rgba(255,255,255,.35)" },
+    red:   { bg: "#ef4a2e", dots: 0, ink: "#141010", chip: "#1a0c0a", chipInk: "#ef4a2c", hud: "#6d6560", corner: "rgba(0,0,0,.35)" },
+    white: { bg: "#fdffff", dots: 0, ink: "#141010", chip: "#1a0c0a", chipInk: "#ef4a2c", hud: "#6d6560", corner: "rgba(0,0,0,.35)" },
+  };
+
+  // Cards (local frames u from the cut): word, size, face, echo outline, theme,
+  // centre offset, roll, zoom, echo spacing and echo drift (start, per frame) along the word.
+  const CARDS = [
+    { from: 0, word: "CUT", fs: 420, face: "s07-white", echo: "", theme: "dark",
+      x: [[0,-70],[1,-30],[3,-8],[6,0],[20,22]], y: -5, r: [[0,-3.6],[20,-3]], s: [[0,1.03],[4,1],[20,.99]],
+      dy: .8, es: .92, top: [-150, -18], bot: [150, 19] },
+    { from: 20, word: "ON", fs: 575, st: 110, face: "s07-black", echo: "s07-echo-red", theme: "red",
+      x: [[0,-30],[2,-8],[6,0],[21,10]], y: [[0,10],[6,0]], r: [[0,8],[2,5.5],[6,3.6],[21,3]],
+      s: [[0,1.15],[2,1.06],[6,1],[21,.98]], dy: .82, es: .95, top: [-30, -30], bot: [120, 20] },
+    { from: 41, word: "EVERY", fs: 425, st: 116, face: "s07-ember", echo: "s07-echo-ember", theme: "dark",
+      x: [[0,-12],[21,5]], y: -5, r: -3.8, s: [[0,1.1],[3,1.06],[14,1],[21,.99]],
+      dy: .82, es: .95, top: [-110, -11], bot: [120, 11] },
+    { from: 62, word: "BEAT.", fs: 475, st: 108, face: "s07-halo", echo: "s07-echo-ink", theme: "white",
+      x: [[0,-40],[1,-15],[3,-5],[6,0],[10,5]], y: -3, r: .4, s: [[0,1.12],[2,1.05],[6,1],[10,.99]],
+      dy: .8, es: .95, top: [-150, -12], bot: [140, 12] },
+    { from: 72, word: "BEAT.", fs: 330, st: 104, face: "s07-ember", echo: "s07-echo-ember", theme: "dark",
+      x: [[0,-35],[4,-15],[10,-7]], y: -155, r: 10, s: [[0,1.12],[2,1.05],[4,1],[10,.98]],
+      dy: .8, es: .95, top: [-209, -20], bot: [179, 14] },
+    { from: 82, word: "BEAT.", fs: 560, st: 112, face: "s07-black", echo: "s07-echo-red", theme: "red",
+      x: [[0,-130],[1,-70],[2,-35],[4,-15],[11,-25]], y: 25, r: -6, s: [[0,1.22],[1,1.15],[2,1.1],[4,1.05],[11,1.1]],
+      dy: .8, es: .95, top: [-100, -10], bot: [100, 10] },
+    { from: 93, word: "BEAT.", fs: 420, face: "s07-pink", echo: "s07-echo-ink", theme: "white",
+      x: 0, y: -10, r: 3.5, s: [[0,1.18],[1,1.08],[3,1],[5,.99]],
+      dy: .8, es: .95, top: [-120, -12], bot: [120, 12] },
+    { from: 98, word: "BEAT", fs: 700, st: 104, face: "s07-white", echo: "", theme: "dark",
+      x: [[0,90],[1,20],[3,-75],[5,-90],[26,-100]], y: -10, r: -4.5, s: [[0,1],[26,1.03]],
+      dy: .8, es: .95, top: [-100, -6], bot: [100, 6], ca: [[0,16],[3,5],[5,1.5],[26,1.5]] },
+  ];
+  const ENDS = CARDS.map((c, i) => (i + 1 < CARDS.length ? CARDS[i + 1].from : FRAMES));
+
+  const host = $("s07-cards");
+  const mk = (cls, word, fs, st) => {
+    const g = document.createElement("div");
+    g.className = "s07-g";
+    const p = document.createElement("p");
+    p.className = "s07-t " + cls;
+    p.style.fontSize = fs + "px";
+    p.style.fontStretch = (st || 100) + "%";
+    p.style.top = (-fs / 2) + "px";
+    p.textContent = word;
+    g.appendChild(p);
+    return g;
+  };
+  CARDS.forEach((c, i) => {
+    const el = document.createElement("div");
+    el.className = "s07-card";
+    el.id = "s07-c" + i;
+    c.eTop = mk("s07-echo " + c.echo, c.word, c.fs, c.st);
+    c.eBot = mk("s07-echo " + c.echo, c.word, c.fs, c.st);
+    el.appendChild(c.eTop); el.appendChild(c.eBot);
+    if (c.ca) {
+      // The white flash rises under the last word, then chromatic fringes and the word itself.
+      const fl = document.createElement("div");
+      fl.id = "s07-flash";
+      el.appendChild(fl);
+      c.caR = mk("s07-ca-r", c.word, c.fs, c.st); c.caC = mk("s07-ca-c", c.word, c.fs, c.st);
+      el.appendChild(c.caR); el.appendChild(c.caC);
+      c.fca = spline(c.ca);
+    }
+    c.main = mk(c.face, c.word, c.fs, c.st);
+    el.appendChild(c.main);
+    host.appendChild(el);
+    c.el = el; c.to = ENDS[i];
+    c.fx = spline(c.x); c.fy = spline(c.y); c.fr = spline(c.r); c.fs_ = spline(c.s);
+  });
+
+  // White flash on the last word: rises over ten frames, holds, and falls back to dark.
+  const flashA = spline([[102,0],[103,.06],[104,.15],[105,.25],[106,.34],[107,.44],[108,.54],[109,.63],
+    [110,.75],[111,.91],[112,.98],[113,1],[114,.96],[115,.84],[116,.69],[117,.59],[118,.49],[119,.4],
+    [120,.31],[121,.22],[122,.12],[123,.04]]);
+
+  const xf = (x, y, r, s) => "translate(" + x.toFixed(2) + "px," + y.toFixed(2) + "px) rotate(" +
+    r.toFixed(3) + "deg) scale(" + s.toFixed(4) + ")";
+
+  tl.to({}, { duration: DURATION, ease: "none" }, 0);
+
+  // Caption: words arrive faint, then the chip slides onto the newest word.
+  const cap = $("s07-cap"), chip = $("s07-chip");
+  const words = Array.from(cap.querySelectorAll(".w"));
+  const CHIPAT = [0, 8, 14, 28, 43, 64];
+  const boxes = words.map((w) => ({ left: w.offsetLeft - 7, width: w.offsetWidth + 14 }));
+  const capOp = spline([[113,1],[118,.4],[121,0]]);
+  const hudEls = ["s07-h0", "s07-h1", "s07-h2", "s07-tc"].map($);
+  const corners = Array.from(document.querySelectorAll("#s07 .corner"));
+  const vig = $("s07-vig"), bg = $("s07-bg"), dots = $("s07-dots");
+
+  const draw = () => {
+    const t = tl.time(), f = t * 60;
+    const fr = Math.round((FILM_START + t) * 60);
+    $("s07-frame").textContent = pad(fr, 4);
+    $("s07-tc").textContent = "00:00:" + pad(Math.floor(fr / 60)) + ":" + pad(fr % 60);
+
+    // The shutter opens on each frame, so a switch on the frame itself cuts clean.
+    let ci = 0;
+    CARDS.forEach((c, i) => { if (f >= c.from - 1e-6) ci = i; });
+    const th = THEMES[CARDS[ci].theme];
+    bg.style.backgroundColor = th.bg;
+    dots.style.opacity = th.dots;
+
+    CARDS.forEach((c, i) => {
+      const on = i === ci;
+      c.el.style.opacity = on ? 1 : 0;
+      if (!on) return;
+      const u = f - c.from;
+      const x = c.fx(u), y = c.fy(u), r = c.fr(u), s = c.fs_(u);
+      c.main.style.transform = xf(x, y, r, s);
+      const rad = r * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad);
+      const echo = (g, side, d) => {
+        const lx = (d[0] + d[1] * u) * s, ly = side * c.dy * c.fs * s;
+        g.style.transform = xf(x + lx * cs - ly * sn, y + lx * sn + ly * cs, r, s * c.es);
+      };
+      echo(c.eTop, -1, c.top);
+      echo(c.eBot, 1, c.bot);
+      if (c.ca) {
+        const d = c.fca(u);
+        c.caR.style.transform = xf(x - d, y, r, s);
+        c.caC.style.transform = xf(x + d, y, r, s);
+        const a = flashA(f);
+        $("s07-flash").style.opacity = a.toFixed(3);
+        vig.style.opacity = (1 - a).toFixed(3);
+      }
+    });
+
+    // Caption state.
+    let newest = 0;
+    for (let i = 1; i < words.length; i++) if (f >= CHIPAT[i] + 1) newest = i;
+    words.forEach((w, i) => {
+      let op = 0, col = th.ink;
+      if (i <= newest) {
+        op = i === 0 ? 1 : clamp(.4 + .6 * (f - CHIPAT[i] - 1) / 3);
+        col = i === newest ? th.chipInk : th.ink;
+      } else if (f >= CHIPAT[i] - 2) {
+        op = .4;
+      }
+      w.style.opacity = op.toFixed(3);
+      w.style.color = col;
+    });
+    let ti = 0;
+    for (let i = 1; i < words.length; i++) if (f >= CHIPAT[i]) ti = i;
+    if (ti === 0) {
+      const pw = clamp(.72 + .14 * f);
+      chip.style.left = boxes[0].left + "px";
+      chip.style.width = (boxes[0].width * pw).toFixed(2) + "px";
+      words[0].style.clipPath = "inset(0% " + ((1 - pw) * 112).toFixed(2) + "% 0% 0%)";
+    } else {
+      const p = clamp((f - CHIPAT[ti]) / 3.5), e = 1 - (1 - p) * (1 - p);
+      const a = boxes[ti - 1], b = boxes[ti];
+      chip.style.left = (a.left + (b.left - a.left) * e).toFixed(2) + "px";
+      chip.style.width = (a.width + (b.width - a.width) * e).toFixed(2) + "px";
+      words[0].style.clipPath = "inset(0% 0% 0% 0%)";
+    }
+    chip.style.backgroundColor = th.chip;
+    cap.style.opacity = capOp(f).toFixed(3);
+
+    hudEls.forEach((h) => { h.style.color = th.hud; });
+    corners.forEach((c) => { c.style.borderColor = th.corner; });
+  };
+  draw();
+  tl.eventCallback("onUpdate", draw);
+
+  window.__timelines["s07"] = tl;
+})();
+</script>
+</body></html>

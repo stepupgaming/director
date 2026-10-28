@@ -195,3 +195,18 @@ fn centred_nowrap_text_keeps_its_line_height() {
         assert!(count(&pixels, white) > 10, "{align}: the text paints");
     }
 }
+
+#[test]
+fn pre_keeps_a_trailing_space_inside_an_inline_block() {
+    // The space after the first box pushes the red box one advance right.
+    let page = |first: &str| {
+        format!(
+            "<style>body{{margin:0}}p{{margin:0;white-space:pre;font-family:'JetBrains Mono';font-size:16px;color:white}}\
+             span{{display:inline-block}}#b{{background:#ff0000}}</style><p><span>{first}</span><span id='b'>b</span></p>"
+        )
+    };
+    let spaced = bounds(&frame(&page("a ")), red);
+    let tight = bounds(&frame(&page("a")), red);
+    let shift = spaced[0] as i64 - tight[0] as i64;
+    assert!((8..=11).contains(&shift), "the trailing space is {shift}px");
+}

@@ -474,6 +474,32 @@ impl NativeGradient {
         let (colors, positions) = expand_hints(&self.colors, &positions).ok()?;
         Some(self.cover(&colors, &positions))
     }
+    /// The ramp cut to the gradient line, which Skia needs between 0 and 1. A
+    /// stop past either end leaves its interpolated colour at that end.
+    fn trimmed(&self, (colors, stops): (Vec<skia_safe::Color>, Vec<f32>)) -> (Vec<skia_safe::Color>, Vec<f32>) {
+        if self.repeating || stops.iter().all(|s| (0.0..=1.0).contains(s)) {
+            return (colors, stops);
+        }
+        let at = |t: f32| {
+            let i = stops.iter().position(|s| *s >= t).unwrap_or(stops.len() - 1);
+            if i == 0 || stops[i] <= t {
+                return colors[i];
+            }
+            let span = stops[i] - stops[i - 1];
+            let f = if span > 0.0 { (t - stops[i - 1]) / span } else { 1.0 };
+            mix(colors[i - 1], colors[i], f)
+        };
+        let (mut out_colors, mut out_stops) = (vec![at(0.0)], vec![0.0]);
+        for (color, stop) in colors.iter().zip(&stops) {
+            if *stop > 0.0 && *stop < 1.0 {
+                out_colors.push(*color);
+                out_stops.push(*stop);
+            }
+        }
+        out_colors.push(at(1.0));
+        out_stops.push(1.0);
+        (out_colors, out_stops)
+    }
     pub fn shader(&self, rect: Rect) -> Option<Shader> {
         self.shader_with(rect, TileMode::Clamp)
     }
@@ -491,7 +517,7 @@ impl NativeGradient {
                 let center = rect.center();
                 let start = (center.x - dx * extent / 2.0, center.y - dy * extent / 2.0);
                 let end = (center.x + dx * extent / 2.0, center.y + dy * extent / 2.0);
-                let (colors, stops) = self.ramp(extent)?;
+                let (colors, stops) = self.trimmed(self.ramp(extent)?);
                 let colors = color4f(&colors);
                 skia_safe::shaders::linear_gradient(
                     (start, end),
@@ -553,18 +579,22 @@ impl NativeGradient {
                 if rx <= 0.0 || ry <= 0.0 {
                     return None;
                 }
+                // A stop past the ending shape widens the shape to reach it.
+                let (colors, mut stops) = self.ramp(rx)?;
+                let reach = if self.repeating { 1.0 } else { stops.last().copied().unwrap_or(1.0).max(1.0) };
+                stops.iter_mut().for_each(|s| *s /= reach);
+                let (colors, stops) = self.trimmed((colors, stops));
                 let matrix = Matrix::new_all(
-                    rx,
+                    rx * reach,
                     0.0,
                     rect.left + local_x,
                     0.0,
-                    ry,
+                    ry * reach,
                     rect.top + local_y,
                     0.0,
                     0.0,
                     1.0,
                 );
-                let (colors, stops) = self.ramp(rx)?;
                 let colors = color4f(&colors);
                 skia_safe::shaders::radial_gradient(
                     ((0.0, 0.0), 1.0),
@@ -579,7 +609,7 @@ impl NativeGradient {
                 );
                 let mut matrix = Matrix::new_identity();
                 matrix.set_rotate(*angle - 90.0, Some(c.into()));
-                let (colors, stops) = self.ramp(1.0)?;
+                let (colors, stops) = self.trimmed(self.ramp(1.0)?);
                 let colors = color4f(&colors);
                 skia_safe::shaders::sweep_gradient(
                     c,

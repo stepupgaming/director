@@ -12,6 +12,7 @@
 - `kinetic-beats.html` sets a 128 BPM grid on its root, cuts three words on bars, kicks a ring on every beat through `director.beat`, flashes into the end card from beat-time timeline keys and fires `../assets/tone.wav` on the cut at 1080p/30fps. `crates/director-html/tests/beats.rs` covers the beat contract.
 - `kinetic-counters.html` rolls a `$2,048,000` revenue reel with two spins and a `+312%` growth reel down from `000` with `data-reel`, under an edge fade mask and motion blur at 1080p/30fps. `crates/director-html/tests/reel.rs` covers the reel contract.
 - `split-text.html` splits a title into lines, words and chars with GSAP SplitText and animates an inline-block badge and an inline span on a paragraph at 1080p/30fps.
+- `film/` rebuilds a 51.8 s kinetic launch film at 1920x1080/60fps from fourteen GSAP shots. `film/shots/sNN-<name>.html` are standalone compositions that share `film/film.css` and drive their HUD frame counter and timecode from their film start. `film/film.html` mounts them back to back with `data-composition-src` under one motion-blur shutter. `film/shots/_skeleton.html` is the shot template.
 - `image-background.html`, `text-decoration.html`, and `nested-rule.html` are native references for a data-URI background, a solid underline, and a nested `& .title` rule. `crates/director-html/tests/authoring_slices.rs` renders them.
 
 ## Local Contracts

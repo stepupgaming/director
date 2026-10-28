@@ -1,0 +1,190 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../film.css">
+<style>
+  #s05 { background: #ef4a2c; }
+  #s05-white { position:absolute; inset:0; opacity:0; background:#fdffff; }
+  #s05-whitevig { position:absolute; inset:0;
+    background: radial-gradient(ellipse 75% 80% at 50% 38%, rgba(255,255,255,0) 50%, rgba(70,68,50,.36) 100%); }
+  #s05-burst { position:absolute; left:0; top:0; width:1920px; height:1080px; }
+  #s05-stage { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin:960px 500px; }
+  .s05-type { position:absolute; left:-1040px; width:4000px; margin:0; text-align:center;
+    font-family:Archivo; font-size:252px; line-height:1; letter-spacing:0; white-space:nowrap;
+    font-variation-settings:"wdth" 62, "wght" 900; }
+  .s05-meas { position:absolute; left:0; top:-700px; margin:0; visibility:hidden; font-family:Archivo;
+    font-size:252px; line-height:1; white-space:nowrap; }
+  #s05-word { top:356px; color:#1f0d0c; }
+  .s05-echo { color:transparent; -webkit-text-stroke:2px rgba(40,10,6,.24); }
+  #s05-ruler { position:absolute; top:686px; height:14px; left:545px; width:830px;
+    border-left:2px solid rgba(40,12,8,.72); border-right:2px solid rgba(40,12,8,.72);
+    background: linear-gradient(rgba(0,0,0,0) 6px, rgba(40,12,8,.72) 6px, rgba(40,12,8,.72) 8px, rgba(0,0,0,0) 8px); }
+  #s05-px { position:absolute; left:0; width:1920px; top:716px; margin:0; text-align:center;
+    font-family:"JetBrains Mono"; font-size:18px; letter-spacing:4px; color:rgba(40,14,10,.62); white-space:nowrap; }
+  #s05-code { position:absolute; left:0; width:1920px; top:806px; margin:0; text-align:center;
+    font-family:"JetBrains Mono"; font-size:25px; color:rgba(30,10,8,.86); white-space:nowrap; }
+  #s05-vig { position:absolute; inset:0;
+    background: radial-gradient(ellipse 75% 80% at 50% 38%, rgba(0,0,0,0) 45%, rgba(100,14,0,.42) 100%); }
+  #s05 .caption .w { position:relative; z-index:1; }
+  #s05-chip { position:absolute; display:block; left:0; top:0; width:0; height:44px;
+    background:#1c0d0b; border-radius:4px; z-index:0; }
+</style></head><body>
+<div id="s05" class="film red" data-composition-id="s05" data-width="1920" data-height="1080" data-fps="60"
+     data-duration="2.7666" data-motion-blur="8" data-shutter-angle="270">
+  <div id="s05-white"><div id="s05-whitevig"></div></div>
+  <svg id="s05-burst" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+    <g id="s05-lines" stroke="#2a0e09" stroke-linecap="round"></g>
+    <circle id="s05-ring" cx="960" cy="540" r="330" fill="none" stroke="rgba(120,22,8,.28)" stroke-width="30"/>
+    <circle id="s05-ring2" cx="960" cy="540" r="95" fill="none" stroke="rgba(255,210,190,.22)" stroke-width="6"/>
+  </svg>
+  <div id="s05-stage">
+    <p class="s05-type s05-echo" id="s05-e0" style="top:-125px">ELASTIC.</p>
+    <p class="s05-type s05-echo" id="s05-e1" style="top:117px">ELASTIC.</p>
+    <p class="s05-type s05-echo" id="s05-e2" style="top:617px">ELASTIC.</p>
+    <p class="s05-type s05-echo" id="s05-e3" style="top:855px">ELASTIC.</p>
+    <p class="s05-type" id="s05-word">ELASTIC.</p>
+    <div id="s05-ruler"></div>
+    <p id="s05-px">815 PX</p>
+    <p id="s05-code">font-variation-settings: "wdth" 62, "wght" 900;</p>
+    <p class="s05-meas" id="s05-m62" style="font-variation-settings:'wdth' 62, 'wght' 900">ELASTIC.</p>
+    <p class="s05-meas" id="s05-m125" style="font-variation-settings:'wdth' 125, 'wght' 900">ELASTIC.</p>
+    <p class="s05-meas" id="s05-m220" style="font-variation-settings:'wdth' 125, 'wght' 220">ELASTIC.</p>
+  </div>
+  <div id="s05-vig"></div>
+  <p class="caption" id="s05-cap"><span id="s05-chip"></span><span class="w">Letters</span> <span class="w">that</span> <span class="w">stretch</span> <span class="w">on</span> <span class="w">a</span> <span class="w">variable</span> <span class="w">axis.</span></p>
+  <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+  <p class="hud" style="left:62px;top:50px">FRAME <span id="s05-frame">1078</span></p>
+  <p class="hud" style="right:62px;top:50px">DIRECTOR &#183; FILM.HTML</p>
+  <p class="hud" style="left:62px;bottom:48px"><span class="rec">&#9679;</span> REC</p>
+  <p class="hud" id="s05-tc" style="right:62px;bottom:48px">00:00:17:58</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+(() => {
+  window.__timelines = window.__timelines || {};
+  const FILM_START = 1078 / 60, FRAMES = 166, DURATION = FRAMES / 60;
+  const F = 1 / 60;
+  const tl = gsap.timeline({ paused: true });
+  const $ = (id) => document.getElementById(id);
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const commas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+  // Piecewise-linear curves sampled from the reference readout (local frames).
+  const WDTH = [[0,62],[20,62],[21,88],[23,125],[29,125],[31,117],[33,118],[35,124],[37,125],
+    [85,125],[87,123],[89,115],[91,83],[93,69],[95,67],[97,66],[103,66],[105,108],[107,125],
+    [111,125],[113,120],[115,113],[117,121],[119,125]];
+  const WGHT = [[0,900],[49,900],[51,890],[53,688],[55,536],[57,355],[59,255],[61,223],[63,245],
+    [65,325],[67,435],[69,635],[71,835],[73,900]];
+  const curve = (k, f) => {
+    if (f <= k[0][0]) return k[0][1];
+    for (let i = 1; i < k.length; i++) {
+      if (f <= k[i][0]) {
+        const [f0, v0] = k[i - 1], [f1, v1] = k[i];
+        return v0 + (v1 - v0) * (f - f0) / (f1 - f0);
+      }
+    }
+    return k[k.length - 1][1];
+  };
+
+  // Radial speed lines of the burst (seeded).
+  const lines = $("s05-lines");
+  for (let i = 0; i < 90; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const r0 = 260 + Math.random() * 260, r1 = r0 + 160 + Math.random() * 520;
+    const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l.setAttribute("x1", (960 + Math.cos(a) * r0).toFixed(1));
+    l.setAttribute("y1", (540 + Math.sin(a) * r0 * 0.9).toFixed(1));
+    l.setAttribute("x2", (960 + Math.cos(a) * r1).toFixed(1));
+    l.setAttribute("y2", (540 + Math.sin(a) * r1 * 0.9).toFixed(1));
+    l.setAttribute("stroke-width", (1 + Math.random() * 2.5).toFixed(2));
+    l.setAttribute("stroke-opacity", (0.35 + Math.random() * 0.5).toFixed(2));
+    lines.appendChild(l);
+  }
+
+  const word = $("s05-word");
+  const echoes = [0, 1, 2, 3].map((i) => $("s05-e" + i));
+  const LAG = [10, 4, 4, 10], SIDE = [-1, -1, 1, 1];
+  const ruler = $("s05-ruler"), pxl = $("s05-px"), code = $("s05-code");
+  const stage = $("s05-stage");
+  let W62px = 0, W125px = 0, Wthin = 0;
+
+  const fvs = (w, g) => '"wdth" ' + w.toFixed(2) + ', "wght" ' + g.toFixed(1);
+
+  tl.to({}, { duration: DURATION, ease: "none" }, 0);
+
+  // Camera: punch in from the cut, then a slow push and a slight roll.
+  tl.fromTo(stage, { scale: 1.14 }, { scale: 0.93, duration: 12 * F, ease: "expo.out" }, 0);
+  tl.to(stage, { scale: 0.985, duration: 32 * F, ease: "sine.out" }, 12 * F);
+  tl.to(stage, { scale: 1.01, duration: 56 * F, ease: "none" }, 44 * F);
+  tl.to(stage, { scale: 1.168, duration: 66 * F, ease: "none" }, 100 * F);
+  tl.to(stage, { y: 24, duration: (FRAMES - 12) * F, ease: "none" }, 12 * F);
+  tl.to(stage, { rotation: 0.7, duration: 60 * F, ease: "sine.inOut" }, 100 * F);
+
+  // Burst: speed lines and shock rings fly out and fade.
+  tl.fromTo("#s05-lines", { scale: 0.9, opacity: 1, transformOrigin: "960px 540px" },
+    { scale: 1.5, opacity: 0, duration: 34 * F, ease: "power1.in" }, 0);
+  tl.fromTo("#s05-ring", { attr: { r: 330 }, opacity: 1 }, { attr: { r: 1150 }, opacity: 0, duration: 20 * F, ease: "power2.out" }, 0);
+  tl.fromTo("#s05-ring2", { attr: { r: 95 }, opacity: 1 }, { attr: { r: 700 }, opacity: 0, duration: 22 * F, ease: "power2.out" }, 0);
+
+  // Echo outlines fade in.
+  tl.fromTo(echoes, { opacity: 0 }, { opacity: 1, duration: 16 * F, ease: "none" }, 0);
+
+  // White flash while the word squeezes. The shutter opens on each frame, so a set on a frame cuts clean.
+  tl.set("#s05-white", { opacity: 1 }, 83 * F);
+  tl.set("#s05-vig", { opacity: 0 }, 83 * F);
+  tl.set("#s05-white", { opacity: 0 }, 104 * F);
+  tl.set("#s05-vig", { opacity: 1 }, 104 * F);
+
+  // Exit: the word whips left, the rest fades.
+  tl.to([word, ruler, pxl, code], { x: "-=1900", duration: 11 * F, ease: "power2.in" }, 155 * F);
+  tl.to([pxl, code], { opacity: 0, duration: 8 * F, ease: "none" }, 155 * F);
+  tl.to(echoes, { opacity: 0, duration: 6 * F, ease: "none" }, 155 * F);
+  tl.to("#s05-cap", { opacity: 0, duration: 8 * F, ease: "none" }, 156 * F);
+
+  // Caption: words arrive faint, then the chip slides onto the newest word.
+  const cap = $("s05-cap"), chip = $("s05-chip");
+  const words = Array.from(cap.querySelectorAll(".w"));
+  const ARRIVE = [1, 19, 31, 56, 65, 73, 98];
+  const INK = "#141010", CHIPINK = "#ef4a2c";
+  const box = (w) => ({ left: w.offsetLeft - 7, width: w.offsetWidth + 14 });
+  gsap.set(words, { opacity: 0 });
+  words.forEach((w, i) => {
+    const a = ARRIVE[i] * F, b = box(w);
+    if (i === 0) {
+      gsap.set(chip, { left: b.left, width: 0 });
+      gsap.set(w, { color: CHIPINK, opacity: 1, clipPath: "inset(0% 100% 0% 0%)" });
+      tl.to(w, { clipPath: "inset(0% 0% 0% 0%)", duration: 4 * F, ease: "none" }, a - F);
+      tl.to(chip, { width: b.width, duration: 4 * F, ease: "none" }, a - F);
+      return;
+    }
+    gsap.set(w, { color: CHIPINK });
+    tl.to(w, { opacity: 0.45, duration: F, ease: "none" }, a - F);
+    tl.to(chip, { left: b.left, width: b.width, duration: 3.5 * F, ease: "power2.out" }, a);
+    tl.to(words[i - 1], { color: INK, duration: 2 * F, ease: "none" }, a + F);
+    tl.to(w, { opacity: 1, duration: 3 * F, ease: "none" }, a + F);
+  });
+
+  tl.eventCallback("onUpdate", () => {
+    const t = tl.time(), f = t * 60;
+    const fr = Math.round((FILM_START + t) * 60);
+    $("s05-frame").textContent = pad(fr, 4);
+    $("s05-tc").textContent = "00:00:" + pad(Math.floor(fr / 60)) + ":" + pad(fr % 60);
+
+    const wd = curve(WDTH, f), wg = curve(WGHT, f);
+    word.style.fontVariationSettings = fvs(wd, wg);
+    echoes.forEach((e, i) => {
+      const fl = Math.max(0, f - LAG[i]);
+      e.style.fontVariationSettings = fvs(curve(WDTH, fl), curve(WGHT, fl));
+      e.style.transform = "translateX(" + (SIDE[i] * (10 + 6.2 * f)).toFixed(1) + "px)";
+    });
+    code.textContent = 'font-variation-settings: "wdth" ' + Math.round(wd) + ', "wght" ' + Math.round(wg) + ";";
+    if (!W62px) { W62px = $("s05-m62").offsetWidth; W125px = $("s05-m125").offsetWidth; Wthin = $("s05-m220").offsetWidth / W125px; }
+    const w = (W62px + (W125px - W62px) * (wd - 62) / 63) * (1 - (1 - Wthin) * (900 - wg) / 680);
+    ruler.style.left = (960 - w / 2).toFixed(1) + "px";
+    ruler.style.width = w.toFixed(1) + "px";
+    pxl.textContent = commas(Math.round(w * gsap.getProperty(stage, "scale"))) + " PX";
+  });
+
+  window.__timelines["s05"] = tl;
+})();
+</script>
+</body></html>
