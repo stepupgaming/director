@@ -28,12 +28,10 @@ fn normal_stretch_and_caps_compile() {
 }
 
 #[test]
-fn condensed_stretch_is_rejected() {
-    let err = compile(&source("font-stretch:condensed"), options())
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(err.contains("font-stretch other than normal unsupported"), "{err}");
+fn stretch_keywords_and_percentages_compile() {
+    for stretch in ["condensed", "ultra-expanded", "62.5%"] {
+        compile(&source(&format!("font-stretch:{stretch}")), options()).unwrap();
+    }
 }
 
 #[test]

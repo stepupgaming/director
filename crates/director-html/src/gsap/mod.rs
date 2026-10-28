@@ -10,6 +10,7 @@ use crate::animation::{
     border_side, box_side, filter_default as default_amount, filter_scalar, filter_shadow_color, indexed, shadow_scalar, Parts,
     COMPONENTS, NO_TEXT_SHADOW,
     FILTERS as FILTER_CHANNELS, NO_BOX_SHADOW,
+    variation_axis,
 };
 use crate::style::{AxisPos, BackgroundFit, Shadow};
 use director_core::element::TextShadow;
@@ -91,6 +92,8 @@ const NATIVE: &[&str] = &[
     "font-size",
     "letter-spacing",
     "word-spacing",
+    "font-stretch",
+    "font-variation-settings",
     "line-height",
     "padding",
     "margin",
@@ -920,6 +923,22 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
         "font-size" => Ok(Val::Num(paint.font_size as f64)),
         "letter-spacing" => Ok(Val::Num(paint.letter_spacing as f64)),
         "word-spacing" => Ok(Val::Num(paint.word_spacing as f64)),
+        "font-stretch" => Ok(Val::Num(paint.font_stretch as f64)),
+        c if variation_axis(c).is_some() => {
+            let axis = variation_axis(c).unwrap_or_default();
+            let set = paint.font_variations.iter().find(|v| v.axis == axis).map(|v| v.value);
+            // Axes CSS drives from other properties start at those values.
+            let derived = match axis {
+                "wdth" => Some(paint.font_stretch),
+                "wght" => Some(paint.font_weight as f32),
+                "opsz" => Some(paint.font_size),
+                "ital" | "slnt" => Some(0.0),
+                _ => None,
+            };
+            set.or(derived)
+                .map(|v| Val::Num(v as f64))
+                .ok_or_else(|| format!("GSAP '{c}' needs the axis in the element's font-variation-settings"))
+        }
         "line-height" => paint
             .line_height
             .map(|h| Val::Num(h as f64))
@@ -1136,6 +1155,7 @@ fn sample(channel: &str, text: &str) -> Result<Val, String> {
     match channel {
         "opacity" => text.trim().parse().map(Val::Num).map_err(|_| format!("GSAP opacity '{text}'")),
         "letter-spacing" | "word-spacing" if text.trim() == "normal" => Ok(Val::Num(0.0)),
+        "font-stretch" => crate::style::stretch_percent(text).map(|p| Val::Num(p as f64)).map_err(|e| format!("GSAP {e}")),
         c if c == "color" || c.ends_with("-color") => {
             color(text.trim(), Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }).map(Val::color)
         }
@@ -1248,6 +1268,36 @@ pub(crate) fn tracks(
                     })
                     .collect();
                 channels.push((channel.to_string(), property, samples));
+            }
+            continue;
+        }
+        if property == "font-variation-settings" {
+            let lists = values
+                .iter()
+                .map(|v| {
+                    v.as_deref()
+                        .map(|text| crate::style::parse_variation_settings(text).map_err(|e| format!("GSAP {e}")))
+                        .transpose()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut axes: Vec<&str> = Vec::new();
+            for v in lists.iter().flatten().flatten() {
+                if !axes.contains(&v.axis.as_str()) {
+                    axes.push(&v.axis);
+                }
+            }
+            for axis in axes {
+                let channel = format!("font-variation-{axis}");
+                let base = base(&channel)?;
+                let samples = lists
+                    .iter()
+                    .map(|list| {
+                        list.as_ref()
+                            .and_then(|list| list.iter().find(|v| v.axis == axis))
+                            .map_or(base, |v| Val::Num(v.value as f64))
+                    })
+                    .collect();
+                channels.push((channel, property, samples));
             }
             continue;
         }

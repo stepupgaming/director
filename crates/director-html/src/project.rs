@@ -355,6 +355,8 @@ fn edit_captured_node(
                     | "font-style"
                     | "letter-spacing"
                     | "word-spacing"
+                    | "font-stretch"
+                    | "font-variation-settings"
                     | "text-align"
                     | "visibility"
                     | "clip-path"

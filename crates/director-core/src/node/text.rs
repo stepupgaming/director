@@ -1,5 +1,5 @@
 use crate::animation::Animated;
-use crate::element::{Element, TextFit, TextShadow, TextSpan};
+use crate::element::{Element, FontVariation, TextFit, TextShadow, TextSpan};
 use crate::text_direction::{resolve_text_direction, TextDirectionMode};
 use crate::node::text_animator::{
     parse_text_anim_property, GlyphAnimState, TextAnimProperty, TextAnimator,
@@ -12,7 +12,8 @@ use skia_safe::{
         FontCollection, Paragraph, ParagraphBuilder, ParagraphStyle, RectHeightStyle,
         RectWidthStyle, StrutStyle, TextAlign, TextDirection, TextHeightBehavior, TextStyle,
     },
-    Canvas, Paint, PaintStyle, Rect, TileMode,
+    font_arguments::{variation_position::Coordinate, VariationPosition},
+    Canvas, FontArguments, FourByteTag, Paint, PaintStyle, Rect, TileMode, Typeface,
 };
 use std::any::Any;
 use std::fmt;
@@ -20,6 +21,38 @@ use std::sync::{Arc, Mutex};
 use taffy::geometry::Size;
 use taffy::style::{AvailableSpace, Style};
 use tracing::warn;
+
+fn coordinates(variations: &[FontVariation]) -> Vec<Coordinate> {
+    variations
+        .iter()
+        .filter_map(|v| match *v.axis.as_bytes() {
+            [a, b, c, d] if v.axis.is_ascii() => Some(Coordinate {
+                axis: FourByteTag::from_chars(a as char, b as char, c as char, d as char),
+                value: v.value,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Sets variable font axes on `style`. Skia ignores axes the font lacks.
+pub fn set_font_variations(style: &mut TextStyle, variations: &[FontVariation]) {
+    let coordinates = coordinates(variations);
+    if !coordinates.is_empty() {
+        let args = FontArguments::new().set_variation_design_position(VariationPosition { coordinates: &coordinates });
+        style.set_font_arguments(&args);
+    }
+}
+
+/// `face` at the given variable font axes, for measuring text as it lays out.
+pub fn vary_typeface(face: Typeface, variations: &[FontVariation]) -> Typeface {
+    let coordinates = coordinates(variations);
+    if coordinates.is_empty() {
+        return face;
+    }
+    let args = FontArguments::new().set_variation_design_position(VariationPosition { coordinates: &coordinates });
+    face.clone_with_arguments(&args).unwrap_or(face)
+}
 
 /// Per-glyph position data extracted from SkParagraph.
 #[derive(Clone, Debug)]
@@ -338,6 +371,9 @@ impl TextNode {
             }
             if let Some(ws) = span.word_spacing {
                 text_style.set_word_spacing(ws);
+            }
+            if let Some(variations) = &span.font_variations {
+                set_font_variations(&mut text_style, variations);
             }
 
             // 5c. Line Height (per-span override; StrutStyle provides the global default)

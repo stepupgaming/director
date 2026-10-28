@@ -964,11 +964,12 @@ fn build_paragraph_colored(
         let spacing = span.letter_spacing.unwrap_or(paint.letter_spacing);
         let word = span.word_spacing.unwrap_or(paint.word_spacing);
         let style = span_font_style(weight, italic);
+        let variations = span.font_variations.as_deref().unwrap_or(&[]);
         let font = collection
             .find_typefaces(&[family], style)
             .into_iter()
             .next()
-            .map(|face| skia_safe::Font::from_typeface(face, size));
+            .map(|face| skia_safe::Font::from_typeface(director_core::node::text::vary_typeface(face, variations), size));
         let mut piece = String::new();
         style::append_wrapped(
             &mut piece,
@@ -1010,6 +1011,7 @@ fn build_paragraph_colored(
         text.set_font_style(style);
         text.set_letter_spacing(spacing);
         text.set_word_spacing(word);
+        director_core::node::text::set_font_variations(&mut text, variations);
         if paint.tabular_nums {
             text.add_font_feature("tnum", 1);
         }
@@ -1141,6 +1143,7 @@ pub fn span(text: String, paint: &PaintStyle) -> TextSpan {
         letter_spacing: Some(paint.letter_spacing),
         word_spacing: Some(paint.word_spacing),
         line_height: paint.line_height,
+        font_variations: paint.span_variations(),
         ..Default::default()
     }
 }
@@ -1823,7 +1826,8 @@ impl Builder {
     }
 
     /// The parent's text animations that reach `el`. A local `color`,
-    /// `letter-spacing`, `word-spacing`, `line-height` or `text-shadow` stops its channel. A
+    /// `letter-spacing`, `word-spacing`, `font-stretch`, `font-variation-settings`,
+    /// `line-height` or `text-shadow` stops its channel. A
     /// local relative font size scales the parent's, and an absolute one stops
     /// it. Replaced elements inherit nothing.
     fn inherit_text(&self, el: ElementRef<'_>, specified_font: Option<&str>, font_size: f32, tag: &str) -> Vec<animation::Animation> {
@@ -1848,6 +1852,8 @@ impl Builder {
             "font-size" => font_scale.is_some(),
             "letter-spacing" => !local(&["letter-spacing"]),
             "word-spacing" => !local(&["word-spacing"]),
+            "font-stretch" => !local(&["font-stretch", "font"]),
+            name if animation::variation_axis(name).is_some() => !local(&["font-variation-settings"]),
             "line-height" => !local(&["line-height", "font"]),
             _ => !local(&["text-shadow"]),
         };

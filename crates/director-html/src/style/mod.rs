@@ -2,6 +2,7 @@ use crate::background_box::AxisRepeat;
 use crate::box_edges::BoxEdge;
 use crate::computed::ComputedStyle;
 use crate::css::{split, Values};
+use director_core::element::FontVariation;
 use director_core::{
     node::BoxNode,
     types::{Color, ObjectPosition},
@@ -116,6 +117,10 @@ pub struct PaintStyle {
     pub letter_spacing: f32,
     /// Extra advance after each space in px.
     pub word_spacing: f32,
+    /// `font-stretch` as a percent of normal width. Variable fonts take it on `wdth`.
+    pub font_stretch: f32,
+    /// `font-variation-settings` axis positions.
+    pub font_variations: Vec<FontVariation>,
     /// First-line `text-indent`. A percent is a fraction of the text box width.
     pub text_indent: LengthPercentage,
     /// `font-variant-numeric: tabular-nums` enables OpenType `tnum`.
@@ -899,6 +904,8 @@ pub fn translate(
         font_style: "normal".into(),
         letter_spacing: 0.0,
         word_spacing: 0.0,
+        font_stretch: 100.0,
+        font_variations: Vec::new(),
         text_indent: zero(),
         tabular_nums: false,
         line_height: None,
@@ -1048,6 +1055,7 @@ pub fn translate(
                         .trim_matches(['\'', '"'])
                         .to_string()
                 }
+                "font-variation-settings" => paint.font_variations = parse_variation_settings(s)?,
                 "font-variant-numeric" => {
                     paint.tabular_nums = match s.trim() {
                         "normal" => false,
@@ -1929,6 +1937,64 @@ fn stroke_over_fill(value: &str) -> Result<bool, String> {
     })
 }
 
+impl PaintStyle {
+    /// Variable font axes for this text: `font-variation-settings`, plus
+    /// `font-stretch` on `wdth` when the settings leave it unset. `None` when
+    /// both are at their defaults.
+    pub fn span_variations(&self) -> Option<Vec<FontVariation>> {
+        let mut out = self.font_variations.clone();
+        if self.font_stretch != 100.0 && !out.iter().any(|v| v.axis == "wdth") {
+            out.push(FontVariation { axis: "wdth".into(), value: self.font_stretch });
+        }
+        (!out.is_empty()).then_some(out)
+    }
+}
+
+/// A `font-stretch` keyword or percentage as a percent of normal width.
+pub fn stretch_percent(s: &str) -> Result<f32, String> {
+    let s = s.trim();
+    let keyword = match s {
+        "normal" => Some(100.0),
+        "ultra-condensed" => Some(50.0),
+        "extra-condensed" => Some(62.5),
+        "condensed" => Some(75.0),
+        "semi-condensed" => Some(87.5),
+        "semi-expanded" => Some(112.5),
+        "expanded" => Some(125.0),
+        "extra-expanded" => Some(150.0),
+        "ultra-expanded" => Some(200.0),
+        _ => None,
+    };
+    keyword
+        .or_else(|| s.strip_suffix('%').and_then(|n| n.trim().parse().ok()))
+        .filter(|p: &f32| *p >= 0.0)
+        .ok_or_else(|| format!("unsupported font-stretch '{s}'"))
+}
+
+/// `font-variation-settings`: `normal`, or a list of quoted four-letter axis
+/// tags with numbers such as `"wdth" 75, "wght" 800`. A repeated axis keeps
+/// its last value.
+pub fn parse_variation_settings(s: &str) -> Result<Vec<FontVariation>, String> {
+    let s = s.trim();
+    if s == "normal" {
+        return Ok(Vec::new());
+    }
+    let bad = || format!("unsupported font-variation-settings '{s}'");
+    let mut out: Vec<FontVariation> = Vec::new();
+    for item in split(s, true) {
+        let item = item.trim();
+        let quote = item.chars().next().filter(|c| matches!(c, '"' | '\'')).ok_or_else(bad)?;
+        let (axis, rest) = item[1..].split_once(quote).ok_or_else(bad)?;
+        if axis.len() != 4 || !axis.is_ascii() {
+            return Err(bad());
+        }
+        let value: f32 = rest.trim().parse().map_err(|_| bad())?;
+        out.retain(|v| v.axis != axis);
+        out.push(FontVariation { axis: axis.into(), value });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod mixed_calc_basis {
     use lightningcss::traits::Parse;
@@ -1993,3 +2059,4 @@ mod mixed_calc_basis {
         assert!((pure.value() - 12.0).abs() < 1.0e-4);
     }
 }
+

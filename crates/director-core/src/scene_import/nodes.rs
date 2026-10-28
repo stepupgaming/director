@@ -122,6 +122,7 @@ pub fn text_node(body: &doc::TextBody, opacity: &Channel, cx: &ImportContext) ->
             letter_spacing: span.letter_spacing,
             word_spacing: span.word_spacing,
             line_height: span.line_height,
+            font_variations: span.font_variations.clone(),
         })
         .collect();
     let mut node = TextNode::new(spans, cx.assets.font_collection.clone());

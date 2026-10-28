@@ -818,6 +818,12 @@ fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
                     }
                 }
             }
+            // Browsers compute font-stretch keywords to percentages.
+            if prop == "font-stretch" {
+                if let Ok(percent) = crate::style::stretch_percent(v) {
+                    return format!("{percent}%");
+                }
+            }
             // Browsers compute letter and word spacing to px.
             if matches!(prop, "letter-spacing" | "word-spacing") && v != "normal" {
                 let m = crate::style::Metrics { width: 0.0, height: 0.0, font_size: p.font_size };
@@ -858,6 +864,8 @@ fn initial(tag: &str, prop: &str) -> &'static str {
         "z-index" | "left" | "top" | "right" | "bottom" => "auto",
         "filter" | "box-shadow" | "text-shadow" | "clip-path" | "mask-image" | "background-image" => "none",
         "letter-spacing" | "word-spacing" | "line-height" | "font-weight" | "font-style" => "normal",
+        "font-stretch" => "100%",
+        "font-variation-settings" => "normal",
         "color" => "rgb(0, 0, 0)",
         "background-color" => "rgba(0, 0, 0, 0)",
         p if p.starts_with("border") && p.ends_with("color") => "rgb(0, 0, 0)",

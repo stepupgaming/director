@@ -162,6 +162,7 @@ fn make_text_node(d: &mut crate::director::Director, text: &str, color: Option<C
         letter_spacing: None,
         word_spacing: None,
         line_height: None,
+        font_variations: None,
     };
     let mut node = TextNode::new(vec![span], d.assets.font_collection.clone());
     node.default_font_size = Animated::new(size);

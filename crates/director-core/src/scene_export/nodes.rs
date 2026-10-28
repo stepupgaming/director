@@ -80,6 +80,7 @@ pub fn text_export(node: &TextNode) -> ElementExport {
                     letter_spacing: span.letter_spacing,
                     word_spacing: span.word_spacing,
                     line_height: span.line_height,
+                    font_variations: span.font_variations.clone(),
                 })
                 .collect(),
             font_size: channel(&node.default_font_size),

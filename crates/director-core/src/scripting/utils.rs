@@ -1190,6 +1190,7 @@ pub fn parse_spans_from_dynamic(content: rhai::Dynamic) -> Vec<TextSpan> {
                     letter_spacing: None,
                     word_spacing: None,
                     line_height: None,
+                    font_variations: None,
                 };
                 parse_text_style(&map, &mut span);
                 spans.push(span);
@@ -1209,6 +1210,7 @@ pub fn parse_spans_from_dynamic(content: rhai::Dynamic) -> Vec<TextSpan> {
                     letter_spacing: None,
                     word_spacing: None,
                     line_height: None,
+                    font_variations: None,
                 });
             }
         }
@@ -1228,6 +1230,7 @@ pub fn parse_spans_from_dynamic(content: rhai::Dynamic) -> Vec<TextSpan> {
             letter_spacing: None,
             word_spacing: None,
             line_height: None,
+            font_variations: None,
         });
     }
     spans

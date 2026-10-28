@@ -41,7 +41,11 @@ pub struct TextSpan {
     pub word_spacing: Option<f32>,
     /// Line height multiplier (1.0 = single, 1.5 = 1.5x, etc.).
     pub line_height: Option<f32>,
+    /// Variable font axis positions. `None` uses the font's defaults.
+    pub font_variations: Option<Vec<FontVariation>>,
 }
+
+pub use director_scene::FontVariation;
 
 /// Strategies for fitting text within a constrained container.
 #[derive(Clone, Debug, PartialEq)]

@@ -85,12 +85,23 @@ pub(super) fn apply(
                 .map(|style| paint.font_style = style.into())
                 .ok_or_else(|| "oblique font style unsupported".into())
         }
-        // The `font` shorthand expands to both, so `normal` must pass.
-        Property::FontStretch(stretch) => match stretch {
-            FontStretch::Keyword(FontStretchKeyword::Normal) => Ok(()),
-            FontStretch::Percentage(p) if p.0 == 1.0 => Ok(()),
-            _ => Err("font-stretch other than normal unsupported".into()),
-        },
+        Property::FontStretch(stretch) => {
+            paint.font_stretch = match stretch {
+                FontStretch::Percentage(p) => p.0 * 100.0,
+                FontStretch::Keyword(k) => match k {
+                    FontStretchKeyword::Normal => 100.0,
+                    FontStretchKeyword::UltraCondensed => 50.0,
+                    FontStretchKeyword::ExtraCondensed => 62.5,
+                    FontStretchKeyword::Condensed => 75.0,
+                    FontStretchKeyword::SemiCondensed => 87.5,
+                    FontStretchKeyword::SemiExpanded => 112.5,
+                    FontStretchKeyword::Expanded => 125.0,
+                    FontStretchKeyword::ExtraExpanded => 150.0,
+                    FontStretchKeyword::UltraExpanded => 200.0,
+                },
+            };
+            Ok(())
+        }
         Property::FontVariantCaps(FontVariantCaps::Normal) => Ok(()),
         Property::FontVariantCaps(_) => Err("font-variant-caps other than normal unsupported".into()),
         Property::LetterSpacing(spacing) => match spacing {

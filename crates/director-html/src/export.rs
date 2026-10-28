@@ -87,6 +87,8 @@ fn paint(p: &PaintStyle, cx: &mut ExportContext) -> Result<doc::HtmlPaint, Expor
         font_style: p.font_style.clone(),
         letter_spacing: p.letter_spacing,
         word_spacing: p.word_spacing,
+        font_stretch: p.font_stretch,
+        font_variations: p.font_variations.clone(),
         text_indent: export_length(p.text_indent)?,
         tabular_nums: p.tabular_nums,
         line_height: p.line_height,

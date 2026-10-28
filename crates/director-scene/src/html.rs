@@ -98,6 +98,12 @@ pub struct HtmlPaint {
     pub letter_spacing: f32,
     #[serde(default)]
     pub word_spacing: f32,
+    /// `font-stretch` as a percent of normal width.
+    #[serde(default = "normal_stretch")]
+    pub font_stretch: f32,
+    /// `font-variation-settings` axis positions.
+    #[serde(default)]
+    pub font_variations: Vec<crate::body::FontVariation>,
     /// First-line indent. A percent is a fraction of the text box width.
     pub text_indent: Length,
     pub tabular_nums: bool,
@@ -532,4 +538,8 @@ pub enum SmilValue {
     /// Components in `0.0..=1.0`.
     Color(Rgba),
     Raw(String),
+}
+
+fn normal_stretch() -> f32 {
+    100.0
 }

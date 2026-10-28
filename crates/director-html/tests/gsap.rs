@@ -1150,6 +1150,32 @@ fn motion_blur_samples_gsap_between_frames() {
 }
 
 #[test]
+fn variable_font_axes_tween_and_reach_children() {
+    let doc = |style: &str, script: &str| {
+        format!(
+            "<style>body{{margin:0;background:black}}p{{margin:0}}</style>             <div data-composition-id='main' data-width='120' data-height='48' data-duration='2'>             <div id='t' style='position:absolute;left:0;top:0;font:32px Inter;color:white;{style}'><p>HIM</p></div></div>             {GSAP}<script>{script}</script>"
+        )
+    };
+    let ink = |p: &[u8]| p.chunks(4).map(|p| p[0] as u64).sum::<u64>();
+    let still = |style: &str| ink(&frame(&mut compile(&doc(style, ""), opts()).unwrap(), 0.0));
+    // The style attribute is single-quoted, so the axis tags take double quotes.
+    let (thin, heavy) = (still("font-variation-settings:\"wght\" 100"), still("font-variation-settings:\"wght\" 900"));
+    assert!(heavy > thin * 4, "{thin} {heavy}");
+    // font-stretch compiles; Inter has no width axis, so its glyphs keep their width.
+    assert_eq!(still("font-stretch:condensed"), still(""));
+
+    // The parent's tween reaches the paragraph that inherits it.
+    let tween = "window.__timelines = {main: gsap.timeline({paused: true})        .fromTo('#t', {fontVariationSettings: \"'wght' 100\"}, {fontVariationSettings: \"'wght' 900\", duration: 1, ease: 'none'}, 0)        .fromTo('#t', {fontStretch: '100%'}, {fontStretch: '50%', duration: 1, ease: 'none'}, 0)};";
+    let mut c = compile(&doc("", tween), opts()).unwrap();
+    near(at(track(&c, "t", "font-variation-wght"), 0.5), 500.0, 1e-3);
+    near(at(track(&c, "t", "font-stretch"), 0.5), 75.0, 1e-3);
+    let (start, middle, end) = (ink(&frame(&mut c, 0.0)), ink(&frame(&mut c, 0.5)), ink(&frame(&mut c, 1.0)));
+    assert_eq!(start, thin);
+    assert!(start < middle && middle < end, "{start} {middle} {end}");
+    assert_eq!(end, heavy);
+}
+
+#[test]
 fn keyframes_win_over_gsap_while_they_run() {
     let source = page("gsap.to('#box', {opacity: 0.6, x: 10, duration: 2, ease: 'none'})").replace(
         "</style>",

@@ -16,8 +16,8 @@ use taffy::{
     style::{AvailableSpace, Style},
 };
 
-/// Font size, letter spacing, line height and word spacing.
-type TextSize = (f32, f32, Option<f32>, f32);
+/// Font size, letter spacing, line height, word spacing and variable font axes.
+type TextSize = (f32, f32, Option<f32>, f32, Option<Vec<director_core::element::FontVariation>>);
 
 mod background;
 mod borders;
@@ -478,9 +478,10 @@ impl Element for HtmlElement {
                 if recolor {
                     text.default_color = director_core::animation::Animated::new(self.paint.color);
                 }
-                let text_size = |p: &PaintStyle| (p.font_size, p.letter_spacing, p.line_height, p.word_spacing);
+                let text_size =
+                    |p: &PaintStyle| (p.font_size, p.letter_spacing, p.line_height, p.word_spacing, p.span_variations());
                 let (base, size) = (text_size(&self.base_paint), text_size(&self.paint));
-                let sized = (size != base).then_some(size);
+                let sized = (size != base).then(|| size.clone());
                 if self.paint.text != self.shown_text || sized != self.shown_size {
                     let own = self.own_spans.get_or_insert_with(|| text.spans.clone());
                     text.spans = match &self.paint.text {
@@ -502,6 +503,9 @@ impl Element for HtmlElement {
                                 }
                                 if span.word_spacing == Some(base.3) {
                                     span.word_spacing = Some(size.3);
+                                }
+                                if span.font_variations == base.4 {
+                                    span.font_variations = size.4.clone();
                                 }
                                 span
                             })

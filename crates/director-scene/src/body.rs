@@ -163,6 +163,17 @@ pub struct TextSpan {
     pub word_spacing: Option<f32>,
     /// Line height as a multiple of the font size.
     pub line_height: Option<f32>,
+    /// Variable font axis positions. `None` uses the font's defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_variations: Option<Vec<FontVariation>>,
+}
+
+/// One variable font axis position: a four-letter OpenType tag such as
+/// `wdth` or `wght`, and its value in the font's design units.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FontVariation {
+    pub axis: String,
+    pub value: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

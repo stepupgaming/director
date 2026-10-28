@@ -143,6 +143,8 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
             let unit = ["px", "deg", "%"].iter().find_map(|u| s.strip_suffix(u));
             Value::Scalar(number(unit.unwrap_or(s).trim())?)
         }
+        "font-stretch" => Value::Scalar(crate::style::stretch_percent(s)?),
+        name if variation_axis(name).is_some() => Value::Scalar(number(s.trim())?),
         "text" => Value::Text(s.to_string()),
         _ => return Err(format!("unsupported animated property '{name}'")),
     })
@@ -649,6 +651,8 @@ pub(crate) fn from_track(
                 name if border_side(name).is_some_and(|(_, field)| field == "width") => format!("{n}px"),
                 name if box_side(name).is_some() => format!("{n}px"),
                 "line-height" => n.to_string(),
+                "font-stretch" => format!("{n}%"),
+                name if variation_axis(name).is_some() => n.to_string(),
                 name if is_component(name) => n.to_string(),
                 "filter-drop-shadow-color" => return Err(format!("timeline '{property}' takes CSS text")),
                 name if indexed(name).is_some_and(|(_, _, field)| field == "color") => {
@@ -733,10 +737,16 @@ impl Animation {
 }
 
 /// Channels whose CSS properties descendants inherit: color, font size,
-/// letter spacing, line height and text shadows.
+/// spacings, font stretch, variable font axes, line height and text shadows.
 pub(crate) fn is_inherited(name: &str) -> bool {
-    matches!(name, "color" | "font-size" | "letter-spacing" | "word-spacing" | "line-height")
+    matches!(name, "color" | "font-size" | "letter-spacing" | "word-spacing" | "font-stretch" | "line-height")
+        || variation_axis(name).is_some()
         || indexed(name).is_some_and(|(list, _, _)| list == "text-shadow")
+}
+
+/// The OpenType axis tag a `font-variation-<tag>` channel drives.
+pub(crate) fn variation_axis(name: &str) -> Option<&str> {
+    name.strip_prefix("font-variation-").filter(|tag| tag.len() == 4 && tag.is_ascii())
 }
 
 fn mix(a: f32, b: f32, t: f32) -> f32 {
@@ -980,6 +990,16 @@ impl Animation {
                 ("font-size", Value::Scalar(v)) => paint.font_size = v.max(0.0),
                 ("letter-spacing", Value::Scalar(v)) => paint.letter_spacing = v,
                 ("word-spacing", Value::Scalar(v)) => paint.word_spacing = v,
+                ("font-stretch", Value::Scalar(v)) => paint.font_stretch = v.max(0.0),
+                (name, Value::Scalar(v)) if variation_axis(name).is_some() => {
+                    let axis = variation_axis(name).unwrap_or_default();
+                    match paint.font_variations.iter_mut().find(|f| f.axis == axis) {
+                        Some(f) => f.value = v,
+                        None => paint
+                            .font_variations
+                            .push(director_core::element::FontVariation { axis: axis.into(), value: v }),
+                    }
+                }
                 ("line-height", Value::Scalar(v)) => paint.line_height = Some(v.max(0.0)),
                 (name, Value::Scalar(v)) if box_side(name).is_some() => {
                     let side = box_side(name).map_or(0, |(_, side)| side);
