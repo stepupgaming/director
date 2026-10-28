@@ -167,5 +167,6 @@ fn invalid_timelines_are_refused() {
         "</style>",
         "@keyframes f{to{opacity:0}}#box{animation:f 1s}</style>",
     );
-    assert!(refusal(&keyframed).contains("both @keyframes and the timeline"));
+    // A running @keyframes animation wins over the track, as it does over inline styles.
+    compile(&keyframed, Default::default()).unwrap();
 }

@@ -30,6 +30,7 @@ mod border;
 mod boxes;
 mod effects;
 pub(crate) use effects::{parse_box_shadows, parse_filters};
+pub(crate) use text::parse_text_shadows;
 mod layout;
 mod text;
 mod transform;
@@ -1514,7 +1515,7 @@ fn decode_background_url(
         .ok_or_else(|| format!("invalid image '{url}'"))
 }
 
-fn background_position_layers(s: &str, m: Metrics) -> Result<Vec<(AxisPos, AxisPos)>, String> {
+pub(crate) fn background_position_layers(s: &str, m: Metrics) -> Result<Vec<(AxisPos, AxisPos)>, String> {
     let parts = split(s.trim(), true);
     if parts.is_empty() {
         return Err(format!("unsupported background-position '{s}'"));

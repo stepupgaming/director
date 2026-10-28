@@ -1643,15 +1643,22 @@ impl Builder {
                 crate::gsap::base_value(channel, &element.base_style, &element.base_paint)
             };
             let shadows = |text: &str| crate::style::parse_box_shadows(text, metrics, element.base_paint.color);
+            let text_shadows = |text: &str| crate::style::parse_text_shadows(text, metrics, element.base_paint.color);
             let clip = |text: Option<&str>| match text {
                 Some(text) => crate::style::clip_points(text, &values, metrics),
                 None => Ok(element.base_paint.box_node.clip_path.clone()),
             };
-            let shapes = crate::gsap::Shapes { shadows: &shadows, clip: &clip };
-            tracks.extend(
-                crate::gsap::tracks(&series, &steps, &target, &base, &shapes, self.options.fps)
-                    .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?,
-            );
+            let positions = |text: &str| crate::style::background_position_layers(text, metrics);
+            let shapes = crate::gsap::Shapes { shadows: &shadows, text_shadows: &text_shadows, clip: &clip, positions: &positions };
+            let mut emitted = crate::gsap::tracks(&series, &steps, &target, &base, &shapes, self.options.fps)
+                .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
+            // A side whose border style is none or hidden draws no border at any width.
+            emitted.retain(|track| {
+                let Some((side, "width")) = crate::animation::border_side(&track.property) else { return true };
+                let side = ["top", "right", "bottom", "left"][side];
+                values.get(&format!("border-{side}-style")).is_some_and(|s| s != "none" && s != "hidden")
+            });
+            tracks.extend(emitted);
         }
         for (i, track) in tracks.iter().enumerate() {
             if tracks[..i].iter().any(|t| t.property == track.property) {
@@ -1660,13 +1667,10 @@ impl Builder {
                     format!("the timeline animates '{}' twice on one element", track.property),
                 )]));
             }
-            if element.animations.iter().any(|a| a.properties().any(|p| p == track.property)) {
-                return Err(CompileError::Diagnostics(vec![diagnostic(
-                    &context,
-                    format!("both @keyframes and the timeline animate '{}'", track.property),
-                )]));
-            }
         }
+        // Timeline tracks play like inline styles, so a running @keyframes
+        // animation of the same property applies after them and wins.
+        let keyframes = std::mem::take(&mut element.animations);
         for track in tracks {
             let animation = animation::from_track(&track, &paint, metrics)
                 .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
@@ -1675,6 +1679,7 @@ impl Builder {
         }
         animation::check_components(&element.animations, &element.base_paint.transform)
             .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
+        element.animations.extend(keyframes);
         let id = self.director.scene.add_node(Box::new(element));
         if let Some(probe) = &mut self.probe {
             probe.push(ProbeEntry {

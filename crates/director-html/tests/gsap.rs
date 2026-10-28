@@ -257,7 +257,7 @@ fn gsap_tracks_survive_scene_export() {
 #[test]
 fn page_scripts_fail_with_context() {
     for (source, message) in [
-        (page("gsap.to('#box', {textShadow: '0 0 4px red', duration: 1})"), "'text-shadow' on #box"),
+        (page("gsap.to('#box', {letterSpacing: 4, duration: 1})"), "'letter-spacing' on #box"),
         (
             page("gsap.fromTo('#box', {clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)'}, {clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)', duration: 1})"),
             "different corner counts",
@@ -561,6 +561,23 @@ fn svg_transforms_and_fills_play_as_smil() {
     let mid = pixel(&p, 64, 28, 32);
     assert!(mid[0] > 80 && mid[2] > 80, "{mid:?}");
     assert!(pixel(&p, 64, 28, 23)[1] < 200, "the turned corner reaches up");
+}
+
+#[test]
+fn svg_sets_hold_until_their_jump() {
+    // A linear attribute jumps at 0.51 s, between the frames at 0.5 and 0.533 s,
+    // and a discrete one at 1.01 s.
+    let mut c = svg_page(
+        "",
+        "<circle id='c' cx='10' cy='32' r='6' fill='blue' visibility='visible'/>",
+        "<script>gsap.timeline().to('#c', {attr: {cx: 30}, duration: 0.5, ease: 'none'})\
+         .set('#c', {attr: {cx: 50}}, 0.51).set('#c', {attr: {visibility: 'hidden'}}, 1.01)</script>",
+    );
+    let at = |c: &mut CompiledHtml, t: f64, x: i32| blue(pixel(&frame(c, t), 64, x, 32));
+    assert!(at(&mut c, 0.505, 25) && !at(&mut c, 0.505, 54));
+    assert!(at(&mut c, 0.52, 54) && !at(&mut c, 0.52, 25));
+    assert!(at(&mut c, 1.005, 50));
+    assert!(!at(&mut c, 1.02, 50));
 }
 
 #[test]
@@ -896,3 +913,75 @@ fn drop_shadow_filters_tween_offset_blur_and_color() {
     assert!(close(pixel(&p, 64, 30, 30), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 30, 30));
 }
 
+
+#[test]
+fn border_text_shadow_and_background_position_tweens_become_channels() {
+    // Border colors and widths per side; the box grows outward from its corner.
+    let source = page(
+        "window.__timelines = {main: gsap.timeline({paused: true}).to('#box',\
+         {borderColor: 'rgb(255,0,0)', borderWidth: 6, duration: 1, ease: 'none'}, 0)};",
+    )
+    .replace("background:rgb(0,0,255)}", "background:rgb(0,0,255);border:2px solid rgb(0,0,255)}");
+    let mut c = compile(&source, opts()).unwrap();
+    near(at(track(&c, "box", "border-top-width"), 0.5), 4.0, 1e-3);
+    near(at(track(&c, "box", "border-left-width"), 0.5), 4.0, 1e-3);
+    assert!(tracks(&c).iter().any(|t| t.property == "border-bottom-color"));
+    // Row 40 stays below the paragraph text.
+    let p = frame(&mut c, 0.0);
+    assert!(close(pixel(&p, 64, 21, 40), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 21, 40));
+    let p = frame(&mut c, 1.0);
+    assert!(close(pixel(&p, 64, 23, 40), [255, 0, 0, 255]), "{:?}", pixel(&p, 64, 23, 40));
+    assert!(close(pixel(&p, 64, 36, 40), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 36, 40));
+    assert!(close(pixel(&p, 64, 49, 40), [255, 0, 0, 255]), "{:?}", pixel(&p, 64, 49, 40));
+    // A side with no border style draws nothing at any width.
+    let c = run("window.__timelines = {main: gsap.timeline({paused: true}).to('#box', {borderWidth: 6, duration: 1}, 0)};");
+    assert!(c.timeline.as_ref().is_none_or(|t| t.tracks.iter().all(|t| !t.property.starts_with("border"))));
+
+    // A text shadow slides out from under its text.
+    let source = format!(
+        "<style>body{{margin:0;background:black}}</style>\
+         <div data-composition-id='main' data-width='64' data-height='64' data-duration='2'>\
+         <div id='t' style='position:absolute;left:4px;top:4px;font:48px Roboto;color:white;text-shadow:0px 0px 0px rgb(255,0,0)'>I</div></div>\
+         {GSAP}<script>window.__timelines = {{main: gsap.timeline({{paused: true}}).to('#t', {{textShadow: '20px 0px 0px rgb(255,0,0)', duration: 1, ease: 'none'}}, 0)}};</script>"
+    );
+    let mut c = compile(&source, opts()).unwrap();
+    near(at(track(&c, "t", "text-shadow-0-x"), 0.5), 10.0, 1e-3);
+    let red = |p: &[u8]| p.chunks(4).filter(|p| p[0] > 200 && p[1] < 60 && p[2] < 60).count();
+    let (before, after) = (red(&frame(&mut c, 0.0)), red(&frame(&mut c, 1.0)));
+    assert!(before < 10 && after > 40, "{before} {after}");
+
+    // A background layer's position moves its tile.
+    let source = page(
+        "window.__timelines = {main: gsap.timeline({paused: true}).to('#box',\
+         {backgroundPosition: '10px 0px', duration: 1, ease: 'none'}, 0)};",
+    )
+    .replace(
+        "background:rgb(0,0,255)}",
+        "background:linear-gradient(to right, rgb(255,0,0) 50%, rgb(0,0,255) 50%) no-repeat;background-size:20px 20px}",
+    );
+    let mut c = compile(&source, opts()).unwrap();
+    near(at(track(&c, "box", "background-position-0-x"), 0.5), 5.0, 1e-3);
+    let p = frame(&mut c, 0.0);
+    assert!(close(pixel(&p, 64, 22, 38), [255, 0, 0, 255]), "{:?}", pixel(&p, 64, 22, 38));
+    let p = frame(&mut c, 1.0);
+    assert!(close(pixel(&p, 64, 22, 38), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 22, 38));
+    assert!(close(pixel(&p, 64, 32, 38), [255, 0, 0, 255]), "{:?}", pixel(&p, 64, 32, 38));
+}
+
+#[test]
+fn keyframes_win_over_gsap_while_they_run() {
+    let source = page("gsap.to('#box', {opacity: 0.6, x: 10, duration: 2, ease: 'none'})").replace(
+        "</style>",
+        "@keyframes k{from,to{opacity:0.2}}@keyframes s{from,to{transform:translateX(20px)}}\
+         #box{animation:k 0.5s 1s,s 0.5s 1s}</style>",
+    );
+    let mut c = compile(&source, opts()).unwrap();
+    // Row 38 stays below the paragraph text.
+    let blue = |p: &[u8], x: i32| pixel(p, 64, x, 38)[2];
+    let p = frame(&mut c, 0.5);
+    assert!(blue(&p, 25).abs_diff(230) < 6 && blue(&p, 50) < 20, "{} {}", blue(&p, 25), blue(&p, 50));
+    let p = frame(&mut c, 1.25);
+    assert!(blue(&p, 50).abs_diff(51) < 6 && blue(&p, 25) < 20, "{} {}", blue(&p, 50), blue(&p, 25));
+    let p = frame(&mut c, 1.75);
+    assert!(blue(&p, 45).abs_diff(166) < 6 && blue(&p, 25) < 20 && blue(&p, 55) < 20, "{} {}", blue(&p, 45), blue(&p, 55));
+}

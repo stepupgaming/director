@@ -7,10 +7,12 @@ mod dom;
 pub(crate) mod ease;
 
 use crate::animation::{
-    filter_default as default_amount, filter_scalar, filter_shadow_color, indexed, shadow_scalar, Parts, COMPONENTS,
+    border_side, filter_default as default_amount, filter_scalar, filter_shadow_color, indexed, shadow_scalar, Parts,
+    COMPONENTS, NO_TEXT_SHADOW,
     FILTERS as FILTER_CHANNELS, NO_BOX_SHADOW,
 };
-use crate::style::Shadow;
+use crate::style::{AxisPos, Shadow};
+use director_core::element::TextShadow;
 use crate::assets::AssetStore;
 use crate::style::{color, PaintStyle};
 use crate::timeline::{TimelineKeyframe, TimelineTrack, TimelineValue};
@@ -72,6 +74,17 @@ const NATIVE: &[&str] = &[
     "filter",
     "box-shadow",
     "clip-path",
+    "text-shadow",
+    "border-color",
+    "border-top-color",
+    "border-right-color",
+    "border-bottom-color",
+    "border-left-color",
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+    "background-position",
 ];
 
 struct Script {
@@ -435,6 +448,17 @@ fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<Recorded, 
                 }
             }
         }
+        // Set times on one recorded key. A transform set names its channels.
+        let jumps = |key: &str| -> Vec<(usize, f64)> {
+            let transform = matches!(key, "@transform" | "transform");
+            steps.get(&i).map_or_else(Vec::new, |steps| {
+                steps
+                    .iter()
+                    .filter(|(name, _)| *name == key || transform && COMPONENTS.contains(&name.as_str()))
+                    .flat_map(|(_, list)| list.iter().copied())
+                    .collect()
+            })
+        };
         let mut kept = Series::new();
         // Values that vary inside an SVG become SMIL on the element.
         let in_svg = doc.svg_owner(i)?.is_some();
@@ -447,7 +471,7 @@ fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<Recorded, 
                 if constant {
                     doc.write_attr(i, name, first)?;
                 } else if in_svg || (svg_root && name == "viewBox") {
-                    let (base, animate) = svg_animation(name, &values, fps)?;
+                    let (base, animate) = svg_animation(name, &values, &jumps(&key), fps)?;
                     doc.write_attr(i, name, Some(base))?;
                     smil.extend(animate);
                 } else {
@@ -456,7 +480,7 @@ fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<Recorded, 
                 continue;
             }
             if in_svg && !constant && key != "#text" {
-                let (base, animate) = svg_animation(&key, &values, fps)?;
+                let (base, animate) = svg_animation(&key, &values, &jumps(&key), fps)?;
                 put(&mut decls, &key, Some(base));
                 smil.extend(animate);
                 continue;
@@ -522,13 +546,16 @@ type Attrs = Vec<(String, String)>;
 const SVG_COLORS: &[&str] = &["fill", "stroke", "stop-color", "flood-color", "lighting-color", "color"];
 
 /// The base value and the `<animate>` attributes that replay one value GSAP
-/// varies on an SVG element. A value that only fills in from unset needs none. Times are on the composition clock, which
-/// `director-clock` tells the SMIL compiler. Frames whose values share one
-/// numeric skeleton interpolate linearly between swing-door keys; other values
-/// change on their frames.
+/// varies on an SVG element. A value that only fills in from unset needs none.
+/// Times are on the composition clock, which `director-clock` tells the SMIL
+/// compiler. Frames whose values share one numeric skeleton interpolate
+/// linearly between swing-door keys; other values change on their frames. A
+/// set in `jumps` (frame, time) holds the value before it until its time,
+/// through two keys that share one key time.
 fn svg_animation(
     name: &str,
     values: &[Option<String>],
+    jumps: &[(usize, f64)],
     fps: f64,
 ) -> Result<(String, Option<Attrs>), String> {
     let identity = (name == "transform").then(|| "matrix(1,0,0,1,0,0)".to_string());
@@ -575,25 +602,45 @@ fn svg_animation(
     }
     let lists: Vec<(String, Vec<f64>)> = texts.iter().map(|t| skeleton(t)).collect();
     let linear = !lists[0].1.is_empty() && lists.iter().all(|(s, _)| *s == lists[0].0);
+    // Jumps where the value changes, earliest per frame.
+    let mut jumps: Vec<(usize, f64)> =
+        jumps.iter().copied().filter(|&(f, _)| f > 0 && f < texts.len() && texts[f] != texts[f - 1]).collect();
+    jumps.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    jumps.dedup_by_key(|j| j.0);
+    let jump = |f: usize| jumps.iter().find(|j| j.0 == f).map(|j| j.1);
     let mut attrs = vec![("attributeName".to_string(), name.to_string())];
-    let (frames, span) = if linear {
+    // Keys as (seconds, frame whose value shows).
+    let mut keys: Vec<(f64, usize)> = Vec::new();
+    let end = if linear {
         let samples: Vec<&[f64]> = lists.iter().map(|(_, n)| n.as_slice()).collect();
-        let frames = keep(&samples, 5e-4);
-        let span = frames[frames.len() - 1] - frames[0];
-        (frames, span)
+        let mut start = 0;
+        for piece in jumps.iter().map(Some).chain([None]) {
+            let stop = piece.map_or(samples.len(), |&(f, _)| f);
+            keys.extend(keep(&samples[start..stop], 5e-4).into_iter().map(|k| ((start + k) as f64 / fps, start + k)));
+            if let Some(&(f, time)) = piece {
+                keys.push((time, f - 1));
+                keys.push((time, f));
+                start = f;
+            }
+        }
+        keys.dedup_by(|b, a| (b.0 - a.0).abs() < 1e-9 && texts[b.1] == texts[a.1]);
+        keys[keys.len() - 1].0
     } else {
-        let frames: Vec<usize> = (1..texts.len()).filter(|&f| texts[f] != texts[f - 1]).collect();
-        let span = (texts.len() - 1 - frames[0]).max(1);
+        keys = (1..texts.len())
+            .filter(|&f| texts[f] != texts[f - 1])
+            .map(|f| (jump(f).unwrap_or(f as f64 / fps), f))
+            .collect();
         attrs.push(("calcMode".into(), "discrete".into()));
-        (frames, span)
+        ((texts.len() - 1) as f64 / fps).max(keys[0].0 + 1.0 / fps)
     };
-    let start = frames[0];
-    let values: Vec<&str> = frames.iter().map(|&k| texts[k].as_str()).collect();
-    let times: Vec<String> = frames.iter().map(|&k| short(round((k - start) as f64 / span as f64))).collect();
+    let start = keys[0].0;
+    let span = end - start;
+    let values: Vec<&str> = keys.iter().map(|&(_, f)| texts[f].as_str()).collect();
+    let times: Vec<String> = keys.iter().map(|&(t, _)| short((t - start) / span)).collect();
     attrs.push(("values".into(), values.join(";")));
     attrs.push(("keyTimes".into(), times.join(";")));
-    attrs.push(("begin".into(), format!("{}s", short(start as f64 / fps))));
-    attrs.push(("dur".into(), format!("{}s", short(span as f64 / fps))));
+    attrs.push(("begin".into(), format!("{}s", short(start))));
+    attrs.push(("dur".into(), format!("{}s", short(span))));
     attrs.push(("fill".into(), "freeze".into()));
     attrs.push(("director-clock".into(), "composition".into()));
     Ok((base, Some(attrs)))
@@ -831,8 +878,23 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
         "border-top-left-radius" => length(paint.corners[0].0.into_raw(), channel),
         "filter-drop-shadow-color" => Ok(filter_shadow_color(&paint.filters).map_or_else(|| filter_default(channel), Val::color)),
         c if FILTER_CHANNELS.contains(&c) => Ok(filter_scalar(&paint.filters, c).map_or_else(|| filter_default(c), |v| Val::Num(v as f64))),
+        c if border_side(c).is_some() => {
+            let side = border_side(c).map_or(0, |(side, _)| side);
+            if c.ends_with("color") {
+                Ok(Val::color(paint.border_colors[side]))
+            } else {
+                let border = [style.border.top, style.border.right, style.border.bottom, style.border.left];
+                length(border[side].into_raw(), c)
+            }
+        }
         c if indexed(c).is_some() => Ok(match indexed(c) {
             Some(("box-shadow", i, field)) => shadow_val(paint.shadows.get(i).unwrap_or(&NO_BOX_SHADOW), field),
+            Some(("text-shadow", i, field)) => text_shadow_val(paint.text_shadows.get(i).unwrap_or(&NO_TEXT_SHADOW), field),
+            Some(("background-position", i, field)) => {
+                let list = if field.starts_with('x') { &paint.background_position_x } else { &paint.background_position_y };
+                let none = AxisPos { percent: 0.0, length: 0.0 };
+                position_val(if list.is_empty() { none } else { list[i % list.len()] }, field)
+            }
             Some((_, i, field)) => {
                 let point = paint.box_node.clip_path.as_ref().and_then(|p| p.get(i)).copied().unwrap_or_default();
                 corner_val(point, field)
@@ -856,7 +918,8 @@ fn tolerance(channel: &str) -> f64 {
         "filter-blur" | "filter-drop-shadow-x" | "filter-drop-shadow-y" | "filter-drop-shadow-blur" => 0.02,
         "filter-hue-rotate" => 0.01,
         c if c.starts_with("filter-") => 5e-4,
-        c if c.starts_with("box-shadow-") && c.ends_with("-color") => 5e-4,
+        c if c.ends_with("-color") => 5e-4,
+        c if c.starts_with("background-position-") && c.ends_with("-percent") => 0.01,
         c if c.starts_with("clip-path-") => 0.01,
         "scale-x" | "scale-y" => 1e-4,
         "translate-x-percent" | "translate-y-percent" => 0.01,
@@ -927,6 +990,22 @@ fn shadow_val(shadow: &Shadow, field: &str) -> Val {
     }
 }
 
+const TEXT_SHADOW_FIELDS: [&str; 4] = ["x", "y", "blur", "color"];
+
+fn text_shadow_val(shadow: &TextShadow, field: &str) -> Val {
+    match field {
+        "color" => Val::color(shadow.color),
+        "x" => Val::Num(shadow.offset.0 as f64),
+        "y" => Val::Num(shadow.offset.1 as f64),
+        _ => Val::Num(shadow.blur as f64),
+    }
+}
+
+/// A background position axis: its length in px, or its percent.
+fn position_val(axis: AxisPos, field: &str) -> Val {
+    Val::Num(if field.ends_with("percent") { axis.percent as f64 * 100.0 } else { axis.length as f64 })
+}
+
 /// A clip corner coordinate in box percent.
 fn corner_val(point: (f32, f32), field: &str) -> Val {
     Val::Num(if field == "x" { point.0 } else { point.1 } as f64 * 100.0)
@@ -966,7 +1045,7 @@ fn filter_channels(text: &str) -> Result<Vec<(&'static str, Val)>, String> {
 fn sample(channel: &str, text: &str) -> Result<Val, String> {
     match channel {
         "opacity" => text.trim().parse().map(Val::Num).map_err(|_| format!("GSAP opacity '{text}'")),
-        "color" | "background-color" => {
+        c if c == "color" || c.ends_with("-color") => {
             color(text.trim(), Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }).map(Val::color)
         }
         _ => text
@@ -1010,14 +1089,18 @@ fn decompose(text: &str) -> Result<Parts, String> {
         .ok_or_else(|| format!("GSAP transform '{text}' has no component form"))
 }
 
-/// Parsers for one element's sampled `box-shadow` and `clip-path` text.
-/// The clip parser reads the element's own clip for an unset frame.
+/// Parsers for one element's sampled `box-shadow`, `text-shadow`,
+/// `clip-path` and `background-position` text. The clip parser reads the
+/// element's own clip for an unset frame.
 pub(crate) struct Shapes<'a> {
     pub shadows: &'a dyn Fn(&str) -> Result<Vec<Shadow>, String>,
+    pub text_shadows: &'a dyn Fn(&str) -> Result<Vec<TextShadow>, String>,
     pub clip: &'a dyn Fn(Option<&str>) -> Clip,
+    pub positions: &'a dyn Fn(&str) -> Positions,
 }
 /// A clip polygon's corners as box fractions. `None` is no clip.
 type Clip = Result<Option<Vec<(f32, f32)>>, String>;
+type Positions = Result<Vec<(AxisPos, AxisPos)>, String>;
 
 /// Native timeline tracks for one element's sampled properties. Keys sit on
 /// frames and interpolate linearly; a set holds the value before it until
@@ -1092,6 +1175,79 @@ pub(crate) fn tracks(
                         .collect();
                     channels.push((channel, property, samples));
                 }
+            }
+            continue;
+        }
+        if property == "text-shadow" {
+            let lists = values
+                .iter()
+                .map(|v| v.as_deref().map(|text| (shapes.text_shadows)(text).map_err(|e| format!("GSAP {e}"))).transpose())
+                .collect::<Result<Vec<_>, _>>()?;
+            let count = lists.iter().flatten().map(Vec::len).max().unwrap_or(0);
+            for i in 0..count {
+                for field in TEXT_SHADOW_FIELDS {
+                    let channel = format!("text-shadow-{i}-{field}");
+                    let base = base(&channel)?;
+                    let samples = lists
+                        .iter()
+                        .map(|list| {
+                            list.as_ref().map_or(base, |list| text_shadow_val(list.get(i).unwrap_or(&NO_TEXT_SHADOW), field))
+                        })
+                        .collect();
+                    channels.push((channel, property, samples));
+                }
+            }
+            continue;
+        }
+        if property == "background-position" {
+            let lists = values
+                .iter()
+                .map(|v| v.as_deref().map(|text| (shapes.positions)(text).map_err(|e| format!("GSAP {e}"))).transpose())
+                .collect::<Result<Vec<_>, _>>()?;
+            let count = lists.iter().flatten().map(Vec::len).max().unwrap_or(0);
+            for i in 0..count {
+                for field in ["x", "y", "x-percent", "y-percent"] {
+                    let channel = format!("background-position-{i}-{field}");
+                    let base = base(&channel)?;
+                    let samples = lists
+                        .iter()
+                        .map(|list| {
+                            list.as_ref().map_or(base, |list| {
+                                let (x, y) = list[i % list.len()];
+                                position_val(if field.starts_with('x') { x } else { y }, field)
+                            })
+                        })
+                        .collect();
+                    channels.push((channel, property, samples));
+                }
+            }
+            continue;
+        }
+        // `border-color` lists one to four colors, top, right, bottom, left.
+        if property == "border-color" {
+            let sides = values
+                .iter()
+                .map(|v| {
+                    v.as_deref()
+                        .map(|text| {
+                            let parts = crate::css::split(text.trim(), false);
+                            let pick: &[usize; 4] = match parts.len() {
+                                1 => &[0, 0, 0, 0],
+                                2 => &[0, 1, 0, 1],
+                                3 => &[0, 1, 2, 1],
+                                4 => &[0, 1, 2, 3],
+                                _ => return Err(format!("GSAP border-color '{text}' lists {} colors", parts.len())),
+                            };
+                            pick.iter().map(|&k| sample("color", &parts[k])).collect::<Result<Vec<_>, _>>()
+                        })
+                        .transpose()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            for (side, name) in ["top", "right", "bottom", "left"].iter().enumerate() {
+                let channel = format!("border-{name}-color");
+                let base = base(&channel)?;
+                let samples = sides.iter().map(|s| s.as_ref().map_or(base, |s| s[side])).collect();
+                channels.push((channel, property, samples));
             }
             continue;
         }

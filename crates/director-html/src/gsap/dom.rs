@@ -723,13 +723,39 @@ fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
             "font-size" => return px(p.font_size),
             _ => {}
         }
-        if let Some(v) = p.css.get(prop) {
-            let current = || {
-                p.css
-                    .get("color")
-                    .and_then(|c| crate::style::color(c, director_core::types::Color::BLACK).ok())
-                    .unwrap_or(director_core::types::Color::BLACK)
+        let current = || {
+            p.css
+                .get("color")
+                .and_then(|c| crate::style::color(c, director_core::types::Color::BLACK).ok())
+                .unwrap_or(director_core::types::Color::BLACK)
+        };
+        // Border colors default to currentColor, and `border-color` lists
+        // its sides once each unless they agree.
+        let side_color = |side: &str| {
+            p.css
+                .get(&format!("border-{side}-color"))
+                .and_then(|c| crate::style::color(c, current()).ok())
+                .map_or_else(|| rgb(current()), rgb)
+        };
+        if prop == "border-color" {
+            let sides = ["top", "right", "bottom", "left"].map(side_color);
+            return if sides.iter().all(|s| *s == sides[0]) { sides[0].clone() } else { sides.join(" ") };
+        }
+        if let Some(side) = prop.strip_prefix("border-").and_then(|s| s.strip_suffix("-color")) {
+            if ["top", "right", "bottom", "left"].contains(&side) {
+                return side_color(side);
+            }
+        }
+        // Each layer's x and y longhands pair into one position.
+        if prop == "background-position" && !p.css.contains_key(prop) {
+            let axis = |name: &str, fallback: &str| {
+                p.css.get(name).map_or_else(|| vec![fallback.to_string()], |v| crate::css::split(v, true))
             };
+            let (x, y) = (axis("background-position-x", "0%"), axis("background-position-y", "0%"));
+            let layers = x.len().max(y.len());
+            return (0..layers).map(|i| format!("{} {}", x[i % x.len()], y[i % y.len()])).collect::<Vec<_>>().join(", ");
+        }
+        if let Some(v) = p.css.get(prop) {
             if prop.ends_with("color") || matches!(prop, "fill" | "stroke") {
                 if let Ok(c) = crate::style::color(v, current()) {
                     return rgb(c);
@@ -743,6 +769,18 @@ fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
                         let shadow = |s: &crate::style::Shadow| {
                             let inset = if s.inset { " inset" } else { "" };
                             format!("{} {} {} {} {}{inset}", rgb(s.color), px(s.x), px(s.y), px(s.blur * 2.0), px(s.spread))
+                        };
+                        return list.iter().map(shadow).collect::<Vec<_>>().join(", ");
+                    }
+                }
+            }
+            // Browsers list each text shadow as its color and three lengths.
+            if prop == "text-shadow" {
+                let m = crate::style::Metrics { width: 0.0, height: 0.0, font_size: p.font_size };
+                if let Ok(list) = crate::style::parse_text_shadows(v, m, current()) {
+                    if !list.is_empty() {
+                        let shadow = |s: &director_core::element::TextShadow| {
+                            format!("{} {} {} {}", rgb(s.color), px(s.offset.0), px(s.offset.1), px(s.blur))
                         };
                         return list.iter().map(shadow).collect::<Vec<_>>().join(", ");
                     }
@@ -782,7 +820,8 @@ fn initial(tag: &str, prop: &str) -> &'static str {
         "filter" | "box-shadow" | "text-shadow" | "clip-path" | "mask-image" | "background-image" => "none",
         "letter-spacing" | "word-spacing" | "line-height" | "font-weight" | "font-style" => "normal",
         "color" => "rgb(0, 0, 0)",
-        "background-color" | "border-color" => "rgba(0, 0, 0, 0)",
+        "background-color" => "rgba(0, 0, 0, 0)",
+        p if p.starts_with("border") && p.ends_with("color") => "rgb(0, 0, 0)",
         "background-position" => "0% 0%",
         "transform" | "perspective" => "none",
         "transform-origin" => "0px 0px",

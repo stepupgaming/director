@@ -210,6 +210,18 @@ pub(super) fn apply(
     Some(result)
 }
 
+/// A `text-shadow` value as scripts write it, resolved like the cascade's.
+pub(crate) fn parse_text_shadows(text: &str, m: Metrics, current: Color) -> Result<Vec<TextShadow>, String> {
+    use lightningcss::{properties::PropertyId, stylesheet::ParserOptions};
+    if text.trim() == "none" {
+        return Ok(Vec::new());
+    }
+    match Property::parse_string(PropertyId::TextShadow, text, ParserOptions::default()) {
+        Ok(Property::TextShadow(list)) => list.iter().map(|shadow| text_shadow(shadow, m, current)).collect(),
+        _ => Err(format!("text-shadow '{text}' does not parse")),
+    }
+}
+
 fn text_shadow(shadow: &CssTextShadow, m: Metrics, current: Color) -> Result<TextShadow, String> {
     if absolute_px(&shadow.spread, m)? != 0.0 {
         return Err("text-shadow spread is unsupported".into());

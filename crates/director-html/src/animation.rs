@@ -1,11 +1,11 @@
 use crate::{
     css::{split, Css, Values},
     gsap::ease::GsapEase,
-    style::{color, number, px, FilterFn, Metrics, PaintStyle, Shadow},
+    style::{color, number, px, AxisPos, FilterFn, Metrics, PaintStyle, Shadow},
 };
 use director_core::scene_export::{export_easing, rgba, ExportError};
 use director_core::scene_import::{color as import_color, easing as import_easing, ImportError};
-use director_core::{animation::EasingType, types::Color};
+use director_core::{animation::EasingType, element::TextShadow, types::Color};
 use director_scene::html as doc;
 use lightningcss::traits::ToCss;
 use lightningcss::{
@@ -125,6 +125,8 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
             TransformList::parse_string(s).map_err(|e| format!("animation transform: {e:?}"))?,
         ),
         "width" | "height" | "left" | "top" | "border-top-left-radius" => Value::Scalar(px(s, m)?),
+        name if border_side(name).is_some_and(|(_, field)| field == "color") => Value::Color(color(s, current)?),
+        name if border_side(name).is_some() => Value::Scalar(px(s, m)?),
         name if is_component(name) => Value::Scalar(component(name, s)?),
         "filter-drop-shadow-color" => Value::Color(color(s, current)?),
         name if indexed(name).is_some_and(|(_, _, field)| field == "color") => Value::Color(color(s, current)?),
@@ -272,8 +274,12 @@ fn set_filter_color(list: &mut Vec<FilterFn>, c: Color) {
 pub(crate) fn indexed(name: &str) -> Option<(&'static str, usize, &str)> {
     let (list, fields, cap): (&'static str, &[&str], usize) = if name.starts_with("box-shadow-") {
         ("box-shadow", &["x", "y", "blur", "spread", "color", "inset"], 32)
+    } else if name.starts_with("text-shadow-") {
+        ("text-shadow", &["x", "y", "blur", "color"], 32)
     } else if name.starts_with("clip-path-") {
         ("clip-path", &["x", "y"], 256)
+    } else if name.starts_with("background-position-") {
+        ("background-position", &["x", "y", "x-percent", "y-percent"], 32)
     } else {
         return None;
     };
@@ -311,6 +317,45 @@ fn set_shadow(list: &mut Vec<Shadow>, i: usize, field: &str, v: Value) {
         ("inset", Value::Scalar(v)) => shadow.inset = v >= 0.5,
         _ => {}
     }
+}
+/// The text shadow a missing list entry stands for: transparent and unblurred.
+pub(crate) const NO_TEXT_SHADOW: TextShadow = TextShadow { color: NO_SHADOW, blur: 0.0, offset: (0.0, 0.0) };
+fn set_text_shadow(list: &mut Vec<TextShadow>, i: usize, field: &str, v: Value) {
+    if list.len() <= i {
+        list.resize(i + 1, NO_TEXT_SHADOW);
+    }
+    let shadow = &mut list[i];
+    match (field, v) {
+        ("color", Value::Color(c)) => shadow.color = c,
+        ("x", Value::Scalar(v)) => shadow.offset.0 = v,
+        ("y", Value::Scalar(v)) => shadow.offset.1 = v,
+        ("blur", Value::Scalar(v)) => shadow.blur = v.max(0.0),
+        _ => {}
+    }
+}
+/// One axis of a background layer's position. A list shorter than the layer
+/// extends with the entries it cycles through.
+fn set_position(list: &mut Vec<AxisPos>, i: usize, percent: bool, v: f32) {
+    if list.is_empty() {
+        list.push(AxisPos { percent: 0.0, length: 0.0 });
+    }
+    let n = list.len();
+    for k in n..=i {
+        list.push(list[k % n]);
+    }
+    if percent {
+        list[i].percent = v / 100.0;
+    } else {
+        list[i].length = v;
+    }
+}
+/// Border side channels: `border-<side>-color` and `border-<side>-width`,
+/// sides in CSS order top, right, bottom, left.
+pub(crate) fn border_side(name: &str) -> Option<(usize, &str)> {
+    let rest = name.strip_prefix("border-")?;
+    let (side, field) = rest.split_once('-')?;
+    let side = ["top", "right", "bottom", "left"].iter().position(|s| *s == side)?;
+    matches!(field, "color" | "width").then_some((side, field))
 }
 fn set_clip(points: &mut Option<Vec<(f32, f32)>>, i: usize, field: &str, v: f32) {
     let list = points.get_or_insert_with(Vec::new);
@@ -554,6 +599,7 @@ pub(crate) fn from_track(
             TimelineValue::Number(n) => match property {
                 "opacity" => n.to_string(),
                 "width" | "height" | "left" | "top" | "border-top-left-radius" => format!("{n}px"),
+                name if border_side(name).is_some_and(|(_, field)| field == "width") => format!("{n}px"),
                 name if is_component(name) => n.to_string(),
                 "filter-drop-shadow-color" => return Err(format!("timeline '{property}' takes CSS text")),
                 name if indexed(name).is_some_and(|(_, _, field)| field == "color") => {
@@ -564,6 +610,7 @@ pub(crate) fn from_track(
                 "color" | "background-color" | "transform" => {
                     return Err(format!("timeline '{property}' takes CSS text"))
                 }
+                name if border_side(name).is_some() => return Err(format!("timeline '{property}' takes CSS text")),
                 _ => return Err(format!("unsupported animated property '{property}'")),
             },
         };
@@ -801,7 +848,11 @@ impl Animation {
                 ("background-color", Value::Color(v)) => {
                     paint.box_node.bg_color = Some(director_core::animation::Animated::new(v))
                 }
-                ("transform", Value::Transform(v)) => paint.transform = v,
+                // A whole transform replaces the components composed so far.
+                ("transform", Value::Transform(v)) => {
+                    paint.transform = v;
+                    *parts = None;
+                }
                 ("text", Value::Text(v)) => paint.text = Some(v),
                 ("border-top-left-radius", Value::Scalar(v)) => {
                     paint.corners = [(
@@ -813,9 +864,31 @@ impl Animation {
                 (name, Value::Scalar(v)) if is_filter(name) => set_filter(&mut paint.filters, name, v),
                 (name, v) if indexed(name).is_some() => match (indexed(name), v) {
                     (Some(("box-shadow", i, field)), v) => set_shadow(&mut paint.shadows, i, field, v),
+                    (Some(("text-shadow", i, field)), v) => set_text_shadow(&mut paint.text_shadows, i, field, v),
+                    (Some(("background-position", i, field)), Value::Scalar(v)) => {
+                        let list = if field.starts_with('x') {
+                            &mut paint.background_position_x
+                        } else {
+                            &mut paint.background_position_y
+                        };
+                        set_position(list, i, field.ends_with("percent"), v)
+                    }
                     (Some((_, i, field)), Value::Scalar(v)) => set_clip(&mut paint.box_node.clip_path, i, field, v),
                     _ => {}
                 },
+                (name, Value::Color(c)) if border_side(name).is_some() => {
+                    paint.border_colors[border_side(name).map_or(0, |(side, _)| side)] = c
+                }
+                (name, Value::Scalar(v)) if border_side(name).is_some() => {
+                    let width = taffy::prelude::length(v.max(0.0));
+                    match border_side(name).map_or(0, |(side, _)| side) {
+                        0 => style.border.top = width,
+                        1 => style.border.right = width,
+                        2 => style.border.bottom = width,
+                        _ => style.border.left = width,
+                    }
+                    layout = true;
+                }
                 (name, Value::Scalar(v)) if is_component(name) => parts
                     .get_or_insert_with(|| Parts::decompose(&paint.transform).unwrap_or_default())
                     .set(name, v),

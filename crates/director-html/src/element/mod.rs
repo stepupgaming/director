@@ -6,7 +6,7 @@ use crate::{
         LengthParts, Metrics, PaintStyle,
     },
 };
-use director_core::{Element, RenderError};
+use director_core::{element::TextShadow, Element, RenderError};
 use skia_safe::{color_filters, Canvas, Matrix, Rect, M44};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -407,6 +407,12 @@ impl Element for HtmlElement {
                 }
                 if recolor || relayout {
                     crate::compiler::prepare_paragraph(text, &self.paint);
+                }
+                // Text shadows paint from the node at draw time.
+                let same = |a: &TextShadow, b: &TextShadow| a.color == b.color && a.blur == b.blur && a.offset == b.offset;
+                let shadows = &self.paint.text_shadows;
+                if text.shadows.len() != shadows.len() || text.shadows.iter().zip(shadows).any(|(a, b)| !same(a, b)) {
+                    text.shadows = shadows.clone();
                 }
             }
             content.update(self.media_start + (time - self.start).max(0.0) * self.playback_rate);
