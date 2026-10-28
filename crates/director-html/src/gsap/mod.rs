@@ -6,7 +6,7 @@
 mod dom;
 pub(crate) mod ease;
 
-use crate::animation::{Parts, COMPONENTS};
+use crate::animation::{filter_default as default_amount, filter_scalar, filter_shadow_color, Parts, COMPONENTS, FILTERS as FILTER_CHANNELS};
 use crate::assets::AssetStore;
 use crate::style::{color, PaintStyle};
 use crate::timeline::{TimelineKeyframe, TimelineTrack, TimelineValue};
@@ -27,10 +27,15 @@ const DOM: &str = include_str!("dom.js");
 /// element falls back to its cascaded value.
 pub(crate) type Series = BTreeMap<String, Vec<Option<String>>>;
 
+/// Where a set jumps, by recorded property or transform channel: the frame
+/// that first shows the new value and the jump time in seconds.
+pub(crate) type Steps = BTreeMap<String, Vec<(usize, f64)>>;
+
 /// What the page scripts animate, by element of the compiled document.
 #[derive(Debug, Default)]
 pub(crate) struct Motion {
     pub(crate) series: HashMap<NodeId, Series>,
+    pub(crate) steps: HashMap<NodeId, Steps>,
 }
 
 /// Inline styles GSAP writes that change nothing on screen.
@@ -60,6 +65,7 @@ const NATIVE: &[&str] = &[
     "top",
     "border-radius",
     "transform",
+    "filter",
 ];
 
 struct Script {
@@ -176,11 +182,16 @@ pub(crate) fn run(dom: &mut Html, options: &CompileOptions, assets: &Arc<AssetSt
     let series = recorded.and_then(|frames| collect(&mut doc, &frames, options.fps));
     let (html, map) = dom::compact(&doc.html);
     *dom = html;
-    let series = series?
+    let (series, steps) = series?;
+    let series = series
         .into_iter()
         .filter_map(|(i, series)| map.get(&doc.ids[i]).map(|id| (*id, series)))
         .collect();
-    Ok(Motion { series })
+    let steps = steps
+        .into_iter()
+        .filter_map(|(i, steps)| map.get(&doc.ids[i]).map(|id| (*id, steps)))
+        .collect();
+    Ok(Motion { series, steps })
 }
 
 /// Evaluate the scripts, fire the load events and seek every frame. Each
@@ -283,11 +294,14 @@ fn invisible(name: &str, values: &[Option<String>]) -> bool {
 /// Turn the frame records into series, bake constant results into the
 /// document and refuse varying ones without a native track. Keys are style
 /// properties, `@name` attributes and `#text`.
-fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<HashMap<usize, Series>, String> {
+type Recorded = (HashMap<usize, Series>, HashMap<usize, Steps>);
+
+fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<Recorded, String> {
     // Inline styles hold the setup state flushed when play began.
     let mut setup: HashMap<usize, Vec<(String, String)>> = HashMap::new();
     let mut series: HashMap<usize, Series> = HashMap::new();
     let mut current: BTreeMap<(usize, String), Option<String>> = BTreeMap::new();
+    let mut steps: HashMap<usize, Steps> = HashMap::new();
     let malformed = || "GSAP frame record is malformed".to_string();
     for (f, frame) in frames.iter().enumerate() {
         if !frame.is_empty() {
@@ -297,6 +311,11 @@ fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<HashMap<us
             }
             for entry in parts.chunks(3) {
                 let i: usize = entry[0].parse().map_err(|_| malformed())?;
+                if let Some(name) = entry[1].strip_prefix('!') {
+                    let time: f64 = entry[2].parse().map_err(|_| malformed())?;
+                    steps.entry(i).or_default().entry(name.to_string()).or_default().push((f, time));
+                    continue;
+                }
                 let key = entry[1].to_string();
                 let value = (entry[2] != "\u{2}").then(|| entry[2].to_string());
                 let slot = (i, key.clone());
@@ -486,7 +505,8 @@ fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<HashMap<us
             out.insert(i, kept);
         }
     }
-    Ok(out)
+    steps.retain(|i, _| out.contains_key(i));
+    Ok((out, steps))
 }
 
 /// Element attributes in order.
@@ -803,6 +823,8 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
         "left" => length(style.inset.left.into_raw(), channel),
         "top" => length(style.inset.top.into_raw(), channel),
         "border-top-left-radius" => length(paint.corners[0].0.into_raw(), channel),
+        "filter-drop-shadow-color" => Ok(filter_shadow_color(&paint.filters).map_or_else(|| filter_default(channel), Val::color)),
+        c if FILTER_CHANNELS.contains(&c) => Ok(filter_scalar(&paint.filters, c).map_or_else(|| filter_default(c), |v| Val::Num(v as f64))),
         _ => Parts::decompose(&paint.transform)
             .and_then(|p| p.get(channel))
             .map(|v| Val::Num(v as f64))
@@ -817,6 +839,9 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
 fn tolerance(channel: &str) -> f64 {
     match channel {
         "opacity" | "color" | "background-color" => 5e-4,
+        "filter-blur" | "filter-drop-shadow-x" | "filter-drop-shadow-y" | "filter-drop-shadow-blur" => 0.02,
+        "filter-hue-rotate" => 0.01,
+        c if c.starts_with("filter-") => 5e-4,
         "scale-x" | "scale-y" => 1e-4,
         "translate-x-percent" | "translate-y-percent" => 0.01,
         c if c.starts_with("rotate") || c.starts_with("skew") => 0.01,
@@ -867,6 +892,46 @@ fn keep<T: AsRef<[f64]> + PartialEq>(samples: &[T], eps: f64) -> Vec<usize> {
     kept
 }
 
+/// A filter channel's value where its function is absent.
+fn filter_default(channel: &str) -> Val {
+    if channel == "filter-drop-shadow-color" {
+        Val::Color([0.0; 4])
+    } else {
+        Val::Num(default_amount(channel) as f64)
+    }
+}
+
+/// Whether two samples differ by more than `eps` on some dimension.
+fn moved(a: &Val, b: &Val, eps: f64) -> bool {
+    a.dims().iter().zip(b.dims()).any(|(a, b)| (a - b).abs() > eps)
+}
+
+/// The channels of one sampled `filter` value. Each function appears once.
+fn filter_channels(text: &str) -> Result<Vec<(&'static str, Val)>, String> {
+    use crate::style::FilterFn;
+    let list = crate::style::parse_filters(text).map_err(|e| format!("GSAP {e}"))?;
+    let mut out: Vec<(&'static str, Val)> = Vec::new();
+    for f in &list {
+        let channels: &[&'static str] = match f {
+            FilterFn::DropShadow { .. } => &FILTER_CHANNELS[9..],
+            _ => &FILTER_CHANNELS[..9],
+        };
+        for &c in channels {
+            let value = if c == "filter-drop-shadow-color" {
+                filter_shadow_color(std::slice::from_ref(f)).map(Val::color)
+            } else {
+                filter_scalar(std::slice::from_ref(f), c).map(|v| Val::Num(v as f64))
+            };
+            let Some(value) = value else { continue };
+            if out.iter().any(|(seen, _)| *seen == c) {
+                return Err(format!("GSAP filter '{text}' repeats a function; native tracks take each function once"));
+            }
+            out.push((c, value));
+        }
+    }
+    Ok(out)
+}
+
 fn sample(channel: &str, text: &str) -> Result<Val, String> {
     match channel {
         "opacity" => text.trim().parse().map(Val::Num).map_err(|_| format!("GSAP opacity '{text}'")),
@@ -915,18 +980,20 @@ fn decompose(text: &str) -> Result<Parts, String> {
 }
 
 /// Native timeline tracks for one element's sampled properties. Keys sit on
-/// frames and interpolate linearly.
+/// frames and interpolate linearly; a set holds the value before it until
+/// its jump.
 pub(crate) fn tracks(
     series: &Series,
+    steps: &Steps,
     target: &str,
     base: &dyn Fn(&str) -> Result<Val, String>,
     fps: f64,
 ) -> Result<Vec<TimelineTrack>, String> {
-    let mut channels: Vec<(&str, Vec<Val>)> = Vec::new();
+    let mut channels: Vec<(&str, &str, Vec<Val>)> = Vec::new();
     let mut out = Vec::new();
     for (property, values) in series {
         if property == "#text" {
-            out.push(text_track(values, target, fps));
+            out.push(text_track(values, steps.get("#text").map_or(&[], Vec::as_slice), target, fps));
             continue;
         }
         if property == "transform" {
@@ -940,7 +1007,29 @@ pub(crate) fn tracks(
                     .iter()
                     .map(|p| p.map_or(base, |p| Val::Num(p.get(channel).unwrap_or_default() as f64)))
                     .collect();
-                channels.push((channel, samples));
+                channels.push((channel, property, samples));
+            }
+            continue;
+        }
+        if property == "filter" {
+            let lists = values
+                .iter()
+                .map(|v| v.as_deref().map(filter_channels).transpose())
+                .collect::<Result<Vec<_>, _>>()?;
+            for channel in FILTER_CHANNELS {
+                if lists.iter().flatten().all(|list| !list.iter().any(|(c, _)| *c == channel)) {
+                    continue;
+                }
+                let base = base(channel)?;
+                let samples = lists
+                    .iter()
+                    .map(|list| {
+                        list.as_ref().map_or(base, |list| {
+                            list.iter().find(|(c, _)| *c == channel).map_or_else(|| filter_default(channel), |(_, v)| *v)
+                        })
+                    })
+                    .collect();
+                channels.push((channel, property, samples));
             }
             continue;
         }
@@ -953,9 +1042,9 @@ pub(crate) fn tracks(
             .iter()
             .map(|v| v.as_deref().map_or(Ok(base), |text| sample(channel, text)))
             .collect::<Result<Vec<_>, _>>()?;
-        channels.push((channel, samples));
+        channels.push((channel, property, samples));
     }
-    for (channel, samples) in channels {
+    for (channel, property, samples) in channels {
         let eps = tolerance(channel);
         let base = base(channel)?;
         let differs = samples
@@ -964,14 +1053,37 @@ pub(crate) fn tracks(
         if !differs {
             continue;
         }
-        let keyframes = keep(&samples, eps)
-            .into_iter()
-            .map(|f| TimelineKeyframe {
-                time: f as f64 / fps,
-                value: samples[f].timeline(),
-                ease: None,
-            })
+        // Jumps on this channel, earliest per frame, where the value moves.
+        let mut jumps: Vec<(usize, f64)> = [channel, property]
+            .iter()
+            .filter_map(|name| steps.get(*name))
+            .flatten()
+            .copied()
+            .filter(|&(f, _)| f > 0 && f < samples.len() && moved(&samples[f - 1], &samples[f], eps))
             .collect();
+        jumps.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        jumps.dedup_by_key(|j| j.0);
+        let mut keyframes = Vec::new();
+        let mut start = 0;
+        for piece in jumps.iter().map(Some).chain([None]) {
+            let end = piece.map_or(samples.len(), |&(f, _)| f);
+            keyframes.extend(keep(&samples[start..end], eps).into_iter().map(|f| TimelineKeyframe {
+                time: (start + f) as f64 / fps,
+                value: samples[start + f].timeline(),
+                ease: None,
+            }));
+            if let Some(&(f, time)) = piece {
+                keyframes.push(TimelineKeyframe {
+                    time,
+                    value: samples[f].timeline(),
+                    ease: Some("steps(1, end)".into()),
+                });
+                start = f;
+            }
+        }
+        // A piece's first frame key lands on its jump when the set sits on
+        // the frame.
+        keyframes.dedup_by(|b, a| (b.time - a.time).abs() < 1e-9);
         out.push(TimelineTrack {
             target: target.to_string(),
             property: channel.to_string(),
@@ -982,13 +1094,14 @@ pub(crate) fn tracks(
 }
 
 /// A `text` track keyed on each frame whose text differs from the frame
-/// before. The element shows its own text, the first frame's, until then.
-fn text_track(values: &[Option<String>], target: &str, fps: f64) -> TimelineTrack {
+/// before, at the set's time when a set wrote it. The element shows its own
+/// text, the first frame's, until then.
+fn text_track(values: &[Option<String>], steps: &[(usize, f64)], target: &str, fps: f64) -> TimelineTrack {
     let text = |f: usize| values[f].clone().unwrap_or_default();
     let keyframes = (1..values.len())
         .filter(|&f| text(f) != text(f - 1))
         .map(|f| TimelineKeyframe {
-            time: f as f64 / fps,
+            time: steps.iter().filter(|s| s.0 == f).map(|s| s.1).reduce(f64::min).unwrap_or(f as f64 / fps),
             value: TimelineValue::Text(text(f)),
             ease: None,
         })

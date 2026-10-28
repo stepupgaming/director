@@ -1063,6 +1063,62 @@ function composite(owner) {
   return offset;
 }
 let drive = [];
+
+// ---- Step holds ----
+// A zero-duration tween (gsap.set, tl.set) jumps at its start time. Each
+// frame reports the ones that fired since the frame before as index,
+// "!" + recorded property or transform channel, and the jump time, so tracks
+// hold the old value until the jump.
+const SET_CHANNELS = {
+  x: ["translate-x"], y: ["translate-y"], z: ["translate-z"],
+  xPercent: ["translate-x-percent"], yPercent: ["translate-y-percent"],
+  rotation: ["rotate-z"], rotate: ["rotate-z"], rotationZ: ["rotate-z"], rotateZ: ["rotate-z"],
+  rotationX: ["rotate-x"], rotateX: ["rotate-x"], rotationY: ["rotate-y"], rotateY: ["rotate-y"],
+  skewX: ["skew-x"], skewY: ["skew-y"],
+  scale: ["scale-x", "scale-y"], scaleX: ["scale-x"], scaleY: ["scale-y"],
+  autoAlpha: ["opacity", "visibility"],
+  text: ["#text"], textContent: ["#text"],
+};
+function setNames(vars, out = []) {
+  for (const key of Object.keys(vars || {})) {
+    if (key === "css") setNames(vars.css, out);
+    else if (key === "attr") for (const name of Object.keys(vars.attr || {})) out.push("@" + name);
+    else out.push(...(SET_CHANNELS[key] || [kebab(key)]));
+  }
+  return out;
+}
+function setTweens() {
+  const gsap = G.gsap;
+  if (!gsap || !gsap.globalTimeline) return [];
+  return gsap.globalTimeline.getChildren(true, true, false).filter((z) => z.duration() === 0);
+}
+// A set's start on the composition clock through its parents. Repeating or
+// reversed parents land outside the frame that fires it, and such a set
+// jumps on that frame.
+function setStart(z) {
+  let s = z.startTime();
+  for (let p = z.parent; p; p = p.parent) {
+    const driven = drive.find(([tl]) => tl === p);
+    if (driven) return s + driven[1];
+    if (p === G.gsap.globalTimeline) return s;
+    s = p.startTime() + s / (p.timeScale() || 1);
+  }
+  return null;
+}
+function setSteps(sets, before, t) {
+  const out = [];
+  for (const [z, ratio, start] of sets) {
+    if (z.ratio === ratio || start === null) continue;
+    const s = start > before && start <= t ? start : t;
+    const names = setNames(z.vars);
+    for (const target of z.targets()) {
+      if (!target || target.__i === undefined) continue;
+      for (const name of names) out.push(target.__i, "!" + name, s);
+    }
+  }
+  return out;
+}
+
 G.__director = {
   loaded() {
     readyState = "interactive";
@@ -1102,12 +1158,16 @@ G.__director = {
   frame(t) {
     const gsap = G.gsap;
     for (const [tl] of drive) tl.pause();
+    // Root tweens leave their parent when they finish, so starts map first.
+    const sets = setTweens().map((z) => [z, z.ratio, setStart(z)]);
     if (gsap && typeof gsap.updateRoot === "function") gsap.updateRoot(t);
     for (const [tl, offset] of drive) {
       const local = Math.max(0, t - offset);
       tl.totalTime(local + 0.000001, true);
       tl.totalTime(local, false);
     }
+    const steps = S.lastTime === undefined ? [] : setSteps(sets, S.lastTime, t);
+    S.lastTime = t;
     for (const n of S.transient) {
       if (n.isConnected) fail(`scripts left a <${n.nodeName.toLowerCase()}> in the document while the timeline played (at ${t}s); remove it before the frame ends or build it during setup`);
     }
@@ -1131,6 +1191,7 @@ G.__director = {
       }
     }
     S.touched.clear();
+    out.push(...steps);
     return out.map((v) => (v === null || v === undefined ? "\x02" : String(v))).join("\x01");
   },
 };

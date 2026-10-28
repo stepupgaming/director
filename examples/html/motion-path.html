@@ -32,7 +32,8 @@
   gsap.registerPlugin(MotionPathPlugin, MorphSVGPlugin);
   window.__timelines = window.__timelines || {};
   const tl = gsap.timeline({ paused: true });
-  tl.from("#title", { y: -40, opacity: 0, duration: 0.6, ease: "power3.out" }, 0)
+  tl.from("#title", { y: -40, opacity: 0, filter: "blur(12px)", duration: 0.6, ease: "power3.out" }, 0)
+    .set("#title", { color: "#f472b6" }, 2.25)
     .to("#rocket", {
       duration: 4,
       ease: "power1.inOut",

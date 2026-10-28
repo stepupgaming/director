@@ -383,6 +383,9 @@ impl Element for HtmlElement {
         if let Some(parts) = parts {
             self.paint.transform = parts.compose();
         }
+        if self.animations.iter().any(|a| a.properties().any(crate::animation::is_filter)) {
+            self.paint.filter = crate::style::compile_filters(&self.paint.filters);
+        }
         let mut relayout = false;
         if let Some(content) = &mut self.content {
             if let Some(text) = content

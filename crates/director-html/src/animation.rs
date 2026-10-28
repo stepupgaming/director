@@ -1,7 +1,7 @@
 use crate::{
     css::{split, Css, Values},
     gsap::ease::GsapEase,
-    style::{color, number, px, Metrics, PaintStyle},
+    style::{color, number, px, FilterFn, Metrics, PaintStyle},
 };
 use director_core::scene_export::{export_easing, rgba, ExportError};
 use director_core::scene_import::{color as import_color, easing as import_easing, ImportError};
@@ -126,6 +126,11 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
         ),
         "width" | "height" | "left" | "top" | "border-top-left-radius" => Value::Scalar(px(s, m)?),
         name if is_component(name) => Value::Scalar(component(name, s)?),
+        "filter-drop-shadow-color" => Value::Color(color(s, current)?),
+        name if is_filter(name) => {
+            let s = s.trim();
+            Value::Scalar(number(s.strip_suffix("px").or_else(|| s.strip_suffix("deg")).unwrap_or(s).trim())?)
+        }
         "text" => Value::Text(s.to_string()),
         _ => return Err(format!("unsupported animated property '{name}'")),
     })
@@ -150,6 +155,114 @@ pub(crate) const COMPONENTS: [&str; 12] = [
 pub(crate) fn is_component(name: &str) -> bool {
     COMPONENTS.contains(&name)
 }
+/// Filter amounts a timeline drives one at a time: blur and drop-shadow
+/// lengths in px, hue rotation in degrees, the rest as factors. Each writes
+/// its function in the element's filter list, which gains a missing function
+/// at its end.
+pub(crate) const FILTERS: [&str; 13] = [
+    "filter-blur",
+    "filter-brightness",
+    "filter-contrast",
+    "filter-saturate",
+    "filter-grayscale",
+    "filter-hue-rotate",
+    "filter-invert",
+    "filter-sepia",
+    "filter-opacity",
+    "filter-drop-shadow-x",
+    "filter-drop-shadow-y",
+    "filter-drop-shadow-blur",
+    "filter-drop-shadow-color",
+];
+pub(crate) fn is_filter(name: &str) -> bool {
+    FILTERS.contains(&name)
+}
+/// The amount a filter channel takes when its function is absent.
+pub(crate) fn filter_default(name: &str) -> f32 {
+    match name {
+        "filter-brightness" | "filter-contrast" | "filter-saturate" | "filter-opacity" => 1.0,
+        _ => 0.0,
+    }
+}
+const NO_SHADOW: Color = Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
+/// The amount of a scalar filter channel in `list`, if its function is there.
+pub(crate) fn filter_scalar(list: &[FilterFn], name: &str) -> Option<f32> {
+    list.iter().find_map(|f| match (name, *f) {
+        ("filter-blur", FilterFn::Blur(v))
+        | ("filter-brightness", FilterFn::Brightness(v))
+        | ("filter-contrast", FilterFn::Contrast(v))
+        | ("filter-saturate", FilterFn::Saturate(v))
+        | ("filter-grayscale", FilterFn::Grayscale(v))
+        | ("filter-hue-rotate", FilterFn::HueRotate(v))
+        | ("filter-invert", FilterFn::Invert(v))
+        | ("filter-sepia", FilterFn::Sepia(v))
+        | ("filter-opacity", FilterFn::Opacity(v)) => Some(v),
+        ("filter-drop-shadow-x", FilterFn::DropShadow { x, .. }) => Some(x),
+        ("filter-drop-shadow-y", FilterFn::DropShadow { y, .. }) => Some(y),
+        ("filter-drop-shadow-blur", FilterFn::DropShadow { blur, .. }) => Some(blur),
+        _ => None,
+    })
+}
+pub(crate) fn filter_shadow_color(list: &[FilterFn]) -> Option<Color> {
+    list.iter().find_map(|f| match *f {
+        FilterFn::DropShadow { color, .. } => Some(color),
+        _ => None,
+    })
+}
+fn filter_slot<'a>(list: &'a mut Vec<FilterFn>, name: &str) -> &'a mut FilterFn {
+    let same = |f: &FilterFn| match name {
+        "filter-blur" => matches!(f, FilterFn::Blur(_)),
+        "filter-brightness" => matches!(f, FilterFn::Brightness(_)),
+        "filter-contrast" => matches!(f, FilterFn::Contrast(_)),
+        "filter-saturate" => matches!(f, FilterFn::Saturate(_)),
+        "filter-grayscale" => matches!(f, FilterFn::Grayscale(_)),
+        "filter-hue-rotate" => matches!(f, FilterFn::HueRotate(_)),
+        "filter-invert" => matches!(f, FilterFn::Invert(_)),
+        "filter-sepia" => matches!(f, FilterFn::Sepia(_)),
+        "filter-opacity" => matches!(f, FilterFn::Opacity(_)),
+        _ => matches!(f, FilterFn::DropShadow { .. }),
+    };
+    let i = match list.iter().position(same) {
+        Some(i) => i,
+        None => {
+            let d = filter_default(name);
+            list.push(match name {
+                "filter-blur" => FilterFn::Blur(d),
+                "filter-brightness" => FilterFn::Brightness(d),
+                "filter-contrast" => FilterFn::Contrast(d),
+                "filter-saturate" => FilterFn::Saturate(d),
+                "filter-grayscale" => FilterFn::Grayscale(d),
+                "filter-hue-rotate" => FilterFn::HueRotate(d),
+                "filter-invert" => FilterFn::Invert(d),
+                "filter-sepia" => FilterFn::Sepia(d),
+                "filter-opacity" => FilterFn::Opacity(d),
+                _ => FilterFn::DropShadow { x: 0.0, y: 0.0, blur: 0.0, color: NO_SHADOW },
+            });
+            list.len() - 1
+        }
+    };
+    &mut list[i]
+}
+fn set_filter(list: &mut Vec<FilterFn>, name: &str, v: f32) {
+    match (filter_slot(list, name), name) {
+        (FilterFn::HueRotate(a), _) => *a = v,
+        (FilterFn::Grayscale(a) | FilterFn::Invert(a) | FilterFn::Sepia(a) | FilterFn::Opacity(a), _) => {
+            *a = v.clamp(0.0, 1.0)
+        }
+        (FilterFn::Blur(a) | FilterFn::Brightness(a) | FilterFn::Contrast(a) | FilterFn::Saturate(a), _) => {
+            *a = v.max(0.0)
+        }
+        (FilterFn::DropShadow { x, .. }, "filter-drop-shadow-x") => *x = v,
+        (FilterFn::DropShadow { y, .. }, "filter-drop-shadow-y") => *y = v,
+        (FilterFn::DropShadow { blur, .. }, _) => *blur = v.max(0.0),
+    }
+}
+fn set_filter_color(list: &mut Vec<FilterFn>, c: Color) {
+    if let FilterFn::DropShadow { color, .. } = filter_slot(list, "filter-drop-shadow-color") {
+        *color = c;
+    }
+}
+
 /// A component in its track unit: px, percent, degrees or a scale factor.
 fn component(name: &str, s: &str) -> Result<f32, String> {
     let s = s.trim();
@@ -381,6 +494,8 @@ pub(crate) fn from_track(
                 "opacity" => n.to_string(),
                 "width" | "height" | "left" | "top" | "border-top-left-radius" => format!("{n}px"),
                 name if is_component(name) => n.to_string(),
+                "filter-drop-shadow-color" => return Err(format!("timeline '{property}' takes CSS text")),
+                name if is_filter(name) => n.to_string(),
                 "text" => n.to_string(),
                 "color" | "background-color" | "transform" => {
                     return Err(format!("timeline '{property}' takes CSS text"))
@@ -630,6 +745,8 @@ impl Animation {
                         taffy::LengthPercentage::length(v.max(0.0)),
                     ); 4];
                 }
+                ("filter-drop-shadow-color", Value::Color(c)) => set_filter_color(&mut paint.filters, c),
+                (name, Value::Scalar(v)) if is_filter(name) => set_filter(&mut paint.filters, name, v),
                 (name, Value::Scalar(v)) if is_component(name) => parts
                     .get_or_insert_with(|| Parts::decompose(&paint.transform).unwrap_or_default())
                     .set(name, v),

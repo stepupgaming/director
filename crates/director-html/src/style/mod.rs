@@ -29,6 +29,7 @@ mod background;
 mod border;
 mod boxes;
 mod effects;
+pub(crate) use effects::parse_filters;
 mod layout;
 mod text;
 mod transform;

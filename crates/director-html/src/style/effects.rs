@@ -84,6 +84,13 @@ fn box_shadow(shadow: &BoxShadow, m: Metrics, current: Color) -> Result<Shadow, 
     })
 }
 
+/// A `filter` value in px, as scripts write it, resolved like the cascade's.
+pub(crate) fn parse_filters(text: &str) -> Result<Vec<FilterFn>, String> {
+    use lightningcss::traits::Parse;
+    let list = FilterList::parse_string(text).map_err(|_| format!("filter '{text}' does not parse"))?;
+    filters(&list, Metrics { width: 0.0, height: 0.0, font_size: 16.0 })
+}
+
 /// Resolve a filter list in order. Zero blur and zero hue rotation are no-ops.
 fn filters(list: &FilterList<'_>, m: Metrics) -> Result<Vec<FilterFn>, String> {
     let FilterList::Filters(list) = list else {

@@ -1637,12 +1637,13 @@ impl Builder {
                 // Transforms and sizes do not apply to inline boxes.
                 series.retain(|property, _| !matches!(property.as_str(), "transform" | "width" | "height"));
             }
+            let steps = self.motion.steps.remove(&el.id()).unwrap_or_default();
             let target = el.value().attr("id").map_or_else(|| path.clone(), str::to_string);
             let base = |channel: &str| {
                 crate::gsap::base_value(channel, &element.base_style, &element.base_paint)
             };
             tracks.extend(
-                crate::gsap::tracks(&series, &target, &base, self.options.fps)
+                crate::gsap::tracks(&series, &steps, &target, &base, self.options.fps)
                     .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?,
             );
         }

@@ -47,7 +47,8 @@ fn num(k: &TimelineKeyframe) -> f64 {
     }
 }
 
-/// The track value at `time`: keys interpolate linearly and hold at the ends.
+/// The track value at `time`: keys interpolate linearly, a set's
+/// `steps(1, end)` key holds the value before it, and the ends hold.
 fn at(t: &TimelineTrack, time: f64) -> f64 {
     let keys = &t.keyframes;
     let i = keys.partition_point(|k| k.time <= time);
@@ -58,6 +59,9 @@ fn at(t: &TimelineTrack, time: f64) -> f64 {
         return num(&keys[i - 1]);
     }
     let (a, b) = (&keys[i - 1], &keys[i]);
+    if b.ease.as_deref() == Some("steps(1, end)") {
+        return num(a);
+    }
     num(a) + (num(b) - num(a)) * (time - a.time) / (b.time - a.time)
 }
 
@@ -253,7 +257,7 @@ fn gsap_tracks_survive_scene_export() {
 #[test]
 fn page_scripts_fail_with_context() {
     for (source, message) in [
-        (page("gsap.to('#box', {filter: 'blur(2px)', duration: 1})"), "'filter' on #box"),
+        (page("gsap.to('#box', {boxShadow: '0 0 4px red', duration: 1})"), "'box-shadow' on #box"),
         (page("gsap.to('body', {opacity: 0})"), "not an animatable box"),
         (page("gsap.to('#box', {attr: {'data-x': 10}})"), "'data-x' attribute of #box"),
         (page("setTimeout(() => {}, 100)"), "setTimeout of 100 ms"),
@@ -407,6 +411,10 @@ fn motion_path_example_follows_its_route_and_morphs() {
     near(at(track(&c, "rocket", "translate-x"), 4.0), 1496.295, 0.05);
     near(at(track(&c, "rocket", "translate-y"), 4.0), 182.262, 0.05);
     assert!(track(&c, "rocket", "rotate-z").keyframes.len() > 2);
+    // The title sharpens from a 12px blur and turns pink at 2.25s.
+    near(at(track(&c, "title", "filter-blur"), 0.0), 12.0, 1e-3);
+    near(at(track(&c, "title", "filter-blur"), 0.6), 0.0, 0.02);
+    assert_eq!(step(track(&c, "title", "color")), [2.25]);
     let (w, h) = (c.director.width, c.director.height);
     let p = frame(&mut c, 4.0);
     let rocket = pixel(&p, w, 1664, 330);
@@ -725,3 +733,91 @@ fn split_text_lines_words_and_chars_animate_natively() {
     assert!(ink(&p, 0..110, 2..22) > 0 && ink(&p, 0..110, 26..46) > 0, "two lines of text");
     assert_eq!(ink(&p, 0..200, 50..64), 0);
 }
+
+/// The key a set leaves on a track: its time and value, held until then.
+fn step(t: &TimelineTrack) -> Vec<f64> {
+    t.keyframes
+        .iter()
+        .filter(|k| k.ease.as_deref() == Some("steps(1, end)"))
+        .map(|k| k.time)
+        .collect()
+}
+
+#[test]
+fn sets_hold_until_their_jump() {
+    let mut c = run(
+        "const tl = gsap.timeline({paused: true});\
+         tl.to('#box', {y: 20, duration: 1, ease: 'none'}, 0)\
+           .set('#box', {x: 30}, 0.51)\
+           .set('#box', {backgroundColor: 'rgb(255,0,0)'}, 1)\
+           .set('#box', {textContent: 'A'}, 0.25);\
+         gsap.set('#box', {opacity: 0.5, delay: 0.75});\
+         window.__timelines = {main: tl};",
+    );
+    // A set between frames jumps at its own time; one on a frame keys there.
+    let x = track(&c, "box", "translate-x");
+    assert_eq!(step(x), [0.51], "{:?}", x.keyframes);
+    assert_eq!(num(x.keyframes.last().unwrap()), 30.0);
+    assert_eq!(step(track(&c, "box", "background-color")), [1.0]);
+    let o = track(&c, "box", "opacity");
+    assert_eq!(step(o), [0.75], "{:?}", o.keyframes);
+    // The tween beside the set keeps its linear keys.
+    let y = track(&c, "box", "translate-y");
+    assert!(step(y).is_empty(), "{:?}", y.keyframes);
+    let text = track(&c, "box", "text");
+    assert_eq!(text.keyframes.iter().map(|k| k.time).collect::<Vec<_>>(), [0.25]);
+    // Between frames the box still sits at x 0 just before the set.
+    let p = frame(&mut c, 0.505);
+    assert!(close(pixel(&p, 64, 21, 36), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 21, 36));
+    let p = frame(&mut c, 0.52);
+    assert!(close(pixel(&p, 64, 21, 36), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 21, 36));
+    assert!(close(pixel(&p, 64, 52, 36), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 52, 36));
+}
+
+#[test]
+fn filter_tweens_become_native_channels() {
+    let mut c = run(
+        "window.__timelines = {main: gsap.timeline({paused: true}).fromTo('#box',\
+         {filter: 'blur(0px) grayscale(0)'}, {filter: 'blur(6px) grayscale(1)', duration: 1, ease: 'none'}, 0)};",
+    );
+    near(at(track(&c, "box", "filter-blur"), 0.5), 3.0, 1e-3);
+    near(at(track(&c, "box", "filter-grayscale"), 0.5), 0.5, 1e-3);
+    let p = frame(&mut c, 0.0);
+    assert!(close(pixel(&p, 64, 30, 30), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 30, 30));
+    assert!(close(pixel(&p, 64, 17, 30), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 17, 30));
+    let p = frame(&mut c, 1.0);
+    let [r, g, b, _] = pixel(&p, 64, 30, 30);
+    assert!(r == g && g == b && b < 128, "grey {:?}", [r, g, b]);
+    assert!(pixel(&p, 64, 17, 30)[0] > 3, "blur spreads past the edge");
+    // The channels export to the scene document.
+    let doc = export_scene(&c.director).unwrap();
+    let names: Vec<_> = doc
+        .nodes
+        .iter()
+        .filter_map(|n| match &n.body {
+            NodeBody::Html(html) => Some(html),
+            _ => None,
+        })
+        .flat_map(|h| &h.animations)
+        .flat_map(|a| &a.channels)
+        .map(|c| c.property.as_str())
+        .collect();
+    assert!(names.contains(&"filter-blur") && names.contains(&"filter-grayscale"), "{names:?}");
+}
+
+#[test]
+fn drop_shadow_filters_tween_offset_blur_and_color() {
+    let mut c = run(
+        "window.__timelines = {main: gsap.timeline({paused: true}).fromTo('#box',\
+         {filter: 'drop-shadow(0px 0px 0px rgba(255,0,0,0))'},\
+         {filter: 'drop-shadow(8px 8px 0px rgba(255,0,0,1))', duration: 1, ease: 'none'}, 0)};",
+    );
+    near(at(track(&c, "box", "filter-drop-shadow-x"), 0.5), 4.0, 1e-3);
+    assert!(tracks(&c).iter().any(|t| t.property == "filter-drop-shadow-color"));
+    let p = frame(&mut c, 0.0);
+    assert!(close(pixel(&p, 64, 44, 44), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 44, 44));
+    let p = frame(&mut c, 1.0);
+    assert!(close(pixel(&p, 64, 44, 44), [255, 0, 0, 255]), "{:?}", pixel(&p, 64, 44, 44));
+    assert!(close(pixel(&p, 64, 30, 30), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 30, 30));
+}
+
