@@ -125,8 +125,8 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
             TransformList::parse_string(s).map_err(|e| format!("animation transform: {e:?}"))?,
         ),
         "width" | "height" | "left" | "top" | "border-top-left-radius" | "font-size" => Value::Scalar(px(s, m)?),
-        "letter-spacing" if s.trim() == "normal" => Value::Scalar(0.0),
-        "letter-spacing" => Value::Scalar(px(s, m)?),
+        "letter-spacing" | "word-spacing" if s.trim() == "normal" => Value::Scalar(0.0),
+        "letter-spacing" | "word-spacing" => Value::Scalar(px(s, m)?),
         // A line height track is a multiple of the font size; px divide by it.
         "line-height" => match s.trim().strip_suffix("px") {
             Some(n) => Value::Scalar(number(n.trim())? / m.font_size.max(f32::EPSILON)),
@@ -642,7 +642,8 @@ pub(crate) fn from_track(
             TimelineValue::Text(s) => s.clone(),
             TimelineValue::Number(n) => match property {
                 "opacity" => n.to_string(),
-                "width" | "height" | "left" | "top" | "border-top-left-radius" | "font-size" | "letter-spacing" => {
+                "width" | "height" | "left" | "top" | "border-top-left-radius" | "font-size" | "letter-spacing"
+                | "word-spacing" => {
                     format!("{n}px")
                 }
                 name if border_side(name).is_some_and(|(_, field)| field == "width") => format!("{n}px"),
@@ -734,7 +735,7 @@ impl Animation {
 /// Channels whose CSS properties descendants inherit: color, font size,
 /// letter spacing, line height and text shadows.
 pub(crate) fn is_inherited(name: &str) -> bool {
-    matches!(name, "color" | "font-size" | "letter-spacing" | "line-height")
+    matches!(name, "color" | "font-size" | "letter-spacing" | "word-spacing" | "line-height")
         || indexed(name).is_some_and(|(list, _, _)| list == "text-shadow")
 }
 
@@ -942,6 +943,7 @@ impl Animation {
                 // The element rebuilds its text spans and relayouts when these change.
                 ("font-size", Value::Scalar(v)) => paint.font_size = v.max(0.0),
                 ("letter-spacing", Value::Scalar(v)) => paint.letter_spacing = v,
+                ("word-spacing", Value::Scalar(v)) => paint.word_spacing = v,
                 ("line-height", Value::Scalar(v)) => paint.line_height = Some(v.max(0.0)),
                 (name, Value::Scalar(v)) if box_side(name).is_some() => {
                     let side = box_side(name).map_or(0, |(_, side)| side);

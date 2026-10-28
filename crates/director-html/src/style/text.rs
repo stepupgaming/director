@@ -46,6 +46,7 @@ const TYPED: &[&str] = &[
     "text-transform",
     "white-space",
     "word-break",
+    "word-spacing",
     "word-wrap",
 ];
 
@@ -98,6 +99,13 @@ pub(super) fn apply(
                 Ok(())
             }
             Spacing::Length(length) => absolute_px(length, m).map(|px| paint.letter_spacing = px),
+        },
+        Property::WordSpacing(spacing) => match spacing {
+            Spacing::Normal => {
+                paint.word_spacing = 0.0;
+                Ok(())
+            }
+            Spacing::Length(length) => absolute_px(length, m).map(|px| paint.word_spacing = px),
         },
         Property::LineHeight(height) => match height {
             LineHeight::Normal => Ok(()),

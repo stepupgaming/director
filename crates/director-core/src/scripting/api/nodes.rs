@@ -2101,6 +2101,10 @@ fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
         .get("letter_spacing")
         .and_then(|v| v.as_float().ok())
         .map(|v| v as f32);
+    let word_spacing = props
+        .get("word_spacing")
+        .and_then(|v| v.as_float().ok())
+        .map(|v| v as f32);
     let line_height = props
         .get("line_height")
         .and_then(|v| v.as_float().ok())
@@ -2138,6 +2142,9 @@ fn apply_text_props(text_node: &mut TextNode, props: &rhai::Map) {
         }
         if span.letter_spacing.is_none() {
             span.letter_spacing = letter_spacing;
+        }
+        if span.word_spacing.is_none() {
+            span.word_spacing = word_spacing;
         }
         if span.line_height.is_none() {
             span.line_height = line_height;

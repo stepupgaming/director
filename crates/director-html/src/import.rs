@@ -107,6 +107,7 @@ fn paint(p: &doc::HtmlPaint, cx: &ImportContext) -> Result<PaintStyle, ImportErr
         font_weight: p.font_weight,
         font_style: p.font_style.clone(),
         letter_spacing: p.letter_spacing,
+        word_spacing: p.word_spacing,
         text_indent: length(p.text_indent),
         tabular_nums: p.tabular_nums,
         line_height: p.line_height,

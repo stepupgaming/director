@@ -120,6 +120,7 @@ pub fn text_node(body: &doc::TextBody, opacity: &Channel, cx: &ImportContext) ->
             stroke_color: span.stroke_color.map(color),
             fill_gradient: span.fill_gradient.as_ref().map(gradient),
             letter_spacing: span.letter_spacing,
+            word_spacing: span.word_spacing,
             line_height: span.line_height,
         })
         .collect();

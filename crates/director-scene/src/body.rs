@@ -159,6 +159,8 @@ pub struct TextSpan {
     pub fill_gradient: Option<Gradient>,
     /// Extra advance between letters in pixels.
     pub letter_spacing: Option<f32>,
+    /// Extra advance after each space in pixels.
+    pub word_spacing: Option<f32>,
     /// Line height as a multiple of the font size.
     pub line_height: Option<f32>,
 }

@@ -78,6 +78,7 @@ pub fn text_export(node: &TextNode) -> ElementExport {
                     stroke_color: span.stroke_color.map(rgba),
                     fill_gradient: span.fill_gradient.as_ref().map(gradient),
                     letter_spacing: span.letter_spacing,
+                    word_spacing: span.word_spacing,
                     line_height: span.line_height,
                 })
                 .collect(),

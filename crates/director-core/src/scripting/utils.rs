@@ -340,6 +340,10 @@ pub fn parse_text_style(map: &rhai::Map, span: &mut TextSpan) {
     if let Some(ls) = map.get("letter_spacing").and_then(|v| v.as_float().ok()) {
         span.letter_spacing = Some(ls as f32);
     }
+    // Word spacing
+    if let Some(ws) = map.get("word_spacing").and_then(|v| v.as_float().ok()) {
+        span.word_spacing = Some(ws as f32);
+    }
     // Line height
     if let Some(lh) = map.get("line_height").and_then(|v| v.as_float().ok()) {
         span.line_height = Some(lh as f32);
@@ -494,6 +498,7 @@ pub const TEXT_STYLE_KEYS: &[&str] = &[
     "stroke_color",
     "fill_gradient",
     "letter_spacing",
+    "word_spacing",
     "line_height",
 ];
 
@@ -1081,6 +1086,9 @@ pub fn text_node_to_json(t: &crate::node::text::TextNode) -> JsonMap<String, Jso
             if let Some(ls) = s.letter_spacing {
                 sm.insert("letter_spacing".into(), JsonValue::from(ls as f64));
             }
+            if let Some(ws) = s.word_spacing {
+                sm.insert("word_spacing".into(), JsonValue::from(ws as f64));
+            }
             if let Some(lh) = s.line_height {
                 sm.insert("line_height".into(), JsonValue::from(lh as f64));
             }
@@ -1180,6 +1188,7 @@ pub fn parse_spans_from_dynamic(content: rhai::Dynamic) -> Vec<TextSpan> {
                     stroke_color: None,
                     fill_gradient: None,
                     letter_spacing: None,
+                    word_spacing: None,
                     line_height: None,
                 };
                 parse_text_style(&map, &mut span);
@@ -1198,6 +1207,7 @@ pub fn parse_spans_from_dynamic(content: rhai::Dynamic) -> Vec<TextSpan> {
                     stroke_color: None,
                     fill_gradient: None,
                     letter_spacing: None,
+                    word_spacing: None,
                     line_height: None,
                 });
             }
@@ -1216,6 +1226,7 @@ pub fn parse_spans_from_dynamic(content: rhai::Dynamic) -> Vec<TextSpan> {
             stroke_color: None,
             fill_gradient: None,
             letter_spacing: None,
+            word_spacing: None,
             line_height: None,
         });
     }

@@ -336,6 +336,9 @@ impl TextNode {
             if let Some(ls) = span.letter_spacing {
                 text_style.set_letter_spacing(ls);
             }
+            if let Some(ws) = span.word_spacing {
+                text_style.set_word_spacing(ws);
+            }
 
             // 5c. Line Height (per-span override; StrutStyle provides the global default)
             if let Some(lh) = span.line_height {

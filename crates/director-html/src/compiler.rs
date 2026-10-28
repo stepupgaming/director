@@ -954,6 +954,7 @@ fn build_paragraph_colored(
         let weight = span.font_weight.unwrap_or(paint.font_weight);
         let italic = span.font_style.as_deref().unwrap_or(&paint.font_style) == "italic";
         let spacing = span.letter_spacing.unwrap_or(paint.letter_spacing);
+        let word = span.word_spacing.unwrap_or(paint.word_spacing);
         let style = span_font_style(weight, italic);
         let font = collection
             .find_typefaces(&[family], style)
@@ -984,7 +985,8 @@ fn build_paragraph_colored(
                     .map(|font| font.measure_str(sample, None).0)
                     .unwrap_or(sample.chars().count() as f32 * size * 0.5);
                 let gaps = sample.chars().count().saturating_sub(1) as f32;
-                advance + spacing * gaps
+                let spaces = sample.chars().filter(|c| matches!(c, ' ' | '\t')).count() as f32;
+                advance + spacing * gaps + word * spaces
             },
         );
         let mut text = TextStyle::new();
@@ -999,6 +1001,7 @@ fn build_paragraph_colored(
         text.set_font_families(&[family]);
         text.set_font_style(style);
         text.set_letter_spacing(spacing);
+        text.set_word_spacing(word);
         if paint.tabular_nums {
             text.add_font_feature("tnum", 1);
         }
@@ -1128,6 +1131,7 @@ pub fn span(text: String, paint: &PaintStyle) -> TextSpan {
         font_style: Some(paint.font_style.clone()),
         font_size: Some(paint.font_size),
         letter_spacing: Some(paint.letter_spacing),
+        word_spacing: Some(paint.word_spacing),
         line_height: paint.line_height,
         ..Default::default()
     }
@@ -1682,7 +1686,7 @@ impl Builder {
                     format!("the timeline animates '{}' twice on one element", track.property),
                 )]));
             }
-            if promoted && matches!(track.property.as_str(), "font-size" | "letter-spacing" | "line-height") {
+            if promoted && matches!(track.property.as_str(), "font-size" | "letter-spacing" | "word-spacing" | "line-height") {
                 return Err(CompileError::Diagnostics(vec![diagnostic(
                     &context,
                     format!("the timeline animates '{}', but an animated inline span keeps its line box", track.property),
@@ -1817,7 +1821,7 @@ impl Builder {
     }
 
     /// The parent's text animations that reach `el`. A local `color`,
-    /// `letter-spacing`, `line-height` or `text-shadow` stops its channel. A
+    /// `letter-spacing`, `word-spacing`, `line-height` or `text-shadow` stops its channel. A
     /// local relative font size scales the parent's, and an absolute one stops
     /// it. Inline spans on their own line box keep their size, spacing and line
     /// height, and replaced elements inherit nothing.
@@ -1842,6 +1846,7 @@ impl Builder {
             "color" => !local(&["color"]),
             "font-size" => font_scale.is_some() && !promoted,
             "letter-spacing" => !local(&["letter-spacing"]) && !promoted,
+            "word-spacing" => !local(&["word-spacing"]) && !promoted,
             "line-height" => !local(&["line-height", "font"]) && !promoted,
             _ => !local(&["text-shadow"]),
         };

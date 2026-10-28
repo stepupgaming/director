@@ -257,7 +257,7 @@ fn gsap_tracks_survive_scene_export() {
 #[test]
 fn page_scripts_fail_with_context() {
     for (source, message) in [
-        (page("gsap.to('#box', {wordSpacing: 4, duration: 1})"), "'word-spacing' on #box"),
+        (page("gsap.to('#box', {textIndent: 4, duration: 1})"), "'text-indent' on #box"),
         (page("gsap.to('#word', {fontSize: 30, duration: 1})"), "keeps its line box"),
         (
             page("gsap.fromTo('#box', {clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)'}, {clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)', duration: 1})"),
@@ -1059,6 +1059,31 @@ fn inherited_text_line_height_and_box_tweens_become_channels() {
     near(at(track(&c, "box", "margin-top"), 0.5), 5.0, 1e-3);
     let p = frame(&mut c, 1.0);
     assert!(blue(&p, 55, 45) && !blue(&p, 30, 25), "{:?} {:?}", pixel(&p, 64, 55, 45), pixel(&p, 64, 30, 25));
+}
+
+#[test]
+fn word_spacing_tweens_spread_words_and_reach_children() {
+    let doc = |style: &str, script: &str| {
+        format!(
+            "<style>body{{margin:0;background:black}}p{{margin:0}}</style>\
+             <div data-composition-id='main' data-width='96' data-height='64' data-duration='2'>\
+             <div id='t' style='position:absolute;left:0;top:0;font:20px Roboto;color:white;{style}'><p>I I I</p></div></div>\
+             {GSAP}<script>{script}</script>"
+        )
+    };
+    let right = |p: &[u8]| p.chunks(4).enumerate().filter(|(_, p)| p[0] > 150).map(|(i, _)| i % 96).max().unwrap_or(0);
+    let mut plain = compile(&doc("", ""), opts()).unwrap();
+    let mut spaced = compile(&doc("word-spacing:10px", ""), opts()).unwrap();
+    let (plain, spaced) = (right(&frame(&mut plain, 0.0)), right(&frame(&mut spaced, 0.0)));
+    assert!(spaced.abs_diff(plain + 20) <= 1, "{plain} {spaced}");
+
+    // The parent's track reaches the paragraph that inherits it.
+    let tween = "window.__timelines = {main: gsap.timeline({paused: true}).to('#t', {wordSpacing: '10px', duration: 1, ease: 'none'}, 0)};";
+    let mut c = compile(&doc("", tween), opts()).unwrap();
+    near(at(track(&c, "t", "word-spacing"), 0.5), 5.0, 1e-3);
+    assert_eq!(right(&frame(&mut c, 0.0)), plain);
+    assert!(right(&frame(&mut c, 0.5)).abs_diff(plain + 10) <= 1);
+    assert_eq!(right(&frame(&mut c, 1.0)), spaced);
 }
 
 #[test]

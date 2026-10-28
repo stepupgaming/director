@@ -160,6 +160,7 @@ fn make_text_node(d: &mut crate::director::Director, text: &str, color: Option<C
         stroke_color: None,
         fill_gradient: None,
         letter_spacing: None,
+        word_spacing: None,
         line_height: None,
     };
     let mut node = TextNode::new(vec![span], d.assets.font_collection.clone());

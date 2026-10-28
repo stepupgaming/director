@@ -114,6 +114,8 @@ pub struct PaintStyle {
     pub font_weight: u16,
     pub font_style: String,
     pub letter_spacing: f32,
+    /// Extra advance after each space in px.
+    pub word_spacing: f32,
     /// First-line `text-indent`. A percent is a fraction of the text box width.
     pub text_indent: LengthPercentage,
     /// `font-variant-numeric: tabular-nums` enables OpenType `tnum`.
@@ -896,6 +898,7 @@ pub fn translate(
         font_weight: 400,
         font_style: "normal".into(),
         letter_spacing: 0.0,
+        word_spacing: 0.0,
         text_indent: zero(),
         tabular_nums: false,
         line_height: None,

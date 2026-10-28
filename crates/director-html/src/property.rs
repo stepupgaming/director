@@ -188,6 +188,7 @@ pub static PROPERTIES: &[PropertyInfo] = &[
     inherited("white-space", Text),
     p("width", Layout),
     inherited("word-break", Text),
+    inherited("word-spacing", Text),
     inherited("word-wrap", Text),
     p("z-index", Box),
 ];

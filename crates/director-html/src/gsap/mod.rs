@@ -88,6 +88,7 @@ const NATIVE: &[&str] = &[
     "background-size",
     "font-size",
     "letter-spacing",
+    "word-spacing",
     "line-height",
     "padding",
     "margin",
@@ -892,6 +893,7 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
         "border-top-left-radius" => length(paint.corners[0].0.into_raw(), channel),
         "font-size" => Ok(Val::Num(paint.font_size as f64)),
         "letter-spacing" => Ok(Val::Num(paint.letter_spacing as f64)),
+        "word-spacing" => Ok(Val::Num(paint.word_spacing as f64)),
         "line-height" => paint
             .line_height
             .map(|h| Val::Num(h as f64))
@@ -1107,7 +1109,7 @@ fn filter_channels(text: &str) -> Result<Vec<(&'static str, Val)>, String> {
 fn sample(channel: &str, text: &str) -> Result<Val, String> {
     match channel {
         "opacity" => text.trim().parse().map(Val::Num).map_err(|_| format!("GSAP opacity '{text}'")),
-        "letter-spacing" if text.trim() == "normal" => Ok(Val::Num(0.0)),
+        "letter-spacing" | "word-spacing" if text.trim() == "normal" => Ok(Val::Num(0.0)),
         c if c == "color" || c.ends_with("-color") => {
             color(text.trim(), Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }).map(Val::color)
         }

@@ -85,6 +85,8 @@ pub struct HtmlPaint {
     pub font_weight: u16,
     pub font_style: String,
     pub letter_spacing: f32,
+    #[serde(default)]
+    pub word_spacing: f32,
     /// First-line indent. A percent is a fraction of the text box width.
     pub text_indent: Length,
     pub tabular_nums: bool,
