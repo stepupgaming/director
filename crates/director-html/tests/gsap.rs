@@ -1156,7 +1156,8 @@ fn text_stroke_color_and_width_tween() {
     );
     let mut c = compile(&source, opts()).unwrap();
     let count = |p: &[u8], test: fn(&[u8]) -> bool| p.chunks(4).filter(|p| test(p)).count();
-    let (red, blue): (fn(&[u8]) -> bool, fn(&[u8]) -> bool) = (|p| p[0] > 200 && p[2] < 60, |p| p[2] > 200 && p[0] < 60);
+    let red: fn(&[u8]) -> bool = |p| p[0] > 200 && p[2] < 60;
+    let blue: fn(&[u8]) -> bool = |p| p[2] > 200 && p[0] < 60;
     let start = frame(&mut c, 0.0);
     assert!(count(&start, red) > 20 && count(&start, blue) == 0);
     let end = frame(&mut c, 1.5);
