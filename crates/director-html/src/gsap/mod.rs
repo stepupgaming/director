@@ -6,7 +6,11 @@
 mod dom;
 pub(crate) mod ease;
 
-use crate::animation::{filter_default as default_amount, filter_scalar, filter_shadow_color, Parts, COMPONENTS, FILTERS as FILTER_CHANNELS};
+use crate::animation::{
+    filter_default as default_amount, filter_scalar, filter_shadow_color, indexed, shadow_scalar, Parts, COMPONENTS,
+    FILTERS as FILTER_CHANNELS, NO_BOX_SHADOW,
+};
+use crate::style::Shadow;
 use crate::assets::AssetStore;
 use crate::style::{color, PaintStyle};
 use crate::timeline::{TimelineKeyframe, TimelineTrack, TimelineValue};
@@ -66,6 +70,8 @@ const NATIVE: &[&str] = &[
     "border-radius",
     "transform",
     "filter",
+    "box-shadow",
+    "clip-path",
 ];
 
 struct Script {
@@ -825,6 +831,14 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
         "border-top-left-radius" => length(paint.corners[0].0.into_raw(), channel),
         "filter-drop-shadow-color" => Ok(filter_shadow_color(&paint.filters).map_or_else(|| filter_default(channel), Val::color)),
         c if FILTER_CHANNELS.contains(&c) => Ok(filter_scalar(&paint.filters, c).map_or_else(|| filter_default(c), |v| Val::Num(v as f64))),
+        c if indexed(c).is_some() => Ok(match indexed(c) {
+            Some(("box-shadow", i, field)) => shadow_val(paint.shadows.get(i).unwrap_or(&NO_BOX_SHADOW), field),
+            Some((_, i, field)) => {
+                let point = paint.box_node.clip_path.as_ref().and_then(|p| p.get(i)).copied().unwrap_or_default();
+                corner_val(point, field)
+            }
+            None => unreachable!(),
+        }),
         _ => Parts::decompose(&paint.transform)
             .and_then(|p| p.get(channel))
             .map(|v| Val::Num(v as f64))
@@ -842,6 +856,8 @@ fn tolerance(channel: &str) -> f64 {
         "filter-blur" | "filter-drop-shadow-x" | "filter-drop-shadow-y" | "filter-drop-shadow-blur" => 0.02,
         "filter-hue-rotate" => 0.01,
         c if c.starts_with("filter-") => 5e-4,
+        c if c.starts_with("box-shadow-") && c.ends_with("-color") => 5e-4,
+        c if c.starts_with("clip-path-") => 0.01,
         "scale-x" | "scale-y" => 1e-4,
         "translate-x-percent" | "translate-y-percent" => 0.01,
         c if c.starts_with("rotate") || c.starts_with("skew") => 0.01,
@@ -899,6 +915,21 @@ fn filter_default(channel: &str) -> Val {
     } else {
         Val::Num(default_amount(channel) as f64)
     }
+}
+
+const SHADOW_FIELDS: [&str; 6] = ["x", "y", "blur", "spread", "color", "inset"];
+
+fn shadow_val(shadow: &Shadow, field: &str) -> Val {
+    if field == "color" {
+        Val::color(shadow.color)
+    } else {
+        Val::Num(shadow_scalar(shadow, field) as f64)
+    }
+}
+
+/// A clip corner coordinate in box percent.
+fn corner_val(point: (f32, f32), field: &str) -> Val {
+    Val::Num(if field == "x" { point.0 } else { point.1 } as f64 * 100.0)
 }
 
 /// Whether two samples differ by more than `eps` on some dimension.
@@ -979,6 +1010,15 @@ fn decompose(text: &str) -> Result<Parts, String> {
         .ok_or_else(|| format!("GSAP transform '{text}' has no component form"))
 }
 
+/// Parsers for one element's sampled `box-shadow` and `clip-path` text.
+/// The clip parser reads the element's own clip for an unset frame.
+pub(crate) struct Shapes<'a> {
+    pub shadows: &'a dyn Fn(&str) -> Result<Vec<Shadow>, String>,
+    pub clip: &'a dyn Fn(Option<&str>) -> Clip,
+}
+/// A clip polygon's corners as box fractions. `None` is no clip.
+type Clip = Result<Option<Vec<(f32, f32)>>, String>;
+
 /// Native timeline tracks for one element's sampled properties. Keys sit on
 /// frames and interpolate linearly; a set holds the value before it until
 /// its jump.
@@ -987,9 +1027,10 @@ pub(crate) fn tracks(
     steps: &Steps,
     target: &str,
     base: &dyn Fn(&str) -> Result<Val, String>,
+    shapes: &Shapes,
     fps: f64,
 ) -> Result<Vec<TimelineTrack>, String> {
-    let mut channels: Vec<(&str, &str, Vec<Val>)> = Vec::new();
+    let mut channels: Vec<(String, &str, Vec<Val>)> = Vec::new();
     let mut out = Vec::new();
     for (property, values) in series {
         if property == "#text" {
@@ -1007,7 +1048,7 @@ pub(crate) fn tracks(
                     .iter()
                     .map(|p| p.map_or(base, |p| Val::Num(p.get(channel).unwrap_or_default() as f64)))
                     .collect();
-                channels.push((channel, property, samples));
+                channels.push((channel.to_string(), property, samples));
             }
             continue;
         }
@@ -1029,7 +1070,48 @@ pub(crate) fn tracks(
                         })
                     })
                     .collect();
-                channels.push((channel, property, samples));
+                channels.push((channel.to_string(), property, samples));
+            }
+            continue;
+        }
+        if property == "box-shadow" {
+            let lists = values
+                .iter()
+                .map(|v| v.as_deref().map(|text| (shapes.shadows)(text).map_err(|e| format!("GSAP {e}"))).transpose())
+                .collect::<Result<Vec<_>, _>>()?;
+            let count = lists.iter().flatten().map(Vec::len).max().unwrap_or(0);
+            for i in 0..count {
+                for field in SHADOW_FIELDS {
+                    let channel = format!("box-shadow-{i}-{field}");
+                    let base = base(&channel)?;
+                    let samples = lists
+                        .iter()
+                        .map(|list| {
+                            list.as_ref().map_or(base, |list| shadow_val(list.get(i).unwrap_or(&NO_BOX_SHADOW), field))
+                        })
+                        .collect();
+                    channels.push((channel, property, samples));
+                }
+            }
+            continue;
+        }
+        if property == "clip-path" {
+            let clips = values
+                .iter()
+                .map(|v| (shapes.clip)(v.as_deref()).map_err(|e| format!("GSAP clip-path: {e}")))
+                .collect::<Result<Vec<_>, _>>()?;
+            let Some(count) = clips.iter().flatten().map(Vec::len).next() else { continue };
+            if clips.iter().any(|s| s.as_ref().is_none_or(|s| s.len() != count)) {
+                return Err(format!(
+                    "GSAP clip-path on {target} changes between shapes of different corner counts or 'none'; \
+                     native clip tracks need one shape kind on every frame"
+                ));
+            }
+            for i in 0..count {
+                for field in ["x", "y"] {
+                    let samples = clips.iter().flatten().map(|s| corner_val(s[i], field)).collect();
+                    channels.push((format!("clip-path-{i}-{field}"), property, samples));
+                }
             }
             continue;
         }
@@ -1042,9 +1124,10 @@ pub(crate) fn tracks(
             .iter()
             .map(|v| v.as_deref().map_or(Ok(base), |text| sample(channel, text)))
             .collect::<Result<Vec<_>, _>>()?;
-        channels.push((channel, property, samples));
+        channels.push((channel.to_string(), property, samples));
     }
     for (channel, property, samples) in channels {
+        let channel = channel.as_str();
         let eps = tolerance(channel);
         let base = base(channel)?;
         let differs = samples

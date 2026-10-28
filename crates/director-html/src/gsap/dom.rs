@@ -724,14 +724,28 @@ fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
             _ => {}
         }
         if let Some(v) = p.css.get(prop) {
-            if prop.ends_with("color") || matches!(prop, "fill" | "stroke") {
-                let current = p
-                    .css
+            let current = || {
+                p.css
                     .get("color")
                     .and_then(|c| crate::style::color(c, director_core::types::Color::BLACK).ok())
-                    .unwrap_or(director_core::types::Color::BLACK);
-                if let Ok(c) = crate::style::color(v, current) {
+                    .unwrap_or(director_core::types::Color::BLACK)
+            };
+            if prop.ends_with("color") || matches!(prop, "fill" | "stroke") {
+                if let Ok(c) = crate::style::color(v, current()) {
                     return rgb(c);
+                }
+            }
+            // Browsers list each shadow as its color, four lengths, then `inset`.
+            if prop == "box-shadow" {
+                let m = crate::style::Metrics { width: 0.0, height: 0.0, font_size: p.font_size };
+                if let Ok(list) = crate::style::parse_box_shadows(v, m, current()) {
+                    if !list.is_empty() {
+                        let shadow = |s: &crate::style::Shadow| {
+                            let inset = if s.inset { " inset" } else { "" };
+                            format!("{} {} {} {} {}{inset}", rgb(s.color), px(s.x), px(s.y), px(s.blur * 2.0), px(s.spread))
+                        };
+                        return list.iter().map(shadow).collect::<Vec<_>>().join(", ");
+                    }
                 }
             }
             // Browsers serialize a zero length with its unit.

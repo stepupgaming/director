@@ -84,6 +84,18 @@ fn box_shadow(shadow: &BoxShadow, m: Metrics, current: Color) -> Result<Shadow, 
     })
 }
 
+/// A `box-shadow` value as scripts write it, resolved like the cascade's.
+pub(crate) fn parse_box_shadows(text: &str, m: Metrics, current: Color) -> Result<Vec<Shadow>, String> {
+    use lightningcss::{properties::PropertyId, stylesheet::ParserOptions, vendor_prefix::VendorPrefix};
+    if text.trim() == "none" {
+        return Ok(Vec::new());
+    }
+    match Property::parse_string(PropertyId::BoxShadow(VendorPrefix::None), text, ParserOptions::default()) {
+        Ok(Property::BoxShadow(list, _)) => list.iter().map(|shadow| box_shadow(shadow, m, current)).collect(),
+        _ => Err(format!("box-shadow '{text}' does not parse")),
+    }
+}
+
 /// A `filter` value in px, as scripts write it, resolved like the cascade's.
 pub(crate) fn parse_filters(text: &str) -> Result<Vec<FilterFn>, String> {
     use lightningcss::traits::Parse;

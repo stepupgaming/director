@@ -257,7 +257,11 @@ fn gsap_tracks_survive_scene_export() {
 #[test]
 fn page_scripts_fail_with_context() {
     for (source, message) in [
-        (page("gsap.to('#box', {boxShadow: '0 0 4px red', duration: 1})"), "'box-shadow' on #box"),
+        (page("gsap.to('#box', {textShadow: '0 0 4px red', duration: 1})"), "'text-shadow' on #box"),
+        (
+            page("gsap.fromTo('#box', {clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)'}, {clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)', duration: 1})"),
+            "different corner counts",
+        ),
         (page("gsap.to('body', {opacity: 0})"), "not an animatable box"),
         (page("gsap.to('#box', {attr: {'data-x': 10}})"), "'data-x' attribute of #box"),
         (page("setTimeout(() => {}, 100)"), "setTimeout of 100 ms"),
@@ -415,7 +419,16 @@ fn motion_path_example_follows_its_route_and_morphs() {
     near(at(track(&c, "title", "filter-blur"), 0.0), 12.0, 1e-3);
     near(at(track(&c, "title", "filter-blur"), 0.6), 0.0, 0.02);
     assert_eq!(step(track(&c, "title", "color")), [2.25]);
+    // The rocket's glow pulses, and a wipe reveals the morph from the left.
+    near(at(track(&c, "rocket", "box-shadow-0-blur"), 0.0), 0.0, 0.02);
+    near(at(track(&c, "rocket", "box-shadow-0-blur"), 1.0), 32.0, 0.05);
+    near(at(track(&c, "morph-wrap", "clip-path-1-x"), 0.4), 0.0, 0.01);
+    near(at(track(&c, "morph-wrap", "clip-path-1-x"), 1.2), 100.0, 0.01);
     let (w, h) = (c.director.width, c.director.height);
+    let morph = pixel(&frame(&mut c, 0.4), w, 1720, 860);
+    assert!(morph[1] < 100, "{morph:?}");
+    let morph = pixel(&frame(&mut c, 1.0), w, 1720, 860);
+    assert!(morph[0] < 100 && morph[1] > 150 && morph[2] > 150, "{morph:?}");
     let p = frame(&mut c, 4.0);
     let rocket = pixel(&p, w, 1664, 330);
     assert!(rocket[0] > 200 && rocket[2] > 150, "{rocket:?}");
@@ -803,6 +816,68 @@ fn filter_tweens_become_native_channels() {
         .map(|c| c.property.as_str())
         .collect();
     assert!(names.contains(&"filter-blur") && names.contains(&"filter-grayscale"), "{names:?}");
+}
+
+#[test]
+fn box_shadow_tweens_become_native_channels() {
+    let mut c = run(
+        "window.__timelines = {main: gsap.timeline({paused: true}).fromTo('#box',\
+         {boxShadow: '0px 0px 0px 0px rgba(255,0,0,1)'}, {boxShadow: '8px 8px 0px 0px rgba(255,0,0,1)', duration: 1, ease: 'none'}, 0)};",
+    );
+    near(at(track(&c, "box", "box-shadow-0-x"), 0.5), 4.0, 1e-3);
+    near(at(track(&c, "box", "box-shadow-0-y"), 0.5), 4.0, 1e-3);
+    let p = frame(&mut c, 0.0);
+    assert!(close(pixel(&p, 64, 44, 44), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 44, 44));
+    let p = frame(&mut c, 1.0);
+    assert!(close(pixel(&p, 64, 44, 44), [255, 0, 0, 255]), "{:?}", pixel(&p, 64, 44, 44));
+    assert!(close(pixel(&p, 64, 30, 30), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 30, 30));
+
+    // An inset shadow grows from none and keeps its inset flag.
+    let mut c = run(
+        "window.__timelines = {main: gsap.timeline({paused: true}).to('#box',\
+         {boxShadow: 'inset 0px 0px 0px 6px rgb(255,255,0)', duration: 1, ease: 'none'}, 0)};",
+    );
+    assert!(tracks(&c).iter().any(|t| t.property == "box-shadow-0-inset"));
+    near(at(track(&c, "box", "box-shadow-0-spread"), 0.5), 3.0, 1e-3);
+    let p = frame(&mut c, 1.0);
+    assert!(close(pixel(&p, 64, 22, 30), [255, 255, 0, 255]), "{:?}", pixel(&p, 64, 22, 30));
+    assert!(close(pixel(&p, 64, 30, 30), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 30, 30));
+    assert!(close(pixel(&p, 64, 44, 30), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 44, 30));
+
+    // The computed shadow lists its color first, so GSAP pairs the cascade's
+    // lengths with the target's.
+    let source = page(
+        "window.__timelines = {main: gsap.timeline({paused: true}).to('#box',\
+         {boxShadow: '0px 12px 0px 0px rgb(255,0,0)', duration: 1, ease: 'none'}, 0)};",
+    )
+    .replace("background:rgb(0,0,255)}", "background:rgb(0,0,255);box-shadow:0 4px 0 red}");
+    let c = compile(&source, opts()).unwrap();
+    near(at(track(&c, "box", "box-shadow-0-y"), 0.0), 4.0, 1e-3);
+    near(at(track(&c, "box", "box-shadow-0-y"), 0.5), 8.0, 1e-3);
+}
+
+#[test]
+fn clip_path_tweens_move_shape_corners() {
+    let mut c = run(
+        "window.__timelines = {main: gsap.timeline({paused: true}).fromTo('#box',\
+         {clipPath: 'inset(0% 100% 0% 0%)'}, {clipPath: 'inset(0% 0% 0% 0%)', duration: 1, ease: 'none'}, 0)};",
+    );
+    near(at(track(&c, "box", "clip-path-1-x"), 0.5), 50.0, 1e-2);
+    let p = frame(&mut c, 0.5);
+    assert!(close(pixel(&p, 64, 25, 38), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 25, 38));
+    assert!(close(pixel(&p, 64, 35, 38), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 35, 38));
+    let p = frame(&mut c, 1.0);
+    assert!(close(pixel(&p, 64, 38, 38), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 38, 38));
+
+    let mut c = run(
+        "window.__timelines = {main: gsap.timeline({paused: true}).fromTo('#box',\
+         {clipPath: 'circle(0% at 50% 50%)'}, {clipPath: 'circle(50% at 50% 50%)', duration: 1, ease: 'none'}, 0)};",
+    );
+    let p = frame(&mut c, 0.0);
+    assert!(close(pixel(&p, 64, 30, 37), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 30, 37));
+    let p = frame(&mut c, 1.0);
+    assert!(close(pixel(&p, 64, 30, 37), [0, 0, 255, 255]), "{:?}", pixel(&p, 64, 30, 37));
+    assert!(close(pixel(&p, 64, 21, 21), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 21, 21));
 }
 
 #[test]

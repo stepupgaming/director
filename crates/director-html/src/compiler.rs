@@ -1642,8 +1642,14 @@ impl Builder {
             let base = |channel: &str| {
                 crate::gsap::base_value(channel, &element.base_style, &element.base_paint)
             };
+            let shadows = |text: &str| crate::style::parse_box_shadows(text, metrics, element.base_paint.color);
+            let clip = |text: Option<&str>| match text {
+                Some(text) => crate::style::clip_points(text, &values, metrics),
+                None => Ok(element.base_paint.box_node.clip_path.clone()),
+            };
+            let shapes = crate::gsap::Shapes { shadows: &shadows, clip: &clip };
             tracks.extend(
-                crate::gsap::tracks(&series, &steps, &target, &base, self.options.fps)
+                crate::gsap::tracks(&series, &steps, &target, &base, &shapes, self.options.fps)
                     .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?,
             );
         }

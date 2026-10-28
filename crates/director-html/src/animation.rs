@@ -1,7 +1,7 @@
 use crate::{
     css::{split, Css, Values},
     gsap::ease::GsapEase,
-    style::{color, number, px, FilterFn, Metrics, PaintStyle},
+    style::{color, number, px, FilterFn, Metrics, PaintStyle, Shadow},
 };
 use director_core::scene_export::{export_easing, rgba, ExportError};
 use director_core::scene_import::{color as import_color, easing as import_easing, ImportError};
@@ -127,9 +127,11 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
         "width" | "height" | "left" | "top" | "border-top-left-radius" => Value::Scalar(px(s, m)?),
         name if is_component(name) => Value::Scalar(component(name, s)?),
         "filter-drop-shadow-color" => Value::Color(color(s, current)?),
-        name if is_filter(name) => {
+        name if indexed(name).is_some_and(|(_, _, field)| field == "color") => Value::Color(color(s, current)?),
+        name if is_filter(name) || indexed(name).is_some() => {
             let s = s.trim();
-            Value::Scalar(number(s.strip_suffix("px").or_else(|| s.strip_suffix("deg")).unwrap_or(s).trim())?)
+            let unit = ["px", "deg", "%"].iter().find_map(|u| s.strip_suffix(u));
+            Value::Scalar(number(unit.unwrap_or(s).trim())?)
         }
         "text" => Value::Text(s.to_string()),
         _ => return Err(format!("unsupported animated property '{name}'")),
@@ -260,6 +262,65 @@ fn set_filter(list: &mut Vec<FilterFn>, name: &str, v: f32) {
 fn set_filter_color(list: &mut Vec<FilterFn>, c: Color) {
     if let FilterFn::DropShadow { color, .. } = filter_slot(list, "filter-drop-shadow-color") {
         *color = c;
+    }
+}
+
+/// Box shadow and clip-path fields a timeline drives one at a time:
+/// `box-shadow-<i>-<x|y|blur|spread|color|inset>` and `clip-path-<i>-<x|y>`.
+/// Lengths are px, `blur` is the CSS blur radius, `inset` turns on at 0.5 and
+/// clip corners are box percents. A missing shadow or corner extends its list.
+pub(crate) fn indexed(name: &str) -> Option<(&'static str, usize, &str)> {
+    let (list, fields, cap): (&'static str, &[&str], usize) = if name.starts_with("box-shadow-") {
+        ("box-shadow", &["x", "y", "blur", "spread", "color", "inset"], 32)
+    } else if name.starts_with("clip-path-") {
+        ("clip-path", &["x", "y"], 256)
+    } else {
+        return None;
+    };
+    let (i, field) = name[list.len() + 1..].split_once('-')?;
+    if i.is_empty() || !i.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let i: usize = i.parse().ok()?;
+    (i < cap && fields.contains(&field)).then_some((list, i, field))
+}
+/// The shadow a missing list entry stands for: transparent and zero sized.
+pub(crate) const NO_BOX_SHADOW: Shadow =
+    Shadow { inset: false, color: NO_SHADOW, x: 0.0, y: 0.0, blur: 0.0, spread: 0.0 };
+/// A scalar shadow field in its track unit.
+pub(crate) fn shadow_scalar(shadow: &Shadow, field: &str) -> f32 {
+    match field {
+        "x" => shadow.x,
+        "y" => shadow.y,
+        "blur" => shadow.blur * 2.0,
+        "spread" => shadow.spread,
+        _ => shadow.inset as u8 as f32,
+    }
+}
+fn set_shadow(list: &mut Vec<Shadow>, i: usize, field: &str, v: Value) {
+    if list.len() <= i {
+        list.resize(i + 1, NO_BOX_SHADOW);
+    }
+    let shadow = &mut list[i];
+    match (field, v) {
+        ("color", Value::Color(c)) => shadow.color = c,
+        ("x", Value::Scalar(v)) => shadow.x = v,
+        ("y", Value::Scalar(v)) => shadow.y = v,
+        ("blur", Value::Scalar(v)) => shadow.blur = v.max(0.0) / 2.0,
+        ("spread", Value::Scalar(v)) => shadow.spread = v,
+        ("inset", Value::Scalar(v)) => shadow.inset = v >= 0.5,
+        _ => {}
+    }
+}
+fn set_clip(points: &mut Option<Vec<(f32, f32)>>, i: usize, field: &str, v: f32) {
+    let list = points.get_or_insert_with(Vec::new);
+    if list.len() <= i {
+        list.resize(i + 1, (0.0, 0.0));
+    }
+    if field == "x" {
+        list[i].0 = v / 100.0;
+    } else {
+        list[i].1 = v / 100.0;
     }
 }
 
@@ -495,7 +556,10 @@ pub(crate) fn from_track(
                 "width" | "height" | "left" | "top" | "border-top-left-radius" => format!("{n}px"),
                 name if is_component(name) => n.to_string(),
                 "filter-drop-shadow-color" => return Err(format!("timeline '{property}' takes CSS text")),
-                name if is_filter(name) => n.to_string(),
+                name if indexed(name).is_some_and(|(_, _, field)| field == "color") => {
+                    return Err(format!("timeline '{property}' takes CSS text"))
+                }
+                name if is_filter(name) || indexed(name).is_some() => n.to_string(),
                 "text" => n.to_string(),
                 "color" | "background-color" | "transform" => {
                     return Err(format!("timeline '{property}' takes CSS text"))
@@ -747,6 +811,11 @@ impl Animation {
                 }
                 ("filter-drop-shadow-color", Value::Color(c)) => set_filter_color(&mut paint.filters, c),
                 (name, Value::Scalar(v)) if is_filter(name) => set_filter(&mut paint.filters, name, v),
+                (name, v) if indexed(name).is_some() => match (indexed(name), v) {
+                    (Some(("box-shadow", i, field)), v) => set_shadow(&mut paint.shadows, i, field, v),
+                    (Some((_, i, field)), Value::Scalar(v)) => set_clip(&mut paint.box_node.clip_path, i, field, v),
+                    _ => {}
+                },
                 (name, Value::Scalar(v)) if is_component(name) => parts
                     .get_or_insert_with(|| Parts::decompose(&paint.transform).unwrap_or_default())
                     .set(name, v),

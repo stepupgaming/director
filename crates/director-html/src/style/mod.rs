@@ -29,7 +29,7 @@ mod background;
 mod border;
 mod boxes;
 mod effects;
-pub(crate) use effects::parse_filters;
+pub(crate) use effects::{parse_box_shadows, parse_filters};
 mod layout;
 mod text;
 mod transform;
@@ -1144,27 +1144,7 @@ pub fn translate(
                     };
                 }
                 "clip-path" => {
-                    if s != "none" {
-                        let points = if let Some(content) =
-                            s.strip_prefix("polygon(").and_then(|s| s.strip_suffix(')'))
-                        {
-                            let mut points = Vec::new();
-                            for point in split(content, true) {
-                                let xy = split(&point, false);
-                                if xy.len() != 2 {
-                                    return Err("invalid polygon point".into());
-                                };
-                                let x = length(&xy[0], m)?;
-                                let y = length(&xy[1], m)?;
-                                if !x.is_percent() || !y.is_percent() {
-                                    return Err("polygon points must be percentages".into());
-                                };
-                                points.push((x.value(), y.value()));
-                            }
-                            points
-                        } else {
-                            clip_shape_points(s, values, m)?
-                        };
+                    if let Some(points) = clip_points(s, values, m)? {
                         paint.box_node.clip_path = Some(points);
                     }
                 }
@@ -1689,6 +1669,31 @@ fn size_component(
         LengthPercentageOrAuto::Auto => Ok(None),
         LengthPercentageOrAuto::LengthPercentage(value) => Ok(Some(convert_length(value, m)?)),
     }
+}
+
+/// A `clip-path` value as box fractions, the corners of its polygon. `none` is `None`.
+pub(crate) fn clip_points(s: &str, values: &Values, m: Metrics) -> Result<Option<Vec<(f32, f32)>>, String> {
+    let s = s.trim();
+    if s == "none" {
+        return Ok(None);
+    }
+    let Some(content) = s.strip_prefix("polygon(").and_then(|s| s.strip_suffix(')')) else {
+        return clip_shape_points(s, values, m).map(Some);
+    };
+    let mut points = Vec::new();
+    for point in split(content, true) {
+        let xy = split(&point, false);
+        if xy.len() != 2 {
+            return Err("invalid polygon point".into());
+        };
+        let x = length(&xy[0], m)?;
+        let y = length(&xy[1], m)?;
+        if !x.is_percent() || !y.is_percent() {
+            return Err("polygon points must be percentages".into());
+        };
+        points.push((x.value(), y.value()));
+    }
+    Ok(Some(points))
 }
 
 fn clip_shape_points(s: &str, values: &Values, m: Metrics) -> Result<Vec<(f32, f32)>, String> {
