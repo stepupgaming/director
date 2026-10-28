@@ -76,6 +76,23 @@ impl Ease {
             _ => return Err(format!("unsupported timing function '{s}'")),
         })
     }
+    fn to_doc(&self) -> doc::CssTiming {
+        match self {
+            Self::Curve(easing) => doc::CssTiming::Curve(export_easing(easing)),
+            Self::Steps(count, start) => doc::CssTiming::Steps {
+                count: *count,
+                start: *start,
+            },
+            Self::Gsap(ease) => doc::CssTiming::Gsap(ease.text()),
+        }
+    }
+    fn from_doc(timing: &doc::CssTiming) -> Result<Self, ImportError> {
+        Ok(match timing {
+            doc::CssTiming::Curve(easing) => Self::Curve(import_easing(easing)),
+            doc::CssTiming::Steps { count, start } => Self::Steps(*count, *start),
+            doc::CssTiming::Gsap(text) => Self::Gsap(GsapEase::parse(text).map_err(ImportError::Invalid)?),
+        })
+    }
     fn eval(&self, t: f32) -> f32 {
         match self {
             Self::Curve(e) => e.eval(t),
@@ -1102,14 +1119,7 @@ impl Animation {
                                 ),
                                 Value::Text(text) => doc::CssValue::Text(text.clone()),
                             },
-                            timing: match &point.ease {
-                                Ease::Curve(easing) => doc::CssTiming::Curve(export_easing(easing)),
-                                Ease::Steps(count, start) => doc::CssTiming::Steps {
-                                    count: *count,
-                                    start: *start,
-                                },
-                                Ease::Gsap(ease) => doc::CssTiming::Gsap(ease.text()),
-                            },
+                            timing: point.ease.to_doc(),
                         })
                     })
                     .collect::<Result<_, ExportError>>()?;
@@ -1152,13 +1162,7 @@ impl Animation {
                                 ),
                                 doc::CssValue::Text(text) => Value::Text(text.clone()),
                             },
-                            ease: match &keyframe.timing {
-                                doc::CssTiming::Curve(easing) => Ease::Curve(import_easing(easing)),
-                                doc::CssTiming::Steps { count, start } => Ease::Steps(*count, *start),
-                                doc::CssTiming::Gsap(text) => {
-                                    Ease::Gsap(GsapEase::parse(text).map_err(ImportError::Invalid)?)
-                                }
-                            },
+                            ease: Ease::from_doc(&keyframe.timing)?,
                         })
                     })
                     .collect::<Result<_, ImportError>>()?;
@@ -1176,6 +1180,126 @@ impl Animation {
             fill: animation.fill_mode.clone(),
             channels,
         })
+    }
+}
+
+/// A `time` track: the clock an element's descendants run on. Each key maps a
+/// composition second to a descendant second, and its ease shapes the segment
+/// arriving at it. Before the first key and after the last the clock runs at
+/// speed 1, so keys from 20 s to 0 s rewind the subtree and then replay it.
+#[derive(Debug, Clone)]
+pub struct TimeMap {
+    keys: Vec<TimeKey>,
+}
+#[derive(Debug, Clone)]
+struct TimeKey {
+    time: f64,
+    value: f64,
+    ease: Ease,
+}
+
+/// Samples per segment when a range query looks for an ease overshooting its keys.
+const RANGE_SAMPLES: usize = 16;
+
+impl TimeMap {
+    /// Keys from a `time` track. Values are seconds, as numbers or `s`/`ms` text.
+    pub(crate) fn from_track(track: &crate::timeline::TimelineTrack) -> Result<Self, String> {
+        use crate::timeline::TimelineValue;
+        if track.keyframes.is_empty() {
+            return Err("timeline track has no keyframes".into());
+        }
+        let keys = track
+            .keyframes
+            .iter()
+            .map(|key| {
+                let value = match &key.value {
+                    TimelineValue::Number(n) => *n,
+                    TimelineValue::Text(s) => {
+                        let s = s.trim();
+                        let (n, scale) = match s.strip_suffix("ms") {
+                            Some(ms) => (ms, 0.001),
+                            None => (s.strip_suffix('s').unwrap_or(s), 1.0),
+                        };
+                        n.trim().parse::<f64>().map_err(|_| format!("invalid time '{s}'"))? * scale
+                    }
+                };
+                if !value.is_finite() {
+                    return Err("a time key must be finite".to_string());
+                }
+                let ease = match key.ease.as_deref() {
+                    Some(ease) => Ease::parse(ease)?,
+                    None => Ease::Curve(EasingType::Linear),
+                };
+                Ok(TimeKey { time: key.time, value, ease })
+            })
+            .collect::<Result<_, String>>()?;
+        Ok(Self { keys })
+    }
+
+    /// Descendant time at composition time `t`.
+    pub fn at(&self, t: f64) -> f64 {
+        let (first, last) = (&self.keys[0], &self.keys[self.keys.len() - 1]);
+        if t <= first.time {
+            return first.value + (t - first.time);
+        }
+        if t >= last.time {
+            return last.value + (t - last.time);
+        }
+        // Keys sharing a time jump: the later one holds from that time.
+        let i = self.keys.partition_point(|key| key.time <= t);
+        let (a, b) = (&self.keys[i - 1], &self.keys[i]);
+        let progress = ((t - a.time) / (b.time - a.time)) as f32;
+        a.value + (b.value - a.value) * b.ease.eval(progress) as f64
+    }
+
+    /// The earliest and latest descendant times while composition time runs
+    /// through `[t0, t1]`.
+    pub fn range(&self, t0: f64, t1: f64) -> (f64, f64) {
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        let mut samples = vec![t0, t1];
+        for pair in self.keys.windows(2) {
+            let (s0, s1) = (pair[0].time.max(t0), pair[1].time.min(t1));
+            if s0 <= s1 {
+                samples.extend((0..=RANGE_SAMPLES).map(|k| s0 + (s1 - s0) * k as f64 / RANGE_SAMPLES as f64));
+            }
+        }
+        for t in samples {
+            let value = self.at(t);
+            lo = lo.min(value);
+            hi = hi.max(value);
+        }
+        (lo, hi)
+    }
+
+    pub(crate) fn to_doc(&self) -> Vec<doc::TimeKey> {
+        self.keys
+            .iter()
+            .map(|key| doc::TimeKey {
+                time: key.time,
+                value: key.value,
+                timing: key.ease.to_doc(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn from_doc(keys: &[doc::TimeKey]) -> Result<Self, ImportError> {
+        if keys.is_empty() {
+            return Err(ImportError::Invalid("an html time map has no keys".to_string()));
+        }
+        if keys.windows(2).any(|pair| pair[1].time < pair[0].time) {
+            return Err(ImportError::Invalid("html time map keys must not go back in time".to_string()));
+        }
+        let keys = keys
+            .iter()
+            .map(|key| {
+                Ok(TimeKey {
+                    time: key.time,
+                    value: key.value,
+                    ease: Ease::from_doc(&key.timing)?,
+                })
+            })
+            .collect::<Result<_, ImportError>>()?;
+        Ok(Self { keys })
     }
 }
 

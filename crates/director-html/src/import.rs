@@ -81,6 +81,7 @@ fn decode_html(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn El
     element.playback_rate = body.playback_rate;
     element.hidden = body.hidden;
     element.paper = body.paper.as_ref().map(|paper| PaperPaint::from_doc(paper, cx)).transpose()?;
+    element.time_map = body.time_map.as_deref().map(crate::animation::TimeMap::from_doc).transpose()?;
     // The text and its boxes share one flow.
     let mut flow = |id: u32| cx.shared(format!("html-inline-flow-{id}"), |_| Ok(InlineFlow::new(id)));
     element.inline = match &body.inline {

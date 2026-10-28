@@ -694,6 +694,7 @@ fn build(
         atomic: HashSet::new(),
         flows: 0,
         inherited: Vec::new(),
+        clocked: 0,
     };
     // Compute inherited values along the full ancestor chain, including body resets.
     let mut ancestors: Vec<_> = root.ancestors().filter_map(ElementRef::wrap).collect();
@@ -757,6 +758,8 @@ struct Builder {
     /// Per open ancestor: its font size and the text animations its
     /// descendants inherit.
     inherited: Vec<(f32, Vec<animation::Animation>)>,
+    /// Open ancestors with a `time` track.
+    clocked: usize,
 }
 
 /// The HTML element on scene node `id`.
@@ -1509,6 +1512,12 @@ impl Builder {
                 if media_start < 0.0 {
                     return Err(CompileError::Input("negative audio media start".into()));
                 }
+                if self.clocked > 0 {
+                    return Err(CompileError::Diagnostics(vec![diagnostic(
+                        &context,
+                        "audio inside a time track plays on the composition clock".to_string(),
+                    )]));
+                }
                 samples.drain(..((media_start * 96000.0) as usize).min(samples.len()));
                 let id = self.director.add_scene_audio(samples, start, end - start);
                 if let Some(track) = &mut self.director.audio_mixer.tracks[id] {
@@ -1698,6 +1707,23 @@ impl Builder {
                 )]));
             }
         }
+        // A time track gives the element's descendants their own clock.
+        if let Some(i) = tracks.iter().position(|track| track.property == "time") {
+            let track = tracks.remove(i);
+            if has_content || tag == "audio" {
+                return Err(CompileError::Diagnostics(vec![diagnostic(
+                    &context,
+                    "a time track clocks child elements, so its element needs children and no own content"
+                        .to_string(),
+                )]));
+            }
+            element.time_map = Some(
+                animation::TimeMap::from_track(&track)
+                    .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?,
+            );
+            self.emitted.push(track);
+        }
+        let clocks = element.time_map.is_some();
         // Timeline tracks play like inline styles, so a running @keyframes
         // animation of the same property applies after them and wins.
         let keyframes = std::mem::take(&mut element.animations);
@@ -1714,7 +1740,14 @@ impl Builder {
         // Descendants inherit every text animation that reaches this element.
         let passed: Vec<animation::Animation> =
             element.animations.iter().filter_map(|a| a.inherited(|_| true, 1.0)).collect();
+        if clocks && !passed.is_empty() {
+            return Err(CompileError::Diagnostics(vec![diagnostic(
+                &context,
+                "text animations cannot pass through a time track to its descendants".to_string(),
+            )]));
+        }
         self.inherited.push((paint.font_size, passed));
+        self.clocked += usize::from(clocks);
         let id = self.director.scene.add_node(Box::new(element));
         if let Some(probe) = &mut self.probe {
             probe.push(ProbeEntry {
@@ -1803,6 +1836,12 @@ impl Builder {
                     self.node(child, &values, next_start, false, child_block, depth + 1)?;
                 // Taffy absolute offsets use the parent node, so fixed is a child of the composition root.
                 if !root && self.fixed.contains(&child_id) {
+                    if self.clocked > 0 {
+                        return Err(CompileError::Diagnostics(vec![diagnostic(
+                            &context,
+                            "a fixed box inside a time track would leave its clock".to_string(),
+                        )]));
+                    }
                     self.director.scene.add_child(
                         self.root_id
                             .expect("composition root exists before a nested fixed box"),
@@ -1822,6 +1861,7 @@ impl Builder {
             self.place_foreign_objects(el, id, &values, fallback, next_start, depth)?;
         }
         self.inherited.pop();
+        self.clocked -= usize::from(clocks);
         Ok(id)
     }
 

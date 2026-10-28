@@ -269,7 +269,11 @@ incremental pass still hits a clean static node without comparing the
 key. Image-only caches (composition surfaces, captured HTML frames)
 still miss on every full pass. `Element::moves_between(t0, t1)` answers
 whether paint or layout may change inside a local time range; the default
-assumes motion, and `BoxNode`, `TextNode`, `ImageNode`, `ShapeNode` and
+assumes motion. `Element::child_time(time)` gives the local time of a node's
+children (`Director::update` passes it down; masks keep the node's time), and
+`Element::child_time_range(t0, t1)` gives the span of child times for range
+queries. Both default to passing time through; a time remap such as an HTML
+`time` track overrides them, and `BoxNode`, `TextNode`, `ImageNode`, `ShapeNode` and
 `VectorNode` check their channels through `Animated::moves_between`, which
 moves only across keys whose values differ. Acceptance: `tests/pipeline_equivalence.rs`
 and `tests/static_reuse.rs`.

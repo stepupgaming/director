@@ -671,9 +671,10 @@ impl Director {
             node.local_time = time;
             node.last_visit_time = global_time;
 
+            let child_time = node.element.child_time(time);
             let children = node.children.clone();
             for child in children {
-                stack.push((child, time));
+                stack.push((child, child_time));
             }
 
             // Also traverse mask node to ensure it gets updates

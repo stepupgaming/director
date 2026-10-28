@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  @font-face { font-family:Roboto; src:url("../../crates/director-core/assets/fonts/Roboto-Bold.ttf"); font-weight:700; }
+  html, body { margin:0; background:#000; }
+  * { box-sizing:border-box; }
+  #stage { position:relative; width:100%; height:100%; overflow:hidden; background:#000; font-family:Roboto; font-weight:700; color:#fff; }
+  #film { position:absolute; inset:0; }
+  #ground { position:absolute; inset:0; background:#0b0b0f; }
+  .word { position:absolute; left:0; top:330px; width:1920px; margin:0; text-align:center; font-size:300px; line-height:1; letter-spacing:-8px; }
+  #bar { position:absolute; left:160px; top:900px; width:0px; height:14px; border-radius:7px; background:#ff3d6e; }
+  #rew { position:absolute; left:120px; top:90px; margin:0; font-size:72px; letter-spacing:4px; color:#fff; }
+  #logo { position:absolute; inset:0; background:#ff3d6e; display:flex; align-items:center; justify-content:center; font-size:180px; color:#0b0b0f; }
+</style></head><body>
+<div id="stage" data-composition-id="kinetic-rewind" data-width="1920" data-height="1080" data-fps="30" data-duration="6">
+  <div id="film">
+    <div id="ground"></div>
+    <h1 class="word" id="w1" data-start="0" data-duration="1">MAKE</h1>
+    <h1 class="word" id="w2" data-start="1" data-duration="1">IT</h1>
+    <h1 class="word" id="w3" data-start="2" data-duration="1.2">MOVE</h1>
+    <div id="bar"></div>
+  </div>
+  <p id="rew" data-start="3.2" data-duration="1.2">&lt;&lt; REWIND</p>
+  <div id="logo" data-start="4.4">director</div>
+</div>
+<script type="application/director-timeline+json">
+{
+  "format": "director-timeline/1",
+  "tracks": [
+    { "target": "film", "property": "time", "keyframes": [
+      { "time": 3.2, "value": 3.2 },
+      { "time": 4.4, "value": 0, "ease": "power2.in" } ] }
+  ]
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+  window.__timelines = window.__timelines || {};
+  const tl = gsap.timeline({ paused: true });
+  // The film: hard cuts on whole seconds, each word punching in.
+  tl.fromTo("#w1", { scale: 1.4 }, { scale: 1, duration: 0.5, ease: "expo.out" }, 0)
+    .fromTo("#w2", { scale: 1.4 }, { scale: 1, duration: 0.5, ease: "expo.out" }, 1)
+    .fromTo("#w3", { scale: 0.7, letterSpacing: "40px" }, { scale: 1, letterSpacing: "-8px", duration: 0.8, ease: "expo.out" }, 2)
+    .set("#ground", { backgroundColor: "#1a1240" }, 1)
+    .set("#ground", { backgroundColor: "#0b0b0f" }, 2)
+    .fromTo("#bar", { width: 0 }, { width: 1600, duration: 3.2, ease: "none" }, 0);
+  // The rewind look runs on the composition clock while the film clock runs back.
+  tl.to("#film", { filter: "blur(4px) contrast(1.5) saturate(0.4)", duration: 0.2, ease: "power1.out" }, 3.2)
+    .to("#film", { filter: "blur(0px) contrast(1) saturate(1)", duration: 0.2, ease: "power1.in" }, 4.2)
+    .fromTo("#rew", { opacity: 1 }, { opacity: 0.25, duration: 0.15, repeat: 7, yoyo: true, ease: "steps(1)" }, 3.2);
+  window.__timelines["kinetic-rewind"] = tl;
+</script>
+</body></html>

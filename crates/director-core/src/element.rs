@@ -161,6 +161,19 @@ pub trait Element: std::fmt::Debug + ElementClone {
         true
     }
 
+    /// The local time this node's children run at while the node runs at
+    /// `time`. A time remap gives its subtree another clock; the default
+    /// passes the node's time through.
+    fn child_time(&self, time: f64) -> f64 {
+        time
+    }
+
+    /// The earliest and latest child times while the node runs through local
+    /// time `[t0, t1]`, for motion queries over the subtree.
+    fn child_time_range(&self, t0: f64, t1: f64) -> (f64, f64) {
+        (t0, t1)
+    }
+
     /// Called after layout is computed but before rendering.
     ///
     /// Useful for elements that need to adjust their state based on their final size (e.g. `TextFit`).

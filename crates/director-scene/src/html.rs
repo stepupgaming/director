@@ -31,6 +31,21 @@ pub struct HtmlBody {
     pub paper: Option<PaperShader>,
     /// This box's part in an inline formatting context with atomic inline boxes.
     pub inline: Option<InlineFlow>,
+    /// The clock the box's descendants run on, as keys from composition
+    /// seconds to descendant seconds. Absent means the composition clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_map: Option<Vec<TimeKey>>,
+}
+
+/// One key of a time map. Outside the first and last key the clock runs at speed 1.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TimeKey {
+    /// Composition seconds.
+    pub time: f64,
+    /// Descendant seconds at `time`.
+    pub value: f64,
+    /// Timing of the segment arriving at this key.
+    pub timing: CssTiming,
 }
 
 /// Atomic inline boxes (`inline-block`) laid out on the lines of a sibling text

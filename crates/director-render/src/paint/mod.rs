@@ -65,8 +65,25 @@ fn subtree_varies(scene: &SceneGraph, root: NodeId) -> bool {
 
 /// True when any node under `root`, masks included, may paint differently
 /// somewhere in local time `[t0, t1]`.
+/// Children ask over the span of times their parent's clock maps the range to.
 pub(crate) fn subtree_moves(scene: &SceneGraph, root: NodeId, t0: f64, t1: f64) -> bool {
-    subtree_any(scene, root, |node| kinds::node_moves(node, t0, t1))
+    let mut stack = vec![(root, t0, t1)];
+    let mut seen = HashSet::new();
+    while let Some((id, t0, t1)) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(node) = scene.get_node(id) else {
+            continue;
+        };
+        if kinds::node_moves(node, t0, t1) {
+            return true;
+        }
+        let (c0, c1) = node.element.child_time_range(t0, t1);
+        stack.extend(node.children.iter().map(|&child| (child, c0, c1)));
+        stack.extend(node.mask_node.map(|mask| (mask, t0, t1)));
+    }
+    false
 }
 
 fn subtree_any(scene: &SceneGraph, root: NodeId, test: impl Fn(&SceneNode) -> bool) -> bool {

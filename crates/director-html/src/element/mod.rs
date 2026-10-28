@@ -1,5 +1,5 @@
 use crate::{
-    animation::Animation,
+    animation::{Animation, TimeMap},
     shader::PaperPaint,
     style::{
         canvas_transform, perspective_matrix, resolve, shows_backface, CanvasTransform,
@@ -91,6 +91,8 @@ pub struct HtmlElement {
     pub base_paint: PaintStyle,
     pub paper: Option<PaperPaint>,
     pub inline: Option<InlineLink>,
+    /// The clock of this box's descendants. `None` passes its time through.
+    pub time_map: Option<TimeMap>,
     time: f64,
     baseline_offset: f32,
     /// The text a `text` track replaced, and the track text on screen.
@@ -126,6 +128,7 @@ impl HtmlElement {
             animations: Vec::new(),
             paper: None,
             inline: None,
+            time_map: None,
             time: 0.0,
             baseline_offset: 0.0,
             own_spans: None,
@@ -327,6 +330,12 @@ impl Element for HtmlElement {
             || edge(self.end)
             || self.animations.iter().any(|animation| animation.moves_between(t0, t1))
             || self.content.as_ref().is_some_and(|content| content.moves_between(m0.min(m1), m0.max(m1)))
+    }
+    fn child_time(&self, time: f64) -> f64 {
+        self.time_map.as_ref().map_or(time, |map| map.at(time))
+    }
+    fn child_time_range(&self, t0: f64, t1: f64) -> (f64, f64) {
+        self.time_map.as_ref().map_or((t0, t1), |map| map.range(t0, t1))
     }
     fn as_any(&self) -> &dyn Any {
         self

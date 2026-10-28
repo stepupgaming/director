@@ -50,6 +50,7 @@ pub(crate) fn html_body(element: &HtmlElement, cx: &mut ExportContext) -> Result
                 font_size: element.metrics.font_size,
             },
             paper: element.paper.as_ref().map(|paper| paper.to_doc(cx)),
+            time_map: element.time_map.as_ref().map(|map| map.to_doc()),
             inline: element.inline.as_ref().map(|link| match link {
                 InlineLink::Text(flow) => doc::InlineFlow::Text {
                     flow: flow.id,
