@@ -397,6 +397,10 @@ impl TextNode {
                     text_style.set_foreground_paint(&stroke_paint);
                 }
             }
+            if span.hidden {
+                text_style.set_foreground_paint(&Paint::new(skia_safe::Color4f::new(0.0, 0.0, 0.0, 0.0), None));
+                text_style.set_background_paint(&Paint::new(skia_safe::Color4f::new(0.0, 0.0, 0.0, 0.0), None));
+            }
 
             builder.push_style(&text_style);
             builder.add_text(&span.text);

@@ -166,6 +166,9 @@ pub struct TextSpan {
     /// Variable font axis positions. `None` uses the font's defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_variations: Option<Vec<FontVariation>>,
+    /// The span keeps its advance and paints nothing, as `visibility: hidden` does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 /// One variable font axis position: a four-letter OpenType tag such as

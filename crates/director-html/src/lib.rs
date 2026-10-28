@@ -23,6 +23,7 @@ mod grid_template;
 mod object_pos;
 mod project;
 mod property;
+mod reel;
 mod shader;
 mod smil;
 mod style;

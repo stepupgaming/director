@@ -94,7 +94,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 437 | 2026-10-28 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test integration visual_suite::` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test integration html_export::` |
-| workspace release tests | 1109, 3 ignored | 2026-10-28 | `cargo test --workspace --release` |
+| workspace release tests | 1115, 3 ignored | 2026-10-28 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 25 | 2026-10-28 | `cargo test -p director-render --release` |
 | director-host | 25 | 2026-10-26 | `cargo test -p director-host --release` |
@@ -108,6 +108,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | HTML rewind (`time` tracks) | 5 | 2026-10-28 | `cargo test -p director-html --release --test integration rewind::` |
 | HTML beats (beat grid, beat times, `data-sfx`) | 7 | 2026-10-28 | `cargo test -p director-html --release --test integration beats::` |
 | beat detection, `html beats --clicks` wall time | 30 s WAV 223 ms (100.01 BPM, interval sd 1.7 ms); 60 s WAV 376 ms (120.18 BPM, drop at 54.38 s) | 2026-10-28 | `director-engine html beats C:/Projects/gemmy/outputs/<song>.wav --clicks <out>.wav` |
+| HTML reels (`data-reel`, positioned boxes beside text, hidden spans) | 6 | 2026-10-28 | `cargo test -p director-html --release --test integration reel::` |
 | HTML gsap (phase 5 GSAP gate) | 44 | 2026-10-28 | `cargo test -p director-html --release --test integration gsap::` |
 | GSAP Chromium parity, 30fps every frame | entrance SSIM .999317 MAE .0519; loop .999945 / .0073; stagger .999140 / .0790; gsap-motion 1080p .995709 / .3758; all pass on the recording-shim pipeline; rerun pending for real GSAP | 2026-10-27 | `node crates/director-html/tools/parity.mjs --input <fixture> --output target/gsap-parity/final/<name> --director target/release/director-engine.exe --chrome <chromium_headless_shell-1248>` (`--root .` for the example) |
 | Vulkan engine clippy | pass | 2026-10-25 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
@@ -143,7 +144,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text) and SMIL `calcMode="spline"`. Issue 8 (kinetic film) continues with slot-reel counters, film QA metrics, a block library and 4K60 throughput (rewind landed as `time` tracks and the beat grid as beat times, `director.beat` and `data-sfx`); its extruded 3D type waits on issue 9. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text) and SMIL `calcMode="spline"`. Issue 8 (kinetic film) continues with film QA metrics, a block library and 4K60 throughput (rewind landed as `time` tracks, the beat grid as beat times, `director.beat` and `data-sfx`, and slot-reel counters as `data-reel`); its extruded 3D type waits on issue 9. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

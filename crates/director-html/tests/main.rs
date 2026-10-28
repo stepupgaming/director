@@ -34,6 +34,7 @@ mod object_position_css;
 mod padded_text;
 mod paint_gaps;
 mod project;
+mod reel;
 mod rewind;
 mod rich_text;
 mod scene_document;

@@ -43,6 +43,8 @@ pub struct TextSpan {
     pub line_height: Option<f32>,
     /// Variable font axis positions. `None` uses the font's defaults.
     pub font_variations: Option<Vec<FontVariation>>,
+    /// The span keeps its advance and paints nothing, as `visibility: hidden` does.
+    pub hidden: bool,
 }
 
 pub use director_scene::FontVariation;

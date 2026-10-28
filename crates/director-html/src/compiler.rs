@@ -556,6 +556,8 @@ pub(crate) fn compile_with_assets(
     let mut dom = Html::parse_document(source);
     let beats = Rc::new(Beats::new(composition_root(&dom, &options)?, &assets).map_err(CompileError::Input)?);
     let options = resolve_options(&dom, options, &beats)?;
+    let root = composition_root(&dom, &options)?.id();
+    crate::reel::expand(&mut dom, root, &beats)?;
     let blur = motion_blur(composition_root(&dom, &options)?)?;
     let motion = crate::gsap::run(&mut dom, &options, blur, &assets, &beats)
         .map_err(|e| CompileError::Diagnostics(vec![diagnostic("script", e)]))?;
@@ -721,6 +723,7 @@ fn build(
         root_element: root.id(),
         emitted: Vec::new(),
         atomic: HashSet::new(),
+        leaves: HashSet::new(),
         flows: 0,
         inherited: Vec::new(),
         clocked: 0,
@@ -784,6 +787,8 @@ struct Builder {
     timeline: BTreeMap<String, Vec<crate::timeline::TimelineTrack>>,
     /// Elements compiling as atomic boxes on a text block's lines.
     atomic: HashSet<ego_tree::NodeId>,
+    /// Anonymous leaves holding the text of a box beside its other children.
+    leaves: HashSet<NodeId>,
     /// Inline formatting contexts with atomic boxes so far.
     flows: u32,
     /// Per open ancestor: its font size and the text animations its
@@ -1039,7 +1044,9 @@ fn build_paragraph_colored(
         let mut text = TextStyle::new();
         text.set_font_size(size);
         let css_color = span.color.unwrap_or(paint.color);
-        let color = if force_white {
+        let color = if span.hidden {
+            director_core::types::Color { a: 0.0, ..css_color }
+        } else if force_white {
             director_core::types::Color::WHITE
         } else {
             css_color
@@ -1053,7 +1060,7 @@ fn build_paragraph_colored(
         if paint.tabular_nums {
             text.add_font_feature("tnum", 1);
         }
-        if paint.text_stroke_width > 0.0 && pass != TextPass::Fill {
+        if paint.text_stroke_width > 0.0 && pass != TextPass::Fill && !span.hidden {
             // A transparent fill or a stroke pass is stroke-only.
             // A combined opaque fill uses stroke-and-fill in that color so the fill still inks.
             let mut ink = skia_safe::Paint::default();
@@ -1153,6 +1160,10 @@ fn fit_paragraph(paragraph: &mut skia_safe::textlayout::Paragraph, paint: &Paint
     let clamped = paint.line_clamp.is_some();
     if !finite {
         paragraph.layout(f32::INFINITY);
+        // Skia aligns a centred or right line against an infinite width, so lay it out at its own.
+        if paint.align != skia_safe::textlayout::TextAlign::Left {
+            paragraph.layout(paragraph.longest_line() + 1.0);
+        }
         width
     } else if ellipsis || clamped {
         paragraph.layout(width);
@@ -1195,6 +1206,9 @@ enum Level {
     /// that GSAP or the timeline animates.
     Atomic,
     Block,
+    /// An absolutely or fixed positioned box, out of the block's flow: it
+    /// compiles beside the block's text.
+    Positioned,
     /// `display: none`.
     Skip,
 }
@@ -1219,8 +1233,10 @@ impl Builder {
             return Level::Inline;
         }
         let animated = || if self.animated(child) { Level::Atomic } else { Level::Inline };
+        let positioned = matches!(values.get("position").map(|p| p.trim()), Some("absolute" | "fixed"));
         match values.get("display").map(|d| d.trim()) {
             Some("none") => Level::Skip,
+            _ if positioned => Level::Positioned,
             Some("inline-block") => Level::Atomic,
             Some("inline") => animated(),
             None if inline(tag) => animated(),
@@ -1487,6 +1503,7 @@ impl Builder {
         }
         let mut svg_viewport: Option<(f32, f32)> = None;
         let mut atomics = Vec::new();
+        let mut positioned = Vec::new();
         let content: Option<Box<dyn Element>> = match tag {
             "img" => {
                 let src = el
@@ -1685,14 +1702,21 @@ impl Builder {
                 let mut text_block = true;
                 for child in &children {
                     let child_values = self.css.cascade(*child, &values)?;
-                    if self.level(*child, &child_values) == Level::Block {
-                        text_block = false;
-                        break;
+                    match self.level(*child, &child_values) {
+                        Level::Block => {
+                            text_block = false;
+                            break;
+                        }
+                        Level::Positioned => positioned.push(*child),
+                        _ => {}
                     }
+                }
+                if !text_block {
+                    positioned.clear();
                 }
                 if text_block {
                     let mut spans = Vec::new();
-                    self.rich_text(el, &values, &paint, style_block, &mut spans, &mut atomics)?;
+                    self.rich_text(el, &values, &paint, style_block, &mut spans, &mut atomics, true, paint.visible)?;
                     normalize(&mut spans, paint.preserve_space);
                     if !atomics.is_empty() && self.text_tracked(el) {
                         return Err(CompileError::Input(format!(
@@ -1738,9 +1762,11 @@ impl Builder {
         })?;
         paint.box_node.style = layout.clone();
         let has_content = content.is_some();
-        // Absolute atomic boxes beside the text need the text in a leaf of its own.
+        // Absolute atomic boxes and positioned children beside the text need the text in a leaf of its own.
         let anonymous_text = has_content
-            && (matches!(layout.display, taffy::Display::Flex | taffy::Display::Grid) || !atomics.is_empty())
+            && (matches!(layout.display, taffy::Display::Flex | taffy::Display::Grid)
+                || !atomics.is_empty()
+                || !positioned.is_empty())
             && !matches!(tag, "img" | "svg" | "video");
         let mut element = HtmlElement::new(
             layout,
@@ -1919,6 +1945,7 @@ impl Builder {
                 leaf.downcast_mut::<HtmlElement>().unwrap().animations = text_parts;
             }
             self.director.scene.add_child(id, child);
+            self.leaves.insert(child);
             self.nodes += 1;
             if !atomics.is_empty() {
                 let next_start = if !root && el.value().attr("data-composition-id").is_some() {
@@ -1929,39 +1956,43 @@ impl Builder {
                 self.place_atomics(id, child, &atomics, next_start, child_block, depth)?;
             }
         }
+        let next_start = if !root && el.value().attr("data-composition-id").is_some() {
+            start
+        } else {
+            composition_start
+        };
+        let children = if has_content {
+            positioned
+        } else if tag == "audio" {
+            Vec::new()
+        } else {
+            el.children()
+                .filter_map(ElementRef::wrap)
+                .filter(|child| !matches!(child.value().name(), "script" | "style" | "link"))
+                .collect()
+        };
         if let Some(name) = el.value().attr("id") {
             if self.ids.insert(name.into(), id).is_some() {
                 return Err(CompileError::Input(format!("duplicate HTML id '{name}'")));
             }
         }
-        if !has_content && tag != "audio" {
-            let next_start = if !root && el.value().attr("data-composition-id").is_some() {
-                start
+        for child in children {
+            let child_id = self.node(child, &values, next_start, false, child_block, depth + 1)?;
+            // Taffy absolute offsets use the parent node, so fixed is a child of the composition root.
+            if !root && self.fixed.contains(&child_id) {
+                if self.clocked > 0 {
+                    return Err(CompileError::Diagnostics(vec![diagnostic(
+                        &context,
+                        "a fixed box inside a time track would leave its clock".to_string(),
+                    )]));
+                }
+                self.director.scene.add_child(
+                    self.root_id
+                        .expect("composition root exists before a nested fixed box"),
+                    child_id,
+                );
             } else {
-                composition_start
-            };
-            for child in el.children().filter_map(ElementRef::wrap) {
-                if matches!(child.value().name(), "script" | "style" | "link") {
-                    continue;
-                }
-                let child_id =
-                    self.node(child, &values, next_start, false, child_block, depth + 1)?;
-                // Taffy absolute offsets use the parent node, so fixed is a child of the composition root.
-                if !root && self.fixed.contains(&child_id) {
-                    if self.clocked > 0 {
-                        return Err(CompileError::Diagnostics(vec![diagnostic(
-                            &context,
-                            "a fixed box inside a time track would leave its clock".to_string(),
-                        )]));
-                    }
-                    self.director.scene.add_child(
-                        self.root_id
-                            .expect("composition root exists before a nested fixed box"),
-                        child_id,
-                    );
-                } else {
-                    self.director.scene.add_child(id, child_id);
-                }
+                self.director.scene.add_child(id, child_id);
             }
         }
         if let Some(fallback) = svg_viewport {
@@ -2259,8 +2290,9 @@ impl Builder {
         let children = self.director.scene.get_node(id).map(|n| n.children.clone()).unwrap_or_default();
         let mut text = html_mut(&mut self.director, id).inline_text_metrics();
         for (i, child) in children.iter().enumerate() {
+            let leaf = self.leaves.contains(child);
             let child = html_mut(&mut self.director, *child);
-            if i == 0 && text.is_none() && matches!(child.inline, Some(InlineLink::Text(_))) {
+            if i == 0 && text.is_none() && (leaf || matches!(child.inline, Some(InlineLink::Text(_)))) {
                 text = child.inline_text_metrics();
             } else if child.base_style.position != taffy::style::Position::Absolute {
                 return Err(CompileError::Input(format!(
@@ -2315,6 +2347,7 @@ impl Builder {
         Ok((placeholder, sizing))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rich_text<'a>(
         &self,
         el: ElementRef<'a>,
@@ -2323,10 +2356,13 @@ impl Builder {
         block: style::ContainingBlock,
         spans: &mut Vec<TextSpan>,
         atomics: &mut Vec<(ElementRef<'a>, ComputedStyle)>,
+        top: bool,
+        visible: bool,
     ) -> Result<(), CompileError> {
         for node in el.children() {
             if let Some(text) = node.value().as_text() {
-                spans.push(span(text.to_string(), paint));
+                // A hidden span inside a visible block keeps its advance; the block's own visibility hides the rest.
+                spans.push(TextSpan { hidden: visible && !paint.visible, ..span(text.to_string(), paint) });
             } else if let Some(child) = ElementRef::wrap(node) {
                 if child.value().name() == "br" {
                     spans.push(span(HARD_BREAK.to_string(), paint));
@@ -2346,6 +2382,14 @@ impl Builder {
                     Level::Block => {
                         return Err(CompileError::Input(format!(
                             "{}: mixed block and inline content requires extraction",
+                            label(child)
+                        )))
+                    }
+                    // The text block compiles its own positioned children beside its text.
+                    Level::Positioned if top => continue,
+                    Level::Positioned => {
+                        return Err(CompileError::Input(format!(
+                            "{}: a positioned box inside an inline box requires extraction",
                             label(child)
                         )))
                     }
@@ -2372,7 +2416,7 @@ impl Builder {
                 )
                 .map_err(|e| CompileError::Input(e.join("; ")))?;
                 let before = spans.len();
-                self.rich_text(child, &child_values, &child_paint, block, spans, atomics)?;
+                self.rich_text(child, &child_values, &child_paint, block, spans, atomics, false, visible)?;
                 if self.css.has_local_property(child, "color") {
                     for span in &mut spans[before..] {
                         if span.color.is_none() {

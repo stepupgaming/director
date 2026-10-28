@@ -81,6 +81,7 @@ pub fn text_export(node: &TextNode) -> ElementExport {
                     word_spacing: span.word_spacing,
                     line_height: span.line_height,
                     font_variations: span.font_variations.clone(),
+            hidden: span.hidden,
                 })
                 .collect(),
             font_size: channel(&node.default_font_size),
