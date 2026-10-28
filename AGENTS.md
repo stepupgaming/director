@@ -89,6 +89,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Director is library-first. Delete in-repo frontend code; a future editor (a Tauri app in the style of the HyperFrames and Remotion studios) links the host session API. Remotion source compatibility stays out of scope.
 - Major overhauls are welcome. Earlier architecture came from weaker models; judge it on merit and replace it when a better design wins.
 - HTML/CSS is the primary authoring front door. Rhai is an optional generator.
+- 3D means real meshes from a feature-complete renderer: physically based materials, image-based and analytic lights with shadows, and film post effects. Do not propose faked 3D such as layered CSS extrusion.
 - Build Director with `cargo --release`. Do not populate `target/debug`. Rustc temp may go on `F:\cargo-tmp` when `C:` is tight.
 - Do not use git worktrees. Keep every change in the shared `C:\Projects\director` tree.
 - Use parallel subagents on file-disjoint slices when it helps. Default subagents to Grok 4.7 (`grok-4.7-xhigh`). Give them explicit step-by-step prompts with exact files, allowed edits and the report format, and review their diffs before landing. Subagents do not compile, run tests, commit, or edit `vendor/`, `Cargo.toml`, `Cargo.lock`, AGENTS.md, README, or docs. The parent runs one release test pass after their edits land, does the DOX pass, and commits.
