@@ -487,6 +487,27 @@ fn composition_root<'a>(dom: &'a Html, options: &CompileOptions) -> Result<Eleme
     Ok(root)
 }
 
+/// Sub-frame motion blur: `data-motion-blur` samples spread over
+/// `data-shutter-angle` degrees, 1 sample at 180 degrees by default.
+fn motion_blur(root: ElementRef<'_>) -> Result<(u32, f32), CompileError> {
+    let mut blur = (1, 180.0);
+    if let Some(v) = root.value().attr("data-motion-blur") {
+        blur.0 = v
+            .parse()
+            .ok()
+            .filter(|n| (1..=64).contains(n))
+            .ok_or_else(|| CompileError::Input(format!("invalid data-motion-blur: {v} (1..=64 samples)")))?;
+    }
+    if let Some(v) = root.value().attr("data-shutter-angle") {
+        blur.1 = v
+            .parse()
+            .ok()
+            .filter(|a: &f32| (0.0..=360.0).contains(a))
+            .ok_or_else(|| CompileError::Input(format!("invalid data-shutter-angle: {v} (0..=360 degrees)")))?;
+    }
+    Ok(blur)
+}
+
 /// `options` with the root's size, duration and frame rate applied.
 fn resolve_options(dom: &Html, mut options: CompileOptions) -> Result<CompileOptions, CompileError> {
     let root = composition_root(dom, &options)?;
@@ -521,7 +542,8 @@ pub(crate) fn compile_with_assets(
 ) -> Result<CompiledHtml, CompileError> {
     let mut dom = Html::parse_document(source);
     let options = resolve_options(&dom, options)?;
-    let motion = crate::gsap::run(&mut dom, &options, &assets)
+    let blur = motion_blur(composition_root(&dom, &options)?)?;
+    let motion = crate::gsap::run(&mut dom, &options, blur, &assets)
         .map_err(|e| CompileError::Diagnostics(vec![diagnostic("script", e)]))?;
     let (mut builder, root_id) = build(&dom, options, assets, motion, false)?;
     if !builder.errors.is_empty() {
@@ -649,21 +671,7 @@ fn build(
         RenderMode::Export,
         None,
     );
-    // Sub-frame motion blur: `data-motion-blur` samples spread over `data-shutter-angle` degrees.
-    if let Some(v) = root.value().attr("data-motion-blur") {
-        director.samples_per_frame = v
-            .parse()
-            .ok()
-            .filter(|n| (1..=64).contains(n))
-            .ok_or_else(|| CompileError::Input(format!("invalid data-motion-blur: {v} (1..=64 samples)")))?;
-    }
-    if let Some(v) = root.value().attr("data-shutter-angle") {
-        director.shutter_angle = v
-            .parse()
-            .ok()
-            .filter(|a: &f32| (0.0..=360.0).contains(a))
-            .ok_or_else(|| CompileError::Input(format!("invalid data-shutter-angle: {v} (0..=360 degrees)")))?;
-    }
+    (director.samples_per_frame, director.shutter_angle) = motion_blur(root)?;
     load_fonts(&mut director, &css.fonts, &assets)?;
     let timeline = if probing { BTreeMap::new() } else { crate::timeline::collect(dom)? };
     let mut builder = Builder {
@@ -1669,7 +1677,7 @@ impl Builder {
                 positions: &positions,
                 sizes: &sizes,
             };
-            let mut emitted = crate::gsap::tracks(&series, &steps, &target, &base, &shapes, self.options.fps)
+            let mut emitted = crate::gsap::tracks(&series, &steps, &target, &base, &shapes, &self.motion.times)
                 .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
             // A side whose border style is none or hidden draws no border at any width.
             emitted.retain(|track| {

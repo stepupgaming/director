@@ -1087,6 +1087,26 @@ fn word_spacing_tweens_spread_words_and_reach_children() {
 }
 
 #[test]
+fn motion_blur_samples_gsap_between_frames() {
+    let script = "window.__timelines = {main: gsap.timeline({paused: true}).to('#box', {x: 300, duration: 1, ease: 'power4.in'}, 0)};";
+    // GSAP's power4 is a quintic.
+    let exact = |t: f64| 300.0 * t.powi(5);
+    let blurred = compile(&page(script).replace("data-duration='2'", "data-duration='2' data-motion-blur='3'"), opts()).unwrap();
+    let plain = run(script);
+    assert_eq!(blurred.director.samples_per_frame, 3);
+    // Three samples at 180 degrees sit a quarter frame either side of each frame.
+    let fps = blurred.director.fps;
+    let x = |c: &CompiledHtml, t: f64| at(track(c, "box", "translate-x"), t);
+    for f in [20.0, 25.0, 29.0] {
+        for t in [(f - 0.25) / fps, (f + 0.25) / fps] {
+            near(x(&blurred, t), exact(t), 0.021);
+            assert!((x(&plain, t) - exact(t)).abs() > 0.05, "{t}: {} vs {}", x(&plain, t), exact(t));
+        }
+        near(x(&blurred, f / fps), exact(f / fps), 0.021);
+    }
+}
+
+#[test]
 fn keyframes_win_over_gsap_while_they_run() {
     let source = page("gsap.to('#box', {opacity: 0.6, x: 10, duration: 2, ease: 'none'})").replace(
         "</style>",

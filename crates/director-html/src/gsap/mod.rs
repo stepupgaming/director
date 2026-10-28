@@ -42,6 +42,8 @@ pub(crate) type Steps = BTreeMap<String, Vec<(usize, f64)>>;
 pub(crate) struct Motion {
     pub(crate) series: HashMap<NodeId, Series>,
     pub(crate) steps: HashMap<NodeId, Steps>,
+    /// The composition time of each sample in the series.
+    pub(crate) times: Vec<f64>,
 }
 
 /// Inline styles GSAP writes that change nothing on screen.
@@ -196,10 +198,16 @@ fn scripts(dom: &Html, options: &CompileOptions, assets: &AssetStore) -> Result<
     Ok(out)
 }
 
-/// Run the page scripts and record every frame. Constant results bake into
-/// `dom`, which is replaced by its compacted form; varying ones come back as
-/// series.
-pub(crate) fn run(dom: &mut Html, options: &CompileOptions, assets: &Arc<AssetStore>) -> Result<Motion, String> {
+/// Run the page scripts and record every frame, and with motion blur every
+/// shutter sample, given as `(samples per frame, shutter angle)`. Constant
+/// results bake into `dom`, which is replaced by its compacted form; varying
+/// ones come back as series.
+pub(crate) fn run(
+    dom: &mut Html,
+    options: &CompileOptions,
+    blur: (u32, f32),
+    assets: &Arc<AssetStore>,
+) -> Result<Motion, String> {
     let scripts = scripts(dom, options, assets)?;
     if scripts.is_empty() {
         return Ok(Motion::default());
@@ -212,8 +220,9 @@ pub(crate) fn run(dom: &mut Html, options: &CompileOptions, assets: &Arc<AssetSt
     let html = std::mem::replace(dom, Html::new_document());
     let doc = dom::Doc::new(html, prober, (options.width as f32, options.height as f32));
     let frames = (options.duration * options.fps).ceil() as usize + 1;
-    let (recorded, mut doc) = dom::with_installed(doc, || execute(&scripts, frames, options.fps));
-    let series = recorded.and_then(|frames| collect(&mut doc, &frames, options.fps));
+    let times = sample_times(frames, options.fps, blur);
+    let (recorded, mut doc) = dom::with_installed(doc, || execute(&scripts, &times));
+    let series = recorded.and_then(|records| collect(&mut doc, &records, &times, options.fps));
     let (html, map) = dom::compact(&doc.html);
     *dom = html;
     let (series, steps) = series?;
@@ -225,12 +234,29 @@ pub(crate) fn run(dom: &mut Html, options: &CompileOptions, assets: &Arc<AssetSt
         .into_iter()
         .filter_map(|(i, steps)| map.get(&doc.ids[i]).map(|id| (*id, steps)))
         .collect();
-    Ok(Motion { series, steps })
+    Ok(Motion { series, steps, times })
 }
 
-/// Evaluate the scripts, fire the load events and seek every frame. Each
-/// frame is the change record `dom.js` returns.
-fn execute(scripts: &[Script], frames: usize, fps: f64) -> Result<Vec<String>, String> {
+/// The seek times: every frame, and with more than one sample per frame the
+/// renderer's sub-frame times spread over the shutter, so motion blur reads
+/// sampled values instead of a line between frames.
+fn sample_times(frames: usize, fps: f64, (samples, angle): (u32, f32)) -> Vec<f64> {
+    let mut times: Vec<f64> = (0..frames).map(|f| f as f64 / fps).collect();
+    if samples > 1 {
+        let shutter = (1.0 / fps) * (angle.clamp(0.0, 360.0) as f64 / 360.0);
+        for f in 0..frames {
+            let start = f as f64 / fps - shutter / 2.0;
+            times.extend((0..samples).map(|k| start + (k as f64 / (samples - 1) as f64) * shutter).filter(|t| *t > 0.0));
+        }
+        times.sort_by(f64::total_cmp);
+        times.dedup_by(|b, a| (*b - *a).abs() < 1e-9);
+    }
+    times
+}
+
+/// Evaluate the scripts, fire the load events and seek every sample time.
+/// Each sample is the change record `dom.js` returns.
+fn execute(scripts: &[Script], times: &[f64]) -> Result<Vec<String>, String> {
     let mut cx = Context::default();
     cx.runtime_limits_mut().set_loop_iteration_limit(50_000_000);
     cx.runtime_limits_mut().set_recursion_limit(4_096);
@@ -259,9 +285,8 @@ fn execute(scripts: &[Script], frames: usize, fps: f64) -> Result<Vec<String>, S
     })
     .map_err(js_error)?;
     eval(&mut cx, "__director.play()")?;
-    let mut out = Vec::with_capacity(frames);
-    for f in 0..frames {
-        let t = f as f64 / fps;
+    let mut out = Vec::with_capacity(times.len());
+    for &t in times {
         out.push(eval(&mut cx, &format!("__director.frame({t})")).map_err(|e| format!("at {t:.3}s: {e}"))?);
     }
     Ok(out)
@@ -330,7 +355,7 @@ fn invisible(name: &str, values: &[Option<String>]) -> bool {
 /// properties, `@name` attributes and `#text`.
 type Recorded = (HashMap<usize, Series>, HashMap<usize, Steps>);
 
-fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<Recorded, String> {
+fn collect(doc: &mut dom::Doc, frames: &[String], times: &[f64], fps: f64) -> Result<Recorded, String> {
     // Inline styles hold the setup state flushed when play began.
     let mut setup: HashMap<usize, Vec<(String, String)>> = HashMap::new();
     let mut series: HashMap<usize, Series> = HashMap::new();
@@ -486,7 +511,7 @@ fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<Recorded, 
                 if constant {
                     doc.write_attr(i, name, first)?;
                 } else if in_svg || (svg_root && name == "viewBox") {
-                    let (base, animate) = svg_animation(name, &values, &jumps(&key), fps)?;
+                    let (base, animate) = svg_animation(name, &values, &jumps(&key), times, fps)?;
                     doc.write_attr(i, name, Some(base))?;
                     smil.extend(animate);
                 } else {
@@ -495,7 +520,7 @@ fn collect(doc: &mut dom::Doc, frames: &[String], fps: f64) -> Result<Recorded, 
                 continue;
             }
             if in_svg && !constant && key != "#text" {
-                let (base, animate) = svg_animation(&key, &values, &jumps(&key), fps)?;
+                let (base, animate) = svg_animation(&key, &values, &jumps(&key), times, fps)?;
                 put(&mut decls, &key, Some(base));
                 smil.extend(animate);
                 continue;
@@ -571,6 +596,7 @@ fn svg_animation(
     name: &str,
     values: &[Option<String>],
     jumps: &[(usize, f64)],
+    times: &[f64],
     fps: f64,
 ) -> Result<(String, Option<Attrs>), String> {
     let identity = (name == "transform").then(|| "matrix(1,0,0,1,0,0)".to_string());
@@ -631,7 +657,7 @@ fn svg_animation(
         let mut start = 0;
         for piece in jumps.iter().map(Some).chain([None]) {
             let stop = piece.map_or(samples.len(), |&(f, _)| f);
-            keys.extend(keep(&samples[start..stop], 5e-4).into_iter().map(|k| ((start + k) as f64 / fps, start + k)));
+            keys.extend(keep(&samples[start..stop], &times[start..stop], 5e-4).into_iter().map(|k| (times[start + k], start + k)));
             if let Some(&(f, time)) = piece {
                 keys.push((time, f - 1));
                 keys.push((time, f));
@@ -643,10 +669,10 @@ fn svg_animation(
     } else {
         keys = (1..texts.len())
             .filter(|&f| texts[f] != texts[f - 1])
-            .map(|f| (jump(f).unwrap_or(f as f64 / fps), f))
+            .map(|f| (jump(f).unwrap_or(times[f]), f))
             .collect();
         attrs.push(("calcMode".into(), "discrete".into()));
-        ((texts.len() - 1) as f64 / fps).max(keys[0].0 + 1.0 / fps)
+        times[texts.len() - 1].max(keys[0].0 + 1.0 / fps)
     };
     let start = keys[0].0;
     let span = end - start;
@@ -970,7 +996,7 @@ fn tolerance(channel: &str) -> f64 {
 
 /// The samples a piecewise-linear line through them keeps, each within
 /// `eps` of the line on every dimension (swing door from each anchor).
-fn keep<T: AsRef<[f64]> + PartialEq>(samples: &[T], eps: f64) -> Vec<usize> {
+fn keep<T: AsRef<[f64]> + PartialEq>(samples: &[T], times: &[f64], eps: f64) -> Vec<usize> {
     let n = samples.len();
     let dims = samples[0].as_ref().len();
     let mut kept = vec![0];
@@ -979,7 +1005,7 @@ fn keep<T: AsRef<[f64]> + PartialEq>(samples: &[T], eps: f64) -> Vec<usize> {
     let mut hi = vec![f64::INFINITY; dims];
     let mut j = 1;
     while j < n {
-        let dt = (j - anchor) as f64;
+        let dt = times[j] - times[anchor];
         let (a, b) = (samples[anchor].as_ref(), samples[j].as_ref());
         let fits = (0..dims).all(|d| {
             let slope = (b[d] - a[d]) / dt;
@@ -1171,21 +1197,21 @@ type Positions = Result<Vec<(AxisPos, AxisPos)>, String>;
 type Sizes = Result<Vec<BackgroundFit>, String>;
 
 /// Native timeline tracks for one element's sampled properties. Keys sit on
-/// frames and interpolate linearly; a set holds the value before it until
-/// its jump.
+/// sample `times` and interpolate linearly; a set holds the value before it
+/// until its jump.
 pub(crate) fn tracks(
     series: &Series,
     steps: &Steps,
     target: &str,
     base: &dyn Fn(&str) -> Result<Val, String>,
     shapes: &Shapes,
-    fps: f64,
+    times: &[f64],
 ) -> Result<Vec<TimelineTrack>, String> {
     let mut channels: Vec<(String, &str, Vec<Val>)> = Vec::new();
     let mut out = Vec::new();
     for (property, values) in series {
         if property == "#text" {
-            out.push(text_track(values, steps.get("#text").map_or(&[], Vec::as_slice), target, fps));
+            out.push(text_track(values, steps.get("#text").map_or(&[], Vec::as_slice), target, times));
             continue;
         }
         if property == "transform" {
@@ -1464,8 +1490,8 @@ pub(crate) fn tracks(
         let mut start = 0;
         for piece in jumps.iter().map(Some).chain([None]) {
             let end = piece.map_or(samples.len(), |&(f, _)| f);
-            keyframes.extend(keep(&samples[start..end], eps).into_iter().map(|f| TimelineKeyframe {
-                time: (start + f) as f64 / fps,
+            keyframes.extend(keep(&samples[start..end], &times[start..end], eps).into_iter().map(|f| TimelineKeyframe {
+                time: times[start + f],
                 value: samples[start + f].timeline(),
                 ease: None,
             }));
@@ -1493,12 +1519,12 @@ pub(crate) fn tracks(
 /// A `text` track keyed on each frame whose text differs from the frame
 /// before, at the set's time when a set wrote it. The element shows its own
 /// text, the first frame's, until then.
-fn text_track(values: &[Option<String>], steps: &[(usize, f64)], target: &str, fps: f64) -> TimelineTrack {
+fn text_track(values: &[Option<String>], steps: &[(usize, f64)], target: &str, times: &[f64]) -> TimelineTrack {
     let text = |f: usize| values[f].clone().unwrap_or_default();
     let keyframes = (1..values.len())
         .filter(|&f| text(f) != text(f - 1))
         .map(|f| TimelineKeyframe {
-            time: steps.iter().filter(|s| s.0 == f).map(|s| s.1).reduce(f64::min).unwrap_or(f as f64 / fps),
+            time: steps.iter().filter(|s| s.0 == f).map(|s| s.1).reduce(f64::min).unwrap_or(times[f]),
             value: TimelineValue::Text(text(f)),
             ease: None,
         })
@@ -1519,9 +1545,10 @@ mod tests {
         let ramp: Vec<Val> = (0..=30)
             .map(|f| Val::Num(if f <= 10 { 0.0 } else if f <= 20 { (f - 10) as f64 * 10.0 } else { 100.0 }))
             .collect();
-        assert_eq!(keep(&ramp, 0.02), vec![10, 20]);
+        let frames = |n: usize| (0..n).map(|f| f as f64).collect::<Vec<_>>();
+        assert_eq!(keep(&ramp, &frames(ramp.len()), 0.02), vec![10, 20]);
         let curve: Vec<Val> = (0..=60).map(|f| Val::Num((f as f64 / 60.0).powi(2) * 500.0)).collect();
-        let kept = keep(&curve, 0.02);
+        let kept = keep(&curve, &frames(curve.len()), 0.02);
         for pair in kept.windows(2) {
             let (a, b) = (pair[0], pair[1]);
             for f in a..=b {
