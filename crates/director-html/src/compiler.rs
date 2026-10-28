@@ -1649,7 +1649,17 @@ impl Builder {
                 None => Ok(element.base_paint.box_node.clip_path.clone()),
             };
             let positions = |text: &str| crate::style::background_position_layers(text, metrics);
-            let shapes = crate::gsap::Shapes { shadows: &shadows, text_shadows: &text_shadows, clip: &clip, positions: &positions };
+            let sizes = |text: Option<&str>| match text {
+                Some(text) => crate::style::background_size_layers(text, metrics),
+                None => Ok(element.base_paint.background_size.clone()),
+            };
+            let shapes = crate::gsap::Shapes {
+                shadows: &shadows,
+                text_shadows: &text_shadows,
+                clip: &clip,
+                positions: &positions,
+                sizes: &sizes,
+            };
             let mut emitted = crate::gsap::tracks(&series, &steps, &target, &base, &shapes, self.options.fps)
                 .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
             // A side whose border style is none or hidden draws no border at any width.
@@ -1660,11 +1670,23 @@ impl Builder {
             });
             tracks.extend(emitted);
         }
+        let holds_text = element
+            .content
+            .as_ref()
+            .is_some_and(|c| c.as_any().downcast_ref::<director_core::node::TextNode>().is_some());
         for (i, track) in tracks.iter().enumerate() {
             if tracks[..i].iter().any(|t| t.property == track.property) {
                 return Err(CompileError::Diagnostics(vec![diagnostic(
                     &context,
                     format!("the timeline animates '{}' twice on one element", track.property),
+                )]));
+            }
+            // Font size and spacing tracks reach the element's own text only.
+            if matches!(track.property.as_str(), "font-size" | "letter-spacing") && (promoted || !holds_text) {
+                let reason = if promoted { "an animated inline span keeps its line box" } else { "the element holds no text of its own" };
+                return Err(CompileError::Diagnostics(vec![diagnostic(
+                    &context,
+                    format!("the timeline animates '{}', but {reason}", track.property),
                 )]));
             }
         }
@@ -1711,6 +1733,8 @@ impl Builder {
                 .downcast_mut::<HtmlElement>()
                 .unwrap();
             let content = parent.content.take();
+            // The leaf's text inherits the element's animated text styles.
+            let text_parts: Vec<_> = parent.animations.iter().filter_map(crate::animation::Animation::text_part).collect();
             let mut anonymous = paint.clone();
             anonymous.box_node = director_core::node::BoxNode::new();
             anonymous.opacity = 1.0;
@@ -1732,6 +1756,10 @@ impl Builder {
                 content,
                 metrics,
             )));
+            if !text_parts.is_empty() {
+                let leaf = self.director.scene.get_node_mut(child).unwrap().element.as_any_mut();
+                leaf.downcast_mut::<HtmlElement>().unwrap().animations = text_parts;
+            }
             self.director.scene.add_child(id, child);
             self.nodes += 1;
             if !atomics.is_empty() {

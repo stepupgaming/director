@@ -11,7 +11,7 @@ use crate::animation::{
     COMPONENTS, NO_TEXT_SHADOW,
     FILTERS as FILTER_CHANNELS, NO_BOX_SHADOW,
 };
-use crate::style::{AxisPos, Shadow};
+use crate::style::{AxisPos, BackgroundFit, Shadow};
 use director_core::element::TextShadow;
 use crate::assets::AssetStore;
 use crate::style::{color, PaintStyle};
@@ -85,6 +85,9 @@ const NATIVE: &[&str] = &[
     "border-bottom-width",
     "border-left-width",
     "background-position",
+    "background-size",
+    "font-size",
+    "letter-spacing",
 ];
 
 struct Script {
@@ -876,6 +879,8 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
         "left" => length(style.inset.left.into_raw(), channel),
         "top" => length(style.inset.top.into_raw(), channel),
         "border-top-left-radius" => length(paint.corners[0].0.into_raw(), channel),
+        "font-size" => Ok(Val::Num(paint.font_size as f64)),
+        "letter-spacing" => Ok(Val::Num(paint.letter_spacing as f64)),
         "filter-drop-shadow-color" => Ok(filter_shadow_color(&paint.filters).map_or_else(|| filter_default(channel), Val::color)),
         c if FILTER_CHANNELS.contains(&c) => Ok(filter_scalar(&paint.filters, c).map_or_else(|| filter_default(c), |v| Val::Num(v as f64))),
         c if border_side(c).is_some() => {
@@ -894,6 +899,14 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
                 let list = if field.starts_with('x') { &paint.background_position_x } else { &paint.background_position_y };
                 let none = AxisPos { percent: 0.0, length: 0.0 };
                 position_val(if list.is_empty() { none } else { list[i % list.len()] }, field)
+            }
+            Some(("background-size", i, field)) => {
+                let list = &paint.background_size;
+                let fit = if list.is_empty() { BackgroundFit::Auto } else { list[i % list.len()] };
+                match size_axis(fit, field.starts_with("width")) {
+                    Some((percent, v)) if percent == field.ends_with("percent") => Val::Num(v),
+                    _ => return Err(format!("GSAP '{c}' needs a base size in its unit")),
+                }
             }
             Some((_, i, field)) => {
                 let point = paint.box_node.clip_path.as_ref().and_then(|p| p.get(i)).copied().unwrap_or_default();
@@ -919,7 +932,7 @@ fn tolerance(channel: &str) -> f64 {
         "filter-hue-rotate" => 0.01,
         c if c.starts_with("filter-") => 5e-4,
         c if c.ends_with("-color") => 5e-4,
-        c if c.starts_with("background-position-") && c.ends_with("-percent") => 0.01,
+        c if c.starts_with("background-") && c.ends_with("-percent") => 0.01,
         c if c.starts_with("clip-path-") => 0.01,
         "scale-x" | "scale-y" => 1e-4,
         "translate-x-percent" | "translate-y-percent" => 0.01,
@@ -1006,6 +1019,30 @@ fn position_val(axis: AxisPos, field: &str) -> Val {
     Val::Num(if field.ends_with("percent") { axis.percent as f64 * 100.0 } else { axis.length as f64 })
 }
 
+/// One axis of a background size as `(percent, value)` in its track unit.
+/// `auto`, keywords and mixed lengths have none.
+fn size_axis(fit: BackgroundFit, width: bool) -> Option<(bool, f64)> {
+    use taffy::style::CompactLength;
+    let BackgroundFit::Lengths(w, h) = fit else { return None };
+    let raw = if width { w } else { h }?.into_raw();
+    match raw.tag() {
+        CompactLength::LENGTH_TAG => Some((false, raw.value() as f64)),
+        CompactLength::PERCENT_TAG => Some((true, raw.value() as f64 * 100.0)),
+        _ => None,
+    }
+}
+
+/// A background size axis with no number: `auto` (0), `cover`, `contain`, or
+/// an `auto` beside a length.
+fn size_keyword(fit: BackgroundFit) -> u8 {
+    match fit {
+        BackgroundFit::Auto | BackgroundFit::Lengths(None, None) => 0,
+        BackgroundFit::Cover => 1,
+        BackgroundFit::Contain => 2,
+        BackgroundFit::Lengths(..) => 3,
+    }
+}
+
 /// A clip corner coordinate in box percent.
 fn corner_val(point: (f32, f32), field: &str) -> Val {
     Val::Num(if field == "x" { point.0 } else { point.1 } as f64 * 100.0)
@@ -1045,6 +1082,7 @@ fn filter_channels(text: &str) -> Result<Vec<(&'static str, Val)>, String> {
 fn sample(channel: &str, text: &str) -> Result<Val, String> {
     match channel {
         "opacity" => text.trim().parse().map(Val::Num).map_err(|_| format!("GSAP opacity '{text}'")),
+        "letter-spacing" if text.trim() == "normal" => Ok(Val::Num(0.0)),
         c if c == "color" || c.ends_with("-color") => {
             color(text.trim(), Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }).map(Val::color)
         }
@@ -1097,10 +1135,13 @@ pub(crate) struct Shapes<'a> {
     pub text_shadows: &'a dyn Fn(&str) -> Result<Vec<TextShadow>, String>,
     pub clip: &'a dyn Fn(Option<&str>) -> Clip,
     pub positions: &'a dyn Fn(&str) -> Positions,
+    /// Background sizes; an unset frame reads the element's own.
+    pub sizes: &'a dyn Fn(Option<&str>) -> Sizes,
 }
 /// A clip polygon's corners as box fractions. `None` is no clip.
 type Clip = Result<Option<Vec<(f32, f32)>>, String>;
 type Positions = Result<Vec<(AxisPos, AxisPos)>, String>;
+type Sizes = Result<Vec<BackgroundFit>, String>;
 
 /// Native timeline tracks for one element's sampled properties. Keys sit on
 /// frames and interpolate linearly; a set holds the value before it until
@@ -1218,6 +1259,37 @@ pub(crate) fn tracks(
                             })
                         })
                         .collect();
+                    channels.push((channel, property, samples));
+                }
+            }
+            continue;
+        }
+        // Each layer axis keeps one unit while it moves; `auto` and keywords hold.
+        if property == "background-size" {
+            let lists = values
+                .iter()
+                .map(|v| (shapes.sizes)(v.as_deref()).map_err(|e| format!("GSAP {e}")))
+                .collect::<Result<Vec<_>, _>>()?;
+            let count = lists.iter().map(Vec::len).max().unwrap_or(0);
+            for i in 0..count {
+                let fits: Vec<BackgroundFit> = lists
+                    .iter()
+                    .map(|list| if list.is_empty() { BackgroundFit::Auto } else { list[i % list.len()] })
+                    .collect();
+                for (width, axis) in [(true, "width"), (false, "height")] {
+                    let axes: Vec<_> = fits.iter().map(|fit| size_axis(*fit, width)).collect();
+                    if axes.iter().all(Option::is_none) && fits.iter().all(|f| size_keyword(*f) == size_keyword(fits[0])) {
+                        continue;
+                    }
+                    let percent = axes[0].is_some_and(|(percent, _)| percent);
+                    if !axes.iter().all(|a| a.is_some_and(|(p, _)| p == percent)) {
+                        return Err(format!(
+                            "GSAP background-size moves layer {i} {axis} between units or keywords ({})",
+                            values.iter().flatten().next().map_or("unset", String::as_str)
+                        ));
+                    }
+                    let channel = format!("background-size-{i}-{axis}{}", if percent { "-percent" } else { "" });
+                    let samples = axes.iter().map(|a| Val::Num(a.map_or(0.0, |(_, v)| v))).collect();
                     channels.push((channel, property, samples));
                 }
             }

@@ -1651,6 +1651,17 @@ fn axis_from_length(value: &CssLength, m: Metrics) -> Result<AxisPos, String> {
     }
 }
 
+/// A `background-size` value as scripts write it, one fit per layer.
+pub(crate) fn background_size_layers(s: &str, m: Metrics) -> Result<Vec<BackgroundFit>, String> {
+    use lightningcss::{properties::PropertyId, stylesheet::ParserOptions};
+    match lightningcss::properties::Property::parse_string(PropertyId::BackgroundSize, s, ParserOptions::default()) {
+        Ok(lightningcss::properties::Property::BackgroundSize(list)) => {
+            list.iter().map(|size| background_fit(size, m)).collect()
+        }
+        _ => Err(format!("unsupported background-size '{s}'")),
+    }
+}
+
 fn background_fit(size: &BackgroundSize, m: Metrics) -> Result<BackgroundFit, String> {
     match size {
         BackgroundSize::Cover => Ok(BackgroundFit::Cover),

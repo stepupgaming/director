@@ -1,7 +1,7 @@
 use crate::{
     css::{split, Css, Values},
     gsap::ease::GsapEase,
-    style::{color, number, px, AxisPos, FilterFn, Metrics, PaintStyle, Shadow},
+    style::{color, number, px, AxisPos, BackgroundFit, FilterFn, Metrics, PaintStyle, Shadow},
 };
 use director_core::scene_export::{export_easing, rgba, ExportError};
 use director_core::scene_import::{color as import_color, easing as import_easing, ImportError};
@@ -124,7 +124,9 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
         "transform" => Value::Transform(
             TransformList::parse_string(s).map_err(|e| format!("animation transform: {e:?}"))?,
         ),
-        "width" | "height" | "left" | "top" | "border-top-left-radius" => Value::Scalar(px(s, m)?),
+        "width" | "height" | "left" | "top" | "border-top-left-radius" | "font-size" => Value::Scalar(px(s, m)?),
+        "letter-spacing" if s.trim() == "normal" => Value::Scalar(0.0),
+        "letter-spacing" => Value::Scalar(px(s, m)?),
         name if border_side(name).is_some_and(|(_, field)| field == "color") => Value::Color(color(s, current)?),
         name if border_side(name).is_some() => Value::Scalar(px(s, m)?),
         name if is_component(name) => Value::Scalar(component(name, s)?),
@@ -280,6 +282,8 @@ pub(crate) fn indexed(name: &str) -> Option<(&'static str, usize, &str)> {
         ("clip-path", &["x", "y"], 256)
     } else if name.starts_with("background-position-") {
         ("background-position", &["x", "y", "x-percent", "y-percent"], 32)
+    } else if name.starts_with("background-size-") {
+        ("background-size", &["width", "height", "width-percent", "height-percent"], 32)
     } else {
         return None;
     };
@@ -348,6 +352,32 @@ fn set_position(list: &mut Vec<AxisPos>, i: usize, percent: bool, v: f32) {
     } else {
         list[i].length = v;
     }
+}
+/// One axis of a background layer's size, in px or as a percent. A keyword
+/// size turns into lengths with the other axis `auto`, and a list shorter than
+/// the layer extends with the entries it cycles through.
+fn set_size(list: &mut Vec<BackgroundFit>, i: usize, field: &str, v: f32) {
+    if list.is_empty() {
+        list.push(BackgroundFit::Auto);
+    }
+    let n = list.len();
+    for k in n..=i {
+        list.push(list[k % n]);
+    }
+    let axis = if field.ends_with("percent") {
+        taffy::LengthPercentage::percent(v / 100.0)
+    } else {
+        taffy::LengthPercentage::length(v.max(0.0))
+    };
+    let (width, height) = match list[i] {
+        BackgroundFit::Lengths(width, height) => (width, height),
+        _ => (None, None),
+    };
+    list[i] = if field.starts_with("width") {
+        BackgroundFit::Lengths(Some(axis), height)
+    } else {
+        BackgroundFit::Lengths(width, Some(axis))
+    };
 }
 /// Border side channels: `border-<side>-color` and `border-<side>-width`,
 /// sides in CSS order top, right, bottom, left.
@@ -598,7 +628,9 @@ pub(crate) fn from_track(
             TimelineValue::Text(s) => s.clone(),
             TimelineValue::Number(n) => match property {
                 "opacity" => n.to_string(),
-                "width" | "height" | "left" | "top" | "border-top-left-radius" => format!("{n}px"),
+                "width" | "height" | "left" | "top" | "border-top-left-radius" | "font-size" | "letter-spacing" => {
+                    format!("{n}px")
+                }
                 name if border_side(name).is_some_and(|(_, field)| field == "width") => format!("{n}px"),
                 name if is_component(name) => n.to_string(),
                 "filter-drop-shadow-color" => return Err(format!("timeline '{property}' takes CSS text")),
@@ -651,6 +683,18 @@ impl Animation {
     pub(crate) fn properties(&self) -> impl Iterator<Item = &str> {
         self.channels.iter().map(|c| c.name.as_str())
     }
+
+    /// The channels that reach text an element's descendants inherit: color,
+    /// font size, letter spacing, text shadows and text tracks.
+    pub(crate) fn text_part(&self) -> Option<Animation> {
+        let channels: Vec<Channel> = self.channels.iter().filter(|c| is_text_channel(&c.name)).cloned().collect();
+        (!channels.is_empty()).then(|| Animation { channels, ..self.clone() })
+    }
+}
+
+pub(crate) fn is_text_channel(name: &str) -> bool {
+    matches!(name, "color" | "font-size" | "letter-spacing" | "text")
+        || indexed(name).is_some_and(|(list, _, _)| list == "text-shadow")
 }
 
 fn mix(a: f32, b: f32, t: f32) -> f32 {
@@ -854,6 +898,9 @@ impl Animation {
                     *parts = None;
                 }
                 ("text", Value::Text(v)) => paint.text = Some(v),
+                // The element rebuilds its text spans and relayouts when these change.
+                ("font-size", Value::Scalar(v)) => paint.font_size = v.max(0.0),
+                ("letter-spacing", Value::Scalar(v)) => paint.letter_spacing = v,
                 ("border-top-left-radius", Value::Scalar(v)) => {
                     paint.corners = [(
                         taffy::LengthPercentage::length(v.max(0.0)),
@@ -872,6 +919,9 @@ impl Animation {
                             &mut paint.background_position_y
                         };
                         set_position(list, i, field.ends_with("percent"), v)
+                    }
+                    (Some(("background-size", i, field)), Value::Scalar(v)) => {
+                        set_size(&mut paint.background_size, i, field, v)
                     }
                     (Some((_, i, field)), Value::Scalar(v)) => set_clip(&mut paint.box_node.clip_path, i, field, v),
                     _ => {}

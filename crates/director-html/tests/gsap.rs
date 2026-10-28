@@ -257,7 +257,9 @@ fn gsap_tracks_survive_scene_export() {
 #[test]
 fn page_scripts_fail_with_context() {
     for (source, message) in [
-        (page("gsap.to('#box', {letterSpacing: 4, duration: 1})"), "'letter-spacing' on #box"),
+        (page("gsap.to('#box', {wordSpacing: 4, duration: 1})"), "'word-spacing' on #box"),
+        (page("gsap.to('#box', {letterSpacing: '4px', duration: 1})"), "holds no text of its own"),
+        (page("gsap.to('#word', {fontSize: 30, duration: 1})"), "keeps its line box"),
         (
             page("gsap.fromTo('#box', {clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)'}, {clipPath: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)', duration: 1})"),
             "different corner counts",
@@ -966,6 +968,47 @@ fn border_text_shadow_and_background_position_tweens_become_channels() {
     let p = frame(&mut c, 1.0);
     assert!(close(pixel(&p, 64, 22, 38), [0, 0, 0, 255]), "{:?}", pixel(&p, 64, 22, 38));
     assert!(close(pixel(&p, 64, 32, 38), [255, 0, 0, 255]), "{:?}", pixel(&p, 64, 32, 38));
+}
+
+#[test]
+fn font_size_letter_spacing_and_background_size_tweens_become_channels() {
+    let text = |style: &str, tween: &str| {
+        format!(
+            "<style>body{{margin:0;background:black}}</style>             <div data-composition-id='main' data-width='96' data-height='64' data-duration='2'>             <div id='t' style='position:absolute;left:0px;top:0px;font:20px Roboto;color:white;{style}'>III</div></div>             {GSAP}<script>window.__timelines = {{main: gsap.timeline({{paused: true}}).to('#t', {{{tween}, duration: 1, ease: 'none'}}, 0)}};</script>"
+        )
+    };
+    let white = |p: &[u8]| p.chunks(4).filter(|p| p[0] > 150 && p[1] > 150).count();
+    let right = |p: &[u8]| p.chunks(4).enumerate().filter(|(_, p)| p[0] > 150 && p[1] > 150).map(|(i, _)| i % 96).max().unwrap_or(0);
+
+    // Font size grows the glyphs, also through the text leaf of a flex box.
+    for style in ["", "display:flex"] {
+        let mut c = compile(&text(style, "fontSize: 40"), opts()).unwrap();
+        near(at(track(&c, "t", "font-size"), 0.5), 30.0, 1e-3);
+        let (before, after) = (white(&frame(&mut c, 0.0)), white(&frame(&mut c, 1.0)));
+        assert!(after > before * 3, "{style}: {before} {after}");
+    }
+
+    // Letter spacing from `normal` spreads the glyphs apart.
+    let mut c = compile(&text("", "letterSpacing: '10px'"), opts()).unwrap();
+    near(at(track(&c, "t", "letter-spacing"), 0.5), 5.0, 1e-3);
+    let (before, after) = (right(&frame(&mut c, 0.0)), right(&frame(&mut c, 1.0)));
+    assert!(after >= before + 18, "{before} {after}");
+
+    // A background layer's size grows its tile, in px or in percent.
+    let tile = "background:linear-gradient(rgb(255,0,0), rgb(255,0,0)) no-repeat;background-size:";
+    let source = page("window.__timelines = {main: gsap.timeline({paused: true}).to('#box', {backgroundSize: '20px 20px', duration: 1, ease: 'none'}, 0)};")
+        .replace("background:rgb(0,0,255)}", &format!("{tile}10px 10px}}"));
+    let mut c = compile(&source, opts()).unwrap();
+    near(at(track(&c, "box", "background-size-0-width"), 0.5), 15.0, 1e-3);
+    near(at(track(&c, "box", "background-size-0-height"), 0.5), 15.0, 1e-3);
+    let red = |p: &[u8]| close(pixel(p, 64, 35, 38), [255, 0, 0, 255]);
+    assert!(!red(&frame(&mut c, 0.0)) && red(&frame(&mut c, 1.0)));
+    let source = page("window.__timelines = {main: gsap.timeline({paused: true}).to('#box', {backgroundSize: '100%', duration: 1, ease: 'none'}, 0)};")
+        .replace("background:rgb(0,0,255)}", &format!("{tile}50%}}"));
+    let mut c = compile(&source, opts()).unwrap();
+    near(at(track(&c, "box", "background-size-0-width-percent"), 0.5), 75.0, 1e-2);
+    assert!(tracks(&c).iter().all(|t| !t.property.starts_with("background-size-0-height")));
+    assert!(!red(&frame(&mut c, 0.0)) && red(&frame(&mut c, 1.0)));
 }
 
 #[test]

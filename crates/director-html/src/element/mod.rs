@@ -77,6 +77,8 @@ pub struct HtmlElement {
     /// The text a `text` track replaced, and the track text on screen.
     own_spans: Option<Vec<director_core::element::TextSpan>>,
     shown_text: Option<String>,
+    /// The animated font size and letter spacing on screen. `None` is the base.
+    shown_size: Option<(f32, f32)>,
 }
 impl HtmlElement {
     pub fn new(
@@ -104,6 +106,7 @@ impl HtmlElement {
             baseline_offset: 0.0,
             own_spans: None,
             shown_text: None,
+            shown_size: None,
         }
     }
     fn ellipsizes(&self) -> bool {
@@ -396,13 +399,31 @@ impl Element for HtmlElement {
                 if recolor {
                     text.default_color = director_core::animation::Animated::new(self.paint.color);
                 }
-                if self.paint.text != self.shown_text {
+                let base = (self.base_paint.font_size, self.base_paint.letter_spacing);
+                let size = (self.paint.font_size, self.paint.letter_spacing);
+                let sized = (size != base).then_some(size);
+                if self.paint.text != self.shown_text || sized != self.shown_size {
                     let own = self.own_spans.get_or_insert_with(|| text.spans.clone());
                     text.spans = match &self.paint.text {
                         Some(shown) => crate::compiler::text_spans(shown, &self.paint),
-                        None => own.clone(),
+                        // Spans at the element's own size and spacing inherit
+                        // the animated ones; spans that set their own keep them.
+                        None => own
+                            .iter()
+                            .cloned()
+                            .map(|mut span| {
+                                if span.font_size == Some(base.0) {
+                                    span.font_size = Some(size.0);
+                                }
+                                if span.letter_spacing == Some(base.1) {
+                                    span.letter_spacing = Some(size.1);
+                                }
+                                span
+                            })
+                            .collect(),
                     };
                     self.shown_text = self.paint.text.clone();
+                    self.shown_size = sized;
                     relayout = true;
                 }
                 if recolor || relayout {

@@ -786,6 +786,13 @@ fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
                     }
                 }
             }
+            // Browsers compute letter spacing to px.
+            if prop == "letter-spacing" && v != "normal" {
+                let m = crate::style::Metrics { width: 0.0, height: 0.0, font_size: p.font_size };
+                if let Ok(spacing) = crate::style::px(v, m) {
+                    return px(spacing);
+                }
+            }
             // Browsers serialize a zero length with its unit.
             if v == "0" && !UNITLESS.contains(&prop) {
                 return "0px".into();
@@ -823,6 +830,7 @@ fn initial(tag: &str, prop: &str) -> &'static str {
         "background-color" => "rgba(0, 0, 0, 0)",
         p if p.starts_with("border") && p.ends_with("color") => "rgb(0, 0, 0)",
         "background-position" => "0% 0%",
+        "background-size" => "auto",
         "transform" | "perspective" => "none",
         "transform-origin" => "0px 0px",
         "transform-style" => "flat",
