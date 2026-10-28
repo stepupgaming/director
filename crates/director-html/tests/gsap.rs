@@ -1133,11 +1133,11 @@ fn motion_blur_samples_gsap_between_frames() {
     let blurred = compile(&page(script).replace("data-duration='2'", "data-duration='2' data-motion-blur='3'"), opts()).unwrap();
     let plain = run(script);
     assert_eq!(blurred.director.samples_per_frame, 3);
-    // Three samples at 180 degrees sit a quarter frame either side of each frame.
+    // Three samples at 180 degrees sit on each frame and a quarter and half frame after it.
     let fps = blurred.director.fps;
     let x = |c: &CompiledHtml, t: f64| at(track(c, "box", "translate-x"), t);
     for f in [20.0, 25.0, 29.0] {
-        for t in [(f - 0.25) / fps, (f + 0.25) / fps] {
+        for t in [(f + 0.25) / fps, (f + 0.5) / fps] {
             near(x(&blurred, t), exact(t), 0.021);
             assert!((x(&plain, t) - exact(t)).abs() > 0.05, "{t}: {} vs {}", x(&plain, t), exact(t));
         }
@@ -1147,6 +1147,34 @@ fn motion_blur_samples_gsap_between_frames() {
     let (mut blurred, mut plain) = (blurred, plain);
     assert_ne!(frame(&mut blurred, 15.0 / fps), frame(&mut plain, 15.0 / fps));
     assert_eq!(frame(&mut blurred, 1.5), frame(&mut plain, 1.5));
+}
+
+#[test]
+fn text_stroke_color_and_width_tween() {
+    let source = format!(
+        "<style>body{{margin:0;background:black}}</style><div data-composition-id='main' data-width='64' data-height='64' data-duration='2'>         <p id='e' style='margin:0;font:900 56px Archivo;line-height:1;color:transparent;-webkit-text-stroke:2px rgb(255,0,0)'>H</p></div>         {GSAP}<script>window.__timelines = {{main: gsap.timeline({{paused: true}}).to('#e', {{webkitTextStrokeColor: 'rgb(0,0,255)', webkitTextStrokeWidth: 6, duration: 1}}, 0)}};</script>"
+    );
+    let mut c = compile(&source, opts()).unwrap();
+    let count = |p: &[u8], test: fn(&[u8]) -> bool| p.chunks(4).filter(|p| test(p)).count();
+    let (red, blue): (fn(&[u8]) -> bool, fn(&[u8]) -> bool) = (|p| p[0] > 200 && p[2] < 60, |p| p[2] > 200 && p[0] < 60);
+    let start = frame(&mut c, 0.0);
+    assert!(count(&start, red) > 20 && count(&start, blue) == 0);
+    let end = frame(&mut c, 1.5);
+    assert!(count(&end, red) == 0, "{}", count(&end, red));
+    // The stroke widens from 2px to 6px.
+    assert!(count(&end, blue) > count(&start, red) * 2, "{} {}", count(&end, blue), count(&start, red));
+}
+
+#[test]
+fn a_set_on_a_frame_cuts_cleanly_under_motion_blur() {
+    // The shutter opens at the frame time, so a set on frame 15 shows whole on that frame.
+    let script = "window.__timelines = {main: gsap.timeline({paused: true}).set('#box', {backgroundColor: 'rgb(255,0,0)'}, 0.5).to('#word', {x: 20, duration: 2}, 0)};";
+    let source = page(script).replace("data-duration='2'", "data-duration='2' data-motion-blur='8' data-shutter-angle='270'");
+    let mut c = compile(&source, opts()).unwrap();
+    let fps = c.director.fps;
+    let pixel = |c: &mut CompiledHtml, t: f64| frame(c, t)[(30 * 64 + 30) * 4..][..3].to_vec();
+    assert_eq!(pixel(&mut c, 14.0 / fps), [0, 0, 255]);
+    assert_eq!(pixel(&mut c, 15.0 / fps), [255, 0, 0]);
 }
 
 #[test]

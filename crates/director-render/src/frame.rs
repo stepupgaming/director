@@ -225,13 +225,15 @@ fn paint(
 
 impl FrameState {
     /// Evaluate and paint the frame at `time` into `target`. With more than one
-    /// sample per frame, sub-frames spread across the shutter add up at equal
+    /// sample per frame, sub-frames spread across the shutter that opens at
+    /// `time` add up at equal
     /// weight, and a shutter in which nothing moves paints once. Scratch rasters
     /// come from `target`, so they share its backend.
     pub fn render(&mut self, director: &mut Director, time: f64, target: &mut Surface) -> Result<(), RenderError> {
         let samples = director.samples_per_frame.max(1);
         let shutter = (1.0 / director.fps) * (director.shutter_angle.clamp(0.0, 360.0) as f64 / 360.0);
-        let shutter_start = time - shutter / 2.0;
+        // The shutter opens at the frame time, so a cut on a frame lands whole.
+        let shutter_start = time;
         if samples == 1 || !moves_between(director, shutter_start, shutter_start + shutter) {
             let plan = evaluate(director, &mut self.layout, time);
             return paint(director, &plan, target, &mut self.transitions);

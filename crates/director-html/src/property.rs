@@ -174,7 +174,7 @@ pub static PROPERTIES: &[PropertyInfo] = &[
     p("text-decoration-thickness", Text),
     p("text-indent", Text),
     p("text-overflow", Text),
-    p("text-shadow", Text),
+    inherited("text-shadow", Text),
     inherited("text-transform", Text),
     p("text-underline-offset", Text),
     p("top", Layout),

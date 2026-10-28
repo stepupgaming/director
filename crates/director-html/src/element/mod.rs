@@ -101,6 +101,8 @@ pub struct HtmlElement {
     /// The animated font size, letter spacing, line height and word spacing
     /// on screen. `None` is the base.
     shown_size: Option<TextSize>,
+    /// The animated text stroke width and color on screen. `None` is the base.
+    shown_stroke: Option<(f32, Option<director_core::types::Color>)>,
     /// An animated atomic box's text metrics, once measured.
     atomic_text: Option<Option<(f32, f32, f32)>>,
     /// The live placeholders the text paragraph holds. `None` is the base.
@@ -134,6 +136,7 @@ impl HtmlElement {
             own_spans: None,
             shown_text: None,
             shown_size: None,
+            shown_stroke: None,
             atomic_text: None,
             held_boxes: None,
         }
@@ -387,6 +390,10 @@ impl Element for HtmlElement {
             if let Some(paragraph) = text.paragraph.lock().unwrap().as_mut() {
                 if self.paint.no_wrap {
                     paragraph.layout(width);
+                    // Centred or right-aligned lines at an infinite width lose their line count.
+                    if self.paint.align != skia_safe::textlayout::TextAlign::Left {
+                        paragraph.layout(paragraph.max_intrinsic_width().ceil());
+                    }
                 }
                 return Size {
                     width: known.width.unwrap_or(paragraph.longest_line()),
@@ -524,7 +531,13 @@ impl Element for HtmlElement {
                     self.shown_size = sized;
                     relayout = true;
                 }
-                if recolor || relayout {
+                let stroke = (self.paint.text_stroke_width, self.paint.text_stroke_color);
+                let base_stroke = (self.base_paint.text_stroke_width, self.base_paint.text_stroke_color);
+                let restroke = stroke != self.shown_stroke.unwrap_or(base_stroke);
+                if restroke {
+                    self.shown_stroke = Some(stroke);
+                }
+                if recolor || relayout || restroke {
                     crate::compiler::prepare_paragraph(text, &self.paint);
                     self.held_boxes = None;
                 }

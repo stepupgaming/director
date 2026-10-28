@@ -126,6 +126,42 @@ fn hidden_spans_keep_their_advance() {
 }
 
 #[test]
+fn staggered_digits_start_one_after_another() {
+    // Each digit rolls for 1 s, the second starting 1 s after the first.
+    let attrs = "data-reel data-reel-duration='1' data-reel-stagger='1' data-reel-spins='0' data-reel-ease='none'";
+    let mut reel = run(&page("", &format!("<p {attrs}>11</p>")));
+    assert!(shows(&mut reel, 1.0, "10"));
+    assert!(shows(&mut reel, 2.5, "11"));
+}
+
+#[test]
+fn reel_windows_fit_any_line_height_and_inherit_text_shadow() {
+    // Ink bounds `[left, top, right, bottom]` of the dark pixels.
+    let ink = |f: &[u8]| {
+        let mut b = [usize::MAX, usize::MAX, 0, 0];
+        for (i, _) in f.chunks(4).enumerate().filter(|(_, p)| p[0] < 128) {
+            let (x, y) = (i % W as usize, i / W as usize);
+            b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
+        }
+        b
+    };
+    for style in ["line-height:1", "line-height:.9", "line-height:1.4", "white-space:nowrap", "line-height:.9;white-space:nowrap"] {
+        let mut reel = run(&page("", &format!("<p style='{style}'><span data-reel>12</span></p>")));
+        let mut text = run(&page("", &format!("<p style='{style}'><span>12</span></p>")));
+        let (landed, plain) = (ink(&frame(&mut reel, 3.0)), ink(&frame(&mut text, 0.0)));
+        // Taffy rounds the windows to whole pixels, so a fractional line moves by at most one.
+        let close = landed.iter().zip(plain).all(|(a, b)| a.abs_diff(b) <= 1);
+        assert!(close && landed[0] < landed[2], "{style}: landed {landed:?}, text {plain:?}");
+    }
+    let glow = |shadow: &str| {
+        let mut c = run(&page("", &format!("<p style='text-shadow:{shadow}'><span data-reel>42</span></p>")));
+        frame(&mut c, 3.0).chunks(4).filter(|p| p[0] > 200 && p[1] < 150 && p[2] < 150).count()
+    };
+    assert_eq!(glow("none"), 0);
+    assert!(glow("2px 2px 0 #f00") > 20, "{}", glow("2px 2px 0 #f00"));
+}
+
+#[test]
 fn reels_refuse_what_they_cannot_roll() {
     let cases = [
         ("<p data-reel='5'>12</p>", "data-reel takes no value"),

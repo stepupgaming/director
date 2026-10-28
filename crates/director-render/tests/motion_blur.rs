@@ -62,8 +62,11 @@ fn a_still_shutter_paints_one_sample() {
     let (mut director, paints) = blurred(0.0, 5.0);
     assert_eq!(paints_at(&mut director, &paints, 0.5), 1);
     assert_eq!(paints_at(&mut director, &paints, 1.5), 8);
-    // The shutter at 1 s opens at 0.975 s, before the motion starts.
+    // The shutter opens at the frame time: at 1 s as the motion starts, at 2 s as it ends.
     assert_eq!(paints_at(&mut director, &paints, 1.0), 8);
+    assert_eq!(paints_at(&mut director, &paints, 0.94), 1);
+    assert_eq!(paints_at(&mut director, &paints, 1.96), 8);
+    assert_eq!(paints_at(&mut director, &paints, 2.0), 1);
     assert_eq!(paints_at(&mut director, &paints, 3.0), 1);
 }
 
@@ -72,8 +75,8 @@ fn clip_edges_and_fades_inside_the_shutter_sample_every_time() {
     // The clip runs 3..4 s, so its local clock never reaches the motion.
     let (mut director, paints) = blurred(3.0, 1.0);
     assert_eq!(paints_at(&mut director, &paints, 3.5), 1);
-    // At 4 s the shutter spans 3.975..4.025 s and the clip ends inside it.
-    assert_eq!(paints_at(&mut director, &paints, 4.0), 4);
+    // At 3.98 s the shutter spans 3.98..4.03 s and the clip ends after its third sample.
+    assert_eq!(paints_at(&mut director, &paints, 3.98), 3);
     director.tracks[0].clips[0].fade_in = 0.25;
     assert_eq!(paints_at(&mut director, &paints, 3.2), 8);
     assert_eq!(paints_at(&mut director, &paints, 3.5), 1);

@@ -241,12 +241,14 @@ fn build(dom: &mut Html, reel: &Reel, ids: &mut HashSet<String>, tracks: &mut Ve
         let window = dom.tree.orphan(element("span", &[("style", "display:inline-block;position:relative;overflow:hidden")])).id();
         let placeholder = dom.tree.orphan(element("span", &[("style", "visibility:hidden")])).id();
         dom.tree.get_mut(placeholder).unwrap().append(Node::Text(Text { text: c.to_string().into() }));
-        let strip = dom
-            .tree
-            .orphan(element("span", &[("id", &id), ("style", "position:absolute;left:0;right:0;top:0;text-align:center")]))
-            .id();
+        // The strip is as many windows tall as it has cells, so a cell is
+        // exactly one window high at any line height.
+        let cells = values.len();
+        let strip_style = format!("position:absolute;left:0;right:0;top:0;height:{}%;text-align:center", 100 * cells);
+        let strip = dom.tree.orphan(element("span", &[("id", &id), ("style", &strip_style)])).id();
+        let cell_style = format!("display:block;height:{}%", 100.0 / cells as f64);
         for value in &values {
-            let cell = dom.tree.orphan(element("span", &[("style", "display:block")])).id();
+            let cell = dom.tree.orphan(element("span", &[("style", &cell_style)])).id();
             dom.tree.get_mut(cell).unwrap().append(Node::Text(Text { text: value.to_string().into() }));
             dom.tree.get_mut(strip).unwrap().append_id(cell);
         }
@@ -257,13 +259,14 @@ fn build(dom: &mut Html, reel: &Reel, ids: &mut HashSet<String>, tracks: &mut Ve
             // A strip of n cells ends one cell short of its full height.
             let end = -100.0 * steps as f64 / (steps + 1) as f64;
             let (first, last) = if reel.down { (end, 0.0) } else { (0.0, end) };
+            let start = reel.start + reel.stagger * digit as f64;
             tracks.push(TimelineTrack {
                 target: id,
                 property: "translate-y-percent".into(),
                 keyframes: vec![
-                    TimelineKeyframe { time: reel.start, value: TimelineValue::Number(first), ease: None },
+                    TimelineKeyframe { time: start, value: TimelineValue::Number(first), ease: None },
                     TimelineKeyframe {
-                        time: reel.start + reel.duration + reel.stagger * digit as f64,
+                        time: start + reel.duration,
                         value: TimelineValue::Number(last),
                         ease: Some(reel.ease.clone()),
                     },

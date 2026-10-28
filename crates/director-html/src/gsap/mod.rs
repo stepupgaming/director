@@ -95,6 +95,8 @@ const NATIVE: &[&str] = &[
     "word-spacing",
     "font-stretch",
     "font-variation-settings",
+    "-webkit-text-stroke-color",
+    "-webkit-text-stroke-width",
     "line-height",
     "padding",
     "margin",
@@ -244,15 +246,16 @@ pub(crate) fn run(
 }
 
 /// The seek times: every frame, and with more than one sample per frame the
-/// renderer's sub-frame times spread over the shutter, so motion blur reads
+/// renderer's sub-frame times spread over the shutter that opens at each
+/// frame, so motion blur reads
 /// sampled values instead of a line between frames.
 fn sample_times(frames: usize, fps: f64, (samples, angle): (u32, f32)) -> Vec<f64> {
     let mut times: Vec<f64> = (0..frames).map(|f| f as f64 / fps).collect();
     if samples > 1 {
         let shutter = (1.0 / fps) * (angle.clamp(0.0, 360.0) as f64 / 360.0);
         for f in 0..frames {
-            let start = f as f64 / fps - shutter / 2.0;
-            times.extend((0..samples).map(|k| start + (k as f64 / (samples - 1) as f64) * shutter).filter(|t| *t > 0.0));
+            let start = f as f64 / fps;
+            times.extend((0..samples).map(|k| start + (k as f64 / (samples - 1) as f64) * shutter));
         }
         times.sort_by(f64::total_cmp);
         times.dedup_by(|b, a| (*b - *a).abs() < 1e-9);
@@ -927,6 +930,8 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
         "letter-spacing" => Ok(Val::Num(paint.letter_spacing as f64)),
         "word-spacing" => Ok(Val::Num(paint.word_spacing as f64)),
         "font-stretch" => Ok(Val::Num(paint.font_stretch as f64)),
+        "-webkit-text-stroke-color" => Ok(Val::color(paint.text_stroke_color.unwrap_or(paint.color))),
+        "-webkit-text-stroke-width" => Ok(Val::Num(paint.text_stroke_width as f64)),
         c if variation_axis(c).is_some() => {
             let axis = variation_axis(c).unwrap_or_default();
             let set = paint.font_variations.iter().find(|v| v.axis == axis).map(|v| v.value);

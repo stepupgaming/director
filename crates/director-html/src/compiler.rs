@@ -101,6 +101,7 @@ fn write_svg_children(
     let mut index = 0usize;
     for child in el.children() {
         match child.value() {
+            Node::Text(text) if el.value().name() == "style" => out.push_str(&escape_xml(&flatten_nested_colors(text), false)),
             Node::Text(text) => out.push_str(&escape_xml(text, false)),
             Node::Element(_) => {
                 let child = ElementRef::wrap(child).unwrap();
@@ -134,20 +135,20 @@ fn write_svg_children(
                 out.push_str(tag);
                 let mut wrote_style = false;
                 for (name, value) in child.value().attrs() {
-                    if name == "style" && !extra.is_empty() {
+                    if name == "style" {
                         let mut style = value.to_string();
-                        if !style.is_empty() && !style.trim_end().ends_with(';') {
+                        if !extra.is_empty() && !style.is_empty() && !style.trim_end().ends_with(';') {
                             style.push(';');
                         }
                         style.push_str(&extra);
-                        out.push_str(&format!(" {name}=\"{}\"", escape_xml(&style, true)));
+                        out.push_str(&format!(" {name}=\"{}\"", escape_xml(&flatten_nested_colors(&style), true)));
                         wrote_style = true;
                     } else {
                         out.push_str(&format!(" {name}=\"{}\"", escape_xml(value, true)));
                     }
                 }
                 if !wrote_style && !extra.is_empty() {
-                    out.push_str(&format!(" style=\"{}\"", escape_xml(&extra, true)));
+                    out.push_str(&format!(" style=\"{}\"", escape_xml(&flatten_nested_colors(&extra), true)));
                 }
                 if let Some(id) = plan.target_id(&child_path) {
                     out.push_str(&format!(" director-smil-id=\"{id}\""));
@@ -162,6 +163,38 @@ fn write_svg_children(
         }
     }
     Ok(())
+}
+
+/// usvg's CSS tokenizer ends a function at its first `)`, so a color function
+/// inside another function, as in `drop-shadow(0 0 4px rgba(0,0,0,.5))`,
+/// would cut the declaration short. Those colors become `#rrggbbaa`.
+fn flatten_nested_colors(css: &str) -> String {
+    const FUNCTIONS: [&str; 10] = ["rgba(", "rgb(", "hsla(", "hsl(", "hwb(", "oklab(", "oklch(", "lab(", "lch(", "color("];
+    let bytes = css.as_bytes();
+    let mut out = String::with_capacity(css.len());
+    let (mut depth, mut i) = (0usize, 0usize);
+    while i < css.len() {
+        let word_start = i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'-');
+        let function = FUNCTIONS.iter().find(|f| css[i..].len() >= f.len() && css[i..i + f.len()].eq_ignore_ascii_case(f));
+        if let (true, true, Some(function)) = (depth > 0, word_start, function) {
+            let close = css[i + function.len()..].find(')').map(|at| i + function.len() + at + 1);
+            if let Some(Ok(c)) = close.map(|end| crate::style::color(&css[i..end], director_core::types::Color::BLACK)) {
+                let channel = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                out.push_str(&format!("#{:02x}{:02x}{:02x}{:02x}", channel(c.r), channel(c.g), channel(c.b), channel(c.a)));
+                i = close.unwrap();
+                continue;
+            }
+        }
+        let ch = css[i..].chars().next().unwrap();
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 pub(crate) fn validate_svg(source: &str) -> Result<(), CompileError> {

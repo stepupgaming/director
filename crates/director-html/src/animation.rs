@@ -162,6 +162,8 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
         }
         "font-stretch" => Value::Scalar(crate::style::stretch_percent(s)?),
         name if variation_axis(name).is_some() => Value::Scalar(number(s.trim())?),
+        "-webkit-text-stroke-color" => Value::Color(color(s, current)?),
+        "-webkit-text-stroke-width" => Value::Scalar(px(s, m)?),
         "text" => Value::Text(s.to_string()),
         _ => return Err(format!("unsupported animated property '{name}'")),
     })
@@ -466,6 +468,8 @@ fn base_value(name: &str, base: &Values, paint: &PaintStyle, m: Metrics) -> Resu
             a: 0.0,
         }),
         "color" => Value::Color(paint.color),
+        "-webkit-text-stroke-color" => Value::Color(paint.text_stroke_color.unwrap_or(paint.color)),
+        "-webkit-text-stroke-width" => Value::Scalar(paint.text_stroke_width),
         "transform" => Value::Transform(TransformList::default()),
         "border-top-left-radius" => Value::Scalar(0.0),
         _ => return Err(format!("animation '{name}' needs an explicit base value")),
@@ -669,6 +673,7 @@ pub(crate) fn from_track(
                 name if box_side(name).is_some() => format!("{n}px"),
                 "line-height" => n.to_string(),
                 "font-stretch" => format!("{n}%"),
+                "-webkit-text-stroke-width" => format!("{n}px"),
                 name if variation_axis(name).is_some() => n.to_string(),
                 name if is_component(name) => n.to_string(),
                 "filter-drop-shadow-color" => return Err(format!("timeline '{property}' takes CSS text")),
@@ -677,7 +682,7 @@ pub(crate) fn from_track(
                 }
                 name if is_filter(name) || indexed(name).is_some() => n.to_string(),
                 "text" => n.to_string(),
-                "color" | "background-color" | "transform" => {
+                "color" | "background-color" | "transform" | "-webkit-text-stroke-color" => {
                     return Err(format!("timeline '{property}' takes CSS text"))
                 }
                 name if border_side(name).is_some() => return Err(format!("timeline '{property}' takes CSS text")),
@@ -1008,6 +1013,8 @@ impl Animation {
                 ("letter-spacing", Value::Scalar(v)) => paint.letter_spacing = v,
                 ("word-spacing", Value::Scalar(v)) => paint.word_spacing = v,
                 ("font-stretch", Value::Scalar(v)) => paint.font_stretch = v.max(0.0),
+                ("-webkit-text-stroke-color", Value::Color(v)) => paint.text_stroke_color = Some(v),
+                ("-webkit-text-stroke-width", Value::Scalar(v)) => paint.text_stroke_width = v.max(0.0),
                 (name, Value::Scalar(v)) if variation_axis(name).is_some() => {
                     let axis = variation_axis(name).unwrap_or_default();
                     match paint.font_variations.iter_mut().find(|f| f.axis == axis) {

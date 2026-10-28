@@ -237,3 +237,20 @@ fn external_svg_text_fill_and_size_paint_red() {
     let empty = pixel(&pixels, 62, 2);
     assert!(empty[0] < 20 && empty[1] < 20 && empty[2] < 20, "{empty:?}");
 }
+
+#[test]
+fn a_drop_shadow_with_a_color_function_paints_its_shadow() {
+    // A blue square with a hard red shadow 8px down and right.
+    for (shadow, rules) in [
+        ("style='filter:drop-shadow(8px 8px 0 rgba(255,0,0,1))'", ""),
+        ("class='s'", "svg .s{filter:drop-shadow(8px 8px 0 rgb(255 0 0))}"),
+        ("", "<style>.t{filter:drop-shadow(8px 8px 0 hsl(0 100% 50%))}</style>"),
+    ] {
+        let (rules, svg_rules) = if rules.starts_with('<') { ("", rules) } else { (rules, "") };
+        let class = if shadow.is_empty() { "class='t'" } else { shadow };
+        let p = frame(&svg_doc(rules, &format!("{svg_rules}<rect {class} x='8' y='8' width='32' height='32' fill='#0000ff'/>")), 0.0);
+        assert!(pixel(&p, 24, 24)[2] > 200, "{class}: the square");
+        let shadow = pixel(&p, 44, 44);
+        assert!(shadow[0] > 200 && shadow[2] < 60, "{class} {rules}{svg_rules}: shadow {shadow:?}");
+    }
+}

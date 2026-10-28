@@ -181,3 +181,17 @@ fn font_weight_and_stretch_drive_variable_font_axes() {
     let narrow = bounds(&frame(&text_box("font-family:Archivo;font-stretch:62%", "HH")), lit);
     assert!(wide[2] - wide[0] > (narrow[2] - narrow[0]) * 3 / 2, "{wide:?} {narrow:?}");
 }
+
+#[test]
+fn centred_nowrap_text_keeps_its_line_height() {
+    for align in ["left", "center", "right"] {
+        let page = format!(
+            "<style>body{{margin:0}}p{{margin:0;width:64px;font-size:16px;line-height:1.25;white-space:nowrap;\
+             text-align:{align};color:white;background:#ff0000}}</style><p>ab</p>"
+        );
+        let pixels = frame(&page);
+        let [.., bottom] = bounds(&pixels, red);
+        assert_eq!(bottom, 19, "{align}: a 20px line box");
+        assert!(count(&pixels, white) > 10, "{align}: the text paints");
+    }
+}

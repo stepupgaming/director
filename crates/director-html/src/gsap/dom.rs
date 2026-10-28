@@ -781,6 +781,18 @@ fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
                 };
             }
         }
+        // The stroke longhands read from the `-webkit-text-stroke` shorthand
+        // too; the color defaults to the text color and the width to 0.
+        if prop == "-webkit-text-stroke-color" || prop == "-webkit-text-stroke-width" {
+            let shorthand = p.css.get("-webkit-text-stroke").map(|v| crate::css::split(v, false)).unwrap_or_default();
+            return if prop.ends_with("color") {
+                let text = p.css.get(prop).cloned().or_else(|| shorthand.get(1).cloned());
+                rgb(text.and_then(|t| crate::style::color(&t, current()).ok()).unwrap_or_else(current))
+            } else {
+                let text = p.css.get(prop).cloned().or_else(|| shorthand.first().cloned());
+                px(text.and_then(|t| crate::style::px(&t, m).ok()).unwrap_or(0.0))
+            };
+        }
         // Each layer's x and y longhands pair into one position.
         if prop == "background-position" && !p.css.contains_key(prop) {
             let axis = |name: &str, fallback: &str| {

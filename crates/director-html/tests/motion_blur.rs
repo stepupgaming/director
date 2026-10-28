@@ -29,14 +29,16 @@ fn root_attributes_set_sub_frame_sampling() {
 
 #[test]
 fn motion_blur_smears_a_moving_edge() {
-    // At 0.5 s the box covers x 32..40. A 360 degree shutter at 10 fps spans 0.1 s, 6.4 px.
+    // At 0.5 s the box covers x 32..40. A 360 degree shutter at 10 fps opens
+    // at the frame and spans 0.1 s, 6.4 px to the right.
     let sharp = row(&source(""), 0.5);
     let blurred = row(&source("data-motion-blur='8' data-shutter-angle='360'"), 0.5);
     assert_eq!(sharp[30], 0);
     assert_eq!(sharp[36], 255);
-    assert!(blurred[30] > 0 && blurred[30] < 255, "leading smear {}", blurred[30]);
-    assert!(blurred[41] > 0 && blurred[41] < 255, "trailing smear {}", blurred[41]);
-    assert!(blurred[36] > 200, "core stays bright {}", blurred[36]);
+    assert_eq!(blurred[30], 0, "nothing before the frame's position");
+    assert!(blurred[34] > 0 && blurred[34] < 255, "left smear {}", blurred[34]);
+    assert!(blurred[43] > 0 && blurred[43] < 255, "right smear {}", blurred[43]);
+    assert!(blurred[39] > 200, "core stays bright {}", blurred[39]);
 }
 
 #[test]
