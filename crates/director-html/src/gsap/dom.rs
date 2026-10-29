@@ -10,7 +10,7 @@ use html5ever::{ns, Attribute, LocalName, Namespace, QualName};
 use scraper::node::{Comment, Element, Node, Text};
 use scraper::{ElementRef, Html, Selector, StrTendril};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 /// What the probe compile knows about one element box.
@@ -30,6 +30,14 @@ pub(crate) struct Probed {
 }
 
 pub(crate) type Probe = HashMap<NodeId, Probed>;
+
+/// The latest probe, the layout generation it saw and the composition clips
+/// it compiled empty.
+struct Probing {
+    layout: u64,
+    emptied: HashSet<NodeId>,
+    map: Probe,
+}
 pub(crate) type Prober = Box<dyn Fn(&Html) -> Result<Probe, String>>;
 
 pub(crate) struct Doc {
@@ -39,10 +47,15 @@ pub(crate) struct Doc {
     selectors: HashMap<String, Rc<Selector>>,
     /// Bumped on every structural or attribute change.
     pub generation: u64,
+    /// Bumped on every change that can move a box.
+    layout: u64,
+    /// Elements whose inline style changed only in paint since the probe,
+    /// each with whether an inherited property changed.
+    painted: HashMap<NodeId, bool>,
     /// The generation and node of the latest insert of a detached node, so
     /// removing it again restores the generation.
     undo: Option<(u64, NodeId)>,
-    probe: Option<(u64, Rc<Probe>)>,
+    probe: Option<Probing>,
     prober: Prober,
     /// While the timeline plays, layout answers stay at the setup state.
     pub playing: bool,
@@ -63,6 +76,8 @@ impl Doc {
             index: HashMap::new(),
             selectors: HashMap::new(),
             generation: 0,
+            layout: 0,
+            painted: HashMap::new(),
             undo: None,
             probe: None,
             prober,
@@ -77,6 +92,36 @@ impl Doc {
             doc.register(id);
         }
         doc
+    }
+
+    /// Composition clips outside the ancestry and subtree of `id` that the
+    /// last probe placed out of flow. Their content moves no box of `id`, so
+    /// its probe compiles them empty.
+    fn out_of_scope(&self, id: NodeId) -> HashSet<NodeId> {
+        let Some(last) = &self.probe else { return HashSet::new() };
+        let Some(node) = self.html.tree.get(id) else { return HashSet::new() };
+        let ancestry: HashSet<NodeId> = node.ancestors().map(|a| a.id()).collect();
+        self.html
+            .tree
+            .root()
+            .descendants()
+            .filter(|n| n.value().as_element().is_some_and(|e| e.attr("data-composition-id").is_some()))
+            .filter(|n| !ancestry.contains(&n.id()) && n.id() != id && !n.ancestors().any(|a| a.id() == id))
+            .filter(|n| {
+                let position = last.map.get(&n.id()).and_then(|p| p.css.get("position"));
+                position.is_some_and(|p| p == "absolute" || p == "fixed")
+            })
+            .map(|n| n.id())
+            .collect()
+    }
+
+    /// Whether paint writes since the probe changed the cascade of `id`.
+    fn repainted(&self, id: NodeId) -> bool {
+        if self.painted.contains_key(&id) {
+            return true;
+        }
+        let Some(node) = self.html.tree.get(id) else { return false };
+        node.ancestors().any(|a| self.painted.get(&a.id()) == Some(&true))
     }
 
     fn register(&mut self, id: NodeId) -> usize {
@@ -118,6 +163,7 @@ impl Doc {
 
     fn touch(&mut self) {
         self.generation += 1;
+        self.layout += 1;
         self.undo = None;
     }
 
@@ -180,8 +226,14 @@ impl Doc {
 
     /// Set or remove attribute `name` on element `i`.
     pub(crate) fn write_attr(&mut self, i: usize, name: &str, value: Option<String>) -> Result<(), String> {
-        let html = self.element(i)?.value().name.ns == ns!(html);
+        let element = self.element(i)?.value();
+        let html = element.name.ns == ns!(html);
         let name = if html { name.to_ascii_lowercase() } else { name.to_string() };
+        let paint = match name.as_str() {
+            "style" => paint_change(element.attr("style").unwrap_or_default(), value.as_deref().unwrap_or_default()),
+            _ => None,
+        };
+        let (id, layout) = (self.id(i)?, self.layout);
         self.set_element(i, |attrs| {
             let at = attrs.iter().position(|a| attr_name(&a.name) == name);
             match (value, at) {
@@ -198,7 +250,15 @@ impl Doc {
                 }
                 (None, None) => {}
             }
-        })
+        })?;
+        if let Some(inherited) = paint {
+            self.layout = layout;
+            *self.painted.entry(id).or_default() |= inherited;
+        } else if self.element(i)?.value().attr("data-composition-id").is_some() {
+            // Scoped probes trust each clip's last placement.
+            self.probe = None;
+        }
+        Ok(())
     }
 
     /// `#id`, else `<tag>`, naming element `i` in diagnostics.
@@ -318,43 +378,54 @@ impl Doc {
         Ok(())
     }
 
-    /// Layout facts for element `i` from the probe compile.
-    pub(crate) fn probed(&mut self, i: usize) -> Result<Option<Probed>, String> {
+    /// Layout facts for element `i` from the probe compile. Paint-only style
+    /// writes keep every box, so the probe stays for layout reads, and for
+    /// `cascade` reads unless they touched `i` or an inherited property above it.
+    pub(crate) fn probed(&mut self, i: usize, cascade: bool) -> Result<Option<Probed>, String> {
         let id = self.id(i)?;
         let stale = match &self.probe {
             None => true,
-            Some((generation, _)) => *generation != self.generation && !self.playing,
+            Some(p) => {
+                let covered = self.html.tree.get(id).is_some_and(|n| !n.ancestors().any(|a| p.emptied.contains(&a.id())));
+                !covered || (!self.playing && (p.layout != self.layout || (cascade && self.repainted(id))))
+            }
         };
         if stale {
-            let (compact, map) = compact(&self.html);
+            let emptied = if self.playing { HashSet::new() } else { self.out_of_scope(id) };
+            let (compact, map) = compact(&self.html, &emptied);
             let probe = (self.prober)(&compact)?;
             let back: HashMap<NodeId, NodeId> = map.into_iter().map(|(old, new)| (new, old)).collect();
             let probe: Probe = probe
                 .into_iter()
                 .filter_map(|(new, p)| back.get(&new).map(|old| (*old, p)))
                 .collect();
-            self.probe = Some((self.generation, Rc::new(probe)));
+            self.probe = Some(Probing { layout: self.layout, emptied, map: probe });
+            self.painted.clear();
         }
-        Ok(self.probe.as_ref().unwrap().1.get(&id).cloned())
+        Ok(self.probe.as_ref().unwrap().map.get(&id).cloned())
     }
 }
 
 /// A copy of `html` holding only nodes reachable from the root, in document
-/// order, with the map from old node ids to new ones.
-pub(crate) fn compact(html: &Html) -> (Html, HashMap<NodeId, NodeId>) {
+/// order, with the map from old node ids to new ones. Nodes in `empty` keep
+/// no children.
+pub(crate) fn compact(html: &Html, empty: &HashSet<NodeId>) -> (Html, HashMap<NodeId, NodeId>) {
     let mut out = Html::new_document();
     out.quirks_mode = html.quirks_mode;
     let mut map = HashMap::new();
     let root = html.tree.root();
     map.insert(root.id(), out.tree.root().id());
-    fn copy(src: ego_tree::NodeRef<'_, Node>, dst: NodeId, out: &mut Html, map: &mut HashMap<NodeId, NodeId>) {
+    fn copy(src: ego_tree::NodeRef<'_, Node>, dst: NodeId, out: &mut Html, map: &mut HashMap<NodeId, NodeId>, empty: &HashSet<NodeId>) {
+        if empty.contains(&src.id()) {
+            return;
+        }
         for child in src.children() {
             let id = out.tree.get_mut(dst).unwrap().append(child.value().clone()).id();
             map.insert(child.id(), id);
-            copy(child, id, out, map);
+            copy(child, id, out, map, empty);
         }
     }
-    copy(root, out.tree.root().id(), &mut out, &mut map);
+    copy(root, out.tree.root().id(), &mut out, &mut map, empty);
     (out, map)
 }
 
@@ -668,7 +739,7 @@ fn matches(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue>
 fn layout(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> {
     let i = arg_index(args, 0, cx)?;
     let found = with_doc(|d| {
-        Ok(d.probed(i)?.map(|p| {
+        Ok(d.probed(i, false)?.map(|p| {
             let mut v = p.rect.to_vec();
             v.extend(p.abs);
             v.push(p.font_size);
@@ -691,7 +762,7 @@ fn computed(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue
     let prop = arg_text(args, 1, cx)?;
     with_doc(|d| {
         let tag = d.element(i).map(|e| e.value().name().to_string()).unwrap_or_default();
-        let probed = d.probed(i)?;
+        let probed = d.probed(i, true)?;
         Ok(text(&computed_value(probed.as_ref(), &tag, &prop)))
     })
 }
@@ -727,6 +798,49 @@ const UNITLESS: &[&str] = &[
 ];
 
 /// `getComputedStyle` text for `prop` (kebab case).
+/// For a paint-only change of inline style `before` to `after`, whether it
+/// changed an inherited property. Any change that can move a box is `None`.
+fn paint_change(before: &str, after: &str) -> Option<bool> {
+    let (before, after) = (super::declarations(before), super::declarations(after));
+    let value = |list: &[(String, String)], name: &str| list.iter().rev().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+    let mut inherited = false;
+    for (name, _) in before.iter().chain(&after) {
+        if value(&before, name) == value(&after, name) {
+            continue;
+        }
+        if !paint_only(name) {
+            return None;
+        }
+        inherited |= inherited_paint(name);
+    }
+    Some(inherited)
+}
+
+/// Properties that change pixels and never a box.
+fn paint_only(name: &str) -> bool {
+    matches!(
+        name,
+        "opacity" | "transform" | "translate" | "rotate" | "scale" | "transform-origin" | "transform-style"
+            | "perspective" | "perspective-origin" | "backface-visibility" | "filter" | "backdrop-filter"
+            | "visibility" | "color" | "box-shadow" | "text-shadow" | "clip-path" | "mix-blend-mode"
+            | "isolation" | "z-index" | "will-change" | "fill" | "fill-opacity" | "stroke-opacity"
+            | "stroke-dasharray" | "stroke-dashoffset" | "stop-color" | "stop-opacity" | "flood-color"
+            | "flood-opacity" | "caret-color" | "cursor" | "pointer-events" | "text-decoration-color"
+            | "-webkit-text-fill-color" | "-webkit-text-stroke-color" | "border-color"
+    ) || ["background", "mask", "-webkit-mask", "outline"].iter().any(|p| name == *p || name.starts_with(&format!("{p}-")))
+        || (name.starts_with("border-") && name.ends_with("-color"))
+}
+
+/// Paint-only properties that descendants inherit.
+fn inherited_paint(name: &str) -> bool {
+    matches!(
+        name,
+        "visibility" | "color" | "text-shadow" | "fill" | "fill-opacity" | "stroke-opacity" | "stroke-dasharray"
+            | "stroke-dashoffset" | "caret-color" | "cursor" | "pointer-events" | "-webkit-text-fill-color"
+            | "-webkit-text-stroke-color"
+    )
+}
+
 fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
     if let Some(p) = probed {
         match prop {
@@ -915,7 +1029,7 @@ fn matrix(_: &JsValue, args: &[JsValue], cx: &mut Context) -> JsResult<JsValue> 
     let i = arg_index(args, 0, cx)?;
     let value = arg_text(args, 1, cx)?;
     with_doc(|d| {
-        let size = d.probed(i)?.map_or((0.0, 0.0), |p| (p.rect[2], p.rect[3]));
+        let size = d.probed(i, false)?.map_or((0.0, 0.0), |p| (p.rect[2], p.rect[3]));
         Ok(text(&matrix_text(&value, size)))
     })
 }

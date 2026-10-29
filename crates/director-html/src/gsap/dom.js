@@ -33,7 +33,11 @@ const S = {
   dirtyStyles: new Set(),
   layoutDirty: false,
   overlay: new Map(),
-  touched: new Set(),
+  // Elements written while the timeline plays, each with the style keys
+  // written, or null when the whole declaration list was replaced.
+  touched: new Map(),
+  // Touched elements skipped while detached, compared in full next time.
+  stale: new Set(),
   last: new Map(),
   generation: 0,
   // Nodes a script added to the document while the timeline played; each
@@ -45,10 +49,15 @@ const S = {
 };
 
 // ---- CSS text helpers ----
+const kebabs = new Map();
 const kebab = (name) => {
-  if (name.startsWith("--")) return name;
-  if (name === "cssFloat") return "float";
-  return name.replace(/^(webkit|moz|ms|o)(?=[A-Z])/, "-$1").replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+  let out = kebabs.get(name);
+  if (out !== undefined) return out;
+  if (name.startsWith("--")) out = name;
+  else if (name === "cssFloat") out = "float";
+  else out = name.replace(/^(webkit|moz|ms|o)(?=[A-Z])/, "-$1").replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+  kebabs.set(name, out);
+  return out;
 };
 const camel = (name) => name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 function splitTop(text, sep) {
@@ -92,12 +101,19 @@ function styleMap(i) {
 }
 function styleWrite(i, name, value) {
   const map = styleMap(i);
-  const v = value == null ? "" : String(value).trim().replace(/\s*!important$/i, "");
+  let v = value == null ? "" : String(value).trim();
+  if (v.includes("!")) v = v.replace(/\s*!important$/i, "");
   if (v === "") map.delete(name); else map.set(name, v);
   noteStyle(i, name);
 }
 function noteStyle(i, name) {
-  if (S.phase === "play") { S.touched.add(i); return; }
+  if (S.phase === "play") {
+    const keys = S.touched.get(i);
+    if (name === null) S.touched.set(i, null);
+    else if (keys === undefined) S.touched.set(i, new Set([name]));
+    else if (keys !== null) keys.add(name);
+    return;
+  }
   S.dirtyStyles.add(i);
   if (name === null || LAYOUT.test(name)) S.layoutDirty = true;
 }
@@ -681,7 +697,7 @@ function overlaySet(i, key, value) {
   let map = S.overlay.get(i);
   if (!map) S.overlay.set(i, (map = new Map()));
   map.set(key, value);
-  S.touched.add(i);
+  if (!S.touched.has(i)) S.touched.set(i, new Set());
 }
 
 class CharacterData extends Node {
@@ -992,7 +1008,13 @@ const random = () => {
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
-Math.random = random;
+// Draws while the timeline plays depend on the seek path, which a run that
+// starts mid-timeline does not share.
+let playDraws = 0;
+Math.random = () => {
+  if (S.phase === "play") playDraws++;
+  return random();
+};
 Date.now = () => 0;
 const noop = () => {};
 class Observer { constructor() {} observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } }
@@ -1089,16 +1111,60 @@ function setNames(vars, out = []) {
   }
   return out;
 }
+// Zero-duration tweens with their composition start, grouped by their
+// nearest driven timeline, with every driven timeline above it. A set under
+// no driven timeline moves with the GSAP root and sits in the `null` group.
+// Root tweens leave their parent when they finish, so the groups map while
+// they are attached, and any GSAP call that adds an animation during play
+// maps them again.
+let setList = null;
 function setTweens() {
   const gsap = G.gsap;
-  if (!gsap || !gsap.globalTimeline) return [];
-  return gsap.globalTimeline.getChildren(true, true, false).filter((z) => z.duration() === 0);
+  if (!gsap || !gsap.globalTimeline) return new Map();
+  if (setList) return setList;
+  setList = new Map();
+  const driven = new Set(drive.map(([tl]) => tl));
+  for (const z of gsap.globalTimeline.getChildren(true, true, false)) {
+    if (z.duration() !== 0) continue;
+    const drivers = [];
+    let rooted = true;
+    for (let p = z.parent; p && p !== gsap.globalTimeline; p = p.parent) {
+      if (driven.has(p)) drivers.push(p);
+      if (!p.parent || p.parent === gsap.globalTimeline) rooted = !driven.has(p);
+    }
+    const key = rooted ? null : drivers[0];
+    let group = setList.get(key);
+    if (!group) setList.set(key, (group = { drivers: rooted ? [] : drivers, sets: [] }));
+    group.sets.push([z, setStart(z)]);
+  }
+  return setList;
+}
+function watchAdds(gsap) {
+  const owners = [gsap, gsap.core && gsap.core.Timeline && gsap.core.Timeline.prototype];
+  for (const owner of owners) {
+    if (!owner) continue;
+    for (const name of ["to", "from", "fromTo", "set", "add", "call", "timeline", "delayedCall"]) {
+      const f = owner[name];
+      if (typeof f !== "function") continue;
+      owner[name] = function (...args) {
+        const made = f.apply(this, args);
+        // A root set that rendered as it was made has fired and steps no
+        // later frame, so per-frame sets in callbacks keep the groups.
+        if (!(owner === gsap && name === "set" && made && made.ratio === 1)) setList = null;
+        return made;
+      };
+    }
+  }
 }
 // A set's start on the composition clock through its parents. Repeating or
 // reversed parents land outside the frame that fires it, and such a set
 // jumps on that frame.
 function setStart(z) {
-  let s = z.startTime();
+  return clock(z, z.startTime());
+}
+// A time on the clock of the parent of `z`, on the composition clock.
+function clock(z, local) {
+  let s = local;
   for (let p = z.parent; p; p = p.parent) {
     const driven = drive.find(([tl]) => tl === p);
     if (driven) return s + driven[1];
@@ -1167,21 +1233,58 @@ G.__director = {
       if (!tl || typeof tl.totalTime !== "function") continue;
       if (tl.parent && gsap && tl.parent !== gsap.globalTimeline) continue;
       const owner = [...document.querySelectorAll("[data-composition-id]")].find((el) => el.getAttribute("data-composition-id") === id);
-      drive.push([tl, owner ? composite(owner) : 0]);
+      drive.push([tl, owner ? composite(owner) : 0, undefined]);
       tl.pause();
     }
+    if (gsap) watchAdds(gsap);
     return drive.length;
+  },
+  // Composition start and end pairs of every animation that draws from
+  // onUpdate. A run that starts mid-timeline seeks the last sample inside
+  // each finished one, so its drawing holds what that sample left.
+  drawers() {
+    const gsap = G.gsap;
+    const out = [];
+    if (!gsap || !gsap.globalTimeline) return "[]";
+    for (const z of gsap.globalTimeline.getChildren(true, true, true)) {
+      if (!z._onUpdate && !(z.vars && z.vars.onUpdate)) continue;
+      const driven = drive.find(([tl]) => tl === z);
+      const start = driven ? driven[1] : clock(z, z.startTime());
+      const end = driven ? driven[1] + z.totalDuration() : clock(z, z.endTime());
+      if (start !== null && end !== null) out.push(start, end);
+    }
+    return JSON.stringify(out);
+  },
+  draws() {
+    return playDraws;
   },
   // Seek every timeline to `t` and return what changed since the last frame
   // as index, key, value triples joined by \x01, with \x02 for a removal.
   frame(t) {
     const gsap = G.gsap;
     for (const [tl] of drive) tl.pause();
-    // Root tweens leave their parent when they finish, so starts map first.
-    const sets = setTweens().map((z) => [z, z.ratio, setStart(z)]);
-    if (gsap && typeof gsap.updateRoot === "function") gsap.updateRoot(t);
-    for (const [tl, offset] of drive) {
+    // A timeline before its start or past its end holds still, so only a
+    // change in its clamped time seeks it again, and only sets under a
+    // moving timeline or the root can fire.
+    const moving = new Set();
+    const seeks = [];
+    for (const entry of drive) {
+      const [tl, offset, last] = entry;
       const local = Math.max(0, t - offset);
+      const held = Math.min(local, tl.totalDuration());
+      if (held === last) continue;
+      entry[2] = held;
+      moving.add(tl);
+      seeks.push([tl, local]);
+    }
+    // Root tweens leave their parent when they finish, so starts map first.
+    const sets = [];
+    for (const [key, group] of setTweens()) {
+      if (key !== null && !group.drivers.some((d) => moving.has(d))) continue;
+      for (const [z, start] of group.sets) sets.push([z, z.ratio, start]);
+    }
+    if (gsap && typeof gsap.updateRoot === "function") gsap.updateRoot(t);
+    for (const [tl, local] of seeks) {
       tl.totalTime(local + 0.000001, true);
       tl.totalTime(local, false);
     }
@@ -1193,13 +1296,28 @@ G.__director = {
     S.transient.clear();
     if (N.generation() !== S.generation) fail(`scripts changed the document structure while the timeline played (at ${t}s)`);
     const out = [];
-    for (const i of S.touched) {
-      if (!N.connected(i)) continue;
-      const now = S.styles.get(i) || new Map();
+    for (const [i, keys] of S.touched) {
+      if (!N.connected(i)) {
+        S.stale.add(i);
+        continue;
+      }
+      // Text nodes carry only overlay values.
+      const now = N.kind(i) === 1 ? styleMap(i) : new Map();
       const before = S.last.get(i) || new Map();
-      for (const [k, v] of now) if (before.get(k) !== v) out.push(i, k, v);
-      for (const k of before.keys()) if (!now.has(k)) out.push(i, k, null);
-      S.last.set(i, new Map(now));
+      // An element first styled while playing reports every declaration.
+      if (keys === null || !S.last.has(i) || S.stale.delete(i)) {
+        for (const [k, v] of now) if (before.get(k) !== v) out.push(i, k, v);
+        for (const k of before.keys()) if (!now.has(k)) out.push(i, k, null);
+        S.last.set(i, new Map(now));
+      } else {
+        for (const k of keys) {
+          const v = now.get(k);
+          if (before.get(k) === v) continue;
+          out.push(i, k, v === undefined ? null : v);
+          if (v === undefined) before.delete(k);
+          else before.set(k, v);
+        }
+      }
       const overlay = S.overlay.get(i);
       if (overlay) {
         for (const [k, v] of overlay) out.push(i, k, v);

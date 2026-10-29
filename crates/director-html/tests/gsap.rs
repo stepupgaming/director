@@ -1276,3 +1276,55 @@ fn keyframes_win_over_gsap_while_they_run() {
     let p = frame(&mut c, 1.75);
     assert!(blue(&p, 45).abs_diff(166) < 6 && blue(&p, 25) < 20 && blue(&p, 55) < 20, "{} {}", blue(&p, 45), blue(&p, 55));
 }
+
+/// A minute-long `counter` page, long enough for its samples to split
+/// across script runs.
+fn minute(script: &str) -> CompiledHtml {
+    let source = format!(
+        "<style>body{{margin:0;background:white}}#n{{position:absolute;left:0;top:30px;font-size:20px;color:black}}</style>\
+         <div data-composition-id='main' style='background:white' data-width='96' data-height='64' data-duration='60'><div id='n'>0</div></div>\
+         {GSAP}<script>{script}</script>"
+    );
+    compile(&source, opts()).unwrap_or_else(|e| panic!("{script}: {e}"))
+}
+
+#[test]
+fn later_script_runs_start_from_what_earlier_samples_drew() {
+    let c = minute(
+        "const n = document.querySelector('#n'); const o = {v: 0};\
+         window.__timelines = {main: gsap.timeline({paused: true})\
+           .to(o, {v: 100, duration: 10, ease: 'none', onUpdate: () => { n.textContent = String(Math.round(o.v)); n.style.left = o.v + 'px'; }}, 0)\
+           .to('#n', {left: '+=10', duration: 1, ease: 'none'}, 54)\
+           .set('#n', {opacity: 0.5}, 20)\
+           .set('#n', {opacity: 0.25}, 52)\
+           .to('#n', {x: 30, duration: 60, ease: 'none'}, 0)};",
+    );
+    let text = track(&c, "n", "text");
+    assert_eq!(text_at(text, 5.0).as_deref(), Some("50"));
+    assert_eq!(text_at(text, 58.0).as_deref(), Some("100"));
+    let opacity = track(&c, "n", "opacity");
+    near(at(opacity, 30.0), 0.5, 1e-9);
+    near(at(opacity, 51.9), 0.5, 1e-9);
+    near(at(opacity, 55.0), 0.25, 1e-9);
+    near(at(track(&c, "n", "translate-x"), 55.0), 27.5, 1e-6);
+    // The relative tween starts from where the callback left the box.
+    near(at(track(&c, "n", "left"), 54.5), 105.0, 1e-6);
+}
+
+#[test]
+fn random_draws_while_playing_record_in_one_run() {
+    let c = minute(
+        "const n = document.querySelector('#n'); let sum = 0;\
+         gsap.to({v: 0}, {v: 1, duration: 60, ease: 'none', onUpdate: () => { sum += Math.random(); n.textContent = sum.toFixed(4); }});",
+    );
+    let sums: Vec<f64> = track(&c, "n", "text")
+        .keyframes
+        .iter()
+        .map(|k| match &k.value {
+            TimelineValue::Text(s) => s.parse().unwrap(),
+            TimelineValue::Number(n) => *n,
+        })
+        .collect();
+    assert!(sums.windows(2).all(|w| w[0] <= w[1]), "the running sum drops");
+    assert!(*sums.last().unwrap() > 500.0, "{}", sums.last().unwrap());
+}

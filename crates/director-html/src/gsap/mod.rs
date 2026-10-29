@@ -23,9 +23,12 @@ use director_core::types::Color;
 use ego_tree::NodeId;
 use scraper::{Html, Selector};
 use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher};
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub(crate) use dom::{matrix_text, Probe, Probed};
 
@@ -219,19 +222,12 @@ pub(crate) fn run(
     if scripts.is_empty() {
         return Ok(Motion::default());
     }
-    let prober: dom::Prober = {
-        let options = options.clone();
-        let assets = assets.clone();
-        let beats = beats.clone();
-        Box::new(move |html: &Html| crate::compiler::probe(html, &options, &assets, &beats).map_err(|e| e.to_string()))
-    };
     let html = std::mem::replace(dom, Html::new_document());
-    let doc = dom::Doc::new(html, prober, (options.width as f32, options.height as f32), beats.clone());
     let frames = (options.duration * options.fps).ceil() as usize + 1;
     let times = sample_times(frames, options.fps, blur);
-    let (recorded, mut doc) = dom::with_installed(doc, || execute(&scripts, &times));
+    let (recorded, mut doc) = record(html, &scripts, &times, options, assets, beats);
     let series = recorded.and_then(|records| collect(&mut doc, &records, &times, options.fps));
-    let (html, map) = dom::compact(&doc.html);
+    let (html, map) = dom::compact(&doc.html, &Default::default());
     *dom = html;
     let (series, steps) = series?;
     let series = series
@@ -243,6 +239,113 @@ pub(crate) fn run(
         .filter_map(|(i, steps)| map.get(&doc.ids[i]).map(|id| (*id, steps)))
         .collect();
     Ok(Motion { series, steps, times })
+}
+
+/// Probe results shared by script runs, keyed by the probed markup's hash
+/// and length. Runs replay the same setup, so the first run to reach a
+/// probe computes it and the others wait for it.
+type Probes = Mutex<HashMap<(u64, usize), Arc<OnceLock<Result<Probe, String>>>>>;
+
+/// The DOM the scripts run against, with layout reads probing `html`.
+fn document(
+    html: Html,
+    options: &CompileOptions,
+    assets: &Arc<AssetStore>,
+    beats: Rc<crate::beats::Beats>,
+    shared: Option<Arc<Probes>>,
+) -> dom::Doc {
+    let prober: dom::Prober = {
+        let options = options.clone();
+        let assets = assets.clone();
+        let beats = beats.clone();
+        Box::new(move |html: &Html| {
+            let probe = || crate::compiler::probe(html, &options, &assets, &beats).map_err(|e| e.to_string());
+            let Some(shared) = &shared else { return probe() };
+            let markup = html.html();
+            let mut hash = std::hash::DefaultHasher::new();
+            markup.hash(&mut hash);
+            let cell = shared.lock().unwrap().entry((hash.finish(), markup.len())).or_default().clone();
+            cell.get_or_init(probe).clone()
+        })
+    };
+    dom::Doc::new(html, prober, (options.width as f32, options.height as f32), beats)
+}
+
+/// The fewest samples one script run records. Each run replays setup, so
+/// runs past the first only pay off over a long stretch of samples.
+const RUN_SAMPLES: usize = 1536;
+/// The most runs a page splits into.
+const RUNS: usize = 16;
+
+/// Contiguous sample ranges, one per script run. The split depends only on
+/// the sample count, so every machine records the same samples.
+fn runs(samples: usize) -> Vec<Range<usize>> {
+    let size = samples.div_ceil(RUNS).max(RUN_SAMPLES);
+    (0..samples).step_by(size).map(|start| start..(start + size).min(samples)).collect()
+}
+
+/// Every sample's change record, and the document after setup. Ranges past
+/// the first run on worker threads, each against its own copy of the
+/// setup document. Seeking is deterministic, so they record what one run
+/// would, unless a script draws random numbers while the timeline plays;
+/// then one run records them all.
+fn record(
+    html: Html,
+    scripts: &[Script],
+    times: &[f64],
+    options: &CompileOptions,
+    assets: &Arc<AssetStore>,
+    beats: &Rc<crate::beats::Beats>,
+) -> (Result<Vec<String>, String>, dom::Doc) {
+    let ranges = runs(times.len());
+    if ranges.len() == 1 {
+        let doc = document(html, options, assets, beats.clone(), None);
+        let (run, doc) = dom::with_installed(doc, || execute(scripts, times, 0..times.len()));
+        return (run.map(|run| run.records), doc);
+    }
+    let pristine = html.clone();
+    let probes = Arc::new(Probes::default());
+    let next = AtomicUsize::new(1);
+    let done: Mutex<Vec<Option<Result<Run, String>>>> = Mutex::new((0..ranges.len()).map(|_| None).collect());
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(ranges.len()).saturating_sub(1);
+    let (first, doc) = std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let (html, beats) = (pristine.clone(), beats.fork());
+            let (ranges, next, done, probes) = (&ranges, &next, &done, &probes);
+            std::thread::Builder::new()
+                .stack_size(64 << 20)
+                .spawn_scoped(scope, move || loop {
+                    let k = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(range) = ranges.get(k) else { break };
+                    let doc = document(html.clone(), options, assets, Rc::new(beats.fork()), Some(probes.clone()));
+                    let (run, _) = dom::with_installed(doc, || execute(scripts, times, range.clone()));
+                    done.lock().unwrap()[k] = Some(run);
+                })
+                .expect("script worker thread");
+        }
+        let doc = document(html, options, assets, beats.clone(), Some(probes.clone()));
+        let first = dom::with_installed(doc, || execute(scripts, times, ranges[0].clone()));
+        loop {
+            let k = next.fetch_add(1, Ordering::Relaxed);
+            let Some(range) = ranges.get(k) else { break };
+            let doc = document(pristine.clone(), options, assets, Rc::new(beats.fork()), Some(probes.clone()));
+            let (run, _) = dom::with_installed(doc, || execute(scripts, times, range.clone()));
+            done.lock().unwrap()[k] = Some(run);
+        }
+        first
+    });
+    let mut runs = vec![first];
+    runs.extend(done.into_inner().unwrap().into_iter().skip(1).map(|run| run.expect("every range ran")));
+    let runs: Result<Vec<Run>, String> = runs.into_iter().collect();
+    match runs {
+        Ok(runs) if runs.iter().all(|run| run.draws == 0) => (Ok(runs.into_iter().flat_map(|run| run.records).collect()), doc),
+        Ok(_) => {
+            let doc = document(pristine, options, assets, beats.clone(), None);
+            let (run, doc) = dom::with_installed(doc, || execute(scripts, times, 0..times.len()));
+            (run.map(|run| run.records), doc)
+        }
+        Err(e) => (Err(e), doc),
+    }
 }
 
 /// The seek times: every frame, and with more than one sample per frame the
@@ -263,9 +366,19 @@ fn sample_times(frames: usize, fps: f64, (samples, angle): (u32, f32)) -> Vec<f6
     times
 }
 
-/// Evaluate the scripts, fire the load events and seek every sample time.
-/// Each sample is the change record `dom.js` returns.
-fn execute(scripts: &[Script], times: &[f64]) -> Result<Vec<String>, String> {
+/// One script run: the change record `dom.js` returns for each sample, and
+/// how many random numbers the scripts drew while the timeline played.
+struct Run {
+    records: Vec<String>,
+    draws: u64,
+}
+
+/// Evaluate the scripts, fire the load events and seek each sample time in
+/// `range`. A range that starts mid-timeline first seeks the sample before
+/// it, and before that the last earlier sample inside each finished
+/// animation that draws from `onUpdate`, so the run starts from the state
+/// earlier samples leave.
+fn execute(scripts: &[Script], times: &[f64], range: Range<usize>) -> Result<Run, String> {
     let mut cx = Context::default();
     cx.runtime_limits_mut().set_loop_iteration_limit(50_000_000);
     cx.runtime_limits_mut().set_recursion_limit(4_096);
@@ -294,11 +407,36 @@ fn execute(scripts: &[Script], times: &[f64]) -> Result<Vec<String>, String> {
     })
     .map_err(js_error)?;
     eval(&mut cx, "__director.play()")?;
-    let mut out = Vec::with_capacity(times.len());
-    for &t in times {
-        out.push(eval(&mut cx, &format!("__director.frame({t})")).map_err(|e| format!("at {t:.3}s: {e}"))?);
+    let frame = |cx: &mut Context, t: f64| eval(cx, &format!("__director.frame({t})")).map_err(|e| format!("at {t:.3}s: {e}"));
+    if range.start > 0 {
+        let earlier = &times[..range.start];
+        let before = earlier[earlier.len() - 1];
+        let spans: Vec<f64> = serde_json::from_str(&eval(&mut cx, "__director.drawers()")?).map_err(|e| e.to_string())?;
+        // The reverse half of each seek renders an animation while its end
+        // is at least a microsecond past the sample.
+        let mut warm: Vec<f64> = spans
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .filter_map(|span| {
+                let last = earlier.partition_point(|&t| t + 1e-6 <= span[1] + 1e-9);
+                let t = *earlier.get(last.checked_sub(1)?)?;
+                (t >= span[0] - 1e-6 && t < before).then_some(t)
+            })
+            .collect();
+        warm.sort_by(f64::total_cmp);
+        warm.dedup();
+        warm.push(before);
+        for t in warm {
+            frame(&mut cx, t)?;
+        }
     }
-    Ok(out)
+    let mut records = Vec::with_capacity(range.len());
+    for &t in &times[range] {
+        records.push(frame(&mut cx, t)?);
+    }
+    let draws = eval(&mut cx, "__director.draws()")?.parse().map_err(|_| "GSAP draw count is malformed".to_string())?;
+    Ok(Run { records, draws })
 }
 
 /// `name: value` pairs of an inline style.
@@ -485,7 +623,7 @@ fn collect(doc: &mut dom::Doc, frames: &[String], times: &[f64], fps: f64) -> Re
         // no component form, its matrix in GSAP's own decomposition does.
         if let Some(values) = props.get_mut("transform") {
             if values.iter().any(Option::is_none) {
-                if let Some(probed) = doc.probed(i)? {
+                if let Some(probed) = doc.probed(i, true)? {
                     let css = probed.css.get("transform").map_or("none", String::as_str);
                     if css != "none" && decompose(css).is_err() {
                         let fill = components(&probed.transform)

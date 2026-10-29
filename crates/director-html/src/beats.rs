@@ -19,6 +19,7 @@ pub(crate) struct Beats {
     decoded: RefCell<Option<(String, Vec<f32>)>>,
 }
 
+#[derive(Clone)]
 enum Source {
     None,
     Fixed(BeatGrid),
@@ -140,6 +141,15 @@ impl Beats {
             grid: OnceCell::new(),
             decoded: RefCell::new(None),
         })
+    }
+
+    /// A copy for another script run, keeping the grid analysed so far.
+    pub(crate) fn fork(&self) -> Self {
+        let grid = OnceCell::new();
+        if let Some(g) = self.grid.get() {
+            let _ = grid.set(g.clone());
+        }
+        Self { source: self.source.clone(), grid, decoded: RefCell::new(None) }
     }
 
     /// The grid, analysing the music on first use.

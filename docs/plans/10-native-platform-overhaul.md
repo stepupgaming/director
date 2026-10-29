@@ -94,7 +94,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 437 | 2026-10-28 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test integration visual_suite::` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test integration html_export::` |
-| workspace release tests | 1134, 3 ignored | 2026-10-28 | `cargo test --workspace --release` |
+| workspace release tests | 1136, 3 ignored | 2026-10-28 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 25 | 2026-10-28 | `cargo test -p director-render --release` |
 | director-host | 25 | 2026-10-26 | `cargo test -p director-host --release` |
@@ -110,7 +110,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | beat detection, `html beats --clicks` wall time | 30 s WAV 223 ms (100.01 BPM, interval sd 1.7 ms); 60 s WAV 376 ms (120.18 BPM, drop at 54.38 s) | 2026-10-28 | `director-engine html beats C:/Projects/gemmy/outputs/<song>.wav --clicks <out>.wav` |
 | HTML reels (`data-reel`, positioned boxes beside text, hidden spans, staggered starts, any line height) | 8 | 2026-10-28 | `cargo test -p director-html --release --test integration reel::` |
 | HTML sub-compositions (`data-composition-src`) | 4 | 2026-10-28 | `cargo test -p director-html --release --test integration compose::` |
-| HTML gsap (phase 5 GSAP gate) | 48 | 2026-10-28 | `cargo test -p director-html --release --test integration gsap::` |
+| HTML gsap (phase 5 GSAP gate) | 50 | 2026-10-28 | `cargo test -p director-html --release --test integration gsap::` |
 | GSAP Chromium parity, 30fps every frame | entrance SSIM .999317 MAE .0519; loop .999945 / .0073; stagger .999140 / .0790; gsap-motion 1080p .995709 / .3758; all pass on the recording-shim pipeline; rerun pending for real GSAP | 2026-10-27 | `node crates/director-html/tools/parity.mjs --input <fixture> --output target/gsap-parity/final/<name> --director target/release/director-engine.exe --chrome <chromium_headless_shell-1248>` (`--root .` for the example) |
 | Vulkan engine clippy | pass | 2026-10-25 | `cargo clippy -p director-cli --features vulkan --all-targets --release -- -D warnings` |
 | text_stroke | 6 | 2026-10-20 | `cargo test -p director-html --release --test integration text_stroke::` |
@@ -123,6 +123,8 @@ One row per check, holding the most recent passing count. Replace the row when a
 | transform_angles | 3 | 2026-10-22 | `cargo test -p director-html --release --test integration transform_angles::` |
 | director-core doctest | 1 | 2026-10-22 | `cargo test -p director-core --doc --release` |
 | director-html lib | 120 | 2026-10-28 | `cargo test -p director-html --release --lib` |
+| director-html integration | 340 | 2026-10-28 | `cargo test -p director-html --release --test integration` |
+| Kinetic film compile (51.8 s, 60 fps, 8 blur samples, 24,872 script samples, 16 split runs) | 2m20s wall, from over 30 min sequential | 2026-10-28 | `time director-engine html check examples/html/film/film.html` |
 | Hyper CN registry smoke, typed style path | original 238/239, portrait 238/239; `github-stars` has no input file in the local checkout | 2026-10-26 | `node crates/director-html/tools/registry-audit.mjs --registry C:/Projects/hypercn/registry --output F:/hypercn-smoke-typed2-<profile> --director <engine> --chrome <chromium_headless_shell-1248> --fps 2 [--portrait]` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
 | object_position_css, project, shader | 9, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |

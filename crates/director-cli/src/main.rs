@@ -245,9 +245,11 @@ enum LogFormat {
 /// Logs go to stderr. Under `mcp` they default to warn and carry no ANSI
 /// colors, so a client that captures stderr reads plain lines.
 fn init_logging(level: LogLevel, format: LogFormat, plain: bool) {
-    // tiny-skia warns for every dash pattern with no visible dash, which draws nothing as SVG asks.
+    // tiny-skia warns for every dash pattern with no visible dash, and usvg for every filter on a
+    // zero-size shape, on each frame. Both draw nothing, as SVG asks.
     let filter = EnvFilter::builder().parse_lossy(
-        std::env::var(EnvFilter::DEFAULT_ENV).unwrap_or_else(|_| format!("{level},tiny_skia=error")),
+        std::env::var(EnvFilter::DEFAULT_ENV)
+            .unwrap_or_else(|_| format!("{level},tiny_skia=error,usvg::parser::filter=error")),
     );
 
     let subscriber_builder = fmt::Subscriber::builder()
