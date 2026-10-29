@@ -242,7 +242,8 @@
   });
   tl.fromTo("#s01-fword", { rotation: -2.5, scale: 1.06 }, { rotation: -1, scale: 1, duration: 0.16, ease: "power2.out" }, 0.70);
   tl.to("#s01-fword", { rotation: 0, duration: 0.08 }, 0.87);
-  tl.to("#s01-fword", { x: -2300, duration: 0.11, ease: "power3.in" }, 0.955);
+  tl.to("#s01-fword", { x: -2300, duration: 0.12, ease: "power2.in" }, 0.93);
+  tl.to(["#s01-frowtop", "#s01-frowbot"], { opacity: 0, duration: 0.1, ease: "power1.in" }, 0.84);
   tl.set(["#s01-frameseg", "#s01-bgred"], { opacity: 0 }, H(1.0667));
 
   // ---------- D: OF THIS FILM 1.0667 - 1.5667 ----------
@@ -376,7 +377,7 @@
 
   // ---------- caption: words arrive, the chip slides to the newest ----------
   const words = $$("#s01-cap .w");
-  const cw = [0.37, 0.70, 1.03, 1.12, 1.22, 1.60, 1.73];
+  const cw = [0.37, 0.70, 1.06, 1.12, 1.22, 1.60, 1.73];
   const inv = (t) => t >= 0.70 && t < 1.5667;
   cw.forEach((t, i) => {
     const r = words[i].getBoundingClientRect();

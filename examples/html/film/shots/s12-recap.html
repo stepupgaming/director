@@ -130,6 +130,32 @@
     return s + "</svg>";
   })();
 
+  // The brief card from s04: it stretches as the rewind pulls it back, then
+  // folds into the line it was drawn from.
+  const brief = (() => {
+    const ADV = 19.6, X = 352, Y = 452, L = 53;
+    const lines = ["A 52-second film: heavy kinetic type, one glowing line", "through every scene, 30 letters the camera flies through, and", "a hard cut on every beat."];
+    const chips = [[0, 24, 12], [0, 42, 12], [1, 21, 10], [1, 36, 20], [2, 2, 8]];
+    let s = `<div id="s12-bdeco" style="position:absolute;left:0;top:0;width:1920px;height:1080px">
+      <svg width="1920" height="1080" style="position:absolute;left:0;top:0">
+        <polygon points="128,252 232,252 180,200 " fill="${RED}"/><polygon points="128,252 232,252 180,304" fill="${RED}"/>
+        <path d="M92 773 H300 L312 785 V893 L300 905 H92 L80 893 V785 Z" fill="none" stroke="#bdb8b4" stroke-width="2"/>
+        <path d="M122 793 H270 L280 803 V876 L270 886 H122 L112 876 V803 Z" fill="none" stroke="#bdb8b4" stroke-width="2"/>
+        <ellipse cx="1735" cy="298" rx="125" ry="52" fill="none" stroke="#6c6866" stroke-width="1.5" stroke-dasharray="3 7"/>
+        <path d="M1660 262 Q1700 246 1742 248" fill="none" stroke="#ff5a36" stroke-width="4" stroke-linecap="round"/>
+        <polygon points="1701,621 1821,591 1851,711 1731,741" fill="none" stroke="#ff4b2b" stroke-width="2.5"/>
+        <polygon points="1731,651 1851,621 1881,741 1761,771" fill="none" stroke="#ff4b2b" stroke-width="2" stroke-opacity=".6"/>
+      </svg></div>
+      <p id="s12-baa" style="position:absolute;left:-205px;top:440px;width:500px;margin:0;text-align:right;font-family:Archivo;font-size:166px;line-height:200px;color:#f4f1ee;letter-spacing:-3px;font-variation-settings:'wdth' 100, 'wght' 700">Aa</p>
+      <div id="s12-bc" style="position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:960px 550px">
+      <div style="position:absolute;left:322px;top:385px;width:1276px;height:330px;box-sizing:border-box;border:2px solid #8f8b88;border-radius:14px;background:#141417"></div>
+      <div style="position:absolute;left:337px;top:404px;width:8px;height:8px;border-radius:50%;background:${RED}"></div>
+      <p style="position:absolute;left:357px;top:399px;margin:0;font-family:'JetBrains Mono';font-size:14px;font-weight:600;letter-spacing:2px;color:#9a9693">BRIEF.md</p>`;
+    for (const [l, c, n] of chips) s += `<div style="position:absolute;left:${X + c * ADV - 2}px;top:${Y + l * L + 1}px;width:${n * ADV + 4}px;height:51px;background:${RED}"></div>`;
+    lines.forEach((t, l) => { s += `<p style="position:absolute;left:${X}px;top:${Y + l * L}px;margin:0;font-family:'JetBrains Mono';font-size:32.67px;font-weight:600;line-height:53px;color:#ece8e4;white-space:pre">${t}</p>`; });
+    return s + "</div>" + cap("It got one brief.").replace('<p class="caption"', '<p class="caption" id="s12-bcap"');
+  })();
+
   const SCREENS = [
     [0.000, RED, `<h1 ${D} style="top:330px;font-size:400px;color:#141010">FILM.</h1>`],
     [0.100, "#0e0d10", `<h1 ${D} style="top:360px;font-size:340px;color:#f4f1ee">CODE</h1>`],
@@ -167,11 +193,7 @@
     [1.367, "#0e0d10", `<h1 ${D} style="top:400px;font-size:280px;color:#f4f1ee">CAMERA</h1>`],
     [1.400, RED, `<h1 ${D} style="top:380px;font-size:300px;color:#141010">ELASTIC.</h1>`],
     [1.567, "#1a0b09", tunnel + `<p style="position:absolute;left:965px;top:520px;margin:0;font-family:Inter;font-weight:700;font-size:64px;color:#ffd9cf">&#8629;</p>` + cap("It got one brief.")],
-    [1.633, "#121116", `<div class="s12-card" style="left:180px;top:180px;width:1560px;height:760px;background:#19181e;border:2px solid #2c2a31"></div>
-      <pre style="position:absolute;left:240px;top:240px;margin:0;font-size:30px;line-height:52px;color:#8d8a88">const tl = gsap.timeline();\ntl.to(".word", { fontStretch: "125%" });\ntl.from(".card", { y: 80, ease: "expo.out" });</pre>
-      <h1 style="position:absolute;left:1180px;top:430px;margin:0;font-family:Archivo;font-weight:900;font-size:340px;color:#f4f1ee">Aa</h1>`],
-    [1.700, "#0e0d10", `<div style="position:absolute;left:-200px;top:534px;width:2300px;height:10px;background:linear-gradient(90deg, rgba(255,75,43,0), #ff7a5a 40%, #ffffff 55%, rgba(255,75,43,0));filter:blur(3px)"></div>`],
-    [1.833, "#0e0d10", `<div style="position:absolute;left:300px;top:538px;width:1320px;height:3px;background:rgba(255,255,255,.12)"></div>`],
+    [1.633, "#111214", brief],
     [1.933, "#2a0f0c", rays(70, "#ff4b2b", 960, 600, 40, 200, 300, 1100, 1, 2.5, .3) + `<h1 ${D} style="top:150px;font-size:130px;color:#f4f1ee">WRITTEN BY</h1>
       <h1 ${D} style="top:380px;font-size:300px;color:#f4f1ee;text-shadow:-10px 0 0 rgba(255,75,43,.6)">OPUS 5.5</h1>
       <div style="position:absolute;left:-60px;top:560px;width:2100px;height:5px;background:${RED};transform:rotate(-7deg);box-shadow:0 0 12px rgba(255,75,43,.8)"></div>
@@ -208,6 +230,18 @@
     if (t1 < DURATION) tl.set(d, { opacity: 0 }, cut(t1));
     // Each screen plays backwards: its push-in unwinds while it is on.
     tl.fromTo("#s12-in" + i, { scale: 1.0 }, { scale: 1.06, duration: Math.max(t1 - t0, 0.02), ease: "none", immediateRender: false }, t0);
+  });
+  // The brief card unwinds: it stretches wide, Aa slides back into it, the
+  // card folds into a line and the caption un-types.
+  tl.to("#s12-bc", { scaleX: 1.55, x: 140, duration: 0.09, ease: "power2.in" }, 1.69);
+  tl.to("#s12-baa", { x: 520, opacity: 0, duration: 0.09, ease: "power2.in" }, 1.69);
+  tl.to("#s12-bdeco", { opacity: 0, duration: 0.06 }, 1.72);
+  tl.to("#s12-bc", { scaleX: 0.72, scaleY: 0.008, x: 0, duration: 0.1, ease: "power3.in" }, 1.8);
+  const bw = document.querySelectorAll("#s12-bcap .w");
+  [1.86, 1.88, 1.9].forEach((t, k) => {
+    const i = bw.length - 1 - k;
+    tl.set(bw[i], { opacity: 0 }, t);
+    tl.set(bw[i - 1], { backgroundColor: RED, color: "#1a0c0a", paddingLeft: 6, paddingRight: 6, borderRadius: 4 }, t);
   });
 
   // ---------- clocks: film HUD, panel HUD, rewind rate, progress ----------
