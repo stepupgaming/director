@@ -1563,9 +1563,173 @@ impl AnimatedSvg {
     }
 }
 
+/// Attributes that change only how paint looks where it already is.
+const TONAL_ATTRS: [&str; 12] = [
+    "opacity",
+    "fill-opacity",
+    "stroke-opacity",
+    "fill",
+    "stroke",
+    "stop-color",
+    "stop-opacity",
+    "flood-color",
+    "flood-opacity",
+    "color",
+    "visibility",
+    "display",
+];
+
+/// The matrix of an SVG transform list.
+fn transform_list(value: &str) -> Option<skia_safe::Matrix> {
+    let mut matrix = skia_safe::Matrix::new_identity();
+    let mut rest = value.trim();
+    while !rest.is_empty() {
+        let open = rest.find('(')?;
+        let close = rest.find(')')?;
+        let name = rest[..open].trim_matches(|c: char| c.is_whitespace() || c == ',');
+        let args = numbers_in(&rest[open + 1..close]).1;
+        let arg = |i: usize, default: f32| args.get(i).copied().unwrap_or(default);
+        let step = match (name, args.len()) {
+            ("translate", 1 | 2) => skia_safe::Matrix::translate((arg(0, 0.0), arg(1, 0.0))),
+            ("scale", 1 | 2) => skia_safe::Matrix::scale((arg(0, 1.0), arg(1, arg(0, 1.0)))),
+            ("rotate", 1) => skia_safe::Matrix::rotate_deg(arg(0, 0.0)),
+            ("rotate", 3) => skia_safe::Matrix::rotate_deg_pivot(arg(0, 0.0), (arg(1, 0.0), arg(2, 0.0))),
+            ("skewX", 1) => skia_safe::Matrix::skew((arg(0, 0.0).to_radians().tan(), 0.0)),
+            ("skewY", 1) => skia_safe::Matrix::skew((0.0, arg(0, 0.0).to_radians().tan())),
+            ("matrix", 6) => skia_safe::Matrix::new_all(arg(0, 1.0), arg(2, 0.0), arg(4, 0.0), arg(1, 0.0), arg(3, 1.0), arg(5, 0.0), 0.0, 0.0, 1.0),
+            _ => return None,
+        };
+        matrix.pre_concat(&step);
+        rest = rest[close + 1..].trim_start();
+    }
+    Some(matrix)
+}
+
+/// The numbers in an attribute value and the text around them. Two values
+/// with the same text draw the same structure.
+fn numbers_in(value: &str) -> (String, Vec<f32>) {
+    let mut skeleton = String::new();
+    let mut numbers = Vec::new();
+    let mut rest = value;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_digit() || c == '-' || c == '+' || c == '.') {
+        skeleton.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let mut end = 1;
+        let bytes = tail.as_bytes();
+        while end < bytes.len() {
+            let c = bytes[end];
+            let exponent_sign = (c == b'-' || c == b'+') && matches!(bytes[end - 1], b'e' | b'E');
+            if c.is_ascii_digit() || c == b'.' || c == b'e' || c == b'E' || exponent_sign {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        match tail[..end].parse::<f32>() {
+            Ok(number) => {
+                numbers.push(number);
+                skeleton.push('#');
+            }
+            Err(_) => skeleton.push_str(&tail[..end]),
+        }
+        rest = &tail[end..];
+    }
+    skeleton.push_str(rest);
+    (skeleton, numbers)
+}
+
+/// Attributes in user units whose change moves paint by as much.
+const LENGTH_ATTRS: [&str; 17] = [
+    "x",
+    "y",
+    "cx",
+    "cy",
+    "r",
+    "rx",
+    "ry",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "dx",
+    "dy",
+    "width",
+    "height",
+    "stroke-width",
+    "stroke-dashoffset",
+];
+
 impl Element for AnimatedSvg {
     fn kind(&self) -> &'static str {
         "svg_smil"
+    }
+    fn paint_travel(&self, t0: f64, t1: f64, size: (f32, f32)) -> Option<f32> {
+        if t1 - t0 > 0.1 {
+            return None;
+        }
+        let scale = (size.0 / self.width.max(1e-3)).max(size.1 / self.height.max(1e-3));
+        let times = [t0, (t0 + t1) / 2.0, t1];
+        let mut travel = 0.0_f32;
+        for anim in &self.anims {
+            let values = times.map(|t| sample_effect(anim, t));
+            if values[0] == values[1] && values[1] == values[2] {
+                continue;
+            }
+            let name = match &anim.effect {
+                Effect::Attr { name, .. } => name.as_str(),
+                Effect::Transform { .. } | Effect::Motion { .. } => "transform",
+            };
+            if TONAL_ATTRS.contains(&name) {
+                continue;
+            }
+            if name == "transform" {
+                // A transformed part moves as far as the viewport corners it carries.
+                let [a, b, c] = [&values[0], &values[1], &values[2]].map(|value| transform_list(value.as_deref().unwrap_or("")));
+                let (a, b, c) = (a?, b?, c?);
+                let corners = [(0.0, 0.0), (self.width, 0.0), (self.width, self.height), (0.0, self.height)];
+                for (p, q) in [(&a, &b), (&b, &c), (&a, &c)] {
+                    for corner in corners {
+                        travel = travel.max((p.map_point(corner) - q.map_point(corner)).length() * scale);
+                    }
+                }
+                continue;
+            }
+            if !LENGTH_ATTRS.contains(&name) && !matches!(name, "d" | "points" | "stroke-dasharray") {
+                return None;
+            }
+            let [a, b, c] = [&values[0], &values[1], &values[2]].map(|value| numbers_in(value.as_deref().unwrap_or("")));
+            if a.0 != b.0 || b.0 != c.0 || a.1.len() != b.1.len() || b.1.len() != c.1.len() {
+                return None;
+            }
+            let pairs = [(&a.1, &b.1), (&b.1, &c.1), (&a.1, &c.1)];
+            let moved = pairs.iter().map(|(p, q)| {
+                let deltas = p.iter().zip(q.iter()).map(|(p, q)| (p - q).abs());
+                // Relative path commands carry each move into every later point.
+                if name == "d" && a.0.bytes().any(|b| b.is_ascii_lowercase()) {
+                    deltas.sum::<f32>()
+                } else if matches!(name, "d" | "points") {
+                    // A point moves as far as both of its coordinates together.
+                    deltas.fold(0.0, f32::max) * std::f32::consts::SQRT_2
+                } else {
+                    deltas.fold(0.0, f32::max)
+                }
+            });
+            travel = travel.max(moved.fold(0.0, f32::max) * scale);
+        }
+        Some(travel)
+    }
+    fn moves_between(&self, t0: f64, t1: f64) -> bool {
+        // Over a span as short as a shutter, an animation that changes shows
+        // a different value at one of the ends or the middle.
+        if t1 - t0 > 0.1 {
+            return true;
+        }
+        let mid = (t0 + t1) / 2.0;
+        self.node.moves_between(t0, t1)
+            || self.anims.iter().any(|anim| {
+                let open = sample_effect(anim, t0);
+                open != sample_effect(anim, mid) || open != sample_effect(anim, t1)
+            })
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -1613,6 +1777,9 @@ impl Element for AnimatedSvg {
         draw_children: &mut dyn FnMut(&skia_safe::Canvas),
     ) -> Result<(), RenderError> {
         self.node.render(canvas, rect, opacity, draw_children)
+    }
+    fn paint_bounds(&self, rect: skia_safe::Rect, children: Option<skia_safe::Rect>) -> Option<skia_safe::Rect> {
+        self.node.paint_bounds(rect, children)
     }
     fn animate_property(
         &mut self,

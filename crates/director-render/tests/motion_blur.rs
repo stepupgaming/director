@@ -1,5 +1,5 @@
-//! Motion blur averages shutter samples, and a shutter in which nothing moves
-//! paints once.
+//! Motion blur averages shutter samples, a shutter in which nothing moves
+//! paints once, and samples follow how far boxes travel on screen.
 
 use director_core::element::Element;
 use director_core::video_wrapper::RenderMode;
@@ -71,13 +71,66 @@ fn a_still_shutter_paints_one_sample() {
 }
 
 #[test]
-fn clip_edges_and_fades_inside_the_shutter_sample_every_time() {
+fn clip_edges_sample_every_time_and_fades_take_the_shutter_ends() {
     // The clip runs 3..4 s, so its local clock never reaches the motion.
     let (mut director, paints) = blurred(3.0, 1.0);
     assert_eq!(paints_at(&mut director, &paints, 3.5), 1);
     // At 3.98 s the shutter spans 3.98..4.03 s and the clip ends after its third sample.
     assert_eq!(paints_at(&mut director, &paints, 3.98), 3);
     director.tracks[0].clips[0].fade_in = 0.25;
-    assert_eq!(paints_at(&mut director, &paints, 3.2), 8);
+    assert_eq!(paints_at(&mut director, &paints, 3.2), 2);
     assert_eq!(paints_at(&mut director, &paints, 3.5), 1);
+}
+
+/// A still element in a box the clip's root holds until 1 s and then slides
+/// by `speed` px per second, so each shutter at 1 s starts on the canvas.
+fn sliding(speed: f32) -> (Director, Arc<AtomicUsize>) {
+    let (mut director, paints) = blurred(0.0, 5.0);
+    let root = director.tracks[0].clips[0].scene_root;
+    let node = director.scene.get_node_mut(root).unwrap();
+    node.element = Box::new(Still(paints.clone()));
+    node.transform.translate_x.add_keyframe(0.0, 1.0, director_core::animation::EasingType::Linear);
+    node.transform.translate_x.add_keyframe(speed * 4.0, 5.0, director_core::animation::EasingType::Linear);
+    (director, paints)
+}
+
+/// An 8 px box whose own paint never moves inside it.
+#[derive(Clone, Debug)]
+struct Still(Arc<AtomicUsize>);
+
+impl Element for Still {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn layout_style(&self) -> taffy::style::Style {
+        taffy::style::Style { size: taffy::geometry::Size::from_lengths(8.0, 8.0), ..Default::default() }
+    }
+    fn update(&mut self, _: f64) -> bool {
+        false
+    }
+    fn moves_between(&self, _: f64, _: f64) -> bool {
+        false
+    }
+    fn render(&self, canvas: &Canvas, rect: Rect, _: f32, _: &mut dyn FnMut(&Canvas)) -> Result<(), RenderError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        canvas.draw_rect(rect, &Paint::default());
+        Ok(())
+    }
+    fn animate_property(&mut self, _: &str, _: f32, _: f32, _: f64, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn samples_space_out_along_the_furthest_box_travel() {
+    // The 180 degree shutter at 10 fps stays open 0.05 s.
+    let (mut slow, paints) = sliding(20.0);
+    assert_eq!(paints_at(&mut slow, &paints, 1.0), 2, "1 px of travel takes the shutter ends");
+    let (mut medium, paints) = sliding(200.0);
+    assert_eq!(paints_at(&mut medium, &paints, 1.0), 5, "10 px of travel spaces samples 2.5 px apart");
+    let (mut fast, paints) = sliding(2000.0);
+    assert_eq!(paints_at(&mut fast, &paints, 1.0), 8, "100 px of travel takes every sample");
 }

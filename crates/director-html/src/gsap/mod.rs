@@ -271,11 +271,12 @@ fn document(
     dom::Doc::new(html, prober, (options.width as f32, options.height as f32), beats)
 }
 
-/// The fewest samples one script run records. Each run replays setup, so
-/// runs past the first only pay off over a long stretch of samples.
-const RUN_SAMPLES: usize = 1536;
-/// The most runs a page splits into.
-const RUNS: usize = 16;
+/// The fewest samples one script run records. Each run replays setup, which
+/// costs about as much as fifty samples, so a run records a few times that.
+const RUN_SAMPLES: usize = 128;
+/// The most runs a page splits into, enough to share a long film across many
+/// cores with room to balance uneven runs.
+const RUNS: usize = 64;
 
 /// Contiguous sample ranges, one per script run. The split depends only on
 /// the sample count, so every machine records the same samples.

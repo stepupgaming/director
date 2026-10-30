@@ -311,6 +311,7 @@ fn cmd_render(args: RenderArgs) {
         alpha: Some(args.alpha),
         options: director_render::ExportOptions {
             draft: args.draft_encode,
+            gpu_contexts: crate::gpu::export_contexts(),
             ..director_render::ExportOptions::new(args.encoder.mode())
         },
     };

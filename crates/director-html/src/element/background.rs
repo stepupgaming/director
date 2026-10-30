@@ -17,12 +17,7 @@ pub(super) fn paint_outer_shadows(canvas: &Canvas, paint: &PaintStyle, outer: RR
         let mut shadow_paint = skia_safe::Paint::default();
         shadow_paint.set_color4f(shadow.color.to_color4f(), None);
         shadow_paint.set_anti_alias(true);
-        shadow_paint.set_image_filter(skia_safe::image_filters::blur(
-            (shadow.blur, shadow.blur),
-            skia_safe::TileMode::Decal,
-            None,
-            None,
-        ));
+        shadow_paint.set_mask_filter(shadow_blur(shadow.blur));
         let mut rr = outer;
         rr.outset((shadow.spread, shadow.spread));
         rr.offset((shadow.x, shadow.y));
@@ -31,6 +26,12 @@ pub(super) fn paint_outer_shadows(canvas: &Canvas, paint: &PaintStyle, outer: RR
         canvas.draw_rrect(rr, &shadow_paint);
         canvas.restore();
     }
+}
+
+/// A Gaussian blur of `sigma` on the shape's coverage. Skia draws a blurred
+/// rounded rect analytically, so a mask filter costs far less than a blur layer.
+fn shadow_blur(sigma: f32) -> Option<skia_safe::MaskFilter> {
+    (sigma > 0.0).then(|| skia_safe::MaskFilter::blur(skia_safe::BlurStyle::Normal, sigma, true)).flatten()
 }
 
 /// The background color and layers, clipped to the corner radii and `background-clip`.
@@ -131,12 +132,7 @@ pub(super) fn paint_inset_shadows(canvas: &Canvas, paint: &PaintStyle, rect: Rec
         let mut shadow_paint = skia_safe::Paint::default();
         shadow_paint.set_color4f(shadow.color.to_color4f(), None);
         shadow_paint.set_anti_alias(true);
-        shadow_paint.set_image_filter(skia_safe::image_filters::blur(
-            (shadow.blur, shadow.blur),
-            skia_safe::TileMode::Decal,
-            None,
-            None,
-        ));
+        shadow_paint.set_mask_filter(shadow_blur(shadow.blur));
         canvas.draw_path(&path.detach(), &shadow_paint);
         canvas.restore();
     }

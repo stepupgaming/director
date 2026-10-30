@@ -1172,8 +1172,7 @@ pub fn prepare_paragraph(node: &mut TextNode, paint: &PaintStyle) {
     let shared = node.font_collection.clone();
     let fonts = shared.lock().unwrap();
     let (paragraph, stroke) = text_paragraphs(node, &fonts, paint, f32::INFINITY);
-    *node.paragraph.lock().unwrap() = Some(paragraph);
-    *node.stroke_paragraph.lock().unwrap() = stroke;
+    node.set_paragraphs(paragraph, stroke);
     node.stroke_over_fill = paint.stroke_over_fill;
     node.dirty_layout = false;
 }
@@ -1190,12 +1189,19 @@ const WRAP_SLACK: f32 = 1.0;
 /// stays on one line; other alignments do so for a line within `WRAP_SLACK`. An
 /// ellipsized nowrap line, and a line-clamp, keep `width`, so the ellipsis stays
 /// inside the box.
+///
+/// A paragraph built for the same width since the text last changed stands.
 pub fn layout_paragraph(node: &TextNode, paint: &PaintStyle, width: f32) -> f32 {
+    if let Some(used) = node.paragraph.lock().unwrap().as_ref().and_then(|p| p.fit(width)) {
+        return used;
+    }
     let fonts = node.font_collection.lock().unwrap();
     let (mut paragraph, stroke) = text_paragraphs(node, &fonts, paint, width);
     let used = fit_paragraph(&mut paragraph, paint, width);
-    *node.paragraph.lock().unwrap() = Some(paragraph);
-    *node.stroke_paragraph.lock().unwrap() = stroke;
+    node.set_paragraphs(paragraph, stroke);
+    if let Some(paragraph) = node.paragraph.lock().unwrap().as_mut() {
+        paragraph.set_fit(width, used);
+    }
     used
 }
 

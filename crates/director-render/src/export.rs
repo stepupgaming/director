@@ -1,24 +1,32 @@
-//! Document export: a [`FramePool`], or one session on a GPU context, paints
-//! the next batch of frames while a writer thread pipes the previous batch to
-//! one FFmpeg process that also encodes the premixed audio track. FFmpeg starts
-//! from the document alone, so it launches while the writer imports and mixes
-//! the audio.
+//! Document export: workers each take the next frame on a CPU raster or on
+//! their own GPU context, or one session on a given GPU context paints frames
+//! in order, while a writer thread puts painted
+//! frames back in order and pipes them to one FFmpeg process that also encodes
+//! the premixed audio track. FFmpeg starts from the document alone, so it
+//! launches while the writer imports and mixes the audio.
 
-use crate::{set_output_scale, Frame, FramePool, GpuContext, RenderError, Renderer, TargetSession};
+use crate::{set_output_scale, Frame, FrameSession, GpuContext, RenderError, Renderer, TargetSession};
 use director_core::scene_export::export_scene;
 use director_core::scene_import::{import_scene, ImportRegistry};
 use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_count, frame_to_time};
 use director_core::video_wrapper::{Encoder, EncoderMode, EncoderSettings};
 use director_core::Director;
+use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 
-/// Pool frame batches in flight: one painting while one encodes.
-const BATCHES: usize = 2;
-/// Single-frame batches in flight for one session, so a brief FFmpeg stall
-/// leaves the painter room to run ahead.
+/// Frame buffers per CPU worker: one painting while another waits to encode.
+const WORKER_FRAMES: usize = 2;
+/// Frame buffers for one session, so a brief FFmpeg stall leaves the painter
+/// room to run ahead.
 const SESSION_FRAMES: usize = 4;
+/// GPU pool workers when [`ExportOptions::workers`] is unset. More contexts
+/// keep the GPU busy while others record or read back.
+const GPU_WORKERS: usize = 3;
+
+/// Makes a GPU context on the calling thread, which must then own it.
+pub type GpuContexts = Arc<dyn Fn() -> Option<GpuContext> + Send + Sync>;
 
 /// Settings of one export beyond the document.
 #[derive(Clone, Default)]
@@ -26,8 +34,12 @@ pub struct ExportOptions {
     pub mode: EncoderMode,
     /// Software x264 ultrafast at CRF 30.
     pub draft: bool,
-    /// Pool sessions for a CPU export; `None` sizes the pool by [`Renderer::pool_for`].
+    /// Pool workers; `None` sizes a CPU pool by [`Renderer::pool_for`] and a
+    /// GPU pool to three.
     pub workers: Option<usize>,
+    /// Gives each pool worker its own GPU context. A GPU export with this set
+    /// paints on a pool of contexts in place of the one passed in.
+    pub gpu_contexts: Option<GpuContexts>,
     /// Checked before each batch paints. A set flag ends the export with
     /// [`RenderError::Cancelled`] and leaves nothing at the output path.
     pub cancel: Option<Arc<AtomicBool>>,
@@ -46,10 +58,32 @@ impl ExportOptions {
 
 /// Where an export paints.
 enum Target<'a> {
-    /// A pool of `Some(workers)` CPU sessions, or one sized by [`Renderer::pool_for`].
-    Pool(Option<usize>),
+    /// `Some(workers)` threads, or a default count, on CPU rasters or on GPU
+    /// contexts each worker makes for itself.
+    Pool(Option<usize>, Option<GpuContexts>),
     /// One session on a GPU context, or on a CPU raster when `None`.
     Session(Option<&'a mut GpuContext>),
+}
+
+/// The session of one pool worker, with the GPU context it made.
+enum PoolSession {
+    Cpu(FrameSession),
+    Gpu(TargetSession, GpuContext),
+}
+
+impl PoolSession {
+    fn new(renderer: &Renderer, contexts: Option<&GpuContexts>) -> Result<Self, RenderError> {
+        let Some(contexts) = contexts else { return Ok(Self::Cpu(renderer.session()?)) };
+        let mut context = contexts().ok_or(RenderError::GpuContext)?;
+        Ok(Self::Gpu(TargetSession::new(renderer, Some(&mut context))?, context))
+    }
+
+    fn render_into(&mut self, time: f64, frame: &mut Frame) -> Result<(), RenderError> {
+        match self {
+            Self::Cpu(session) => session.render_into(time, frame),
+            Self::Gpu(session, context) => session.render_into(time, frame, Some(context)),
+        }
+    }
 }
 
 /// One [`TargetSession`] with the export's GPU context, or a CPU raster.
@@ -66,28 +100,6 @@ impl<'a> SerialSession<'a> {
 
     fn render_into(&mut self, time: f64, frame: &mut Frame) -> Result<(), RenderError> {
         self.session.render_into(time, frame, self.context.as_deref_mut())
-    }
-}
-
-/// The painter of one export, created on the calling thread once FFmpeg is starting.
-enum Painter<'a> {
-    Pool(FramePool),
-    Session(Box<SerialSession<'a>>),
-}
-
-impl Painter<'_> {
-    fn render_into(&mut self, times: &[f64], frames: &mut Vec<Frame>) -> Result<(), RenderError> {
-        match self {
-            Painter::Pool(pool) => pool.render_into(times, frames),
-            Painter::Session(session) => {
-                frames.resize_with(times.len(), || Frame {
-                    width: 0,
-                    height: 0,
-                    rgba: Vec::new(),
-                });
-                times.iter().zip(frames).try_for_each(|(&time, frame)| session.render_into(time, frame))
-            }
-        }
     }
 }
 
@@ -137,20 +149,30 @@ impl Renderer {
         self.export_encoded(path, &ExportOptions::new(mode), Target::Session(context))
     }
 
-    /// Export with `options`: on one session on `gpu` when given, otherwise
+    /// Export with `options`: on a pool of `options.gpu_contexts` when `gpu`
+    /// is given with them, on one session on `gpu` without them, and otherwise
     /// on a CPU pool of `options.workers`.
     pub fn export_options(&self, path: &Path, options: &ExportOptions, gpu: Option<&mut GpuContext>) -> Result<(), RenderError> {
-        let target = gpu.map_or(Target::Pool(options.workers), |gpu| Target::Session(Some(gpu)));
+        let target = match (gpu, &options.gpu_contexts) {
+            (Some(_), Some(contexts)) => Target::Pool(options.workers, Some(contexts.clone())),
+            (Some(gpu), None) => Target::Session(Some(gpu)),
+            (None, _) => Target::Pool(options.workers, None),
+        };
         self.export_encoded(path, options, target)
     }
 
     fn export_encoded(&self, path: &Path, options: &ExportOptions, target: Target) -> Result<(), RenderError> {
         let fps = self.document.fps.max(1e-6);
         let times = self.frame_times();
-        let (batch, in_flight) = match &target {
-            Target::Pool(Some(workers)) => ((*workers).max(1), BATCHES),
-            Target::Pool(None) => (self.pool_for(times.len()).workers(), BATCHES),
-            Target::Session(_) => (1, SESSION_FRAMES),
+        let workers = match &target {
+            Target::Pool(Some(workers), _) => (*workers).max(1),
+            Target::Pool(None, Some(_)) => GPU_WORKERS.min(times.len()).max(1),
+            Target::Pool(None, None) => self.pool_for(times.len()).workers(),
+            Target::Session(_) => 1,
+        };
+        let buffers = match &target {
+            Target::Pool(..) => workers * WORKER_FRAMES,
+            Target::Session(_) => SESSION_FRAMES,
         };
         let (width, height) = self.output_size();
         let mut settings = EncoderSettings::preset_h264_yuv420p(width as usize, height as usize)
@@ -159,17 +181,24 @@ impl Renderer {
             .with_alpha(self.document.transparent_background)
             .with_draft(options.draft);
         settings.sample_rate = self.document.audio.sample_rate as i32;
-        let (full_tx, full_rx) = mpsc::sync_channel::<(usize, Vec<Frame>)>(in_flight);
-        let (empty_tx, empty_rx) = mpsc::channel::<Vec<Frame>>();
-        for _ in 0..in_flight {
-            let _ = empty_tx.send(Vec::new());
+        // `None` reports a failed worker, so the writer stops waiting for its frame.
+        let (full_tx, full_rx) = mpsc::channel::<Option<(usize, Frame)>>();
+        let (empty_tx, empty_rx) = mpsc::channel::<Frame>();
+        for _ in 0..buffers {
+            let _ = empty_tx.send(Frame {
+                width: 0,
+                height: 0,
+                rgba: Vec::new(),
+            });
         }
         let failed = AtomicBool::new(false);
+        // Workers share the free buffers and the index of the next frame to paint.
+        let (empty_rx, next) = (Mutex::new(empty_rx), AtomicUsize::new(0));
         std::thread::scope(|scope| {
             let (times, failed) = (&times, &failed);
             let progress = options.progress.clone();
             // The writer starts FFmpeg, then imports and mixes the whole track while
-            // FFmpeg launches and the first batch paints.
+            // FFmpeg launches and the first frames paint.
             let writer = scope.spawn(move || -> anyhow::Result<()> {
                 // A document without audio tracks exports a video stream alone.
                 let silent = self.document.audio.tracks.is_empty();
@@ -184,16 +213,21 @@ impl Renderer {
                         let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, fps, 1);
                         encoder.send_audio(times.iter().flat_map(|&time| audio.mix_audio(block, time)).collect())?;
                     }
-                    full_rx.iter().try_for_each(|(start, frames)| {
-                        for (frame, &time) in frames.iter().zip(&times[start..]) {
-                            encoder.encode(&frame.rgba, time)?;
+                    // Workers finish out of order; frames wait here for their turn.
+                    let mut waiting = BTreeMap::new();
+                    let mut next = 0;
+                    for (index, frame) in full_rx.iter().map_while(|painted| painted) {
+                        waiting.insert(index, frame);
+                        while let Some(frame) = waiting.remove(&next) {
+                            encoder.encode(&frame.rgba, times[next])?;
+                            next += 1;
+                            if let Some(progress) = &progress {
+                                progress(next, times.len());
+                            }
+                            let _ = empty_tx.send(frame);
                         }
-                        if let Some(progress) = &progress {
-                            progress(start + frames.len(), times.len());
-                        }
-                        let _ = empty_tx.send(frames);
-                        anyhow::Ok(())
-                    })
+                    }
+                    anyhow::Ok(())
                 })();
                 // A failed paint or write leaves nothing at `path`.
                 if written.is_err() || failed.load(Ordering::Acquire) {
@@ -202,24 +236,66 @@ impl Renderer {
                 }
                 encoder.finish()
             });
-            let painted: Result<(), RenderError> = (|| {
-                let mut painter = match target {
-                    Target::Pool(_) => Painter::Pool(self.pool_with(batch)),
-                    Target::Session(context) => Painter::Session(Box::new(SerialSession::new(self, context)?)),
-                };
-                for (index, chunk) in times.chunks(batch).enumerate() {
-                    if options.cancel.as_ref().is_some_and(|cancel| cancel.load(Ordering::Acquire)) {
-                        return Err(RenderError::Cancelled);
-                    }
-                    // The writer hung up, so it failed; its join reports why.
-                    let Ok(mut frames) = empty_rx.recv() else { break };
-                    painter.render_into(chunk, &mut frames)?;
-                    if full_tx.send((index * batch, frames)).is_err() {
-                        break;
-                    }
+            let cancelled = || options.cancel.as_ref().is_some_and(|cancel| cancel.load(Ordering::Acquire));
+            let painted: Result<(), RenderError> = match target {
+                Target::Pool(_, contexts) => {
+                    // A worker holds a buffer before it takes an index, so the
+                    // lowest unencoded frame always has a buffer to paint into.
+                    let (next, empty_rx) = (&next, &empty_rx);
+                    let workers: Vec<_> = (0..workers)
+                        .map(|_| {
+                            let (full_tx, contexts) = (full_tx.clone(), contexts.clone());
+                            scope.spawn(move || -> Result<(), RenderError> {
+                                let mut session = None;
+                                let painted = (|| loop {
+                                    if failed.load(Ordering::Acquire) {
+                                        return Ok(());
+                                    }
+                                    if cancelled() {
+                                        return Err(RenderError::Cancelled);
+                                    }
+                                    // The writer hung up, so it failed; its join reports why.
+                                    let Ok(mut frame) = empty_rx.lock().unwrap().recv() else { return Ok(()) };
+                                    let index = next.fetch_add(1, Ordering::Relaxed);
+                                    let Some(&time) = times.get(index) else { return Ok(()) };
+                                    let session = match &mut session {
+                                        Some(session) => session,
+                                        None => session.insert(PoolSession::new(self, contexts.as_ref())?),
+                                    };
+                                    session.render_into(time, &mut frame)?;
+                                    if full_tx.send(Some((index, frame))).is_err() {
+                                        return Ok(());
+                                    }
+                                })();
+                                if painted.is_err() {
+                                    failed.store(true, Ordering::Release);
+                                    let _ = full_tx.send(None);
+                                }
+                                painted
+                            })
+                        })
+                        .collect();
+                    // A failed worker stops the others at their next frame.
+                    workers
+                        .into_iter()
+                        .map(|worker| worker.join().unwrap_or(Err(RenderError::Readback)))
+                        .fold(Ok(()), Result::and)
                 }
-                Ok(())
-            })();
+                Target::Session(context) => (|| {
+                    let mut session = SerialSession::new(self, context)?;
+                    for (index, &time) in times.iter().enumerate() {
+                        if cancelled() {
+                            return Err(RenderError::Cancelled);
+                        }
+                        let Ok(mut frame) = empty_rx.lock().unwrap().recv() else { break };
+                        session.render_into(time, &mut frame)?;
+                        if full_tx.send(Some((index, frame))).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(())
+                })(),
+            };
             if painted.is_err() {
                 failed.store(true, Ordering::Release);
             }
@@ -251,6 +327,20 @@ pub fn export_director(
         draft,
         ..ExportOptions::new(director.encoder_mode)
     };
+    export_director_with(director, registry, path, alpha, scale, &options, gpu)
+}
+
+/// [`export_director`] with full `options`, whose `gpu_contexts` turn a `gpu`
+/// export into a pool of contexts.
+pub fn export_director_with(
+    director: &mut Director,
+    registry: ImportRegistry,
+    path: &Path,
+    alpha: bool,
+    scale: f32,
+    options: &ExportOptions,
+    gpu: Option<&mut GpuContext>,
+) -> anyhow::Result<()> {
     let previous = (director.output_scale_x, director.output_scale_y, director.transparent_background);
     let document = set_output_scale(director, scale).map_err(anyhow::Error::msg).and_then(|_| {
         director.transparent_background = alpha;
@@ -262,6 +352,6 @@ pub fn export_director(
     Renderer::new(Arc::new(document?), director.assets.loader.clone())
         .with_registry(registry)
         .with_render_mode(director.render_mode)
-        .export_options(path, &options, gpu)?;
+        .export_options(path, options, gpu)?;
     Ok(())
 }

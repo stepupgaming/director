@@ -114,13 +114,16 @@ pub struct TextNode {
     pub opacity: Animated<f32>,
 
     // Skia Text Layout
-    pub paragraph: Mutex<Option<Paragraph>>,
+    pub paragraph: Mutex<Option<CachedParagraph>>,
     /// Stroke-only paragraph painted with `paragraph` at the same layout width.
     /// The HTML compiler sets it when a text stroke colour differs from an opaque fill.
-    pub stroke_paragraph: Mutex<Option<Paragraph>>,
+    pub stroke_paragraph: Mutex<Option<CachedParagraph>>,
     /// Paint `stroke_paragraph` over the fill, matching CSS `paint-order: normal`.
     /// `false` paints it under the fill.
     pub stroke_over_fill: bool,
+    /// The paragraphs as last painted. Write `paragraph` and
+    /// `stroke_paragraph` through `set_paragraphs`, which drops it.
+    painted: Mutex<Option<PaintedText>>,
     pub font_collection: Arc<Mutex<FontCollection>>,
 
     // Layout & Styling
@@ -164,6 +167,7 @@ impl Clone for TextNode {
             paragraph: Mutex::new(None), // Must rebuild
             stroke_paragraph: Mutex::new(None),
             stroke_over_fill: self.stroke_over_fill,
+            painted: Mutex::new(None),
             font_collection: self.font_collection.clone(),
             fit_mode: self.fit_mode.clone(),
             fitted_font_size: self.fitted_font_size,
@@ -181,6 +185,70 @@ impl Clone for TextNode {
             counter_value: self.counter_value.clone(),
         }
     }
+}
+
+/// A paragraph that remembers the width it was last laid out at. Skia lays a
+/// one-line paragraph out again on every call, so repeat calls at the same
+/// width return early here.
+pub struct CachedParagraph {
+    paragraph: Paragraph,
+    width: Option<u32>,
+    /// Longest line and height at an unbounded width.
+    natural: Option<(f32, f32)>,
+    /// Box width the paragraph was built for and the width it fills.
+    fit: Option<(u32, f32)>,
+}
+
+impl CachedParagraph {
+    pub fn new(paragraph: Paragraph) -> Self {
+        Self { paragraph, width: None, natural: None, fit: None }
+    }
+
+    /// Records that the paragraph was built for a box `width` wide and fills `used`.
+    pub fn set_fit(&mut self, width: f32, used: f32) {
+        self.fit = Some((width.to_bits(), used));
+    }
+
+    /// The width the paragraph fills when it was built for a box `width` wide.
+    pub fn fit(&self, width: f32) -> Option<f32> {
+        self.fit.filter(|fit| fit.0 == width.to_bits()).map(|fit| fit.1)
+    }
+
+    /// Longest line and height laid out at an unbounded width, measured once
+    /// so a max-content query leaves the current layout alone.
+    pub fn natural_size(&mut self) -> (f32, f32) {
+        if let Some(size) = self.natural {
+            return size;
+        }
+        self.layout(f32::INFINITY);
+        let size = (self.paragraph.longest_line(), self.paragraph.height());
+        self.natural = Some(size);
+        size
+    }
+
+    pub fn layout(&mut self, width: f32) {
+        if self.width != Some(width.to_bits()) {
+            self.paragraph.layout(width);
+            self.width = Some(width.to_bits());
+        }
+    }
+}
+
+impl std::ops::Deref for CachedParagraph {
+    type Target = Paragraph;
+
+    fn deref(&self) -> &Paragraph {
+        &self.paragraph
+    }
+}
+
+/// Fill and stroke paragraphs recorded once at a layout width. Replaying the
+/// picture reuses their glyph runs, and its bounding box hierarchy skips lines
+/// outside the clip.
+struct PaintedText {
+    /// Layout width bits and paint order.
+    key: (u32, bool),
+    picture: skia_safe::Picture,
 }
 
 /// Paints the fill paragraph and the optional stroke paragraph in paint order.
@@ -223,6 +291,7 @@ impl TextNode {
             paragraph: Mutex::new(None),
             stroke_paragraph: Mutex::new(None),
             stroke_over_fill: true,
+            painted: Mutex::new(None),
             font_collection,
             fit_mode: TextFit::None,
             fitted_font_size: None,
@@ -411,36 +480,91 @@ impl TextNode {
     }
 
     pub fn init_paragraph(&mut self) {
-        if let Ok(mut p) = self.paragraph.lock() {
-            *p = Some(self.build_paragraph());
-        }
+        self.replace_paragraph();
         self.dirty_layout = true;
     }
 
     pub fn set_text_align(&mut self, align: TextAlign) {
         self.text_align = align;
-        if let Ok(mut p) = self.paragraph.lock() {
-            *p = Some(self.build_paragraph());
-        }
+        self.replace_paragraph();
         self.dirty_layout = true;
     }
 
     pub fn set_text_direction(&mut self, direction: TextDirectionMode) {
         self.text_direction = direction;
-        if let Ok(mut p) = self.paragraph.lock() {
-            *p = Some(self.build_paragraph());
-        }
+        self.replace_paragraph();
         self.dirty_layout = true;
     }
 
     pub fn ensure_paragraph_ready(&self) {
-        if let Ok(p_guard) = self.paragraph.lock() {
-            if p_guard.is_none() {
-                drop(p_guard);
-                if let Ok(mut p_guard) = self.paragraph.lock() {
-                    *p_guard = Some(self.build_paragraph());
-                }
+        if self.paragraph.lock().is_ok_and(|p| p.is_none()) {
+            self.replace_paragraph();
+        }
+    }
+
+    /// Rebuilds the fill paragraph from the spans and style.
+    fn replace_paragraph(&self) {
+        let fill = CachedParagraph::new(self.build_paragraph());
+        if let Ok(mut p) = self.paragraph.lock() {
+            *p = Some(fill);
+        }
+        self.forget_painted();
+    }
+
+    /// Replaces both paragraphs.
+    pub fn set_paragraphs(&self, fill: Paragraph, stroke: Option<Paragraph>) {
+        if let Ok(mut p) = self.paragraph.lock() {
+            *p = Some(CachedParagraph::new(fill));
+        }
+        if let Ok(mut p) = self.stroke_paragraph.lock() {
+            *p = stroke.map(CachedParagraph::new);
+        }
+        self.forget_painted();
+    }
+
+    fn forget_painted(&self) {
+        if let Ok(mut painted) = self.painted.lock() {
+            *painted = None;
+        }
+    }
+
+    /// Paints the fill and stroke paragraphs, laid out at `width`, with their
+    /// origin at `origin`.
+    fn paint_paragraphs(&self, canvas: &Canvas, fill: &Paragraph, stroke: Option<&Paragraph>, width: f32, origin: (f32, f32)) {
+        let key = (width.to_bits(), self.stroke_over_fill);
+        let Ok(mut painted) = self.painted.lock() else {
+            paint_with_stroke(canvas, fill, stroke, self.stroke_over_fill, origin);
+            return;
+        };
+        if painted.as_ref().is_none_or(|painted| painted.key != key) {
+            let mut lines = Rect::new_empty();
+            for line in fill.get_line_metrics() {
+                lines.join(Rect::new(
+                    line.left as f32,
+                    (line.baseline - line.ascent) as f32,
+                    (line.left + line.width) as f32,
+                    (line.baseline + line.descent) as f32,
+                ));
             }
+            // Accents, italic overhang, decorations and strokes reach past the line metrics.
+            let em = self
+                .spans
+                .iter()
+                .filter_map(|span| span.font_size)
+                .fold(self.fitted_font_size.unwrap_or(self.default_font_size.current_value), f32::max);
+            let stroke_width = self.spans.iter().filter_map(|span| span.stroke_width).fold(0.0, f32::max);
+            let reach = em + stroke_width + 16.0;
+            let mut recorder = skia_safe::PictureRecorder::new();
+            let recording = recorder.begin_recording(lines.with_outset((reach, reach)), true);
+            paint_with_stroke(recording, fill, stroke, self.stroke_over_fill, (0.0, 0.0));
+            let Some(picture) = recorder.finish_recording_as_picture(None) else {
+                paint_with_stroke(canvas, fill, stroke, self.stroke_over_fill, origin);
+                return;
+            };
+            *painted = Some(PaintedText { key, picture });
+        }
+        if let Some(painted) = painted.as_ref() {
+            canvas.draw_picture(&painted.picture, Some(&skia_safe::Matrix::translate(origin)), None);
         }
     }
 
@@ -533,7 +657,7 @@ impl TextNode {
         canvas: &Canvas,
         rect: Rect,
         base_opacity: f32,
-        paragraph: &mut Paragraph,
+        paragraph: &Paragraph,
     ) {
         // Get glyph positions
         let char_count = self.get_total_char_count();
@@ -718,6 +842,50 @@ impl Element for TextNode {
         "text"
     }
 
+    fn paint_bounds(&self, rect: Rect, children: Option<Rect>) -> Option<Rect> {
+        // Glyph animators move glyphs anywhere.
+        if !self.animators.is_empty() {
+            return None;
+        }
+        // Each line's ink sits within its font ascent and descent.
+        let mut text = Rect::new_empty();
+        {
+            let _fonts = self.font_collection.lock();
+            let mut guard = self.paragraph.lock().ok()?;
+            if let Some(paragraph) = guard.as_mut() {
+                paragraph.layout(if rect.width() < 1.0 { f32::INFINITY } else { rect.width() });
+                for line in paragraph.get_line_metrics() {
+                    text.join(Rect::new(
+                        line.left as f32,
+                        (line.baseline - line.ascent) as f32,
+                        (line.left + line.width) as f32,
+                        (line.baseline + line.descent) as f32,
+                    ));
+                }
+            }
+        }
+        // Accents, italic overhang and strokes reach a little past the metrics.
+        let em = self
+            .spans
+            .iter()
+            .filter_map(|span| span.font_size)
+            .fold(self.fitted_font_size.unwrap_or(self.default_font_size.current_value), f32::max);
+        let stroke = self.spans.iter().filter_map(|span| span.stroke_width).fold(0.0, f32::max);
+        let shadow = self
+            .shadows
+            .iter()
+            .map(|shadow| shadow.blur * 4.0 + shadow.offset.0.abs().max(shadow.offset.1.abs()))
+            .fold(0.0, f32::max);
+        let reach = em * 0.25 + stroke + shadow;
+        let mut bounds = text.with_offset((rect.left, rect.top)).with_outset((reach, reach));
+        // A gradient fill paints its whole rect.
+        if self.spans.iter().any(|span| span.fill_gradient.is_some()) {
+            bounds.join(rect);
+        }
+        bounds.join(children?);
+        Some(bounds)
+    }
+
     fn moves_between(&self, t0: f64, t1: f64) -> bool {
         self.default_font_size.moves_between(t0, t1)
             || self.default_color.moves_between(t0, t1)
@@ -737,6 +905,14 @@ impl Element for TextNode {
         available_space: Size<AvailableSpace>,
     ) -> Size<f32> {
         self.ensure_paragraph_ready();
+        let max_content = known_dimensions.width.is_none() && available_space.width == AvailableSpace::MaxContent;
+        // A measured max-content size needs neither the font collection nor a layout.
+        if max_content {
+            let natural = self.paragraph.lock().ok().and_then(|p| p.as_ref().and_then(|p| p.natural));
+            if let Some((width, height)) = natural {
+                return Size { width: width.ceil(), height: height.ceil() };
+            }
+        }
         let _fonts = self.font_collection.lock();
         let mut p_guard = match self.paragraph.lock() {
             Ok(g) => g,
@@ -744,6 +920,10 @@ impl Element for TextNode {
         };
 
         if let Some(paragraph) = p_guard.as_mut() {
+            if max_content {
+                let (width, height) = paragraph.natural_size();
+                return Size { width: width.ceil(), height: height.ceil() };
+            }
             // Determine constraint
             let width_opt = match available_space.width {
                 AvailableSpace::Definite(w) => w,
@@ -881,7 +1061,7 @@ impl Element for TextNode {
         opacity: f32,
         draw_children: &mut dyn FnMut(&Canvas),
     ) -> Result<(), crate::RenderError> {
-        let fonts = self.font_collection.lock();
+        let mut fonts = Some(self.font_collection.lock());
         let mut p_guard = match self.paragraph.lock() {
             Ok(g) => g,
             Err(_) => return Ok(()),
@@ -901,8 +1081,13 @@ impl Element for TextNode {
                 .and_then(|guard| guard.as_mut())
                 .map(|stroke| {
                     stroke.layout(layout_width);
-                    &*stroke
+                    &**stroke
                 });
+            // Painting laid-out paragraphs reads only typefaces and glyph caches,
+            // which Skia shares safely, so other threads may lay out meanwhile.
+            if self.animators.is_empty() {
+                fonts = None;
+            }
 
             canvas.save();
 
@@ -917,10 +1102,9 @@ impl Element for TextNode {
                 for shadow in self.shadows.iter().rev() {
                     let mut shadow_paint = Paint::default();
                     shadow_paint.set_alpha_f(effective_opacity * shadow.color.a);
-                    shadow_paint.set_image_filter(image_filters::blur(
+                    shadow_paint.set_image_filter(crate::types::wide_blur(
                         (shadow.blur, shadow.blur),
                         TileMode::Decal,
-                        None,
                         None,
                     ));
 
@@ -950,11 +1134,11 @@ impl Element for TextNode {
                             .bounds(&shadow_bounds)
                             .paint(&shadow_paint),
                     );
-                    paint_with_stroke(
+                    self.paint_paragraphs(
                         canvas,
                         paragraph,
                         stroke,
-                        self.stroke_over_fill,
+                        layout_width,
                         (rect.x() + shadow.offset.0, rect.y() + shadow.offset.1),
                     );
                     canvas.restore();
@@ -969,22 +1153,10 @@ impl Element for TextNode {
                             .bounds(&rect)
                             .paint(&paint),
                     );
-                    paint_with_stroke(
-                        canvas,
-                        paragraph,
-                        stroke,
-                        self.stroke_over_fill,
-                        (rect.x(), rect.y()),
-                    );
+                    self.paint_paragraphs(canvas, paragraph, stroke, layout_width, (rect.x(), rect.y()));
                     canvas.restore();
                 } else {
-                    paint_with_stroke(
-                        canvas,
-                        paragraph,
-                        stroke,
-                        self.stroke_over_fill,
-                        (rect.x(), rect.y()),
-                    );
+                    self.paint_paragraphs(canvas, paragraph, stroke, layout_width, (rect.x(), rect.y()));
                 }
 
                 // Apply gradient fill overlay if any span has fill_gradient.

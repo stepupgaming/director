@@ -11,6 +11,7 @@ pub use text_animator::{parse_text_anim_property, GlyphAnimState, TextAnimProper
 
 pub mod vector;
 pub use vector::VectorNode;
+mod svg_picture;
 
 pub mod lottie;
 pub use lottie::LottieNode;

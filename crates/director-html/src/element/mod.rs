@@ -250,6 +250,24 @@ impl HtmlElement {
             baseline: margin.top + baseline,
         }
     }
+    /// Whether the border box paints anything of its own: a fill, a border, a
+    /// box shadow or a Paper shader.
+    fn paints_box(&self) -> bool {
+        let bg = &self.paint.box_node;
+        let visible = |color: &Option<director_core::animation::Animated<director_core::types::Color>>| {
+            color.as_ref().is_some_and(|color| color.current_value.a > 0.0)
+        };
+        let border = &self.style.border;
+        visible(&bg.bg_color)
+            || bg.bg_gradient.is_some()
+            || bg.shadow_color.is_some()
+            || !bg.extra_shadows.is_empty()
+            || bg.backdrop_blur.current_value > 0.0
+            || !self.paint.layers.is_empty()
+            || !self.paint.shadows.is_empty()
+            || self.paper.is_some()
+            || [border.left, border.right, border.top, border.bottom].iter().any(|side| side.value() > 0.0)
+    }
     fn content_rect(&self, rect: Rect) -> Rect {
         let left = resolve(self.style.padding.left, rect.width()) + self.style.border.left.value();
         let top = resolve(self.style.padding.top, rect.width()) + self.style.border.top.value();
@@ -334,8 +352,27 @@ impl Element for HtmlElement {
             || self.animations.iter().any(|animation| animation.moves_between(t0, t1))
             || self.content.as_ref().is_some_and(|content| content.moves_between(m0.min(m1), m0.max(m1)))
     }
+    fn paint_travel(&self, t0: f64, t1: f64, size: (f32, f32)) -> Option<f32> {
+        // Showing or hiding inside the shutter is a cut that every sample shows.
+        if (t0 < self.start && self.start <= t1) || (t0 < self.end && self.end <= t1) {
+            return None;
+        }
+        let media = |t: f64| self.media_start + (t - self.start).max(0.0) * self.playback_rate;
+        let (m0, m1) = (media(t0), media(t1));
+        let content = match &self.content {
+            Some(content) => content.paint_travel(m0.min(m1), m0.max(m1), size)?,
+            None => 0.0,
+        };
+        self.animations
+            .iter()
+            .try_fold(content, |most, animation| Some(most.max(animation.paint_travel(t0, t1, size)?)))
+    }
     fn child_time(&self, time: f64) -> f64 {
         self.time_map.as_ref().map_or(time, |map| map.at(time))
+    }
+    fn children_active(&self, time: f64) -> bool {
+        // `render` skips the children outside the clip window.
+        !self.hidden && time >= self.start && time < self.end
     }
     fn child_time_range(&self, t0: f64, t1: f64) -> (f64, f64) {
         self.time_map.as_ref().map_or((t0, t1), |map| map.range(t0, t1))
@@ -631,6 +668,12 @@ impl Element for HtmlElement {
             CanvasTransform::Affine(_) => 0.0,
         }
     }
+    fn child_view_matrix(&self, width: f32, height: f32) -> Option<skia_safe::M44> {
+        let distance = self.paint.perspective?;
+        let (x, y) = (resolve(self.paint.perspective_origin.0, width), resolve(self.paint.perspective_origin.1, height));
+        let matrix = skia_safe::M44::concat(&skia_safe::M44::translate(x, y, 0.0), &perspective_matrix(distance));
+        Some(skia_safe::M44::concat(&matrix, &skia_safe::M44::translate(-x, -y, 0.0)))
+    }
     fn local_view_matrix(&self, width: f32, height: f32) -> Option<skia_safe::M44> {
         let origin_x = resolve(self.paint.origin.0, width);
         let origin_y = resolve(self.paint.origin.1, height);
@@ -674,6 +717,52 @@ impl Element for HtmlElement {
         about_origin.pre_concat(&matrix);
         about_origin.pre_translate((-origin.0, -origin.1));
         Some(about_origin)
+    }
+    fn opens_layer(&self, opacity: f32) -> bool {
+        self.paint.opacity * opacity < 1.0
+            || self.paint.filter.is_some()
+            || self.paint.mask.is_some()
+            || self.paint.blend_mode != skia_safe::BlendMode::SrcOver
+    }
+    fn paint_bounds(&self, rect: Rect, children: Option<Rect>) -> Option<Rect> {
+        // Perspective projects the children.
+        if self.paint.perspective.is_some() {
+            return None;
+        }
+        // A box with no fill, border, shadow or shader paints nothing of its own,
+        // so a group's filter layer covers its children alone.
+        let mut bounds = if self.paints_box() { rect } else { Rect::new_empty() };
+        for shadow in self.paint.shadows.iter().filter(|shadow| !shadow.inset) {
+            let reach = shadow.spread.max(0.0) + shadow.blur * 4.0;
+            bounds.join(rect.with_offset((shadow.x, shadow.y)).with_outset((reach, reach)));
+        }
+        let content = self.content_rect(rect);
+        if let Some(element) = &self.content {
+            bounds.join(element.paint_bounds(content, Some(Rect::new_empty()))?);
+        }
+        let lines = self.paint.decoration;
+        if lines.underline || lines.overline || lines.line_through {
+            let reach = self.paint.font_size * 2.0 + self.paint.text_underline_offset.abs();
+            bounds.join(content.with_outset((reach, reach)));
+        }
+        let children = if self.paint.box_node.overflow == "hidden" {
+            Some(children.map_or(rect, |mut children| if children.intersect(rect) { children } else { Rect::new_empty() }))
+        } else {
+            children
+        };
+        bounds.join(children?);
+        if let Some(filter) = &self.paint.filter {
+            bounds = filter.compute_fast_bounds(bounds);
+        }
+        if let Some(points) = &self.paint.box_node.clip_path {
+            let points: Vec<_> = points.iter().map(|p| skia_safe::Point::new(p.0 * rect.width(), p.1 * rect.height())).collect();
+            if let Some(clip) = Rect::bounds(&points) {
+                if !bounds.intersect(clip) {
+                    return Some(Rect::new_empty());
+                }
+            }
+        }
+        Some(bounds)
     }
     fn render(
         &self,
@@ -745,10 +834,7 @@ impl Element for HtmlElement {
         layer_paint.set_alpha_f(self.paint.opacity * opacity);
         layer_paint.set_blend_mode(self.paint.blend_mode);
         layer_paint.set_image_filter(self.paint.filter.clone());
-        let layered = self.paint.opacity * opacity < 1.0
-            || self.paint.filter.is_some()
-            || self.paint.mask.is_some()
-            || self.paint.blend_mode != skia_safe::BlendMode::SrcOver;
+        let layered = self.opens_layer(opacity);
         if layered {
             canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&layer_paint));
         }
@@ -776,15 +862,9 @@ impl Element for HtmlElement {
             }
         }
         if content_error.is_ok() {
-            if let Some(distance) = self.paint.perspective {
-                let origin = (
-                    resolve(self.paint.perspective_origin.0, rect.width()),
-                    resolve(self.paint.perspective_origin.1, rect.height()),
-                );
+            if let Some(view) = self.child_view_matrix(rect.width(), rect.height()) {
                 canvas.save();
-                canvas.translate(origin);
-                canvas.concat_44(&perspective_matrix(distance));
-                canvas.translate((-origin.0, -origin.1));
+                canvas.concat_44(&view);
                 draw_children(canvas);
                 canvas.restore();
             } else {

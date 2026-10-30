@@ -1,5 +1,5 @@
 use crate::element::Element;
-use skia_safe::{AlphaType, Canvas, ColorSpace, ColorType, Data, Image, Paint, Rect};
+use skia_safe::{AlphaType, Canvas, ColorSpace, ColorType, Data, Image, Matrix, Paint, Picture, Rect};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use taffy::style::Style;
@@ -52,10 +52,13 @@ fn layer_padding(tree: &Tree, sx: f32, sy: f32, width: u32, height: u32) -> (u32
 
 /// A node that renders scalable vector graphics (SVG).
 ///
-/// Rasterizes the SVG to a bitmap at the exact size required by the layout, ensuring crisp rendering.
+/// Draws the tree as a recorded Skia picture, which stays sharp at any scale.
+/// A tree that needs a feature the picture lacks rasterizes through resvg at
+/// the size the canvas shows.
 #[derive(Debug)]
 pub struct VectorNode {
     tree: Arc<Tree>,
+    picture: Option<Picture>,
     cache: Mutex<Option<(u32, u32, Image)>>,
     pub style: Style,
     pub opacity: crate::animation::Animated<f32>,
@@ -65,6 +68,7 @@ impl Clone for VectorNode {
     fn clone(&self) -> Self {
         Self {
             tree: self.tree.clone(),
+            picture: self.picture.clone(),
             cache: Mutex::new(None), // Don't share cache across clones (or maybe we should? No, size might differ)
             style: self.style.clone(),
             opacity: self.opacity.clone(),
@@ -83,6 +87,7 @@ impl VectorNode {
     /// Render a tree that has already resolved text into paths.
     pub fn from_tree(tree: Tree) -> Self {
         Self {
+            picture: super::svg_picture::record(&tree),
             tree: Arc::new(tree),
             cache: Mutex::new(None),
             style: Style::DEFAULT,
@@ -95,8 +100,9 @@ impl VectorNode {
         &self.tree
     }
 
-    /// Replace the resolved tree and drop the size-keyed pixmap.
+    /// Replace the resolved tree, record its picture and drop the size-keyed pixmap.
     pub fn set_tree(&mut self, tree: Tree) {
+        self.picture = super::svg_picture::record(&tree);
         self.tree = Arc::new(tree);
         *self.cache.lock().unwrap() = None;
     }
@@ -157,6 +163,20 @@ impl Element for VectorNode {
         true
     }
 
+    fn paint_bounds(&self, rect: Rect, children: Option<Rect>) -> Option<Rect> {
+        // The drawing clips to its rect, and a recorded picture to what it draws.
+        let mut drawn = rect;
+        let size = self.tree.size();
+        if let Some(picture) = &self.picture {
+            let mut matrix = Matrix::translate((rect.left, rect.top));
+            matrix.pre_scale((rect.width() / size.width(), rect.height() / size.height()), None);
+            if !drawn.intersect(matrix.map_rect(picture.cull_rect()).0) {
+                drawn = Rect::new_empty();
+            }
+        }
+        Some(Rect::join2(drawn, children?))
+    }
+
     fn render(
         &self,
         canvas: &Canvas,
@@ -164,6 +184,24 @@ impl Element for VectorNode {
         parent_opacity: f32,
         draw_children: &mut dyn FnMut(&Canvas),
     ) -> Result<(), crate::RenderError> {
+        let final_opacity = self.opacity.current_value * parent_opacity;
+        if let Some(picture) = &self.picture {
+            let size = self.tree.size();
+            if final_opacity > 0.0 && size.width() > 0.0 && size.height() > 0.0 {
+                // The viewport clips the drawing like the edge of the raster.
+                canvas.save();
+                canvas.clip_rect(rect, None, true);
+                let mut matrix = Matrix::translate((rect.left, rect.top));
+                matrix.pre_scale((rect.width() / size.width(), rect.height() / size.height()), None);
+                let mut paint = Paint::default();
+                paint.set_alpha_f(final_opacity);
+                canvas.draw_picture(picture, Some(&matrix), (final_opacity < 1.0).then_some(&paint));
+                canvas.restore();
+            }
+            draw_children(canvas);
+            return Ok(());
+        }
+
         // Rasterize at the size the canvas shows, so a scaled or perspective
         // camera keeps the vector sharp. Steps of a half octave bound re-rasters.
         let scale = device_scale(canvas, rect);
@@ -228,7 +266,6 @@ impl Element for VectorNode {
         }
 
         // Draw
-        let final_opacity = self.opacity.current_value * parent_opacity;
         let mut paint = Paint::default();
         paint.set_alpha_f(final_opacity);
 

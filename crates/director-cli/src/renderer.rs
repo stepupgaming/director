@@ -3,8 +3,8 @@ use director_host::{import_registry, Session};
 use director_render::{Frame, GpuContext};
 use std::path::Path;
 
-/// Export `director` to `output` through the pipelined document export: one
-/// session on a Vulkan `context`, or a CPU worker pool.
+/// Export `director` to `output` through the pipelined document export: a
+/// pool of Vulkan contexts when `context` is given, or a CPU worker pool.
 pub fn export_video(
     director: &mut Director,
     output: &Path,
@@ -13,8 +13,14 @@ pub fn export_video(
     scale: f32,
     draft: bool,
 ) -> anyhow::Result<()> {
-    director_render::export_director(director, import_registry(), output, alpha, scale, draft, context)
+    let options = director_render::ExportOptions {
+        draft,
+        gpu_contexts: crate::gpu::export_contexts(),
+        ..director_render::ExportOptions::new(director.encoder_mode)
+    };
+    director_render::export_director_with(director, import_registry(), output, alpha, scale, &options, context)
 }
+
 
 /// Give `session` a required Vulkan context under `gpu`. Its frames then paint
 /// on that context, which stays on the calling thread.

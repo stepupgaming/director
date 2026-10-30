@@ -65,3 +65,41 @@ fn invalid_motion_blur_is_refused() {
         assert!(error.contains("data-motion-blur") || error.contains("data-shutter-angle"), "{error}");
     }
 }
+
+/// The furthest any node of a 64 px SVG moves its paint inside its box over
+/// `[t0, t1]`, as motion blur measures it.
+fn svg_travel(markup: &str, t0: f64, t1: f64) -> Option<f32> {
+    travel(&format!("<svg width='64' height='64' viewBox='0 0 64 64'>{markup}</svg>"), t0, t1)
+}
+
+/// The furthest any node of a 64 px composition holding `body` moves its
+/// paint inside its box over `[t0, t1]`. `None` asks for every sample.
+fn travel(body: &str, t0: f64, t1: f64) -> Option<f32> {
+    let source = format!("<div id='r' data-composition-id='m' data-width='64' data-height='64' data-fps='10' data-duration='2'>{body}</div>");
+    let c = compile(&source, CompileOptions::default()).unwrap();
+    let travel = c.director.scene.iter_alive().try_fold(0.0_f32, |most, (_, node)| Some(most.max(node.element.paint_travel(t0, t1, (64.0, 64.0))?)));
+    travel
+}
+
+#[test]
+fn svg_paint_travel_measures_what_moves_inside_the_box() {
+    let x = "<rect width='12' height='32'><animate attributeName='x' from='0' to='40' dur='2s' fill='freeze'/></rect>";
+    let travel = svg_travel(x, 1.0, 1.05).unwrap();
+    assert!((travel - 1.0).abs() < 0.01, "40 px over 2 s moves 1 px in 0.05 s, got {travel}");
+    let fade = "<rect width='12' height='32'><animate attributeName='opacity' from='0' to='1' dur='2s'/></rect>";
+    assert_eq!(svg_travel(fade, 1.0, 1.05), Some(0.0), "a fade moves nothing");
+    let slide = "<rect width='12' height='32'><animateTransform attributeName='transform' type='translate' from='0 0' to='40 0' dur='2s'/></rect>";
+    let travel = svg_travel(slide, 1.0, 1.05).unwrap();
+    assert!((travel - 1.0).abs() < 0.01, "a translate moves its corners 1 px, got {travel}");
+    let draw = "<path d='M0 0 L64 0' stroke='white' stroke-dasharray='64'><animate attributeName='stroke-dashoffset' from='64' to='0' dur='2s'/></path>";
+    let travel = svg_travel(draw, 1.0, 1.05).unwrap();
+    assert!((travel - 1.6).abs() < 0.01, "the stroke end draws on 1.6 px, got {travel}");
+}
+
+#[test]
+fn a_shade_that_steps_inside_the_shutter_takes_every_sample() {
+    let style = |animation: &str| format!("<style>@keyframes f{{from{{opacity:0}}to{{opacity:1}}}}.b{{width:8px;height:8px;background:white;animation:{animation}}}</style><div class='b'></div>");
+    assert_eq!(travel(&style("f 2s linear both"), 1.0, 1.05), Some(0.0), "a linear fade moves nothing");
+    assert_eq!(travel(&style("f 2s steps(1) both"), 0.98, 1.03), Some(0.0), "a step outside the shutter holds");
+    assert_eq!(travel(&style("f 2s steps(2) both"), 0.98, 1.03), None, "a step inside the shutter flashes");
+}

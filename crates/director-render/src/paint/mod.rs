@@ -8,6 +8,7 @@
 //! The cache is `Director::static_cache`, so `Director::note_mutation`
 //! evicts layers that a live edit invalidates.
 
+mod bsp;
 mod depth;
 mod kinds;
 
@@ -15,7 +16,7 @@ use director_core::director::{StaticCacheEntry, StaticCacheKey};
 use director_core::scene::{SceneGraph, SceneNode};
 use director_core::types::NodeId;
 use director_core::RenderError;
-use skia_safe::{AlphaType, BlendMode, Canvas, Color, ColorSpace, ColorType, Font, Image, ImageInfo, Paint, Rect, TextBlob};
+use skia_safe::{AlphaType, BlendMode, Canvas, ClipOp, Color, ColorSpace, ColorType, Font, Image, ImageInfo, Matrix, M44, Paint, Point, Rect, TextBlob};
 use std::collections::{HashMap, HashSet};
 
 /// Deepest node nesting a traversal accepts.
@@ -67,6 +68,30 @@ fn subtree_varies(scene: &SceneGraph, root: NodeId) -> bool {
 /// somewhere in local time `[t0, t1]`.
 /// Children ask over the span of times their parent's clock maps the range to.
 pub(crate) fn subtree_moves(scene: &SceneGraph, root: NodeId, t0: f64, t1: f64) -> bool {
+    subtree_changes(scene, root, t0, t1, kinds::node_moves)
+}
+
+/// Every node under `root`, masks included, whose paint may move inside its
+/// box over local time `[t0, t1]`, with that travel in local pixels as
+/// [`kinds::node_paint_travel`] reports it.
+pub(crate) fn paint_travels(scene: &SceneGraph, root: NodeId, t0: f64, t1: f64, out: &mut Vec<(NodeId, Option<f32>)>) {
+    let mut stack = vec![(root, t0, t1)];
+    let mut seen = HashSet::new();
+    while let Some((id, t0, t1)) = stack.pop() {
+        let Some(node) = scene.get_node(id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        match kinds::node_paint_travel(node, t0, t1) {
+            Some(travel) if travel <= 0.0 => {}
+            travel => out.push((id, travel)),
+        }
+        let (c0, c1) = node.element.child_time_range(t0, t1);
+        stack.extend(node.children.iter().map(|&child| (child, c0, c1)));
+        stack.extend(node.mask_node.map(|mask| (mask, t0, t1)));
+    }
+}
+
+fn subtree_changes(scene: &SceneGraph, root: NodeId, t0: f64, t1: f64, test: fn(&SceneNode, f64, f64) -> bool) -> bool {
     let mut stack = vec![(root, t0, t1)];
     let mut seen = HashSet::new();
     while let Some((id, t0, t1)) = stack.pop() {
@@ -76,7 +101,7 @@ pub(crate) fn subtree_moves(scene: &SceneGraph, root: NodeId, t0: f64, t1: f64) 
         let Some(node) = scene.get_node(id) else {
             continue;
         };
-        if kinds::node_moves(node, t0, t1) {
+        if test(node, t0, t1) {
             return true;
         }
         let (c0, c1) = node.element.child_time_range(t0, t1);
@@ -84,6 +109,36 @@ pub(crate) fn subtree_moves(scene: &SceneGraph, root: NodeId, t0: f64, t1: f64) 
         stack.extend(node.mask_node.map(|mask| (mask, t0, t1)));
     }
     false
+}
+
+/// A node box and the matrix that maps it to the device.
+pub(crate) struct BoxPlacement {
+    pub matrix: M44,
+    pub size: (f32, f32),
+}
+
+/// Placement of every node box under `root`, keyed by node, where `matrix`
+/// maps the root's parent space to the device.
+pub(crate) fn box_placements(scene: &SceneGraph, root: NodeId, matrix: M44, out: &mut HashMap<NodeId, BoxPlacement>) {
+    let mut stack = vec![(root, matrix, 0)];
+    while let Some((id, parent, level)) = stack.pop() {
+        let Some(node) = scene.get_node(id).filter(|_| level <= MAX_DEPTH) else {
+            continue;
+        };
+        let (width, height) = (node.layout_rect.width(), node.layout_rect.height());
+        let mut matrix = M44::concat(&parent, &depth::scene_view_matrix(node));
+        match node.element.local_view_matrix(width, height) {
+            Some(view) => matrix = M44::concat(&matrix, &view),
+            None => {
+                if let Some(transform) = node.element.local_transform(width, height) {
+                    matrix = M44::concat(&matrix, &M44::from(transform));
+                }
+            }
+        }
+        let inner = node.element.child_view_matrix(width, height).map_or_else(|| matrix.clone(), |view| M44::concat(&matrix, &view));
+        stack.extend(node.children.iter().map(|&child| (child, inner.clone(), level + 1)));
+        out.insert(id, BoxPlacement { matrix, size: (width, height) });
+    }
 }
 
 fn subtree_any(scene: &SceneGraph, root: NodeId, test: impl Fn(&SceneNode) -> bool) -> bool {
@@ -105,10 +160,116 @@ fn subtree_any(scene: &SceneGraph, root: NodeId, test: impl Fn(&SceneNode) -> bo
     false
 }
 
+/// The matrix `Painter::node` applies before a node's subtree: layout position,
+/// translation, then rotation, scale and skew about the pivot.
+fn placement(node: &SceneNode) -> Matrix {
+    let transform = &node.transform;
+    let pivot_x = node.layout_rect.width() * transform.pivot_x;
+    let pivot_y = node.layout_rect.height() * transform.pivot_y;
+    let mut matrix = Matrix::translate((
+        node.layout_rect.left + transform.translate_x.current_value + pivot_x,
+        node.layout_rect.top + transform.translate_y.current_value + pivot_y,
+    ));
+    matrix.pre_rotate(transform.rotation.current_value, None);
+    matrix.pre_scale((transform.scale_x.current_value, transform.scale_y.current_value), None);
+    matrix.pre_skew(
+        (transform.skew_x.current_value.to_radians().tan(), transform.skew_y.current_value.to_radians().tan()),
+        None,
+    );
+    matrix.pre_translate((-pivot_x, -pivot_y));
+    matrix
+}
+
+/// Clip `canvas` to the device pixels covering local `bounds` inside a save.
+/// Returns false and leaves the canvas alone when a corner maps behind the eye.
+fn clip_device(canvas: &Canvas, bounds: Rect, view: Option<&M44>) -> bool {
+    let matrix = canvas.local_to_device();
+    let through = view.map_or_else(|| matrix.clone(), |view| M44::concat(&matrix, view));
+    let mut corners = [Point::default(); 4];
+    let points = [(bounds.left, bounds.top), (bounds.right, bounds.top), (bounds.right, bounds.bottom), (bounds.left, bounds.bottom)];
+    for (corner, (x, y)) in corners.iter_mut().zip(points) {
+        let mapped = through.map(x, y, 0.0, 1.0);
+        if mapped.w <= f32::EPSILON {
+            return false;
+        }
+        *corner = Point::new(mapped.x / mapped.w, mapped.y / mapped.w);
+    }
+    let Some(device) = Rect::bounds(&corners) else {
+        return false;
+    };
+    canvas.save();
+    canvas.reset_matrix();
+    let device: skia_safe::IRect = skia_safe::RoundOut::round_out(&device);
+    canvas.clip_irect(device.with_outset((1, 1)), ClipOp::Intersect);
+    canvas.set_matrix(&matrix);
+    true
+}
+
 impl Painter<'_> {
     /// Paint the subtree at `root` onto `canvas` under the canvas's current matrix.
     pub(crate) fn root(&self, cache: &mut LayerCache, root: NodeId, canvas: &Canvas, opacity: f32) -> Result<(), RenderError> {
         self.node(cache, root, canvas, opacity, 0, ChildDraw::Normal)
+    }
+
+    /// Bounds the subtree at `id` paints in the space `subtree` draws it in,
+    /// after placement and before the element's own transform. `None` means
+    /// unbounded: a 3D context, an element without bounds or a projective child.
+    fn subtree_bounds(&self, id: NodeId, depth: usize) -> Option<Rect> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
+        let node = self.scene.get_node(id)?;
+        let (width, height) = (node.layout_rect.width(), node.layout_rect.height());
+        if node.element.shares_3d() || node.element.local_view_matrix(width, height).is_some() {
+            return None;
+        }
+        let mut children = Rect::new_empty();
+        for &child_id in &node.children {
+            let Some(child) = self.scene.get_node(child_id) else {
+                continue;
+            };
+            children.join(placement(child).map_rect(self.subtree_bounds(child_id, depth + 1)?).0);
+        }
+        let inner = node.element.paint_bounds(Rect::from_wh(width, height), Some(children))?;
+        let mut bounds = node.element.local_transform(width, height).map_or(inner, |matrix| matrix.map_rect(inner).0);
+        if node.filter.has_effects() {
+            if let Some(filter) = node.filter.to_image_filter() {
+                bounds = filter.compute_fast_bounds(bounds);
+            }
+        }
+        Some(bounds)
+    }
+
+    /// Clips `canvas` to the device pixels the subtree at `id` can reach.
+    /// `false` leaves it unclipped.
+    fn clip_layer(&self, id: NodeId, depth: usize, canvas: &Canvas) -> bool {
+        if let Some(bounds) = self.subtree_bounds(id, depth) {
+            return clip_device(canvas, bounds, None);
+        }
+        // An element's 3D transform carries its flat subtree in one plane.
+        let Some(node) = self.scene.get_node(id) else {
+            return false;
+        };
+        let (width, height) = (node.layout_rect.width(), node.layout_rect.height());
+        if node.element.shares_3d() || node.filter.has_effects() {
+            return false;
+        }
+        let Some(view) = node.element.local_view_matrix(width, height) else {
+            return false;
+        };
+        let mut children = Rect::new_empty();
+        for &child_id in &node.children {
+            let Some(child) = self.scene.get_node(child_id) else {
+                continue;
+            };
+            match self.subtree_bounds(child_id, depth + 1) {
+                Some(bounds) => children.join(placement(child).map_rect(bounds).0),
+                None => return false,
+            }
+        }
+        node.element
+            .paint_bounds(Rect::from_wh(width, height), Some(children))
+            .is_some_and(|inner| clip_device(canvas, inner, Some(&view)))
     }
 
     fn node(
@@ -248,6 +409,10 @@ impl Painter<'_> {
         };
 
         let need_layer = node.mask_node.is_some() || node.blend_mode != BlendMode::SrcOver || node.filter.has_effects();
+        // A layer without bounds covers the whole clip, so clip layered
+        // subtrees to the device pixels they can reach.
+        let clipped = (need_layer || node.element.opens_layer(opacity))
+            && self.clip_layer(node_id, depth, canvas);
         let result = if need_layer {
             let mut paint = Paint::default();
             paint.set_blend_mode(node.blend_mode);
@@ -271,6 +436,9 @@ impl Painter<'_> {
         } else {
             kinds::paint_element(node, canvas, local_rect, opacity, &mut draw_children)
         };
+        if clipped {
+            canvas.restore();
+        }
         result?;
         last_error
     }

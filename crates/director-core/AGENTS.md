@@ -251,10 +251,15 @@ rather than relying on host system fonts.
 
 ## Core hardening
 
-`VectorNode` rasterizes at the size the canvas shows (the local-to-device
-scale of its rect, from 1 to 8 in half-octave steps, at most 4096 px a side)
-and draws with linear sampling, so a zoom or perspective camera keeps SVG
-edges sharp.
+`VectorNode` records its resolved tree as a Skia picture
+(`node/svg_picture.rs`), so the canvas draws it at any scale and on the GPU.
+A tree with masks, patterns, embedded images or an unsupported filter
+primitive keeps the resvg raster, taken at the size the canvas shows (the
+local-to-device scale of its rect, from 1 to 8 in half-octave steps, at most
+4096 px a side) and drawn with linear sampling, so a zoom or perspective
+camera keeps SVG edges sharp. `types::wide_blur` halves its input until the
+sigma is about 4 px, blurs there and scales back up; drop shadows, text
+shadows and filter blurs use it.
 
 Engine solidity work is specified under `docs/plans/` (index `00`). Local
 spines that this crate owns: time/timeline (`director`/`timeline`/`lifecycle`),
@@ -283,7 +288,13 @@ incremental pass still hits a clean static node without comparing the
 key. Image-only caches (composition surfaces, captured HTML frames)
 still miss on every full pass. `Element::moves_between(t0, t1)` answers
 whether paint or layout may change inside a local time range; the default
-assumes motion. `Element::child_time(time)` gives the local time of a node's
+assumes motion. `Element::paint_travel(t0, t1, size)` gives the furthest
+its paint moves inside its own box over that range in local px, so motion
+blur can space its samples; the default is 0 when it holds and `None`
+(take every sample) when it moves. `Element::child_view_matrix(width,
+height)` is what the element concatenates around its children in
+border-box space, such as CSS perspective, so placement math sees what
+paint draws. `Element::child_time(time)` gives the local time of a node's
 children (`Director::update` passes it down; masks keep the node's time), and
 `Element::child_time_range(t0, t1)` gives the span of child times for range
 queries. Both default to passing time through; a time remap such as an HTML

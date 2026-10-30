@@ -1483,11 +1483,17 @@ mod tests {
         }
     }
 
+    // Windows can list a killed process for a moment while the system
+    // releases it, so the check allows two seconds under a loaded test run.
     fn assert_process_exited(pid: u32) {
-        assert!(
-            !process_exists(pid),
-            "FFmpeg process {pid} survived session cleanup"
-        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while process_exists(pid) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "FFmpeg process {pid} survived session cleanup"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 
     fn assert_decoded_frame(decoder: &mut SyncDecoder, index: u64) {

@@ -90,11 +90,11 @@ One row per check, holding the most recent passing count. Replace the row when a
 
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
-| workspace clippy | pass | 2026-10-28 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
+| workspace clippy | pass | 2026-10-29 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
 | director-core release tests | 437 | 2026-10-28 | `cargo test -p director-core --release` |
-| visual_suite (render, scene round trip, document render) | 41 | 2026-10-25 | `cargo test -p director-core --release --test integration visual_suite::` |
+| visual_suite (render, scene round trip, document render) | 40 | 2026-10-29 | `cargo test -p director-core --release --test integration visual_suite::` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test integration html_export::` |
-| workspace release tests | 1136, 3 ignored | 2026-10-28 | `cargo test --workspace --release` |
+| workspace release tests | 1142, 3 ignored | 2026-10-29 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 25 | 2026-10-28 | `cargo test -p director-render --release` |
 | director-host | 25 | 2026-10-26 | `cargo test -p director-host --release` |
@@ -124,7 +124,8 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core doctest | 1 | 2026-10-22 | `cargo test -p director-core --doc --release` |
 | director-html lib | 120 | 2026-10-28 | `cargo test -p director-html --release --lib` |
 | director-html integration | 340 | 2026-10-28 | `cargo test -p director-html --release --test integration` |
-| Kinetic film compile (51.8 s, 60 fps, 8 blur samples, 24,872 script samples, 16 split runs) | 2m20s wall, from over 30 min sequential | 2026-10-28 | `time director-engine html check examples/html/film/film.html` |
+| Kinetic film compile (51.8 s, 60 fps, 8 blur samples, 24,872 script samples, 64 split runs) | about 230 s (GSAP recording 169 s, build 60 s) | 2026-10-29 | `director-engine html render examples/html/film/film.html -o <out>.mp4` compile phase |
+| Kinetic film export, adaptive shutter sampling (3108 frames, 1920x1080, 8 samples at most, 270 degree shutter) | CPU 191.3 s, Vulkan 98.0 s (`--gpu --encoder nvenc`); 21.8k paints for 24.9k samples; per shot PSNR against every-sample renders 47 to 54 dB average, 40 dB worst frame | 2026-10-29 | `director-engine html render examples/html/film/film.html -o <out>.mp4 [--gpu --encoder nvenc]`, `export_ms` |
 | Hyper CN registry smoke, typed style path | original 238/239, portrait 238/239; `github-stars` has no input file in the local checkout | 2026-10-26 | `node crates/director-html/tools/registry-audit.mjs --registry C:/Projects/hypercn/registry --output F:/hypercn-smoke-typed2-<profile> --director <engine> --chrome <chromium_headless_shell-1248> --fps 2 [--portrait]` |
 | paint_gaps, background_layers | 22, 5 | 2026-10-18 | release run, exact command not recorded |
 | object_position_css, project, shader | 9, 7, 10 | 2026-10-17 | `cargo test -p director-html --release` |

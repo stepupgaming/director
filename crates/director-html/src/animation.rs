@@ -124,6 +124,41 @@ struct Channel {
     name: String,
     points: Vec<Point>,
 }
+
+impl Channel {
+    /// The scalar value at directed `progress`, if the channel holds numbers.
+    fn scalar_at(&self, progress: f32) -> Option<f32> {
+        match self.value_at(progress)? {
+            Value::Scalar(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// True when the value at `pm` strays from the line between the values at
+    /// `p0` and `p1`, as a step or a turn between them does. Samples at the
+    /// two ends alone would average it wrongly.
+    fn bends(&self, p0: f32, pm: f32, p1: f32) -> bool {
+        let (Some(a), Some(m), Some(b)) = (self.value_at(p0), self.value_at(pm), self.value_at(p1)) else {
+            return false;
+        };
+        match (a, m, b) {
+            (Value::Scalar(a), Value::Scalar(m), Value::Scalar(b)) => (m - (a + b) / 2.0).abs() > 0.1 * a.abs().max(b.abs()).max(1.0),
+            (a, m, b) => a != b && (m == a || m == b),
+        }
+    }
+
+    fn value_at(&self, progress: f32) -> Option<Value> {
+        let points = &self.points;
+        let right = points.partition_point(|p| p.offset <= progress).min(points.len().checked_sub(1)?);
+        let (a, b) = (&points[right.saturating_sub(1)], &points[right]);
+        let t = if a.offset == b.offset {
+            0.0
+        } else {
+            a.ease.eval(((progress - a.offset) / (b.offset - a.offset)).clamp(0.0, 1.0))
+        };
+        interpolate(&a.value, &b.value, t).ok()
+    }
+}
 #[derive(Debug, Clone)]
 pub struct Animation {
     delay: f64,
@@ -210,6 +245,24 @@ pub(crate) const FILTERS: [&str; 13] = [
 ];
 pub(crate) fn is_filter(name: &str) -> bool {
     FILTERS.contains(&name)
+}
+/// True for a channel that moves paint inside the element's box: shadow
+/// offsets and spread, background offsets, clip paths, padding, borders and
+/// type metrics.
+fn reshapes(name: &str) -> bool {
+    let tonal = matches!(
+        name,
+        "opacity" | "background-color" | "color" | "transform" | "width" | "height" | "left" | "top" | "text" | "-webkit-text-stroke-color"
+    ) || is_component(name)
+        || (is_filter(name) && !matches!(name, "filter-drop-shadow-x" | "filter-drop-shadow-y"))
+        || border_side(name).is_some_and(|(_, field)| field == "color")
+        || indexed(name).is_some_and(|(_, _, field)| matches!(field, "color" | "blur"));
+    !tonal
+}
+/// True for a channel that changes how paint looks without moving it:
+/// opacity, colors and filter amounts.
+fn shades(name: &str) -> bool {
+    name == "opacity" || name.ends_with("color") || (is_filter(name) && !matches!(name, "filter-drop-shadow-x" | "filter-drop-shadow-y"))
 }
 /// The amount a filter channel takes when its function is absent.
 pub(crate) fn filter_default(name: &str) -> f32 {
@@ -935,9 +988,59 @@ impl Animation {
     /// holds outside its active interval and through its fills, and inside one
     /// iteration it moves only across keyframes whose values differ.
     pub fn moves_between(&self, t0: f64, t1: f64) -> bool {
+        self.changes_between(t0, t1, |_| true)
+    }
+
+    /// Local pixels this animation may move paint inside a box of `size`
+    /// over `[t0, t1]` beyond the box geometry and transforms: the change of
+    /// each channel that reshapes, with type metrics and font axes scaled to
+    /// the box. `None` when a change wraps an iteration.
+    pub fn paint_travel(&self, t0: f64, t1: f64, (width, height): (f32, f32)) -> Option<f32> {
+        if !self.changes_between(t0, t1, |_| true) {
+            return Some(0.0);
+        }
         let end = self.duration * self.count;
         let (e0, e1) = (t0 - self.delay, t1 - self.delay);
-        if self.count == 0.0 || e1 < 0.0 || e0 >= end {
+        // Crossing an unfilled edge switches between the base and the animation.
+        let unfilled = (e0 < 0.0 && e1 >= 0.0 && !matches!(self.fill.as_str(), "both" | "backwards"))
+            || (e0 < end && e1 >= end && !matches!(self.fill.as_str(), "both" | "forwards"));
+        let (i0, p0) = self.phase(e0.clamp(0.0, end));
+        let (i1, p1) = self.phase(e1.clamp(0.0, end));
+        let (_, pm) = self.phase(((e0 + e1) / 2.0).clamp(0.0, end));
+        // Box travel spaces the samples of geometric channels. A step or a
+        // flash in a shade between the ends needs every sample.
+        let flashes = self.channels.iter().filter(|channel| shades(&channel.name)).any(|channel| channel.bends(p0, pm, p1));
+        if unfilled || i0 != i1 || flashes {
+            return None;
+        }
+        if !self.changes_between(t0, t1, reshapes) {
+            return Some(0.0);
+        }
+        let (side, diagonal) = (width.max(height), width.hypot(height));
+        let mut travel = 0.0_f32;
+        for channel in self.channels.iter().filter(|channel| reshapes(&channel.name)) {
+            let (Some(a), Some(b)) = (channel.scalar_at(p0), channel.scalar_at(p1)) else {
+                return None;
+            };
+            let delta = (b - a).abs();
+            let relative = delta / a.abs().max(b.abs()).max(1e-3);
+            let name = channel.name.as_str();
+            travel = travel.max(match name {
+                _ if name.ends_with("-percent") || name.starts_with("clip-path-") => delta / 100.0 * side,
+                "font-size" | "font-stretch" | "line-height" => relative * diagonal,
+                _ if variation_axis(name).is_some() => relative * diagonal,
+                // Spacing adds up along a line of glyphs at least 10 px wide.
+                "letter-spacing" | "word-spacing" => delta * width / 10.0,
+                _ => delta,
+            });
+        }
+        Some(travel)
+    }
+
+    fn changes_between(&self, t0: f64, t1: f64, counts: impl Fn(&str) -> bool) -> bool {
+        let end = self.duration * self.count;
+        let (e0, e1) = (t0 - self.delay, t1 - self.delay);
+        if self.count == 0.0 || e1 < 0.0 || e0 >= end || !self.channels.iter().any(|channel| counts(&channel.name)) {
             return false;
         }
         let backwards = matches!(self.fill.as_str(), "both" | "backwards");
@@ -951,7 +1054,7 @@ impl Animation {
             return true;
         }
         let (p0, p1) = (p0.min(p1), p0.max(p1));
-        self.channels.iter().any(|channel| {
+        self.channels.iter().filter(|channel| counts(&channel.name)).any(|channel| {
             let points = &channel.points;
             let Some(last) = points.len().checked_sub(1) else {
                 return false;

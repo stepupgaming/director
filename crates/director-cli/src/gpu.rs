@@ -183,6 +183,14 @@ pub fn create_vulkan_context() -> Option<()> {
     None
 }
 
+/// Makes one Vulkan context per GPU export worker, each on its own device.
+pub fn export_contexts() -> Option<director_render::GpuContexts> {
+    #[cfg(feature = "vulkan")]
+    return Some(std::sync::Arc::new(create_vulkan_context));
+    #[cfg(not(feature = "vulkan"))]
+    None
+}
+
 /// Explicit GPU requests fail if the requested backend cannot be initialized.
 pub fn required_context(
     enable: bool,

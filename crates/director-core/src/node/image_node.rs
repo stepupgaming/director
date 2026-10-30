@@ -101,6 +101,11 @@ impl Element for ImageNode {
         true
     }
 
+    fn paint_bounds(&self, rect: Rect, children: Option<Rect>) -> Option<Rect> {
+        // The image clips to its rect.
+        Some(Rect::join2(rect, children?))
+    }
+
     fn render(
         &self,
         canvas: &Canvas,

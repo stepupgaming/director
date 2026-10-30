@@ -292,6 +292,7 @@ impl Server {
             alpha: args.alpha,
             options: director_render::ExportOptions {
                 draft: args.draft,
+                gpu_contexts: crate::gpu::export_contexts(),
                 progress,
                 ..director_render::ExportOptions::new(args.encoder.mode())
             },

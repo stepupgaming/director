@@ -561,16 +561,35 @@ impl FilterConfig {
 
         // Then blur
         if self.blur > 0.0 {
-            filter = skia_safe::image_filters::blur(
-                (self.blur, self.blur),
-                TileMode::Clamp,
-                filter,
-                None,
-            );
+            filter = wide_blur((self.blur, self.blur), TileMode::Clamp, filter);
         }
 
         filter
     }
+}
+
+/// A Gaussian blur that halves its input until the sigma is about 4 pixels,
+/// blurs there and scales back up. Raster Skia blurs a wide sigma at full
+/// resolution, so this cuts its cost by the square of the scale. Each halving
+/// samples between two pixels, so it averages 2 by 2 blocks.
+pub fn wide_blur(sigma: (f32, f32), tile: TileMode, input: Option<ImageFilter>) -> Option<ImageFilter> {
+    use skia_safe::{image_filters, FilterMode, Matrix, MipmapMode, SamplingOptions};
+    let mut scale = 1.0;
+    while scale < 8.0 && sigma.0.min(sigma.1) >= 8.0 * scale {
+        scale *= 2.0;
+    }
+    if scale == 1.0 {
+        return image_filters::blur(sigma, tile, input, None);
+    }
+    let linear = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
+    let mut filter = input;
+    let mut reduced = 1.0;
+    while reduced < scale {
+        filter = image_filters::matrix_transform(&Matrix::scale((0.5, 0.5)), linear, filter);
+        reduced *= 2.0;
+    }
+    filter = image_filters::blur((sigma.0 / scale, sigma.1 / scale), tile, filter, None);
+    image_filters::matrix_transform(&Matrix::scale((scale, scale)), linear, filter)
 }
 
 /// Identity 4x5 color matrix (20 elements in row-major order).

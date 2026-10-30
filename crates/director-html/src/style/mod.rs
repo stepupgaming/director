@@ -1288,14 +1288,18 @@ pub(crate) fn compile_filters(list: &[FilterFn]) -> Option<skia_safe::ImageFilte
                 f.hue_rotate = degrees;
                 f.to_image_filter()
             }
-            FilterFn::DropShadow { x, y, blur, color } => skia_safe::image_filters::drop_shadow(
-                (x, y),
-                (blur, blur),
-                color.to_color4f(),
-                None,
-                None,
-                None,
-            ),
+            FilterFn::DropShadow { x, y, blur, color } => {
+                // Skia's drop shadow: the source alpha in the shadow color, blurred,
+                // offset and drawn under the source.
+                let tint = skia_safe::color_filters::blend(color.to_color4f().to_color(), skia_safe::BlendMode::SrcIn);
+                let shadow = director_core::types::wide_blur(
+                    (blur, blur),
+                    skia_safe::TileMode::Decal,
+                    tint.and_then(|tint| skia_safe::image_filters::color_filter(tint, None, None)),
+                );
+                let shadow = skia_safe::image_filters::offset((x, y), shadow, None);
+                skia_safe::image_filters::merge([shadow, None], None)
+            }
             FilterFn::Invert(amount) => {
                 f.invert = amount;
                 f.to_image_filter()

@@ -16,7 +16,7 @@ mod frame;
 mod live;
 mod paint;
 
-pub use export::{export_director, frame_times, ExportOptions};
+pub use export::{export_director, export_director_with, frame_times, ExportOptions, GpuContexts};
 pub use frame::{paint_root, render_frame, FrameState};
 pub use live::{output_dimensions, render_export, render_export_at_scale, set_output_scale, validate_scale, GpuContext};
 
@@ -40,6 +40,8 @@ pub enum RenderError {
     Surface(i32, i32),
     #[error("failed to read frame pixels")]
     Readback,
+    #[error("failed to create a GPU context for an export worker")]
+    GpuContext,
     #[error("encoding failed: {0}")]
     Encode(anyhow::Error),
     #[error("the export was cancelled")]
@@ -128,10 +130,13 @@ impl Renderer {
     }
 
     /// A pool for `frames` frames: one session per [`FRAMES_PER_SESSION`]
-    /// frames, up to half the rayon workers so the encoder keeps cores.
+    /// frames, up to half the rayon workers so the encoder keeps cores. Motion
+    /// blur paints several samples per encoded frame, so a blurred document
+    /// leaves the encoder one sixth of the workers.
     pub fn pool_for(&self, frames: usize) -> FramePool {
-        let cap = (rayon::current_num_threads() / 2).max(1);
-        self.pool_with(frames.div_ceil(FRAMES_PER_SESSION).min(cap))
+        let threads = rayon::current_num_threads();
+        let cap = if self.document.motion_blur.samples_per_frame > 1 { threads - threads / 6 } else { threads / 2 };
+        self.pool_with(frames.div_ceil(FRAMES_PER_SESSION).min(cap.max(1)))
     }
 
     /// Paint frames at `times` in parallel through a fresh [`FramePool`].
@@ -202,7 +207,9 @@ unsafe impl Send for FrameSession {}
 
 impl FrameSession {
     /// Wrap a live `Director` that paints into a `width` x `height` raster.
-    pub fn new(director: Director, (width, height): (i32, i32)) -> Result<Self, RenderError> {
+    pub fn new(mut director: Director, (width, height): (i32, i32)) -> Result<Self, RenderError> {
+        // Sessions paint beside each other, so each updates on its own thread.
+        director.parallel_update = false;
         let info = frame_info((width, height))?;
         let surface = skia_safe::surfaces::raster(&info, None, None).ok_or(RenderError::Surface(width, height))?;
         Ok(Self {

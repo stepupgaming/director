@@ -22,7 +22,7 @@ use crate::node::caption::{CaptionLine, CaptionNode};
 use crate::node::smart_caption::{SmartCaptionConfig, SmartCaptionNode};
 use crate::render_manifest::IssueSeverity;
 use crate::semantic::{SemanticManifest, SolverConfig};
-use crate::scene::SceneGraph;
+use crate::scene::{SceneGraph, SceneNode};
 use crate::style_policy::{StylePolicy, StylePolicyScorer, PolicyScore};
 
 use crate::systems::assets::AssetManager;
@@ -146,6 +146,9 @@ pub struct Director {
     pub encoder_mode: EncoderMode,
     /// Render debug overlays (bounding boxes, ids, z-indices) on top of frames.
     pub debug_overlays: bool,
+    /// Update nodes across the Rayon pool. A caller that already paints
+    /// several directors at once turns it off, so each updates on its own thread.
+    pub parallel_update: bool,
     /// Rasterized static subtrees, keyed by layout, baked transform, opacity, and time.
     pub static_cache: std::collections::HashMap<NodeId, StaticCacheEntry>,
     /// Persistent semantic entity registry (faces, speakers, objects, caption phrases).
@@ -365,6 +368,7 @@ impl Director {
             assets,
             encoder_mode: EncoderMode::Auto, // Default to auto-detect hardware
             debug_overlays: false,
+            parallel_update: true,
             static_cache: HashMap::new(),
             entities: EntityRegistry::new(),
             compiler: DependencyGraph::new(),
@@ -674,6 +678,10 @@ impl Director {
             node.local_time = time;
             node.last_visit_time = global_time;
 
+            // A subtree that paints nothing at this time keeps its last state.
+            if !node.element.children_active(time) {
+                continue;
+            }
             let child_time = node.element.child_time(time);
             let children = node.children.clone();
             for child in children {
@@ -688,7 +696,7 @@ impl Director {
 
         // Pass 2: Parallel node update via Rayon
         let generations = self.scene.generations_snapshot();
-        self.scene.nodes.par_iter_mut().enumerate().for_each(|(index, node_opt)| {
+        let update = |(index, node_opt): (usize, &mut Option<SceneNode>)| {
             if let Some(node) = node_opt {
                 let node_id = NodeId::new(index as u32, generations[index]);
                 if (node.last_visit_time - global_time).abs() >= 0.0001 {
@@ -765,7 +773,12 @@ impl Director {
                     );
                 }
             }
-        });
+        };
+        if self.parallel_update {
+            self.scene.nodes.par_iter_mut().enumerate().for_each(update);
+        } else {
+            self.scene.nodes.iter_mut().enumerate().for_each(update);
+        }
 
         // Pass 3: elements read what other nodes published during the parallel update.
         for node in self.scene.nodes.iter_mut().flatten() {

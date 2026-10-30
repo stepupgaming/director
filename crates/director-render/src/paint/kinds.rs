@@ -66,6 +66,16 @@ pub(super) fn node_varies(node: &SceneNode) -> bool {
         || element_varies(node.element.as_ref())
 }
 
+/// Local pixels this node's paint may move inside its box over local time
+/// `[t0, t1]` beyond what the box and its transforms show. Clocked kinds,
+/// audio-driven nodes and path animations answer `None`.
+pub(super) fn node_paint_travel(node: &SceneNode, t0: f64, t1: f64) -> Option<f32> {
+    if CLOCKED_KINDS.contains(&node.element.kind()) || !node.audio_bindings.is_empty() || path_moves(node) {
+        return None;
+    }
+    node.element.paint_travel(t0, t1, (node.layout_rect.width(), node.layout_rect.height()))
+}
+
 /// True when this node's own paint may differ somewhere in local time
 /// `[t0, t1]`. Kinds this crate does not know answer through
 /// `Element::moves_between`, which assumes motion by default.

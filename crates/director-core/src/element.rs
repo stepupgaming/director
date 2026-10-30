@@ -163,11 +163,29 @@ pub trait Element: std::fmt::Debug + ElementClone {
         true
     }
 
+    /// How far, in local pixels, the element's own paint may move inside a
+    /// box of `size` over local time `[t0, t1]` beyond what the box and its
+    /// transforms show, such as a sliding shadow or a scrolling background.
+    /// Motion blur spaces its samples by the furthest on-screen travel, and
+    /// `None` makes it take every sample. The default answers zero for an
+    /// element that does not move and `None` otherwise.
+    fn paint_travel(&self, t0: f64, t1: f64, _size: (f32, f32)) -> Option<f32> {
+        (!self.moves_between(t0, t1)).then_some(0.0)
+    }
+
     /// The local time this node's children run at while the node runs at
     /// `time`. A time remap gives its subtree another clock; the default
     /// passes the node's time through.
     fn child_time(&self, time: f64) -> f64 {
         time
+    }
+
+    /// False when nothing below this node paints or sounds at local `time`,
+    /// such as a clip outside its window. [`crate::Director::update`] then
+    /// leaves the subtree's state where it was, and layout reuses its last
+    /// result. The node itself still updates.
+    fn children_active(&self, _time: f64) -> bool {
+        true
     }
 
     /// The earliest and latest child times while the node runs through local
@@ -225,10 +243,31 @@ pub trait Element: std::fmt::Debug + ElementClone {
         None
     }
 
+    /// What the element concatenates around its children in border-box space,
+    /// such as CSS perspective. `None` paints them unchanged.
+    fn child_view_matrix(&self, _width: f32, _height: f32) -> Option<skia_safe::M44> {
+        None
+    }
+
     /// The element's own 2D transform about its origin, sampled by the motion
     /// policy. `None` means the element has no transform of its own.
     fn local_transform(&self, _width: f32, _height: f32) -> Option<skia_safe::Matrix> {
         None
+    }
+
+    /// Bounds of what [`Element::render`] paints for `rect` when its children
+    /// paint within `children`, in the space of `rect` after the element's own
+    /// transform. `None` means unbounded, and an unbounded child keeps the
+    /// element unbounded unless the element clips it.
+    fn paint_bounds(&self, _rect: Rect, _children: Option<Rect>) -> Option<Rect> {
+        None
+    }
+
+    /// True when [`Element::render`] composites its paint through a layer at
+    /// inherited `opacity`. The painter bounds such layers by
+    /// [`Element::paint_bounds`].
+    fn opens_layer(&self, _opacity: f32) -> bool {
+        false
     }
 
     /// Animates a specific named property.
