@@ -2,9 +2,9 @@
 
 Director renders video from HTML and CSS without a browser. It compiles a composition, GSAP timelines included, into a native scene. Taffy lays it out, Skia paints it on the CPU or on Vulkan, and FFmpeg encodes it.
 
-[![A 28-second motion reel rendered by Director from one HTML file, with 16-sample motion blur and a depth-sorted 3D globe](https://stepupgaming.github.io/assets/director-motion-poster.jpg)](https://stepupgaming.github.io/assets/director-motion-1280.mp4)
+https://github.com/user-attachments/assets/98d02b48-bc6d-4e67-9da9-dfa26e9ea516
 
-The reel above is one HTML file rendered by Director. Click it to play.
+Director rendered this reel from one HTML file, with 16-sample motion blur and a depth-sorted 3D globe.
 
 Director is pre-release, and its APIs will change before 1.0.
 
