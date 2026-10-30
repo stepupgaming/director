@@ -352,30 +352,52 @@ fn invisible(name: &str, values: &[Option<String>]) -> bool {
 /// properties, `@name` attributes and `#text`.
 type Recorded = (HashMap<usize, Series>, HashMap<usize, Steps>);
 
+/// One frame's (node, key, value) entries up to its first bad one, and that
+/// one's error.
+type Entries<'a> = (Vec<(usize, &'a str, &'a str)>, Option<String>);
+
 fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result<Recorded, String> {
     // Inline styles hold the setup state flushed when play began.
     let mut setup: HashMap<usize, Vec<(String, String)>> = HashMap::new();
     let mut series: HashMap<usize, Series> = HashMap::new();
-    let mut current: BTreeMap<(usize, String), Option<String>> = BTreeMap::new();
     let mut steps: HashMap<usize, Steps> = HashMap::new();
     let malformed = || "GSAP frame record is malformed".to_string();
-    for (f, frame) in frames.iter().enumerate() {
-        if !frame.is_empty() {
+    // Frames split on the pool. Each keeps its entries up to the first bad
+    // one and that error, so errors surface in record order.
+    let parsed: Vec<Entries> = frames
+        .par_iter()
+        .map(|frame| {
+            let mut entries = Vec::new();
+            if frame.is_empty() {
+                return (entries, None);
+            }
             let parts: Vec<&str> = frame.split('\u{1}').collect();
             if !parts.len().is_multiple_of(3) {
-                return Err(malformed());
+                return (entries, Some(malformed()));
             }
             for entry in parts.chunks(3) {
-                let i: usize = entry[0].parse().map_err(|_| malformed())?;
-                if let Some(name) = entry[1].strip_prefix('!') {
-                    let time: f64 = entry[2].parse().map_err(|_| malformed())?;
-                    steps.entry(i).or_default().entry(name.to_string()).or_default().push((f, time));
-                    continue;
-                }
-                let key = entry[1].to_string();
-                let value = (entry[2] != "\u{2}").then(|| entry[2].to_string());
-                let slot = (i, key.clone());
-                if !current.contains_key(&slot) {
+                let Ok(i) = entry[0].parse() else { return (entries, Some(malformed())) };
+                entries.push((i, entry[1], entry[2]));
+            }
+            (entries, None)
+        })
+        .collect();
+    // Slots in first-write order, with the value each showed before its
+    // first write and every write as (frame, value).
+    let mut slots: HashMap<(usize, &str), usize> = HashMap::new();
+    let mut keys: Vec<(usize, &str)> = Vec::new();
+    let mut befores: Vec<Option<String>> = Vec::new();
+    let mut writes: Vec<Vec<(usize, &str)>> = Vec::new();
+    for (f, (entries, error)) in parsed.into_iter().enumerate() {
+        for (i, key, value) in entries {
+            if let Some(name) = key.strip_prefix('!') {
+                let time: f64 = value.parse().map_err(|_| malformed())?;
+                steps.entry(i).or_default().entry(name.to_string()).or_default().push((f, time));
+                continue;
+            }
+            let slot = match slots.entry((i, key)) {
+                std::collections::hash_map::Entry::Occupied(e) => *e.get(),
+                std::collections::hash_map::Entry::Vacant(e) => {
                     let before = if let Some(name) = key.strip_prefix('@') {
                         doc.attr(i, name)?
                     } else if key == "#text" {
@@ -384,18 +406,39 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
                         if let std::collections::hash_map::Entry::Vacant(e) = setup.entry(i) {
                             e.insert(declarations(&doc.attr(i, "style")?.unwrap_or_default()));
                         }
-                        setup[&i]
-                            .iter().find(|(n, _)| *n == key).map(|(_, v)| v.clone())
+                        setup[&i].iter().find(|(n, _)| *n == key).map(|(_, v)| v.clone())
                     };
-                    series.entry(i).or_default().insert(key.clone(), vec![before.clone(); f]);
-                    current.insert(slot.clone(), before);
+                    keys.push((i, key));
+                    befores.push(before);
+                    writes.push(Vec::new());
+                    *e.insert(keys.len() - 1)
                 }
-                current.insert(slot, value);
+            };
+            writes[slot].push((f, value));
+        }
+        if let Some(error) = error {
+            return Err(error);
+        }
+    }
+    // Each slot holds its last value through the frames after it.
+    let columns: Vec<Vec<Option<String>>> = befores
+        .into_par_iter()
+        .zip(writes.par_iter())
+        .map(|(before, writes)| {
+            let mut column = Vec::with_capacity(frames.len());
+            let mut value = before;
+            let mut next = writes.iter().peekable();
+            for f in 0..frames.len() {
+                while let Some((_, v)) = next.next_if(|(w, _)| *w == f) {
+                    value = (*v != "\u{2}").then(|| v.to_string());
+                }
+                column.push(value.clone());
             }
-        }
-        for ((i, key), value) in &current {
-            series.get_mut(i).and_then(|s| s.get_mut(key)).ok_or_else(malformed)?.push(value.clone());
-        }
+            column
+        })
+        .collect();
+    for ((i, key), column) in keys.into_iter().zip(columns) {
+        series.entry(i).or_default().insert(key.to_string(), column);
     }
 
     // A write to an element's only text node is a write to its text.
