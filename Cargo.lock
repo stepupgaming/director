@@ -1055,6 +1055,7 @@ dependencies = [
  "ego-tree",
  "html5ever",
  "lightningcss",
+ "rayon",
  "scraper",
  "serde",
  "serde_json",

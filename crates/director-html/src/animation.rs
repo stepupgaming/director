@@ -1589,6 +1589,14 @@ impl Parts {
         })
     }
 
+    /// Every component, in [`COMPONENTS`] order.
+    pub(crate) fn values(&self) -> [f32; 13] {
+        [
+            self.persp, self.tx, self.ty, self.tz, self.xp, self.yp, self.rz, self.rx, self.ry, self.skx, self.sky,
+            self.sx, self.sy,
+        ]
+    }
+
     /// GSAP's CSS transform order, leaving out identity functions.
     pub(crate) fn compose(&self) -> TransformList {
         use lightningcss::values::percentage::Percentage;

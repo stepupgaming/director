@@ -26,6 +26,7 @@ sha2 = "0.10"
 tempfile = "3.23"
 director-dom = { path = "../director-dom" }
 ego-tree = "0.10"
+rayon = "1.10"
 
 [dev-dependencies]
 criterion = "0.5"

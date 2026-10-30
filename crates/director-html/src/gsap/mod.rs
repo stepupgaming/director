@@ -16,6 +16,7 @@ use crate::animation::{
 };
 use crate::style::{AxisPos, BackgroundFit, Shadow};
 use director_core::element::TextShadow;
+use rayon::prelude::*;
 use crate::assets::AssetStore;
 use crate::style::{color, PaintStyle};
 use crate::timeline::{TimelineKeyframe, TimelineTrack, TimelineValue};
@@ -1246,6 +1247,35 @@ fn decompose(text: &str) -> Result<Parts, String> {
         .ok_or_else(|| format!("GSAP transform '{text}' has no component form"))
 }
 
+/// `parse` of every set sample, in sample order. A sample equal to the one
+/// before reuses its result, and chunks of samples parse on the Rayon pool.
+/// The first failure in sample order wins.
+fn parse_samples<T: Clone + Send>(
+    values: &[Option<String>],
+    parse: impl Fn(&str) -> Result<T, String> + Sync,
+) -> Result<Vec<Option<T>>, String> {
+    let chunks: Vec<Result<Vec<Option<T>>, String>> = values
+        .par_chunks(256)
+        .map(|chunk| {
+            let mut out: Vec<Option<T>> = Vec::with_capacity(chunk.len());
+            for (i, value) in chunk.iter().enumerate() {
+                let parsed = match value.as_deref() {
+                    None => None,
+                    Some(text) if i > 0 && chunk[i - 1].as_deref() == Some(text) => out[i - 1].clone(),
+                    Some(text) => Some(parse(text)?),
+                };
+                out.push(parsed);
+            }
+            Ok(out)
+        })
+        .collect();
+    let mut out = Vec::with_capacity(values.len());
+    for chunk in chunks {
+        out.extend(chunk?);
+    }
+    Ok(out)
+}
+
 /// Parsers for one element's sampled `box-shadow`, `text-shadow`,
 /// `clip-path` and `background-position` text. The clip parser reads the
 /// element's own clip for an unset frame.
@@ -1281,25 +1311,19 @@ pub(crate) fn tracks(
             continue;
         }
         if property == "transform" {
-            let parts = values
-                .iter()
-                .map(|v| v.as_deref().map(decompose).transpose())
-                .collect::<Result<Vec<_>, _>>()?;
-            for channel in COMPONENTS {
-                let base = base(channel)?;
-                let samples = parts
-                    .iter()
-                    .map(|p| p.map_or(base, |p| Val::Num(p.get(channel).unwrap_or_default() as f64)))
-                    .collect();
+            let parts = parse_samples(values, |text| decompose(text).map(|p| p.values()))?;
+            let bases = COMPONENTS.iter().map(|channel| base(channel)).collect::<Result<Vec<_>, _>>()?;
+            let columns: Vec<Vec<Val>> = (0..COMPONENTS.len())
+                .into_par_iter()
+                .map(|k| parts.iter().map(|p| p.map_or(bases[k], |p| Val::Num(p[k] as f64))).collect())
+                .collect();
+            for (channel, samples) in COMPONENTS.into_iter().zip(columns) {
                 channels.push((channel.to_string(), property, samples));
             }
             continue;
         }
         if property == "filter" {
-            let lists = values
-                .iter()
-                .map(|v| v.as_deref().map(filter_channels).transpose())
-                .collect::<Result<Vec<_>, _>>()?;
+            let lists = parse_samples(values, filter_channels)?;
             for channel in FILTER_CHANNELS {
                 if lists.iter().flatten().all(|list| !list.iter().any(|(c, _)| *c == channel)) {
                     continue;
@@ -1318,14 +1342,9 @@ pub(crate) fn tracks(
             continue;
         }
         if property == "font-variation-settings" {
-            let lists = values
-                .iter()
-                .map(|v| {
-                    v.as_deref()
-                        .map(|text| crate::style::parse_variation_settings(text).map_err(|e| format!("GSAP {e}")))
-                        .transpose()
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let lists = parse_samples(values, |text| {
+                crate::style::parse_variation_settings(text).map_err(|e| format!("GSAP {e}"))
+            })?;
             let mut axes: Vec<&str> = Vec::new();
             for v in lists.iter().flatten().flatten() {
                 if !axes.contains(&v.axis.as_str()) {
@@ -1475,24 +1494,17 @@ pub(crate) fn tracks(
         }
         // `padding` and `margin` list one to four lengths, top, right, bottom, left.
         if property == "padding" || property == "margin" {
-            let sides = values
-                .iter()
-                .map(|v| {
-                    v.as_deref()
-                        .map(|text| {
-                            let parts = crate::css::split(text.trim(), false);
-                            let pick: &[usize; 4] = match parts.len() {
-                                1 => &[0, 0, 0, 0],
-                                2 => &[0, 1, 0, 1],
-                                3 => &[0, 1, 2, 1],
-                                4 => &[0, 1, 2, 3],
-                                _ => return Err(format!("GSAP {property} '{text}' lists {} lengths", parts.len())),
-                            };
-                            pick.iter().map(|&k| sample(property, &parts[k])).collect::<Result<Vec<_>, _>>()
-                        })
-                        .transpose()
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let sides = parse_samples(values, |text| {
+                let parts = crate::css::split(text.trim(), false);
+                let pick: &[usize; 4] = match parts.len() {
+                    1 => &[0, 0, 0, 0],
+                    2 => &[0, 1, 0, 1],
+                    3 => &[0, 1, 2, 1],
+                    4 => &[0, 1, 2, 3],
+                    _ => return Err(format!("GSAP {property} '{text}' lists {} lengths", parts.len())),
+                };
+                pick.iter().map(|&k| sample(property, &parts[k])).collect::<Result<Vec<_>, _>>()
+            })?;
             for (side, name) in ["top", "right", "bottom", "left"].iter().enumerate() {
                 let channel = format!("{property}-{name}");
                 let samples = sides
@@ -1505,24 +1517,17 @@ pub(crate) fn tracks(
         }
         // `border-color` lists one to four colors, top, right, bottom, left.
         if property == "border-color" {
-            let sides = values
-                .iter()
-                .map(|v| {
-                    v.as_deref()
-                        .map(|text| {
-                            let parts = crate::css::split(text.trim(), false);
-                            let pick: &[usize; 4] = match parts.len() {
-                                1 => &[0, 0, 0, 0],
-                                2 => &[0, 1, 0, 1],
-                                3 => &[0, 1, 2, 1],
-                                4 => &[0, 1, 2, 3],
-                                _ => return Err(format!("GSAP border-color '{text}' lists {} colors", parts.len())),
-                            };
-                            pick.iter().map(|&k| sample("color", &parts[k])).collect::<Result<Vec<_>, _>>()
-                        })
-                        .transpose()
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let sides = parse_samples(values, |text| {
+                let parts = crate::css::split(text.trim(), false);
+                let pick: &[usize; 4] = match parts.len() {
+                    1 => &[0, 0, 0, 0],
+                    2 => &[0, 1, 0, 1],
+                    3 => &[0, 1, 2, 1],
+                    4 => &[0, 1, 2, 3],
+                    _ => return Err(format!("GSAP border-color '{text}' lists {} colors", parts.len())),
+                };
+                pick.iter().map(|&k| sample("color", &parts[k])).collect::<Result<Vec<_>, _>>()
+            })?;
             for (side, name) in ["top", "right", "bottom", "left"].iter().enumerate() {
                 let channel = format!("border-{name}-color");
                 let base = base(&channel)?;
@@ -1556,21 +1561,20 @@ pub(crate) fn tracks(
             other => other,
         };
         let base = base(channel)?;
-        let samples = values
-            .iter()
-            .map(|v| v.as_deref().map_or(Ok(base), |text| sample(channel, text)))
-            .collect::<Result<Vec<_>, _>>()?;
+        let samples = parse_samples(values, |text| sample(channel, text))?;
+        let samples = samples.into_iter().map(|v| v.unwrap_or(base)).collect();
         channels.push((channel.to_string(), property, samples));
     }
-    for (channel, property, samples) in channels {
+    // Channels thin independently once their bases are read in order.
+    let bases = channels.iter().map(|(channel, ..)| base(channel)).collect::<Result<Vec<_>, _>>()?;
+    let thinned = channels.into_par_iter().zip(bases).filter_map(|((channel, property, samples), base)| {
         let channel = channel.as_str();
         let eps = tolerance(channel);
-        let base = base(channel)?;
         let differs = samples
             .iter()
             .any(|v| v.dims().iter().zip(base.dims()).any(|(a, b)| (a - b).abs() > eps));
         if !differs {
-            continue;
+            return None;
         }
         // Jumps on this channel, earliest per frame, where the value moves.
         let mut jumps: Vec<(usize, f64)> = [channel, property]
@@ -1603,12 +1607,13 @@ pub(crate) fn tracks(
         // A piece's first frame key lands on its jump when the set sits on
         // the frame.
         keyframes.dedup_by(|b, a| (b.time - a.time).abs() < 1e-9);
-        out.push(TimelineTrack {
+        Some(TimelineTrack {
             target: target.to_string(),
             property: channel.to_string(),
             keyframes,
-        });
-    }
+        })
+    });
+    out.par_extend(thinned);
     Ok(out)
 }
 
