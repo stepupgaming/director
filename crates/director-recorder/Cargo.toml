@@ -10,4 +10,4 @@ description = "The GSAP recorder helper that runs page scripts for Director's HT
 [dependencies]
 director-dom = { path = "../director-dom" }
 serde_json.workspace = true
-boa_engine = { version = "0.22", default-features = false, features = ["annex-b"] }
+v8 = "=152.2.0"

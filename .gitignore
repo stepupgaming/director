@@ -27,4 +27,3 @@ repomix-output.xml
 vendor/*
 !vendor/AGENTS.md
 !vendor/skia-safe/
-!vendor/boa_engine/

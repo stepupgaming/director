@@ -14,7 +14,7 @@ members = [
     "crates/lottie-data",
     "crates/lottie-skia",
 ]
-exclude = ["vendor/skia-safe", "vendor/boa_engine"]
+exclude = ["vendor/skia-safe"]
 
 
 [workspace.package]
@@ -45,5 +45,4 @@ director-scene = { path = "crates/director-scene", version = "0.1.0" }
 
 [patch.crates-io]
 skia-safe = { path = "vendor/skia-safe" }
-boa_engine = { path = "vendor/boa_engine" }
 

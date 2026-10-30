@@ -478,9 +478,9 @@ fn motion_path_example_follows_its_route_and_morphs() {
 }
 
 #[test]
-fn boa_reads_left_operands_before_the_right_assigns() {
-    // GSAP's grid detection runs `max < (max = rect.left)`; the vendored Boa
-    // copies the left local first, matching Node.
+fn scripts_read_left_operands_before_the_right_assigns() {
+    // GSAP's grid detection runs `max < (max = rect.left)`, which needs the
+    // left local read first, as in Node.
     let source = "<div data-composition-id='main'></div><script>        function a() { let k = -1; return k < (k = 5); } function c() { var k = 3; return k - (k = 5); }         function e() { var k = 3; return k + k++; } function g() { var k = 3; return k === (k = 5); }         function i() { var k = 3; k += (k = 5); return k; } function j() { var k = 3; return k * (k++, k); }         function l() { let k = -1, n = 0; while (k < (k = n++) && n < 4) {} return n; }         throw new Error(JSON.stringify([a(), c(), e(), g(), i(), j(), l()]));</script>";
     assert!(refused(source).contains("[true,-2,6,false,8,12,4]"));
 }

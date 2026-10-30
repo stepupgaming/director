@@ -5,7 +5,6 @@
 use crate::ask;
 use director_dom::protocol::{Ask, Placed, Reply};
 use director_dom::{Doc, Placement};
-use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -52,8 +51,9 @@ pub(crate) fn with_doc<R>(f: impl FnOnce(&mut Page) -> Result<R, String>) -> Res
 pub(crate) enum Fault {
     Error(String),
     Range(String),
-    /// An exception the engine raised while converting an argument.
-    Thrown(Box<dyn Any>),
+    /// An exception the engine raised while converting an argument, which
+    /// the engine still holds.
+    Thrown,
 }
 
 /// A native's result.

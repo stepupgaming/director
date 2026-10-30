@@ -1,17 +1,20 @@
-//! Page scripts on Boa.
+//! Page scripts on V8.
 
 use crate::natives::{Args, Fault, Out, NATIVES};
-use boa_engine::{
-    object::builtins::JsArray, Context, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source,
-};
 use director_dom::protocol::Script;
 
 /// Browser environment for page scripts.
 const DOM: &str = include_str!("dom.js");
 
-fn js_error(e: JsError) -> String {
-    let text = e.to_string();
-    text.strip_prefix("Error: ").unwrap_or(&text).to_string()
+/// Start V8 once per process. The run thread's 64 MB stack holds deep
+/// script recursion, so V8 may use most of it.
+fn start() {
+    static START: std::sync::Once = std::sync::Once::new();
+    START.call_once(|| {
+        v8::V8::set_flags_from_string("--stack-size=32768");
+        v8::V8::initialize_platform(v8::new_default_platform(0, false).make_shared());
+        v8::V8::initialize();
+    });
 }
 
 /// Evaluate the scripts, fire the load events and seek each sample time in
@@ -21,39 +24,39 @@ fn js_error(e: JsError) -> String {
 /// earlier samples leave. Returns each sample's change record and how many
 /// random numbers the scripts drew while the timeline played.
 pub(crate) fn execute(scripts: &[Script], times: &[f64], from: usize) -> Result<(Vec<String>, u64), String> {
-    let mut cx = Context::default();
-    cx.runtime_limits_mut().set_loop_iteration_limit(50_000_000);
-    cx.runtime_limits_mut().set_recursion_limit(4_096);
-    register(&mut cx).map_err(js_error)?;
-    cx.eval(Source::from_bytes(DOM)).map_err(js_error)?;
-    let eval = |cx: &mut Context, code: &str| -> Result<String, String> {
-        let value = cx.eval(Source::from_bytes(code)).map_err(js_error)?;
-        cx.run_jobs().map_err(js_error)?;
-        Ok(value.to_string(cx).map_err(js_error)?.to_std_string_escaped())
-    };
+    start();
+    let isolate = &mut v8::Isolate::new(v8::CreateParams::default());
+    isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
+    v8::scope!(let scope, isolate);
+    let context = v8::Context::new(scope, Default::default());
+    let scope = &mut v8::ContextScope::new(scope, context);
+    register(scope, context);
+    eval(scope, DOM)?;
     for script in scripts {
-        eval(&mut cx, &script.source).map_err(|e| format!("{}: {e}", script.name))?;
+        eval(scope, &script.source).map_err(|e| format!("{}: {e}", script.name))?;
         if let Some(major) = script.major {
-            let version = eval(&mut cx, "typeof gsap === 'object' && gsap.version || ''")?;
+            let version = eval(scope, "typeof gsap === 'object' && gsap.version || ''")?;
             let found = version.split('.').next().and_then(|v| v.parse::<u32>().ok());
             if found.is_some_and(|found| found != major) {
                 return Err(format!("{} names GSAP {major}, and the local copy is GSAP {version}", script.name));
             }
         }
     }
-    eval(&mut cx, "__director.loaded()")?;
-    eval(&mut cx, "__director.settle()")?;
+    eval(scope, "__director.loaded()")?;
+    eval(scope, "__director.settle()")?;
     crate::natives::with_doc(|d| {
         d.playing = true;
         Ok(())
     })
     .map_err(|_| "no installed document")?;
-    eval(&mut cx, "__director.play()")?;
-    let frame = |cx: &mut Context, t: f64| eval(cx, &format!("__director.frame({t})")).map_err(|e| format!("at {t:.3}s: {e}"));
+    eval(scope, "__director.play()")?;
+    let frame = |scope: &mut v8::PinScope<'_, '_>, t: f64| {
+        eval(scope, &format!("__director.frame({t})")).map_err(|e| format!("at {t:.3}s: {e}"))
+    };
     if from > 0 {
         let earlier = &times[..from];
         let before = earlier[earlier.len() - 1];
-        let spans: Vec<f64> = serde_json::from_str(&eval(&mut cx, "__director.drawers()")?).map_err(|e| e.to_string())?;
+        let spans: Vec<f64> = serde_json::from_str(&eval(scope, "__director.drawers()")?).map_err(|e| e.to_string())?;
         // The reverse half of each seek renders an animation while its end
         // is at least a microsecond past the sample.
         let mut warm: Vec<f64> = spans
@@ -70,91 +73,137 @@ pub(crate) fn execute(scripts: &[Script], times: &[f64], from: usize) -> Result<
         warm.dedup();
         warm.push(before);
         for t in warm {
-            frame(&mut cx, t)?;
+            frame(scope, t)?;
         }
     }
     let mut records = Vec::with_capacity(times.len() - from);
     for &t in &times[from..] {
-        records.push(frame(&mut cx, t)?);
+        records.push(frame(scope, t)?);
     }
-    let draws = eval(&mut cx, "__director.draws()")?.parse().map_err(|_| "GSAP draw count is malformed".to_string())?;
+    let draws = eval(scope, "__director.draws()")?.parse().map_err(|_| "GSAP draw count is malformed".to_string())?;
     Ok((records, draws))
 }
 
-struct BoaArgs<'a> {
-    args: &'a [JsValue],
-    cx: &'a mut Context,
-}
-
-impl BoaArgs<'_> {
-    fn arg(&self, n: usize) -> JsValue {
-        self.args.get(n).cloned().unwrap_or_default()
+/// Run `code`, then its promise jobs, and return the result as a string. An
+/// exception becomes its `toString` text without a leading `Error: `.
+fn eval(scope: &mut v8::PinScope<'_, '_>, code: &str) -> Result<String, String> {
+    v8::tc_scope!(let tc, scope);
+    let source = v8::String::new(tc, code).ok_or("a script is too long for V8")?;
+    let value = v8::Script::compile(tc, source, None).and_then(|script| script.run(tc));
+    if value.is_some() {
+        tc.perform_microtask_checkpoint();
+    }
+    match (value, tc.exception()) {
+        (Some(value), None) => Ok(value.to_rust_string_lossy(tc)),
+        (_, Some(e)) => {
+            let text = e.to_rust_string_lossy(tc);
+            Err(text.strip_prefix("Error: ").unwrap_or(&text).to_string())
+        }
+        (None, None) => Err("V8 stopped the script".into()),
     }
 }
 
-fn thrown(e: JsError) -> Fault {
-    Fault::Thrown(Box::new(e))
+struct V8Args<'a, 's, 'i, 'c> {
+    scope: &'a mut v8::PinScope<'s, 'i>,
+    args: &'a v8::FunctionCallbackArguments<'c>,
 }
 
-impl Args for BoaArgs<'_> {
+impl<'c> V8Args<'_, '_, '_, 'c> {
+    fn arg(&self, n: usize) -> v8::Local<'c, v8::Value> {
+        self.args.get(n as i32)
+    }
+}
+
+/// The exception V8 already holds for a failed conversion.
+fn thrown() -> Fault {
+    Fault::Thrown
+}
+
+impl Args for V8Args<'_, '_, '_, '_> {
     fn int(&mut self, n: usize) -> Result<i64, Fault> {
-        Ok(self.arg(n).to_i32(self.cx).map_err(thrown)? as i64)
+        self.arg(n).int32_value(self.scope).map(i64::from).ok_or_else(thrown)
     }
     fn text(&mut self, n: usize) -> Result<String, Fault> {
-        Ok(self.arg(n).to_string(self.cx).map_err(thrown)?.to_std_string_escaped())
+        let text = self.arg(n).to_string(self.scope).ok_or_else(thrown)?;
+        Ok(text.to_rust_string_lossy(self.scope))
     }
     fn opt(&mut self, n: usize) -> Result<Option<String>, Fault> {
-        match self.args.get(n) {
-            None => Ok(None),
-            Some(v) if v.is_null_or_undefined() => Ok(None),
-            Some(_) => self.text(n).map(Some),
+        if self.arg(n).is_null_or_undefined() {
+            return Ok(None);
         }
+        self.text(n).map(Some)
     }
     fn flag(&mut self, n: usize) -> bool {
-        self.args.get(n).is_some_and(JsValue::to_boolean)
+        self.arg(n).boolean_value(self.scope)
     }
     fn number(&mut self, n: usize) -> Result<f64, Fault> {
-        self.arg(n).to_number(self.cx).map_err(thrown)
+        self.arg(n).number_value(self.scope).ok_or_else(thrown)
     }
     fn given(&self, n: usize) -> bool {
-        self.args.get(n).is_some_and(|v| !v.is_undefined())
+        !self.arg(n).is_undefined()
     }
 }
 
-fn value(out: Out, cx: &mut Context) -> JsValue {
-    let text = |s: &str| JsValue::from(JsString::from(s));
+fn value<'s>(out: Out, scope: &mut v8::PinScope<'s, '_>) -> v8::Local<'s, v8::Value> {
+    let text = |scope: &mut v8::PinScope<'s, '_>, s: &str| -> v8::Local<'s, v8::Value> {
+        v8::String::new(scope, s).map_or_else(|| v8::String::empty(scope).into(), Into::into)
+    };
+    let list = |scope: &mut v8::PinScope<'s, '_>, items: Vec<v8::Local<'s, v8::Value>>| -> v8::Local<'s, v8::Value> {
+        v8::Array::new_with_elements(scope, &items).into()
+    };
     match out {
-        Out::Undefined => JsValue::undefined(),
-        Out::Null => JsValue::null(),
-        Out::Bool(b) => JsValue::from(b),
-        Out::Int(i) => JsValue::from(i),
-        Out::Number(n) => JsValue::from(n),
-        Out::Text(s) => text(&s),
-        Out::Indexes(list) => JsArray::from_iter(list.into_iter().map(|i| JsValue::from(i as i32)), cx).into(),
-        Out::Strings(list) => JsArray::from_iter(list.iter().map(|s| text(s)), cx).into(),
-        Out::Numbers(list) => JsArray::from_iter(list.iter().map(|n| JsValue::from(*n as f64)), cx).into(),
+        Out::Undefined => v8::undefined(scope).into(),
+        Out::Null => v8::null(scope).into(),
+        Out::Bool(b) => v8::Boolean::new(scope, b).into(),
+        Out::Int(i) => v8::Integer::new(scope, i).into(),
+        Out::Number(n) => v8::Number::new(scope, n).into(),
+        Out::Text(s) => text(scope, &s),
+        Out::Indexes(items) => {
+            let items = items.into_iter().map(|i| v8::Integer::new(scope, i as i32).into()).collect();
+            list(scope, items)
+        }
+        Out::Strings(items) => {
+            let items = items.iter().map(|s| text(scope, s)).collect();
+            list(scope, items)
+        }
+        Out::Numbers(items) => {
+            let items = items.into_iter().map(|n| v8::Number::new(scope, n as f64).into()).collect();
+            list(scope, items)
+        }
     }
 }
 
-fn fault(f: Fault) -> JsError {
-    match f {
-        Fault::Error(m) => JsNativeError::error().with_message(m).into(),
-        Fault::Range(m) => JsNativeError::range().with_message(m).into(),
-        Fault::Thrown(e) => *e.downcast::<JsError>().expect("a Boa exception"),
-    }
+/// Every native: the function's data slot holds its index in [`NATIVES`].
+fn call(scope: &mut v8::PinScope<'_, '_>, args: v8::FunctionCallbackArguments<'_>, mut rv: v8::ReturnValue<'_, v8::Value>) {
+    let k = args.data().int32_value(scope).unwrap_or(0) as usize;
+    let result = NATIVES[k].2(&mut V8Args { scope, args: &args });
+    let (make, message): (fn(_, _) -> _, String) = match result {
+        Ok(out) => {
+            let out = value(out, scope);
+            rv.set(out);
+            return;
+        }
+        Err(Fault::Error(m)) => (v8::Exception::error, m),
+        Err(Fault::Range(m)) => (v8::Exception::range_error, m),
+        Err(Fault::Thrown) => return,
+    };
+    let message = v8::String::new(scope, &message).unwrap_or_else(|| v8::String::empty(scope));
+    let exception = make(scope, message);
+    scope.throw_exception(exception);
 }
 
-/// Register the DOM natives as globals.
-fn register(cx: &mut Context) -> JsResult<()> {
-    for (name, length, f) in NATIVES {
-        let body = NativeFunction::from_copy_closure(move |_, args, cx| {
-            let mut a = BoaArgs { args, cx };
-            match f(&mut a) {
-                Ok(out) => Ok(value(out, a.cx)),
-                Err(e) => Err(fault(e)),
-            }
-        });
-        cx.register_global_callable(JsString::from(name), length, body)?;
+/// Register the DOM natives as globals that do not enumerate.
+fn register(scope: &mut v8::PinScope<'_, '_>, context: v8::Local<v8::Context>) {
+    let global = context.global(scope);
+    for (k, (name, length, _)) in NATIVES.iter().enumerate() {
+        let data = v8::Integer::new(scope, k as i32);
+        let function = v8::FunctionTemplate::builder(call)
+            .data(data.into())
+            .length(*length as i32)
+            .build(scope)
+            .get_function(scope)
+            .expect("a native function");
+        let name = v8::String::new(scope, name).expect("a native name");
+        global.define_own_property(scope, name.into(), function.into(), v8::PropertyAttribute::DONT_ENUM);
     }
-    Ok(())
 }
