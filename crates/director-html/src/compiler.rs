@@ -1,3 +1,4 @@
+use crate::Attr;
 use crate::{
     animation,
     assets::AssetStore,
@@ -273,7 +274,7 @@ fn parse_svg_len(raw: &str) -> Result<SvgLen, CompileError> {
 }
 
 fn svg_space(svg: ElementRef<'_>, viewport: (f32, f32)) -> Result<SvgSpace, CompileError> {
-    let (min_x, min_y, width, height) = if let Some(raw) = svg.value().attr("viewBox") {
+    let (min_x, min_y, width, height) = if let Some(raw) = svg.value().attr_text("viewBox") {
         let parts: Vec<f32> = raw
             .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
             .filter(|part| !part.is_empty())
@@ -353,7 +354,7 @@ fn definite_svg_axis(
 }
 
 fn specifies_transform(css: &Css, el: ElementRef<'_>) -> Result<bool, CompileError> {
-    if el.value().attr("transform").is_some_and(|value| {
+    if el.value().attr_text("transform").is_some_and(|value| {
         let value = value.trim();
         !value.is_empty() && value != "none"
     }) {
@@ -502,7 +503,7 @@ fn composition_root<'a>(dom: &'a Html, options: &CompileOptions) -> Result<Eleme
         roots
             .iter()
             .copied()
-            .find(|r| r.value().attr("data-composition-id") == Some(id.as_str()))
+            .find(|r| r.value().attr_text("data-composition-id") == Some(id.as_str()))
             .ok_or_else(|| CompileError::Input(format!("composition '{id}' not found")))?
     } else {
         roots.first().copied().unwrap_or_else(|| {
@@ -527,14 +528,14 @@ fn composition_root<'a>(dom: &'a Html, options: &CompileOptions) -> Result<Eleme
 /// `data-shutter-angle` degrees, 1 sample at 180 degrees by default.
 fn motion_blur(root: ElementRef<'_>) -> Result<(u32, f32), CompileError> {
     let mut blur = (1, 180.0);
-    if let Some(v) = root.value().attr("data-motion-blur") {
+    if let Some(v) = root.value().attr_text("data-motion-blur") {
         blur.0 = v
             .parse()
             .ok()
             .filter(|n| (1..=64).contains(n))
             .ok_or_else(|| CompileError::Input(format!("invalid data-motion-blur: {v} (1..=64 samples)")))?;
     }
-    if let Some(v) = root.value().attr("data-shutter-angle") {
+    if let Some(v) = root.value().attr_text("data-shutter-angle") {
         blur.1 = v
             .parse()
             .ok()
@@ -550,7 +551,7 @@ fn resolve_options(dom: &Html, mut options: CompileOptions, beats: &Beats) -> Re
     let root = composition_root(dom, &options)?;
     let beat_end = root
         .value()
-        .attr("data-duration")
+        .attr_text("data-duration")
         .map(|v| beats.seconds(v))
         .transpose()
         .map_err(CompileError::Input)?
@@ -559,7 +560,7 @@ fn resolve_options(dom: &Html, mut options: CompileOptions, beats: &Beats) -> Re
         ("data-width", &mut options.width),
         ("data-height", &mut options.height),
     ] {
-        if let Some(v) = root.value().attr(attr) {
+        if let Some(v) = root.value().attr_text(attr) {
             *target = v
                 .parse()
                 .map_err(|_| CompileError::Input(format!("invalid {attr}: {v}")))?;
@@ -569,7 +570,7 @@ fn resolve_options(dom: &Html, mut options: CompileOptions, beats: &Beats) -> Re
         ("data-duration", &mut options.duration),
         ("data-fps", &mut options.fps),
     ] {
-        if let Some(v) = root.value().attr(attr).filter(|_| attr != "data-duration" || beat_end.is_none()) {
+        if let Some(v) = root.value().attr_text(attr).filter(|_| attr != "data-duration" || beat_end.is_none()) {
             *target = v
                 .parse()
                 .map_err(|_| CompileError::Input(format!("invalid {attr}: {v}")))?;
@@ -606,7 +607,7 @@ pub(crate) fn compile_with_assets(
         )));
     }
     if let Some(el) = builder.motion.series.keys().find_map(|id| dom.tree.get(*id).and_then(ElementRef::wrap)) {
-        let name = match el.value().attr("id") {
+        let name = match el.value().attr_text("id") {
             Some(id) => format!("#{id}"),
             None => format!("<{}>", el.value().name()),
         };
@@ -723,8 +724,8 @@ fn build(
     for el in dom.select(&Selector::parse("style, link, script").unwrap()) {
         match el.value().name() {
             "style" if !el.ancestors().filter_map(ElementRef::wrap).any(|p|p.value().name()=="svg")=>css.append(&el.text().collect::<String>(), options.width, options.height)?,
-            "link" if el.value().attr("rel")==Some("stylesheet")=>{
-                let href=el.value().attr("href").ok_or_else(||CompileError::Input("stylesheet without href".into()))?;
+            "link" if el.value().attr_text("rel")==Some("stylesheet")=>{
+                let href=el.value().attr_text("href").ok_or_else(||CompileError::Input("stylesheet without href".into()))?;
                 let bytes=assets.read(href)?;let source=String::from_utf8(bytes).map_err(|e|CompileError::Input(e.to_string()))?;css.append(&source, options.width, options.height)?;
             },
             _=>{},
@@ -849,7 +850,7 @@ fn html_mut(director: &mut Director, id: NodeId) -> &mut HtmlElement {
 
 fn label(el: ElementRef<'_>) -> String {
     el.value()
-        .attr("id")
+        .attr_text("id")
         .map(|id| format!("#{id}"))
         .unwrap_or_else(|| el.value().name().into())
 }
@@ -1272,7 +1273,7 @@ impl Builder {
         self.motion.series.contains_key(&el.id())
             || el
                 .value()
-                .attr("id")
+                .attr_text("id")
                 .into_iter()
                 .chain([path.as_str()])
                 .any(|key| self.timeline.contains_key(key))
@@ -1300,7 +1301,7 @@ impl Builder {
     fn text_tracked(&self, el: ElementRef<'_>) -> bool {
         let path = crate::timeline::element_path(el, self.root_element);
         self.motion.series.get(&el.id()).is_some_and(|s| s.contains_key("#text"))
-            || el.value().attr("id").into_iter().chain([path.as_str()]).any(|key| {
+            || el.value().attr_text("id").into_iter().chain([path.as_str()]).any(|key| {
                 self.timeline.get(key).is_some_and(|tracks| tracks.iter().any(|t| t.property == "text"))
             })
     }
@@ -1335,7 +1336,7 @@ impl Builder {
                 samples
             }
         };
-        let volume = match el.value().attr("data-sfx-volume") {
+        let volume = match el.value().attr_text("data-sfx-volume") {
             None => 1.0,
             Some(v) => v.trim().parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0).ok_or_else(|| {
                 CompileError::Diagnostics(vec![diagnostic(
@@ -1348,7 +1349,7 @@ impl Builder {
             .ancestors()
             .filter_map(ElementRef::wrap)
             .chain([el])
-            .any(|el| el.value().attr("data-hidden").is_some_and(|v| v != "false"));
+            .any(|el| el.value().attr_text("data-hidden").is_some_and(|v| v != "false"));
         let seconds = samples.len() as f64 / 96000.0;
         let id = self.director.add_scene_audio(samples, start, seconds);
         if let Some(track) = &mut self.director.audio_mixer.tracks[id] {
@@ -1378,14 +1379,14 @@ impl Builder {
         let context = label(el);
         let mut values = self.css.cascade(el, parent)?;
         if tag == "svg" && !self.css.has_local_property(el, "color") {
-            if let Some(color) = el.value().attr("color") {
+            if let Some(color) = el.value().attr_text("color") {
                 values.insert("color", color);
             }
         }
         if matches!(tag, "img" | "svg" | "video") {
             for dimension in ["width", "height"] {
                 if !values.contains_key(dimension) {
-                    if let Some(value) = el.value().attr(dimension) {
+                    if let Some(value) = el.value().attr_text(dimension) {
                         let value = value
                             .parse::<f32>()
                             .map(|v| format!("{v}px"))
@@ -1495,7 +1496,7 @@ impl Builder {
         let numeric = |name: &str, default: f64| -> Result<f64, CompileError> {
             let v = el
                 .value()
-                .attr(name)
+                .attr_text(name)
                 .map(|v| {
                     v.parse::<f64>().map_err(|_| {
                         CompileError::Input(format!("{context}: {name} must be numeric"))
@@ -1511,7 +1512,7 @@ impl Builder {
         if !root {
             if let Some(name) = ["data-bpm", "data-beat-offset", "data-beats-per-bar"]
                 .into_iter()
-                .find(|name| el.value().attr(name).is_some())
+                .find(|name| el.value().attr_text(name).is_some())
             {
                 return Err(CompileError::Diagnostics(vec![diagnostic(
                     &context,
@@ -1523,7 +1524,7 @@ impl Builder {
         let beat_error = |e: String| CompileError::Diagnostics(vec![diagnostic(&context, e)]);
         let beats = self.beats.clone();
         let at = |name: &str| -> Result<Option<f64>, CompileError> {
-            Ok(el.value().attr(name).map(|v| beats.seconds(v)).transpose().map_err(beat_error)?.flatten())
+            Ok(el.value().attr_text(name).map(|v| beats.seconds(v)).transpose().map_err(beat_error)?.flatten())
         };
         let start = if root {
             0.0
@@ -1534,14 +1535,14 @@ impl Builder {
         };
         let end = if root {
             self.options.duration
-        } else if let Some(span) = el.value().attr("data-duration") {
+        } else if let Some(span) = el.value().attr_text("data-duration") {
             match beats.span_end(start, span).map_err(beat_error)? {
                 Some(end) => end,
                 None => start + numeric("data-duration", 0.0)?,
             }
         } else if let Some(end) = at("data-end")? {
             end
-        } else if el.value().attr("data-end").is_some() {
+        } else if el.value().attr_text("data-end").is_some() {
             composition_start + numeric("data-end", self.options.duration)?
         } else {
             self.options.duration
@@ -1551,7 +1552,7 @@ impl Builder {
                 "{context}: invalid clip window [{start}, {end})"
             )));
         }
-        if let Some(src) = el.value().attr("data-sfx") {
+        if let Some(src) = el.value().attr_text("data-sfx") {
             self.sound_effect(el, &context, src, start)?;
         }
         let mut svg_viewport: Option<(f32, f32)> = None;
@@ -1561,9 +1562,9 @@ impl Builder {
             "img" => {
                 let src = el
                     .value()
-                    .attr("src")
+                    .attr_text("src")
                     .ok_or_else(|| CompileError::Input(format!("{context}: image without src")))?;
-                if el.value().attr("srcset").is_some() {
+                if el.value().attr_text("srcset").is_some() {
                     return Err(CompileError::Input(
                         "responsive srcset requires extraction".into(),
                     ));
@@ -1607,7 +1608,7 @@ impl Builder {
                         value.replace('&', "&amp;").replace('"', "&quot;")
                     ));
                 }
-                if el.value().attr("xmlns").is_none() {
+                if el.value().attr_text("xmlns").is_none() {
                     markup.push_str(" xmlns=\"http://www.w3.org/2000/svg\"");
                 }
                 if let Some(id) = plan.target_id("") {
@@ -1651,17 +1652,17 @@ impl Builder {
                 Some(content_node)
             }
             "video" => {
-                if el.value().attr("muted").is_none() {
+                if el.value().attr_text("muted").is_none() {
                     return Err(CompileError::Input(
                         "video audio needs an explicit audio element; author muted video".into(),
                     ));
                 }
                 let src = el
                     .value()
-                    .attr("src")
+                    .attr_text("src")
                     .ok_or_else(|| CompileError::Input("video without src".into()))?;
                 let path = self.assets.media_path(src)?;
-                let looped = el.value().attr("loop").is_some();
+                let looped = el.value().attr_text("loop").is_some();
                 let duration = if looped { media_duration(&path)? } else { 0.0 };
                 let mut video = VideoNode::new(VideoSource::Path(path), RenderMode::Export);
                 // The document references the file through the compile asset loader.
@@ -1683,7 +1684,7 @@ impl Builder {
             "audio" => {
                 let src = el
                     .value()
-                    .attr("src")
+                    .attr_text("src")
                     .ok_or_else(|| CompileError::Input("audio without src".into()))?;
                 let mut samples = match self.beats.take_decoded(src) {
                     Some(samples) => samples,
@@ -1712,13 +1713,13 @@ impl Builder {
                     let hidden = el
                         .ancestors()
                         .filter_map(ElementRef::wrap)
-                        .any(|el| el.value().attr("data-hidden").is_some_and(|v| v != "false"));
+                        .any(|el| el.value().attr_text("data-hidden").is_some_and(|v| v != "false"));
                     track.volume = director_core::animation::Animated::new(if hidden {
                         0.0
                     } else {
                         volume as f32
                     });
-                    track.loop_audio = el.value().attr("loop").is_some();
+                    track.loop_audio = el.value().attr_text("loop").is_some();
                     // The document references the file through the compile asset loader.
                     if !src.starts_with("data:") {
                         track.source_path = Some(src.into());
@@ -1832,7 +1833,7 @@ impl Builder {
         );
         element.start = start;
         element.end = end;
-        element.hidden = el.value().attr("data-hidden").is_some_and(|v| v != "false");
+        element.hidden = el.value().attr_text("data-hidden").is_some_and(|v| v != "false");
         element.media_start = numeric("data-media-start", 0.0)?;
         element.playback_rate = numeric("data-playback-rate", 1.0)?;
         if element.media_start < 0.0 || element.playback_rate <= 0.0 {
@@ -1849,7 +1850,7 @@ impl Builder {
             .map_err(|e| CompileError::Diagnostics(vec![diagnostic(&context, e)]))?;
         let path = crate::timeline::element_path(el, self.root_element);
         let mut tracks = Vec::new();
-        for key in el.value().attr("id").into_iter().chain([path.as_str()]) {
+        for key in el.value().attr_text("id").into_iter().chain([path.as_str()]) {
             tracks.extend(self.timeline.remove(key).unwrap_or_default());
         }
         if let Some(mut series) = self.motion.series.remove(&el.id()) {
@@ -1858,7 +1859,7 @@ impl Builder {
                 series.retain(|property, _| !matches!(property.as_str(), "transform" | "width" | "height"));
             }
             let steps = self.motion.steps.remove(&el.id()).unwrap_or_default();
-            let target = el.value().attr("id").map_or_else(|| path.clone(), str::to_string);
+            let target = el.value().attr_text("id").map_or_else(|| path.clone(), str::to_string);
             let base = |channel: &str| {
                 crate::gsap::base_value(channel, &element.base_style, &element.base_paint)
             };
@@ -2001,7 +2002,7 @@ impl Builder {
             self.leaves.insert(child);
             self.nodes += 1;
             if !atomics.is_empty() {
-                let next_start = if !root && el.value().attr("data-composition-id").is_some() {
+                let next_start = if !root && el.value().attr_text("data-composition-id").is_some() {
                     start
                 } else {
                     composition_start
@@ -2009,7 +2010,7 @@ impl Builder {
                 self.place_atomics(id, child, &atomics, next_start, child_block, depth)?;
             }
         }
-        let next_start = if !root && el.value().attr("data-composition-id").is_some() {
+        let next_start = if !root && el.value().attr_text("data-composition-id").is_some() {
             start
         } else {
             composition_start
@@ -2024,7 +2025,7 @@ impl Builder {
                 .filter(|child| !matches!(child.value().name(), "script" | "style" | "link"))
                 .collect()
         };
-        if let Some(name) = el.value().attr("id") {
+        if let Some(name) = el.value().attr_text("id") {
             if self.ids.insert(name.into(), id).is_some() {
                 return Err(CompileError::Input(format!("duplicate HTML id '{name}'")));
             }
@@ -2049,7 +2050,7 @@ impl Builder {
             }
         }
         if let Some(fallback) = svg_viewport {
-            let next_start = if !root && el.value().attr("data-composition-id").is_some() {
+            let next_start = if !root && el.value().attr_text("data-composition-id").is_some() {
                 start
             } else {
                 composition_start
@@ -2189,7 +2190,7 @@ impl Builder {
             let raw = cascaded
                 .get(name)
                 .map(String::as_str)
-                .or_else(|| foreign.value().attr(name))
+                .or_else(|| foreign.value().attr_text(name))
                 .unwrap_or(default);
             parse_svg_len(raw)
         };
@@ -2269,7 +2270,7 @@ impl Builder {
         let box_id = self.director.scene.add_node(Box::new(element));
         self.nodes += 1;
         self.director.scene.get_node_mut(box_id).unwrap().z_index = paint.z_index;
-        if let Some(name) = foreign.value().attr("id") {
+        if let Some(name) = foreign.value().attr_text("id") {
             if self.ids.insert(name.into(), box_id).is_some() {
                 return Err(CompileError::Input(format!("duplicate HTML id '{name}'")));
             }

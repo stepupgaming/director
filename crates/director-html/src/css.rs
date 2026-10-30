@@ -1,3 +1,4 @@
+use crate::Attr;
 use crate::{computed::ComputedStyle, CompileError, Diagnostic};
 use lightningcss::{
     declaration::DeclarationBlock,
@@ -201,7 +202,7 @@ impl Css {
         self.has_stylesheet_property(el, name)
             || el
                 .value()
-                .attr("style")
+                .attr_text("style")
                 .and_then(|s| parse_inline(s).ok())
                 .is_some_and(|ds| ds.iter().any(|d| d.name == name))
     }
@@ -404,7 +405,7 @@ impl Css {
         for name in parent.keys().filter(|k| inherited(k)) {
             values.copy_from(parent, name);
         }
-        let inline = match el.value().attr("style") {
+        let inline = match el.value().attr_text("style") {
             Some(style) => parse_inline(style)?,
             None => Vec::new(),
         };

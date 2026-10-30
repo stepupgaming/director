@@ -17,6 +17,9 @@ mod sheet;
 mod skills;
 mod snapshot;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use director_core::video_wrapper::RenderMode;
 use input::{Encoder, Input};

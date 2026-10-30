@@ -6,6 +6,7 @@
 //! soundtrack. It resolves on first use, so pages that never name a beat
 //! never analyse their music.
 
+use crate::Attr;
 use crate::assets::AssetStore;
 use director_core::beats::{BeatGrid, BeatOptions};
 use scraper::ElementRef;
@@ -92,7 +93,7 @@ impl Beats {
     pub(crate) fn new(root: ElementRef<'_>, assets: &Arc<AssetStore>) -> Result<Self, String> {
         let attr = |name: &str| -> Result<Option<f64>, String> {
             root.value()
-                .attr(name)
+                .attr_text(name)
                 .map(|v| v.trim().parse::<f64>().map_err(|_| format!("{name} must be numeric (got '{v}')")))
                 .transpose()
         };
@@ -107,10 +108,10 @@ impl Beats {
         let music: Vec<_> = music.collect();
         let track = music
             .iter()
-            .find(|el| el.value().attr("data-timeline-role") == Some("music"))
+            .find(|el| el.value().attr_text("data-timeline-role") == Some("music"))
             .or_else(|| {
                 music.iter().find(|el| {
-                    el.value().attr("id").is_some_and(|id| {
+                    el.value().attr_text("id").is_some_and(|id| {
                         let id = id.to_ascii_lowercase();
                         ["music", "bgm", "soundtrack"].iter().any(|word| id.contains(word))
                     })
@@ -123,11 +124,11 @@ impl Beats {
                 let seconds = |name: &str| -> Result<f64, String> {
                     track
                         .value()
-                        .attr(name)
+                        .attr_text(name)
                         .map_or(Ok(0.0), |v| v.trim().parse().map_err(|_| format!("the music track's {name} must be seconds")))
                 };
                 Source::Music {
-                    src: track.value().attr("src").ok_or("the music track has no src")?.to_string(),
+                    src: track.value().attr_text("src").ok_or("the music track has no src")?.to_string(),
                     shift: seconds("data-start")? - seconds("data-media-start")?,
                     options: BeatOptions { beats_per_bar, bpm, ..Default::default() },
                     assets: assets.clone(),

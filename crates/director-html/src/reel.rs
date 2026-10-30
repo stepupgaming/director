@@ -8,6 +8,7 @@
 //! on `translate-y-percent`, so the reels compile, export and edit as ordinary
 //! timeline tracks.
 
+use crate::Attr;
 use crate::beats::Beats;
 use crate::timeline::{Timeline, TimelineKeyframe, TimelineTrack, TimelineValue, TIMELINE_FORMAT, TIMELINE_SCRIPT};
 use crate::CompileError;
@@ -58,7 +59,7 @@ pub(crate) fn expand(dom: &mut Html, root: NodeId, beats: &Beats) -> Result<(), 
     }
     let mut ids: HashSet<String> = dom
         .select(&Selector::parse("[id]").unwrap())
-        .filter_map(|el| el.value().attr("id").map(str::to_string))
+        .filter_map(|el| el.value().attr_text("id").map(str::to_string))
         .collect();
     let mut tracks = Vec::new();
     for (index, node) in reels.into_iter().enumerate() {
@@ -83,7 +84,7 @@ pub(crate) fn expand(dom: &mut Html, root: NodeId, beats: &Beats) -> Result<(), 
 
 fn read(dom: &Html, node: NodeId, root: NodeId, index: usize, beats: &Beats) -> Result<Reel, CompileError> {
     let el = ElementRef::wrap(dom.tree.get(node).unwrap()).unwrap();
-    let label = match el.value().attr("id") {
+    let label = match el.value().attr_text("id") {
         Some(id) => format!("#{id}"),
         None => format!("<{}>", el.value().name()),
     };
@@ -91,7 +92,7 @@ fn read(dom: &Html, node: NodeId, root: NodeId, index: usize, beats: &Beats) -> 
     if node != root && !el.ancestors().any(|a| a.id() == root) {
         return Err(fail("data-reel sits outside the composition".into()));
     }
-    if el.value().attr("data-reel").is_some_and(|v| !v.trim().is_empty()) {
+    if el.value().attr_text("data-reel").is_some_and(|v| !v.trim().is_empty()) {
         return Err(fail("data-reel takes no value; the element's text is the final value".into()));
     }
     if el.children().any(|c| !c.value().is_text() && !c.value().is_comment()) {
@@ -102,7 +103,7 @@ fn read(dom: &Html, node: NodeId, root: NodeId, index: usize, beats: &Beats) -> 
     if digits.is_empty() || !text.chars().all(|c| !c.is_numeric() || c.is_ascii_digit()) {
         return Err(fail(format!("data-reel text '{text}' needs ASCII digits")));
     }
-    let attr = |name: &str| el.value().attr(name).map(str::trim);
+    let attr = |name: &str| el.value().attr_text(name).map(str::trim);
     // The starting digits align to the final digits from the right; missing ones start at 0.
     let mut from = vec![0; digits.len()];
     if let Some(value) = attr("data-reel-from") {
@@ -151,7 +152,7 @@ fn read(dom: &Html, node: NodeId, root: NodeId, index: usize, beats: &Beats) -> 
         Some("down") => true,
         Some(other) => return Err(fail(format!("data-reel-direction must be up or down (got '{other}')"))),
     };
-    let base = match el.value().attr("id") {
+    let base = match el.value().attr_text("id") {
         Some(id) => id.to_string(),
         None => format!("reel-{index}"),
     };
@@ -185,7 +186,7 @@ fn clip_start(el: ElementRef<'_>, root: NodeId, beats: &Beats) -> Result<f64, St
     if el.id() == root {
         return Ok(0.0);
     }
-    let Some(value) = el.value().attr("data-start") else {
+    let Some(value) = el.value().attr_text("data-start") else {
         return match el.parent().and_then(ElementRef::wrap) {
             Some(parent) => clip_start(parent, root, beats),
             None => Ok(0.0),
@@ -197,7 +198,7 @@ fn clip_start(el: ElementRef<'_>, root: NodeId, beats: &Beats) -> Result<f64, St
     let composition = el
         .ancestors()
         .filter_map(ElementRef::wrap)
-        .find(|a| a.id() == root || a.value().attr("data-composition-id").is_some());
+        .find(|a| a.id() == root || a.value().attr_text("data-composition-id").is_some());
     let offset = match composition {
         Some(parent) => clip_start(parent, root, beats)?,
         None => 0.0,

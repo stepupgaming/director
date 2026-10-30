@@ -2,6 +2,7 @@
 //! native functions; `dom.js` wraps node indexes in browser-shaped objects.
 //! Layout and computed style come from a probe compile of the current tree.
 
+use crate::Attr;
 use boa_engine::{
     object::builtins::JsArray, Context, JsNativeError, JsResult, JsString, JsValue, NativeFunction,
 };
@@ -105,7 +106,7 @@ impl Doc {
             .tree
             .root()
             .descendants()
-            .filter(|n| n.value().as_element().is_some_and(|e| e.attr("data-composition-id").is_some()))
+            .filter(|n| n.value().as_element().is_some_and(|e| e.attr_text("data-composition-id").is_some()))
             .filter(|n| !ancestry.contains(&n.id()) && n.id() != id && !n.ancestors().any(|a| a.id() == id))
             .filter(|n| {
                 let position = last.map.get(&n.id()).and_then(|p| p.css.get("position"));
@@ -230,7 +231,7 @@ impl Doc {
         let html = element.name.ns == ns!(html);
         let name = if html { name.to_ascii_lowercase() } else { name.to_string() };
         let paint = match name.as_str() {
-            "style" => paint_change(element.attr("style").unwrap_or_default(), value.as_deref().unwrap_or_default()),
+            "style" => paint_change(element.attr_text("style").unwrap_or_default(), value.as_deref().unwrap_or_default()),
             _ => None,
         };
         let (id, layout) = (self.id(i)?, self.layout);
@@ -254,7 +255,7 @@ impl Doc {
         if let Some(inherited) = paint {
             self.layout = layout;
             *self.painted.entry(id).or_default() |= inherited;
-        } else if self.element(i)?.value().attr("data-composition-id").is_some() {
+        } else if self.element(i)?.value().attr_text("data-composition-id").is_some() {
             // Scoped probes trust each clip's last placement.
             self.probe = None;
         }
@@ -264,7 +265,7 @@ impl Doc {
     /// `#id`, else `<tag>`, naming element `i` in diagnostics.
     pub(crate) fn label(&self, i: usize) -> String {
         match self.element(i) {
-            Ok(el) => match el.value().attr("id") {
+            Ok(el) => match el.value().attr_text("id") {
                 Some(id) => format!("#{id}"),
                 None => format!("<{}>", el.value().name()),
             },

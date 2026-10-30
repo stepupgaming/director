@@ -3,6 +3,7 @@
 //! and each track compiles to a native animation on the element whose `id`
 //! matches its target.
 
+use crate::Attr;
 use crate::beats::Beats;
 use crate::CompileError;
 use scraper::{Html, Selector};
@@ -116,7 +117,7 @@ pub(crate) fn collect(dom: &Html, beats: &Beats) -> Result<BTreeMap<String, Vec<
         tracks: Vec::new(),
     };
     for script in dom.select(&Selector::parse("script").unwrap()) {
-        if script.value().attr("type") != Some(TIMELINE_SCRIPT) {
+        if script.value().attr_text("type") != Some(TIMELINE_SCRIPT) {
             continue;
         }
         let text: String = script.text().collect();

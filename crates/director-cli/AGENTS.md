@@ -20,6 +20,7 @@
 
 - CLI behavior must remain consistent with `README.md`.
 - User-facing errors should distinguish script failures (exit 1) from render failures (exit 2).
+- `director-engine` uses mimalloc as its global allocator.
 - Logs filter by `RUST_LOG` when set, else by the log level with `tiny_skia` and `usvg::parser::filter` at `error`, because they warn on every frame for an SVG dash pattern with no visible dash and a filter on a zero-size shape, both of which draw nothing.
 - HTML compile/extraction failures exit 1; native paint/export/output failures exit 2. Capture JSON declares its FPS and sample rate; stored metadata controls playback.
 - `sheet` prints one JSON object and writes one PNG. Frames are `i * timeline_duration / n`, painted at full size, then scaled into the cell. Frame count is capped at 64 and the raster at 16777216 pixels. Load or a rejected plan exits 1; paint or write failure exits 2.

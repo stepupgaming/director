@@ -6,6 +6,7 @@
 mod dom;
 pub(crate) mod ease;
 
+use crate::Attr;
 use crate::animation::{
     border_side, box_side, filter_default as default_amount, filter_scalar, filter_shadow_color, indexed, shadow_scalar, Parts,
     COMPONENTS, NO_TEXT_SHADOW,
@@ -160,7 +161,7 @@ fn js_error(e: boa_engine::JsError) -> String {
 fn scripts(dom: &Html, options: &CompileOptions, assets: &AssetStore) -> Result<Vec<Script>, String> {
     let mut out = Vec::new();
     for script in dom.select(&Selector::parse("script").unwrap()) {
-        let kind = script.value().attr("type").map(str::trim).unwrap_or("");
+        let kind = script.value().attr_text("type").map(str::trim).unwrap_or("");
         if matches!(
             kind,
             "application/json" | "application/ld+json" | crate::timeline::TIMELINE_SCRIPT
@@ -173,7 +174,7 @@ fn scripts(dom: &Html, options: &CompileOptions, assets: &AssetStore) -> Result<
         if !matches!(kind, "" | "text/javascript" | "application/javascript") {
             return Err(format!("script type '{kind}' requires extraction; run director-engine html capture"));
         }
-        let Some(src) = script.value().attr("src") else {
+        let Some(src) = script.value().attr_text("src") else {
             out.push(Script {
                 name: "inline script".into(),
                 source: script.text().collect(),
@@ -274,9 +275,10 @@ fn document(
 /// The fewest samples one script run records. Each run replays setup, which
 /// costs about as much as fifty samples, so a run records a few times that.
 const RUN_SAMPLES: usize = 128;
-/// The most runs a page splits into, enough to share a long film across many
-/// cores with room to balance uneven runs.
-const RUNS: usize = 64;
+/// The most runs a page splits into, one per core on a 24-thread machine.
+/// Each run past the first replays setup and starts mid-timeline, so fewer
+/// runs save setup and start fewer runs inside overlapping tweens.
+const RUNS: usize = 24;
 
 /// Contiguous sample ranges, one per script run. The split depends only on
 /// the sample count, so every machine records the same samples.

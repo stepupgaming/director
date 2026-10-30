@@ -1,3 +1,4 @@
+use crate::Attr;
 use crate::{
     assets::AssetStore,
     capture::compile_capture_with_assets,
@@ -218,7 +219,7 @@ fn edited_html(html: &str, edits: &BTreeMap<String, ElementEdit>) -> Result<Stri
     for (id, edit) in edits {
         let ids: Vec<_> = dom
             .select(&Selector::parse("[id]").unwrap())
-            .filter(|n| n.value().attr("id") == Some(id.as_str()))
+            .filter(|n| n.value().attr_text("id") == Some(id.as_str()))
             .map(|n| n.id())
             .collect();
         if ids.len() != 1 {
@@ -232,7 +233,7 @@ fn edited_html(html: &str, edits: &BTreeMap<String, ElementEdit>) -> Result<Stri
         let mut node = dom.tree.get_mut(node_id).unwrap();
         if let Node::Element(element) = node.value() {
             if !declarations.is_empty() {
-                let previous = element.attr("style").unwrap_or("");
+                let previous = element.attr_text("style").unwrap_or("");
                 set_attribute(element, "style", &format!("{previous};{declarations}"));
             }
             for (name, value) in &edit.attributes {

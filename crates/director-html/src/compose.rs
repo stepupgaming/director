@@ -10,6 +10,7 @@
 //! clip's clock. A document whose only
 //! composition root sits inside a `<template>` compiles that template.
 
+use crate::Attr;
 use crate::assets::AssetStore;
 use crate::CompileError;
 use ego_tree::NodeId;
@@ -31,7 +32,7 @@ pub(crate) fn mount(dom: &mut Html, assets: &AssetStore) -> Result<(), CompileEr
         let hosts: Vec<(NodeId, String)> = dom
             .select(&Selector::parse("[data-composition-src]").unwrap())
             .filter(|el| !mounted.contains(&el.id()))
-            .map(|el| (el.id(), el.value().attr("data-composition-src").unwrap_or("").trim().to_string()))
+            .map(|el| (el.id(), el.value().attr_text("data-composition-src").unwrap_or("").trim().to_string()))
             .collect();
         if hosts.is_empty() {
             return Ok(());
@@ -49,7 +50,7 @@ pub(crate) fn mount(dom: &mut Html, assets: &AssetStore) -> Result<(), CompileEr
 
 fn mount_one(dom: &mut Html, host: NodeId, src: &str, assets: &AssetStore) -> Result<(), CompileError> {
     let el = ElementRef::wrap(dom.tree.get(host).unwrap()).unwrap();
-    let id = el.value().attr("data-composition-id").map(str::to_string);
+    let id = el.value().attr_text("data-composition-id").map(str::to_string);
     let label = format!("data-composition-src '{src}'");
     let fail = |message: String| CompileError::Input(format!("{label}: {message}"));
     let Some(id) = id else {
@@ -81,7 +82,7 @@ fn mount_one(dom: &mut Html, host: NodeId, src: &str, assets: &AssetStore) -> Re
         .iter()
         .filter_map(|n| ElementRef::wrap(sub.tree.get(*n).unwrap()))
         .flat_map(|e| e.descendants().filter_map(ElementRef::wrap))
-        .filter(|e| e.value().attr("data-composition-id") == Some(id.as_str()))
+        .filter(|e| e.value().attr_text("data-composition-id") == Some(id.as_str()))
         .map(|e| e.id())
         .collect();
     if roots.len() != 1 {
@@ -91,8 +92,8 @@ fn mount_one(dom: &mut Html, host: NodeId, src: &str, assets: &AssetStore) -> Re
     for node in content {
         if let Some(el) = ElementRef::wrap(sub.tree.get(node).unwrap()) {
             let key = match el.value().name() {
-                "script" => el.value().attr("src").map(|s| rebase(dir, s)),
-                "link" => el.value().attr("href").map(|s| rebase(dir, s)),
+                "script" => el.value().attr_text("src").map(|s| rebase(dir, s)),
+                "link" => el.value().attr_text("href").map(|s| rebase(dir, s)),
                 _ => None,
             };
             if key.is_some_and(|key| loaded.contains(&key)) {
@@ -108,7 +109,7 @@ fn mount_one(dom: &mut Html, host: NodeId, src: &str, assets: &AssetStore) -> Re
 /// The script sources and stylesheet links `dom` already loads.
 fn loaded(dom: &Html) -> Vec<String> {
     dom.select(&Selector::parse("script[src], link[rel=stylesheet][href]").unwrap())
-        .filter_map(|e| e.value().attr("src").or_else(|| e.value().attr("href")).map(str::to_string))
+        .filter_map(|e| e.value().attr_text("src").or_else(|| e.value().attr_text("href")).map(str::to_string))
         .collect()
 }
 
@@ -140,7 +141,7 @@ fn copy(from: &Html, node: NodeId, to: &mut Html, dir: &str, root: NodeId) -> No
         to.tree.get_mut(id).unwrap().append_id(child);
     }
     if let Some(el) = ElementRef::wrap(source) {
-        if let Some(style) = el.value().attr("style") {
+        if let Some(style) = el.value().attr_text("style") {
             let rebased = rebase_css(dir, style);
             if let Node::Element(el) = to.tree.get_mut(id).unwrap().value() {
                 for (name, attr) in el.attrs.iter_mut() {
