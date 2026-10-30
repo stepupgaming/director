@@ -31,16 +31,7 @@ mod style;
 mod timeline;
 mod transform_origin;
 
-/// Attribute lookup by text. `Element::attr` interns its argument, and a name outside html5ever's static atoms takes string_cache's process-wide lock, which serializes parallel GSAP recording.
-pub(crate) trait Attr {
-    fn attr_text(&self, name: &str) -> Option<&str>;
-}
-
-impl Attr for scraper::node::Element {
-    fn attr_text(&self, name: &str) -> Option<&str> {
-        self.attrs.iter().find(|(q, _)| q.ns.is_empty() && &*q.local == name).map(|(_, v)| &**v)
-    }
-}
+pub(crate) use director_dom::Attr;
 
 pub use capture::{
     compile_capture, compile_capture_file, Capture, CapturedFrame, CapturedMedia, CapturedNode,

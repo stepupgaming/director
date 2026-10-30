@@ -1,0 +1,13 @@
+[package]
+name = "director-recorder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The GSAP recorder helper that runs page scripts for Director's HTML compiler in its own process"
+
+# Never depend on Skia or any crate that links it: the JavaScript engine's
+# prebuilt library clashes with Skia's at link time.
+[dependencies]
+director-dom = { path = "../director-dom" }
+serde_json.workspace = true
+boa_engine = { version = "0.22", default-features = false, features = ["annex-b"] }

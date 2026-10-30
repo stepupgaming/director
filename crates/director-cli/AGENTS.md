@@ -14,6 +14,7 @@
 - `src/run.rs` owns default output naming (`default_video_output`). Script evaluation and movie resolution live in `director_host::script`.
 - `src/gpu.rs` owns Vulkan context creation (`director_render::GpuContext`), explicit HTML GPU requests, native render-surface creation and synchronous RGBA readback.
 - `src/bin/director_manifest.rs` owns agent-facing JSON manifest export (`api`, `schema`, `from-json`, `from-script`).
+- `src/bin/director_recorder.rs` is the `director-recorder` helper `director-html` spawns per GSAP script run (`director_recorder::serve`, with mimalloc). `director-engine` does not link `director-recorder`.
 - `README.md` owns CLI usage and exit-code documentation.
 
 ## Local Contracts

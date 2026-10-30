@@ -6,7 +6,7 @@
 
 - `skia-safe/` is upstream skia-safe 0.153.3 from revision `b7f043e0b1e2a850e702245de811f01df1f6b0ff`, with the Vulkan resolver lifetime patch.
 - Its upstream manifest, license and source remain intact except for the three documented edits. `LICENSE` is upstream's MIT license file, which the crates.io package omits.
-- `boa_engine/` is upstream boa_engine 0.22.0 from crates.io with the operand-order patch. `director-html` runs page scripts and GSAP on it.
+- `boa_engine/` is upstream boa_engine 0.22.0 from crates.io with the operand-order patch. The `director-recorder` helper runs page scripts and GSAP on it.
 
 ## Local Contracts
 

@@ -11,6 +11,7 @@ anyhow.workspace = true
 clap = { version = "4.5.53", features = ["derive"] }
 director-core = { path = "../director-core" }
 director-html = { path = "../director-html" }
+director-recorder = { path = "../director-recorder" }
 director-render = { path = "../director-render" }
 director-host = { path = "../director-host" }
 director-schema = { path = "../director-schema" }
@@ -46,6 +47,10 @@ path = "src/main.rs"
 [[bin]]
 name = "director-manifest"
 path = "src/bin/director_manifest.rs"
+
+[[bin]]
+name = "director-recorder"
+path = "src/bin/director_recorder.rs"
 
 [[bin]]
 name = "director-cli"

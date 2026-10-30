@@ -105,7 +105,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Current phase status, latest test counts, and the next action live in `docs/plans/10-native-platform-overhaul.md`. Read it first when resuming work.
 - Use Cargo workspace conventions from `Cargo.toml`; prefer package-scoped checks while iterating and workspace checks before broad closeout.
 - Keep Rust crate ownership clear: public API and shared runtime behavior belong in `crates/director-core`, the serializable scene document in `crates/director-scene`, document frame rendering in `crates/director-render`, the host session (open, patch, inspect, render, export) in `crates/director-host`, command-line concerns in `crates/director-cli`, schema reflection in `crates/director-schema`, and Lottie-specific logic in the `lottie-*` crates.
-- `crates/director-html` owns HTML/CSS/HyperFrames compilation, GSAP translation to native tracks, portable native authoring projects and explicit compile-time browser extraction. Native rendering continues through `director-core`; Hyper CN is part of its compatibility corpus.
+- `crates/director-html` owns HTML/CSS/HyperFrames compilation, GSAP translation to native tracks, portable native authoring projects and explicit compile-time browser extraction. Native rendering continues through `director-core`; Hyper CN is part of its compatibility corpus. Page scripts run in the `director-recorder` helper process (`crates/director-recorder`, sharing `crates/director-dom`), so a JavaScript engine never links beside Skia.
 - Keep core contracts in `docs/architecture/core-contracts.md` green when changing engine spines.
 - Rhai examples are executable reference material. Update examples and tests when scripting-facing behavior changes.
 - Generated or downloaded assets should not become durable source unless the relevant AGENTS.md explicitly says they are owned there.
@@ -113,7 +113,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Product direction: high-quality native video production for agents and developers, covering short-form and long-form (Shorts, Reels, TikTok, YouTube). Keep preview, editing, inspection and export consistent across supported authoring inputs. Web research as an input belongs at orchestration layers outside the render core.
 - `vendor/` contains third-party source selected by local Cargo patches. Do not modify vendor sources without updating its `AGENTS.md`; exclude vendored packages from workspace membership.
 - `vendor/skia-safe/` is skia-safe 0.153.3 with three edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.
-- `vendor/boa_engine/` is boa_engine 0.22.0 with a bytecompiler fix that reads a left local operand before a right operand assigns it. `director-html` runs page scripts on it.
+- `vendor/boa_engine/` is boa_engine 0.22.0 with a bytecompiler fix that reads a left local operand before a right operand assigns it. The `director-recorder` helper runs page scripts on it.
 
 ## Verification
 

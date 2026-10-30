@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/director-core",
     "crates/director-html",
+    "crates/director-dom",
+    "crates/director-recorder",
     "crates/director-cli",
     "crates/director-schema",
     "crates/director-scene",

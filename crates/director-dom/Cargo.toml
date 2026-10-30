@@ -1,0 +1,15 @@
+[package]
+name = "director-dom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The scripted page document and recorder protocol Director's GSAP recording shares across processes"
+
+# Skia-free and engine-free: the recorder helper links it beside a JavaScript
+# engine, and director-html links it beside Skia.
+[dependencies]
+serde.workspace = true
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
+scraper = { version = "0.24", features = ["atomic"] }
+html5ever = "0.35"
+ego-tree = "0.10"
