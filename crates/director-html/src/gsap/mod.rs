@@ -36,9 +36,12 @@ use director_dom::protocol::{Script, Span};
 use recorder::{Host, Page, Probes};
 pub(crate) use recorder::{matrix_text, Probe, Probed};
 
-/// One value per frame for each property a script animates, `None` where the
-/// element falls back to its cascaded value.
-pub(crate) type Series = BTreeMap<String, Vec<Option<String>>>;
+/// One recorded value, `None` where the element falls back to its cascaded
+/// value. Frames that hold one write share its text.
+pub(crate) type Sample = Option<Arc<str>>;
+
+/// One value per frame for each property a script animates.
+pub(crate) type Series = BTreeMap<String, Vec<Sample>>;
 
 /// Where a set jumps, by recorded property or transform channel: the frame
 /// that first shows the new value and the jump time in seconds.
@@ -340,7 +343,7 @@ fn serialize(decls: &[(String, String)]) -> Option<String> {
 }
 
 /// A GSAP write with no effect on screen.
-fn invisible(name: &str, values: &[Option<String>]) -> bool {
+fn invisible(name: &str, values: &[Sample]) -> bool {
     INVISIBLE.contains(&name)
         || name == "@data-svg-origin"
         || (matches!(name, "translate" | "rotate" | "scale")
@@ -386,7 +389,7 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
     // first write and every write as (frame, value).
     let mut slots: HashMap<(usize, &str), usize> = HashMap::new();
     let mut keys: Vec<(usize, &str)> = Vec::new();
-    let mut befores: Vec<Option<String>> = Vec::new();
+    let mut befores: Vec<Sample> = Vec::new();
     let mut writes: Vec<Vec<(usize, &str)>> = Vec::new();
     for (f, (entries, error)) in parsed.into_iter().enumerate() {
         for (i, key, value) in entries {
@@ -409,7 +412,7 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
                         setup[&i].iter().find(|(n, _)| *n == key).map(|(_, v)| v.clone())
                     };
                     keys.push((i, key));
-                    befores.push(before);
+                    befores.push(before.map(Arc::from));
                     writes.push(Vec::new());
                     *e.insert(keys.len() - 1)
                 }
@@ -421,7 +424,7 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
         }
     }
     // Each slot holds its last value through the frames after it.
-    let columns: Vec<Vec<Option<String>>> = befores
+    let columns: Vec<Vec<Sample>> = befores
         .into_par_iter()
         .zip(writes.par_iter())
         .map(|(before, writes)| {
@@ -430,7 +433,7 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
             let mut next = writes.iter().peekable();
             for f in 0..frames.len() {
                 while let Some((_, v)) = next.next_if(|(w, _)| *w == f) {
-                    value = (*v != "\u{2}").then(|| v.to_string());
+                    value = (*v != "\u{2}").then(|| Arc::from(*v));
                 }
                 column.push(value.clone());
             }
@@ -460,7 +463,7 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
         let Ok(Some(style)) = doc.attr(i, "style") else { continue };
         let mut decls = declarations(&style);
         let before = decls.len();
-        decls.retain(|(name, value)| !invisible(name, &[Some(value.clone())]));
+        decls.retain(|(name, value)| !invisible(name, &[Some(value.as_str().into())]));
         if decls.len() != before {
             doc.write_attr(i, "style", serialize(&decls))?;
         }
@@ -519,8 +522,9 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
                 if let Some(probed) = doc.probed(i, true)? {
                     let css = probed.css.get("transform").map_or("none", String::as_str);
                     if css != "none" && decompose(css).is_err() {
-                        let fill = components(&probed.transform)
-                            .ok_or_else(|| format!("GSAP animates {label} over the 3D transform '{css}'"))?;
+                        let fill: Arc<str> = components(&probed.transform)
+                            .ok_or_else(|| format!("GSAP animates {label} over the 3D transform '{css}'"))?
+                            .into();
                         for v in values.iter_mut().filter(|v| v.is_none()) {
                             *v = Some(fill.clone());
                         }
@@ -549,7 +553,7 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
             let constant = values.iter().all(|v| *v == first);
             if let Some(name) = key.strip_prefix('@') {
                 if constant {
-                    doc.write_attr(i, name, first)?;
+                    doc.write_attr(i, name, first.as_deref().map(str::to_string))?;
                 } else if in_svg || (svg_root && name == "viewBox") {
                     let (base, animate) = svg_animation(name, &values, &jumps(&key), times, fps)?;
                     doc.write_attr(i, name, Some(base))?;
@@ -570,9 +574,9 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
                     return Err(format!("GSAP animates the text of SVG {label}; SVG text keeps its markup"));
                 }
                 // The first frame's text becomes the element's own text.
-                let first = first.unwrap_or_default();
+                let first = first.as_deref().unwrap_or_default();
                 if doc.text(i)? != first {
-                    doc.write_text(i, &first)?;
+                    doc.write_text(i, first)?;
                 }
                 if !constant {
                     kept.insert(key, values);
@@ -580,19 +584,19 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
                 continue;
             }
             if constant {
-                put(&mut decls, &key, first);
+                put(&mut decls, &key, first.as_deref().map(str::to_string));
                 continue;
             }
             // GSAP sets transformOrigin once when a tween starts.
             if key == "transform-origin" {
                 let set: Vec<_> = values.iter().flatten().collect();
                 if set.iter().all(|v| *v == set[0]) {
-                    put(&mut decls, &key, Some(set[0].clone()));
+                    put(&mut decls, &key, Some(set[0].to_string()));
                     continue;
                 }
             }
             if !NATIVE.contains(&key.as_str()) {
-                let shown = |v: &Option<String>| v.as_deref().map_or("unset".into(), |v| format!("'{v}'"));
+                let shown = |v: &Sample| v.as_deref().map_or("unset".into(), |v| format!("'{v}'"));
                 let change = values.iter().find(|v| **v != first).unwrap_or(&first);
                 return Err(format!(
                     "GSAP animates '{key}' on {label} from {} to {}; native tracks cover {}",
@@ -604,7 +608,7 @@ fn collect(doc: &mut Page, frames: &[String], times: &[f64], fps: f64) -> Result
             // The first frame becomes the base unless some frame falls back
             // to the cascade.
             let base = if values.iter().all(Option::is_some) { first } else { None };
-            put(&mut decls, &key, base);
+            put(&mut decls, &key, base.as_deref().map(str::to_string));
             kept.insert(key, values);
         }
         doc.write_attr(i, "style", serialize(&decls))?;
@@ -634,7 +638,7 @@ const SVG_COLORS: &[&str] = &["fill", "stroke", "stop-color", "flood-color", "li
 /// through two keys that share one key time.
 fn svg_animation(
     name: &str,
-    values: &[Option<String>],
+    values: &[Sample],
     jumps: &[(usize, f64)],
     times: &[f64],
     fps: f64,
@@ -649,7 +653,7 @@ fn svg_animation(
         texts.push(match v {
             // `0px, 9px` and `2px,7px` share one skeleton.
             Some(v) => v.split(',').map(|p| p.split_whitespace().collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join(","),
-            None => identity.clone().or_else(|| last.clone()).unwrap_or_default(),
+            None => identity.clone().or_else(|| last.as_deref().map(str::to_string)).unwrap_or_default(),
         });
     }
     if name == "transform" {
@@ -1294,7 +1298,7 @@ fn decompose(text: &str) -> Result<Parts, String> {
 /// before reuses its result, and chunks of samples parse on the Rayon pool.
 /// The first failure in sample order wins.
 fn parse_samples<T: Clone + Send>(
-    values: &[Option<String>],
+    values: &[Sample],
     parse: impl Fn(&str) -> Result<T, String> + Sync,
 ) -> Result<Vec<Option<T>>, String> {
     let chunks: Vec<Result<Vec<Option<T>>, String>> = values
@@ -1496,7 +1500,7 @@ pub(crate) fn tracks(
                     if !axes.iter().all(|a| a.is_some_and(|(p, _)| p == percent)) {
                         return Err(format!(
                             "GSAP background-size moves layer {i} {axis} between units or keywords ({})",
-                            values.iter().flatten().next().map_or("unset", String::as_str)
+                            values.iter().flatten().next().map_or("unset", |v| &**v)
                         ));
                     }
                     let channel = format!("background-size-{i}-{axis}{}", if percent { "-percent" } else { "" });
@@ -1663,13 +1667,13 @@ pub(crate) fn tracks(
 /// A `text` track keyed on each frame whose text differs from the frame
 /// before, at the set's time when a set wrote it. The element shows its own
 /// text, the first frame's, until then.
-fn text_track(values: &[Option<String>], steps: &[(usize, f64)], target: &str, times: &[f64]) -> TimelineTrack {
-    let text = |f: usize| values[f].clone().unwrap_or_default();
+fn text_track(values: &[Sample], steps: &[(usize, f64)], target: &str, times: &[f64]) -> TimelineTrack {
+    let text = |f: usize| values[f].as_deref().unwrap_or_default();
     let keyframes = (1..values.len())
         .filter(|&f| text(f) != text(f - 1))
         .map(|f| TimelineKeyframe {
             time: steps.iter().filter(|s| s.0 == f).map(|s| s.1).reduce(f64::min).unwrap_or(times[f]),
-            value: TimelineValue::Text(text(f)),
+            value: TimelineValue::Text(text(f).to_string()),
             ease: None,
         })
         .collect();
