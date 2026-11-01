@@ -1360,12 +1360,28 @@ pub(crate) fn tracks(
         if property == "transform" {
             let parts = parse_samples(values, |text| decompose(text).map(|p| p.values()))?;
             let bases = COMPONENTS.iter().map(|channel| base(channel)).collect::<Result<Vec<_>, _>>()?;
-            let columns: Vec<Vec<Val>> = (0..COMPONENTS.len())
+            // A component that holds its base on every frame thins to no
+            // track, so its column is never built.
+            let eps = COMPONENTS.map(tolerance);
+            let moves = parts
+                .par_chunks(4096)
+                .map(|chunk| {
+                    let mut moves = [false; COMPONENTS.len()];
+                    for p in chunk.iter().flatten() {
+                        for (k, m) in moves.iter_mut().enumerate() {
+                            *m |= moved(&Val::Num(p[k] as f64), &bases[k], eps[k]);
+                        }
+                    }
+                    moves
+                })
+                .reduce(|| [false; COMPONENTS.len()], |a, b| std::array::from_fn(|k| a[k] || b[k]));
+            let columns: Vec<(usize, Vec<Val>)> = (0..COMPONENTS.len())
                 .into_par_iter()
-                .map(|k| parts.iter().map(|p| p.map_or(bases[k], |p| Val::Num(p[k] as f64))).collect())
+                .filter(|&k| moves[k])
+                .map(|k| (k, parts.iter().map(|p| p.map_or(bases[k], |p| Val::Num(p[k] as f64))).collect()))
                 .collect();
-            for (channel, samples) in COMPONENTS.into_iter().zip(columns) {
-                channels.push((channel.to_string(), property, samples));
+            for (k, samples) in columns {
+                channels.push((COMPONENTS[k].to_string(), property, samples));
             }
             continue;
         }
