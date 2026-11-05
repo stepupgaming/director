@@ -168,6 +168,9 @@ pub struct HtmlPaint {
     pub preserve_3d: bool,
     /// CSS `filter` functions in source order.
     pub filters: Vec<CssFilter>,
+    /// The colour grade from `--grade`, applied after `filters`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<HtmlGrade>,
     /// `mix-blend-mode` as a node record blend name.
     pub blend_mode: String,
     pub shadows: Vec<HtmlShadow>,
@@ -302,6 +305,27 @@ pub struct HtmlShadow {
     pub y: f32,
     pub blur: f32,
     pub spread: f32,
+}
+
+/// A colour grade: `from`, crossfading toward `to` by `mix`, blended with
+/// the ungraded colour by `intensity`. Both amounts run from 0 to 1.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HtmlGrade {
+    pub from: GradeLut,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<GradeLut>,
+    pub mix: f32,
+    pub intensity: f32,
+}
+
+/// The 3D LUT of a grade.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GradeLut {
+    /// A built-in preset: film-print, bleach-bypass, teal-orange, warm-fade, night or mono.
+    Preset { name: String },
+    /// An asset holding `.cube` file text.
+    Cube { asset: AssetId },
 }
 
 /// One CSS filter function with its amount resolved.

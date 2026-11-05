@@ -68,6 +68,15 @@ pub(crate) fn html_body(element: &HtmlElement, cx: &mut ExportContext) -> Result
     })
 }
 
+fn grade_lut(lut: &director_core::grade::Lut3d, cx: &mut ExportContext) -> doc::GradeLut {
+    match &lut.source {
+        director_core::grade::LutSource::Preset(name) => doc::GradeLut::Preset { name: name.to_string() },
+        director_core::grade::LutSource::Cube(bytes) => doc::GradeLut::Cube {
+            asset: cx.embedded_asset("lut", "text/plain", bytes),
+        },
+    }
+}
+
 fn paint(p: &PaintStyle, cx: &mut ExportContext) -> Result<doc::HtmlPaint, ExportError> {
     let NodeBody::Box(box_paint) = nodes::box_body(&p.box_node, cx)?.body else {
         unreachable!("box_body returns a box body");
@@ -203,6 +212,12 @@ fn paint(p: &PaintStyle, cx: &mut ExportContext) -> Result<doc::HtmlPaint, Expor
         backface_hidden: p.backface_hidden,
         preserve_3d: p.preserve_3d,
         filters: p.filters.iter().map(filter).collect(),
+        grade: p.grade.as_ref().map(|grade| doc::HtmlGrade {
+            from: grade_lut(&grade.from, cx),
+            to: grade.to.as_ref().map(|lut| grade_lut(lut, cx)),
+            mix: grade.mix,
+            intensity: grade.intensity,
+        }),
         blend_mode: blend_mode_name(p.blend_mode).to_string(),
         shadows: p
             .shadows

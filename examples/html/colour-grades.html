@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html, body { margin:0; background:#0b0d12; }
+  * { box-sizing:border-box; }
+  #stage { width:100%; height:100%; position:relative; font-family:Inter, sans-serif; color:#f4f1ea; }
+  .grid { position:absolute; inset:0; display:grid; grid-template-columns:repeat(3, 1fr); gap:24px; padding:48px 48px 32px; }
+  .tile { display:flex; flex-direction:column; gap:10px; }
+  .tile video { width:100%; height:218px; object-fit:cover; border-radius:10px; }
+  .tile p { margin:0; font-size:22px; font-weight:600; letter-spacing:0.02em; }
+  .film-print video { --grade:film-print; }
+  .bleach-bypass video { --grade:bleach-bypass; }
+  .teal-orange video { --grade:teal-orange; }
+  .warm-fade video { --grade:warm-fade; }
+  .night video { --grade:night; }
+  .mono video { --grade:mono; }
+  .fade { position:absolute; inset:0; }
+  .fade video { width:100%; height:100%; object-fit:cover; --grade:film-print night; --grade-mix:0; animation:to-night 1s linear 4.5s both; }
+  .fade p { position:absolute; left:48px; bottom:40px; margin:0; font-size:40px; font-weight:700; }
+  @keyframes to-night { from { --grade-mix:0; } to { --grade-mix:1; } }
+</style></head><body>
+<div id="stage" data-composition-id="colour-grades" data-no-timeline data-width="1280" data-height="720" data-fps="30" data-duration="7">
+  <div class="grid" data-start="0" data-duration="3.5">
+    <div class="tile film-print"><video muted loop src="../assets/clip.mp4"></video><p>film-print</p></div>
+    <div class="tile bleach-bypass"><video muted loop src="../assets/clip.mp4"></video><p>bleach-bypass</p></div>
+    <div class="tile teal-orange"><video muted loop src="../assets/clip.mp4"></video><p>teal-orange</p></div>
+    <div class="tile warm-fade"><video muted loop src="../assets/clip.mp4"></video><p>warm-fade</p></div>
+    <div class="tile night"><video muted loop src="../assets/clip.mp4"></video><p>night</p></div>
+    <div class="tile mono"><video muted loop src="../assets/clip.mp4"></video><p>mono</p></div>
+  </div>
+  <div class="fade" data-start="3.5" data-duration="3.5">
+    <video muted loop src="../assets/clip.mp4"></video>
+    <p>film-print to night in 1 s</p>
+  </div>
+</div>
+</body></html>

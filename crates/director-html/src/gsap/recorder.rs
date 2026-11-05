@@ -399,8 +399,9 @@ fn computed_value(probed: Option<&Probed>, tag: &str, prop: &str) -> String {
                     return px(spacing);
                 }
             }
-            // Browsers serialize a zero length with its unit.
-            if v == "0" && !UNITLESS.contains(&prop) {
+            // Browsers serialize a zero length with its unit. Custom
+            // properties keep their text.
+            if v == "0" && !UNITLESS.contains(&prop) && !prop.starts_with("--") {
                 return "0px".into();
             }
             return v.clone();

@@ -199,6 +199,7 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
         name if variation_axis(name).is_some() => Value::Scalar(number(s.trim())?),
         "-webkit-text-stroke-color" => Value::Color(color(s, current)?),
         "-webkit-text-stroke-width" => Value::Scalar(px(s, m)?),
+        name if is_grade(name) => Value::Scalar(crate::style::grade_amount(s)?),
         "text" => Value::Text(s.to_string()),
         _ => return Err(format!("unsupported animated property '{name}'")),
     })
@@ -246,6 +247,12 @@ pub(crate) const FILTERS: [&str; 13] = [
 pub(crate) fn is_filter(name: &str) -> bool {
     FILTERS.contains(&name)
 }
+/// Colour grade amounts from `0` to `1`: the crossfade toward the second
+/// LUT and the strength of the grade. They move an element's `--grade`.
+pub(crate) const GRADES: [&str; 2] = ["--grade-mix", "--grade-intensity"];
+pub(crate) fn is_grade(name: &str) -> bool {
+    GRADES.contains(&name)
+}
 /// True for a channel that moves paint inside the element's box: shadow
 /// offsets and spread, background offsets, clip paths, padding, borders and
 /// type metrics.
@@ -255,6 +262,7 @@ fn reshapes(name: &str) -> bool {
         "opacity" | "background-color" | "color" | "transform" | "width" | "height" | "left" | "top" | "text" | "-webkit-text-stroke-color"
     ) || is_component(name)
         || (is_filter(name) && !matches!(name, "filter-drop-shadow-x" | "filter-drop-shadow-y"))
+        || is_grade(name)
         || border_side(name).is_some_and(|(_, field)| field == "color")
         || indexed(name).is_some_and(|(_, _, field)| matches!(field, "color" | "blur"));
     !tonal
@@ -262,7 +270,10 @@ fn reshapes(name: &str) -> bool {
 /// True for a channel that changes how paint looks without moving it:
 /// opacity, colors and filter amounts.
 fn shades(name: &str) -> bool {
-    name == "opacity" || name.ends_with("color") || (is_filter(name) && !matches!(name, "filter-drop-shadow-x" | "filter-drop-shadow-y"))
+    name == "opacity"
+        || name.ends_with("color")
+        || is_grade(name)
+        || (is_filter(name) && !matches!(name, "filter-drop-shadow-x" | "filter-drop-shadow-y"))
 }
 /// The amount a filter channel takes when its function is absent.
 pub(crate) fn filter_default(name: &str) -> f32 {
@@ -528,6 +539,8 @@ fn base_value(name: &str, base: &Values, paint: &PaintStyle, m: Metrics) -> Resu
         "-webkit-text-stroke-width" => Value::Scalar(paint.text_stroke_width),
         "transform" => Value::Transform(TransformList::default()),
         "border-top-left-radius" => Value::Scalar(0.0),
+        "--grade-mix" => Value::Scalar(0.0),
+        "--grade-intensity" => Value::Scalar(1.0),
         _ => return Err(format!("animation '{name}' needs an explicit base value")),
     })
 }
@@ -737,6 +750,7 @@ pub(crate) fn from_track(
                     return Err(format!("timeline '{property}' takes CSS text"))
                 }
                 name if is_filter(name) || indexed(name).is_some() => n.to_string(),
+                name if is_grade(name) => n.to_string(),
                 "text" => n.to_string(),
                 "color" | "background-color" | "transform" | "-webkit-text-stroke-color" => {
                     return Err(format!("timeline '{property}' takes CSS text"))
@@ -1160,6 +1174,16 @@ impl Animation {
                 }
                 ("filter-drop-shadow-color", Value::Color(c)) => set_filter_color(&mut paint.filters, c),
                 (name, Value::Scalar(v)) if is_filter(name) => set_filter(&mut paint.filters, name, v),
+                (name, Value::Scalar(v)) if is_grade(name) => {
+                    if let Some(grade) = &mut paint.grade {
+                        let v = v.clamp(0.0, 1.0);
+                        if name == "--grade-mix" {
+                            grade.mix = v;
+                        } else {
+                            grade.intensity = v;
+                        }
+                    }
+                }
                 (name, v) if indexed(name).is_some() => match (indexed(name), v) {
                     (Some(("box-shadow", i, field)), v) => set_shadow(&mut paint.shadows, i, field, v),
                     (Some(("text-shadow", i, field)), v) => set_text_shadow(&mut paint.text_shadows, i, field, v),

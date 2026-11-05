@@ -20,6 +20,7 @@ mod ellipse_clip;
 mod filter_fns;
 mod fixed_position;
 mod font_shorthand;
+mod grade;
 mod gradient_calc;
 mod gradient_hints;
 mod gradient_tiles;

@@ -204,7 +204,9 @@ pub fn info(name: &str) -> Option<&'static PropertyInfo> {
 
 /// Whether `name` inherits: custom properties and the inherited longhands.
 pub fn is_inherited(name: &str) -> bool {
-    name.starts_with("--") || info(name).is_some_and(|entry| entry.inherited)
+    // The grade properties apply to the box that declares them.
+    (name.starts_with("--") && !matches!(name, "--grade" | "--grade-mix" | "--grade-intensity"))
+        || info(name).is_some_and(|entry| entry.inherited)
 }
 
 #[cfg(test)]
@@ -223,6 +225,7 @@ mod tests {
         }
         assert!(info("float").is_none());
         assert!(is_inherited("--accent"));
+        assert!(!is_inherited("--grade") && !is_inherited("--grade-mix"));
         assert!(is_inherited("color"));
         assert!(!is_inherited("width"));
     }

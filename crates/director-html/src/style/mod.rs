@@ -30,6 +30,7 @@ mod background;
 mod border;
 mod boxes;
 mod effects;
+mod grade;
 pub(crate) use effects::{parse_box_shadows, parse_filters};
 pub(crate) use text::parse_text_shadows;
 mod layout;
@@ -170,6 +171,8 @@ pub struct PaintStyle {
     /// `filter` functions in source order. `filter` is their compiled chain.
     pub filters: Vec<FilterFn>,
     pub filter: Option<skia_safe::ImageFilter>,
+    /// The colour grade from `--grade`, composed after `filters` into `filter`.
+    pub grade: Option<director_core::grade::Grade>,
     pub blend_mode: skia_safe::BlendMode,
     pub shadows: Vec<Shadow>,
     /// CSS `text-shadow` list in source order: the first shadow paints on top. Empty is
@@ -945,6 +948,7 @@ pub fn translate(
         preserve_3d: false,
         filters: Vec::new(),
         filter: Default::default(),
+        grade: None,
         blend_mode: skia_safe::BlendMode::SrcOver,
         shadows: Vec::new(),
         text_shadows: Vec::new(),
@@ -1233,6 +1237,13 @@ pub fn translate(
             paint.align = skia_safe::textlayout::TextAlign::Left;
         }
     }
+    match grade::grade(values, assets) {
+        Ok(found) => paint.grade = found,
+        Err(e) => errors.push(e),
+    }
+    if paint.grade.is_some() {
+        paint.filter = paint_filter(&paint);
+    }
     paint.box_node.style = style.clone();
     if errors.is_empty() {
         Ok((style, paint, grid_scope))
@@ -1257,6 +1268,17 @@ pub enum FilterFn {
     Sepia(f32),
     Opacity(f32),
 }
+
+/// The element's image filter: its filter list, then its colour grade.
+pub(crate) fn paint_filter(paint: &PaintStyle) -> Option<skia_safe::ImageFilter> {
+    let chain = compile_filters(&paint.filters);
+    match &paint.grade {
+        Some(grade) => grade.image_filter(chain),
+        None => chain,
+    }
+}
+
+pub(crate) use grade::amount as grade_amount;
 
 /// Compose a filter list into one image filter, the first function innermost.
 pub(crate) fn compile_filters(list: &[FilterFn]) -> Option<skia_safe::ImageFilter> {

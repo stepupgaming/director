@@ -96,8 +96,32 @@ fn decode_html(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn El
     Ok(Box::new(element))
 }
 
+fn grade(g: &doc::HtmlGrade, cx: &ImportContext) -> Result<director_core::grade::Grade, ImportError> {
+    let lut = |lut: &doc::GradeLut| -> Result<std::sync::Arc<director_core::grade::Lut3d>, ImportError> {
+        match lut {
+            doc::GradeLut::Preset { name } => director_core::grade::preset(name)
+                .ok_or_else(|| ImportError::Invalid(format!("unknown grade preset `{name}`"))),
+            doc::GradeLut::Cube { asset } => director_core::grade::parse_cube(&cx.asset_bytes(asset)?)
+                .map(std::sync::Arc::new)
+                .map_err(|e| ImportError::Invalid(format!("grade LUT `{asset}`: {e}"))),
+        }
+    };
+    Ok(director_core::grade::Grade {
+        from: lut(&g.from)?,
+        to: g.to.as_ref().map(lut).transpose()?,
+        mix: g.mix.clamp(0.0, 1.0),
+        intensity: g.intensity.clamp(0.0, 1.0),
+    })
+}
+
 fn paint(p: &doc::HtmlPaint, cx: &ImportContext) -> Result<PaintStyle, ImportError> {
     let filters: Vec<FilterFn> = p.filters.iter().map(filter).collect();
+    let grade = p.grade.as_ref().map(|g| grade(g, cx)).transpose()?;
+    let chain = compile_filters(&filters);
+    let compiled = match &grade {
+        Some(grade) => grade.image_filter(chain),
+        None => chain,
+    };
     Ok(PaintStyle {
         box_node: nodes::box_node(&p.box_paint, &Channel::still(1.0))?,
         opacity: 1.0,
@@ -215,8 +239,9 @@ fn paint(p: &doc::HtmlPaint, cx: &ImportContext) -> Result<PaintStyle, ImportErr
         perspective_origin: pair(p.perspective_origin),
         backface_hidden: p.backface_hidden,
         preserve_3d: p.preserve_3d,
-        filter: compile_filters(&filters),
+        filter: compiled,
         filters,
+        grade,
         blend_mode: blend_mode(&p.blend_mode)?,
         shadows: p
             .shadows

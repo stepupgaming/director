@@ -90,6 +90,7 @@ Gate: the Hyper CN corpus compiles through the typed style path with no new refu
   - encoder blotching: with a finished export (`--video`), block steps in its dark flat areas against the painted frames at the 0.5 s steps. The draft encode (x264 ultrafast, CRF 30) of a dark gradient fails and the final encode passes; on the showreel the final software and NVENC encodes pass and an ultrafast CRF 30 re-encode flags 12 of 31 frames.
   - finished files without the project (`qa_video`, `qa` on an MP4, MCP `qa_video`): static stretches on decoded frames, and loudness, peak, clipping, dead stops and, with words, the voice against bed on the first audio stream.
 - Still open for C2: project rules (mechanical checks a project declares, failing as errors).
+- Colour grading (issue 10), landed 2026-11-05: `.cube` 3D LUTs (2 to 65 points) and six presets on any element or the whole frame through `--grade`, with `--grade-mix` crossfades and `--grade-intensity` animatable from `@keyframes`, timeline JSON and GSAP, applied to encoded sRGB/BT.709 values and round tripping through the scene document. `examples/html/colour-grades.html` shows every preset and a 1 s crossfade.
 
 Later candidates: a Tauri editor over the host protocol, a WASM player, distributed chunked rendering.
 
@@ -99,11 +100,11 @@ One row per check, holding the most recent passing count. Replace the row when a
 
 | Check | Count | Date | Command |
 | --- | --- | --- | --- |
-| workspace clippy | pass | 2026-10-29 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
+| workspace clippy | pass | 2026-11-05 | `cargo clippy --workspace --all-targets --release -- -D warnings` |
 | director-core release tests | 437 | 2026-10-28 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 40 | 2026-10-29 | `cargo test -p director-core --release --test integration visual_suite::` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test integration html_export::` |
-| workspace release tests | 1143, 3 ignored | 2026-10-30 | `cargo test --workspace --release` |
+| workspace release tests | 1169, 3 ignored | 2026-11-05 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 25 | 2026-10-28 | `cargo test -p director-render --release` |
 | director-host | 37 | 2026-11-05 | `cargo test -p director-host --release` |
@@ -113,6 +114,9 @@ One row per check, holding the most recent passing count. Replace the row when a
 | 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | 1080p HTML export on Vulkan, CLI `html render --gpu` serial `render_export_at_scale` vs pipelined `export_on` (one session, four frames in flight; 90 frames, x264, median of 3; CPU pool export for reference) | native-motion 565 vs 505 ms (CPU 546), image-background 483 vs 415 ms (CPU 396), nested-rule 474 vs 421 ms (CPU 371), text-decoration 485 vs 417 ms (CPU 379); GPU outputs frame-identical to the serial GPU export (framemd5) | 2026-10-25 | `director-engine html render examples/html/<name>.html -o <out>.mp4 --gpu` from `cargo build -p director-cli --release --features vulkan` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
+| HTML grade (presets, intensity, `.cube` files, subtree grading, keyframe and GSAP crossfades, scene document) | 8 | 2026-11-05 | `cargo test -p director-html --release --test integration grade::` |
+| director-core grade lib (cube parsing, domains, presets, shader against the CPU reference, crossfade) | 6 | 2026-11-05 | `cargo test -p director-core --release --lib grade` |
+| Colour grade CPU against Vulkan, `examples/html/colour-grades.html` stills at 1280x720 | crossfade at 5 s: max 1 level; preset grid at 1 s: 120 pixels over 8 levels, all in noisy video texture, where the same grid ungraded has 880 | 2026-11-05 | `director-engine still examples/html/colour-grades.html --width 1280 --height 720 -t <t> [--gpu]` |
 | filter_fns | 6 | 2026-10-25 | `cargo test -p director-html --release --test integration filter_fns::` |
 | HTML scene_document | 7 | 2026-10-27 | `cargo test -p director-html --release --test integration scene_document::` |
 | HTML timeline | 7 | 2026-10-26 | `cargo test -p director-html --release --test integration timeline::` |
@@ -160,7 +164,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Phase 5 is met. Phase 6 export QA has its text, mix and blotching checks in `Session::qa` and its static and mix checks on finished files in `qa_video`; next come project rules (the benchmark harness needs the user's yes; media quality runs locally), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text) and SMIL `calcMode="spline"`. Issue 8 (kinetic film) continues with film QA metrics, a block library and 4K60 throughput (rewind landed as `time` tracks, the beat grid as beat times, `director.beat` and `data-sfx`, and slot-reel counters as `data-reel`); its extruded 3D type waits on issue 9. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Phase 5 is met. Issue 10 (colour grading) landed. Phase 6 export QA has its text, mix and blotching checks in `Session::qa` and its static and mix checks on finished files in `qa_video`; next come project rules (the benchmark harness needs the user's yes; media quality runs locally), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text) and SMIL `calcMode="spline"`. Issue 8 (kinetic film) continues with film QA metrics, a block library and 4K60 throughput (rewind landed as `time` tracks, the beat grid as beat times, `director.beat` and `data-sfx`, and slot-reel counters as `data-reel`); its extruded 3D type waits on issue 9. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

@@ -4,7 +4,7 @@
 
 ## Ownership
 
-- Sections below are the local contracts for each engine area: captions, bundled fonts, core hardening spines, video export and decoding, beat grids, entities and smart captions, project round-trip, the dependency-graph compiler, the authoring stack, and named compositions.
+- Sections below are the local contracts for each engine area: captions, bundled fonts, core hardening spines, video export and decoding, beat grids, entities and smart captions, project round-trip, the dependency-graph compiler, the authoring stack, named compositions, and colour grades.
 - Normative cross-crate spines live in `docs/architecture/core-contracts.md`.
 
 ## Caption system: kinetic captions for short-form video
@@ -519,6 +519,14 @@ five 640x360 premultiplied RGBA frames per workload via
 - Hosts that need compositions call `register_rhai_api_with_compositions` (or `register_composition_api`) and keep the compiled AST alive for `FnPtr::call`.
 - Base `register_rhai_api*` does **not** install the composition registry (opt-in per host).
 - Acceptance: unit tests in `compositions.rs`; example `examples/features/compositions.rhai`; `tests/examples.rs` accepts Movie **or** registry builders.
+
+## Colour grades
+
+- `src/grade.rs` owns 3D LUTs and grades. `parse_cube` reads `.cube` text: `TITLE`, `LUT_3D_SIZE` from 2 to 65, `DOMAIN_MIN`, `DOMAIN_MAX`, `LUT_3D_INPUT_RANGE` and `#` comments. A 1D LUT, a missing size, a wrong row count and a non-number fail.
+- `preset(name)` returns the six built-in looks as 33-point tables built in code on first use: `film-print`, `bleach-bypass`, `teal-orange`, `warm-fade`, `night` and `mono`. `Lut3d::to_cube` writes any table as `.cube` text, and `Lut3d::source` keeps the preset name or the `.cube` bytes for export.
+- LUTs apply to the encoded sRGB/BT.709 values the canvas paints. `Lut3d::apply` is the CPU reference: a trilinear lookup over the table's domain.
+- `Grade { from, to, mix, intensity }` crossfades `from` toward `to` by `mix`, then blends the result with the ungraded colour by `intensity`. `Grade::image_filter(input)` wraps one runtime colour filter that holds each LUT as an RGBA F16 atlas (`N*N` wide, `N` high, entry `(r, g, b)` at `(r + b*N, g)`). It unpremultiplies, looks up, mixes and premultiplies again. Transparent pixels pass unchanged, and intensity 0 adds no filter. The raster and Ganesh paths run the same SKSL.
+- Unit tests in `grade.rs` cover parsing, domains, preset round trips, the shader against `apply` and the crossfade.
 
 ## Child DOX Index
 

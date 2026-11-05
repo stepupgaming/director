@@ -527,8 +527,8 @@ impl Element for HtmlElement {
         if let Some(parts) = parts {
             self.paint.transform = parts.compose();
         }
-        if self.animations.iter().any(|a| a.properties().any(crate::animation::is_filter)) {
-            self.paint.filter = crate::style::compile_filters(&self.paint.filters);
+        if self.animations.iter().any(|a| a.properties().any(|p| crate::animation::is_filter(p) || crate::animation::is_grade(p))) {
+            self.paint.filter = crate::style::paint_filter(&self.paint);
         }
         let mut relayout = false;
         if let Some(content) = &mut self.content {

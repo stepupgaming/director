@@ -47,7 +47,7 @@ Director runs GSAP at compile time and keeps no browser for the render. A page t
 
 - Layout: flexbox, grid with `subgrid` and named lines, absolute, fixed and sticky positioning, and `calc()`.
 - Text: rich inline spans, inline boxes, text strokes and shadows, variable font axes, SplitText, rolling digit reels.
-- Paint: gradients, layered backgrounds, borders, shadows, masks, clip paths, filters, blend modes, SVG, and 3D transforms with `preserve-3d` depth sorting.
+- Paint: gradients, layered backgrounds, borders, shadows, masks, clip paths, filters, blend modes, `.cube` LUT colour grades with six presets and animatable crossfades, SVG, and 3D transforms with `preserve-3d` depth sorting.
 - Animation: CSS keyframes and transitions, SVG SMIL, timeline JSON, beat grids from music, and GSAP with its MotionPath, MorphSVG, DrawSVG and SplitText plugins. All of it compiles to native keyframe tracks.
 - Motion blur samples each frame's shutter. A still frame paints once, and fast motion gets more samples.
 - Media: images, video, multi-track audio and Lottie.

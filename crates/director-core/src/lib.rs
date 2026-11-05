@@ -75,6 +75,9 @@ pub mod timeline;
 /// Design system tokens (spacing, colors, typography).
 pub mod tokens;
 
+/// Colour grades: `.cube` 3D LUTs and the named presets as one colour filter.
+pub mod grade;
+
 /// Shared data structures used across the engine.
 pub mod types;
 
