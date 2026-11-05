@@ -215,6 +215,9 @@ rather than relying on host system fonts.
 * Fonts live in crates/director-core/assets/fonts/ (force-committed via
   .gitignore) and are registered at Director construction
   (director.rs, BUNDLED_FONTS).
+* Each Director registers its own font collection and provider. Typefaces
+  parse once per process: `parsed_typeface` shares the typeface parsed from
+  equal font bytes, so probe and nested compiles skip the parse.
 * Multiple weights of a family (Regular/Bold/Italic) are registered under
   the same family alias so font_weight / font_style resolve deterministically.
 * Roboto Regular/Bold/Italic, Inter Regular/Bold, and Poppins Bold are

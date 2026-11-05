@@ -32,7 +32,7 @@ use crate::types::NodeId;
 use crate::video_wrapper::{EncoderMode, RenderMode};
 use crate::AssetLoader;
 use skia_safe::textlayout::{FontCollection, TypefaceFontProvider};
-use skia_safe::FontMgr;
+use skia_safe::{FontMgr, Typeface};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::instrument;
@@ -219,6 +219,20 @@ unsafe impl Send for Director {}
         ("JetBrainsMono-Variable.ttf", &["JetBrains Mono", "monospace"], false),
     ];
 
+/// The typeface in font file `bytes`. Parsing a font costs about ten times
+/// reading it, so every director in the process shares the typeface parsed
+/// from equal bytes.
+fn parsed_typeface(bytes: Vec<u8>) -> Option<Typeface> {
+    static PARSED: Mutex<Vec<(Vec<u8>, Typeface)>> = Mutex::new(Vec::new());
+    let mut parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, typeface)) = parsed.iter().find(|(seen, _)| *seen == bytes) {
+        return Some(typeface.clone());
+    }
+    let typeface = FontMgr::new().new_from_bytes(&bytes, 0)?;
+    parsed.push((bytes, typeface.clone()));
+    Some(typeface)
+}
+
 impl Director {
     /// Computes the effective analysis time for an audio track at a given global time.
     /// Returns `None` if the track hasn't started, has ended, or has no samples.
@@ -295,7 +309,7 @@ impl Director {
             for (filename, aliases, required) in BUNDLED_FONTS {
                 match asset_loader.load_bytes(&format!("fonts/{}", filename)) {
                     Ok(bytes) => {
-                        if let Some(typeface) = FontMgr::new().new_from_bytes(&bytes, 0) {
+                        if let Some(typeface) = parsed_typeface(bytes) {
                             for alias in *aliases {
                                 font_provider.register_typeface(typeface.clone(), Some(*alias));
                             }
@@ -332,7 +346,7 @@ impl Director {
 
             // Load fallback font (e.g. Emoji) if available
             if let Some(bytes) = asset_loader.load_font_fallback() {
-                if let Some(typeface) = FontMgr::new().new_from_bytes(&bytes, 0) {
+                if let Some(typeface) = parsed_typeface(bytes) {
                     font_provider.register_typeface(typeface, Some("Fallback"));
                 }
             }
