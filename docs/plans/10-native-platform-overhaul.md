@@ -1,7 +1,7 @@
 # Plan 10: Native platform overhaul
 
 > **Status:** In progress. The phase 1 gate is green locally. The phase 2 gate is green: the director-core golden corpus and the HTML examples and fixtures round-trip through the scene document. The phase 3 gate is met (2026-10-25): `director-core::scene_import` loads a document back into a `Director`, every golden scene renders from its document identically, and `director-render` paints document frames, matching the compiled HTML examples, SMIL, looped video, sampled captures, Paper shaders, Lottie and spectrum scenes within the parity tolerance. Document audio mixes sample-equal to the live mixer. `director-render` is the only frame path: it owns the frame driver (`FrameState`: evaluation, paint, shutter sampling and transitions), the node traversal, preserve-3d sorting, static layer reuse on `Director::static_cache`, composition and capture paint, and the serial live `render_export` with Vulkan targets. Core export, preview, stills, tests and the CLI paint through it, and the core frame path is deleted. CLI exports run the pipelined document export through `export_director`, on a CPU pool or with `--gpu` on one Vulkan session. Live and document frames match across all 59 Rhai examples, the HTML examples and every golden scene, and the pipelined export leads the serial export 2.13x and 1.48x on animated 1080p HTML scenes. Phase 4 has started: `director-host` owns input loading and a `Session` over a revisioned scene document with atomic patches by authored name or node id, outline, inspect, warm frame render on CPU or an owned Vulkan context, reload, cached audio, native project edits and export with cancellation and progress, and one JSON error envelope. Every top-level CLI command that opens an input runs on `Session`. The phase 4 gate is met (2026-10-25): `director-engine mcp` serves open, close, outline, diff, patch, inspect, render frame and export over stdio, and an agent opens, patches, inspects and exports a project through it alone. Phase 4 is complete (2026-10-26): `Session::qa` scores revisions, and `director_host::Editor` with `director-engine editor` serves the editor protocol with a shared-memory frame ring, which replaced the axum `preview` server.
-> **Product direction:** Exceed HyperFrames, FFrames and Remotion with a library-first native video platform: HTML/CSS authoring that compiles to a typed scene document, a parallel deterministic renderer, one host session API shared by the CLI, agents and a future editor, and measured proof of speed and quality.
+> **Product direction:** Exceed HyperFrames, FFrames, Remotion and raea with a library-first native video platform: HTML/CSS authoring that compiles to a typed scene document, a parallel deterministic renderer, one host session API shared by the CLI, agents and a future editor, and measured proof of speed and quality.
 
 This file is the current-state and handoff document for the active phase. It replaces [plan 09](09-native-fidelity.md) as the active plan. Feature contracts for HTML live in [`crates/director-html/AGENTS.md`](../../crates/director-html/AGENTS.md).
 
@@ -79,8 +79,16 @@ Gate: the Hyper CN corpus compiles through the typed style path with no new refu
 
 ### Phase 6: Proof and media quality
 
-- A public benchmark harness against HyperFrames, FFrames and Remotion (needs the user's explicit yes before running).
+- A public benchmark harness against HyperFrames, FFrames, Remotion and raea (needs the user's explicit yes before running).
 - Motion blur on every paint path, 10-bit and HDR export, LUFS normalization and ducking.
+- Export QA on painted pixels, the mix and the transcript, ranked P0 to P3 with a fix, in `Session::qa` and on a finished MP4 ([plan 11 C2](11-transcription-and-competitive-gaps.md#part-c-raea-comparison)):
+  - caption contrast of at least 3:1 against the pixels behind each glyph, at the caption's middle frame;
+  - reading time of about 0.3 s a word and at least 1 s, waived for captions the voice reads while they show;
+  - captions and word-tied cues starting on the first word they carry, from the transcript's word times;
+  - the voice against its bed: music under speech at least 12 dB down, and no voiceless stretch louder than the voice's median (the pass condition for ducking);
+  - dead stops: a steady bed that drops 12 dB or more in one 10 ms step instead of fading;
+  - encoder blotching in flat dark areas;
+  - project rules: mechanical checks a project declares, failing as P1.
 
 Later candidates: a Tauri editor over the host protocol, a WASM player, distributed chunked rendering.
 
@@ -149,7 +157,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text) and SMIL `calcMode="spline"`. Issue 8 (kinetic film) continues with film QA metrics, a block library and 4K60 throughput (rewind landed as `time` tracks, the beat grid as beat times, `director.beat` and `data-sfx`, and slot-reel counters as `data-reel`); its extruded 3D type waits on issue 9. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes; export QA and media quality run locally), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text) and SMIL `calcMode="spline"`. Issue 8 (kinetic film) continues with film QA metrics, a block library and 4K60 throughput (rewind landed as `time` tracks, the beat grid as beat times, `director.beat` and `data-sfx`, and slot-reel counters as `data-reel`); its extruded 3D type waits on issue 9. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

@@ -1,7 +1,7 @@
 # Plan 11: Transcription engine and competitive gaps
 
 > **Status:** Spec. Plan 10 stays the active plan and holds current status, test counts and the next action. Part A may start beside plan 10 phase 4 because it lives in a new crate; Part B items marked for plan 10 stay there.
-> **Inputs:** `pluggableasrengine.txt` (a proposed `director-asr` spec) and `fframesvsdirector.txt` (a Director and FFrames comparison), both at the repo root and both checked against the tree and public sources on 2026-10-25.
+> **Inputs:** `pluggableasrengine.txt` (a proposed `director-asr` spec) and `fframesvsdirector.txt` (a Director and FFrames comparison), both at the repo root and both checked against the tree and public sources on 2026-10-25. Part C reads the raea repository and site on 2026-11-05.
 
 ## Why
 
@@ -102,10 +102,41 @@ Sources: the FFrames README at `github.com/dmtrKovalenko/fframes` (3.0k stars, M
 **B2. Distribution.** Tagged releases with `director-engine` binaries for Windows, Linux and macOS (CPU build plus a Vulkan build), FFmpeg detection with a clear install message, `cargo install` from crates.io once `director-*` crate names and the vendored skia-safe patch allow publishing, and Linux text goldens so CI is green on Linux.
 Gate: a clean machine installs a release binary and renders the four HTML examples with no Rust toolchain.
 
-**B3. Head-to-head protocol.** Define the FFrames comparison clip for plan 10 phase 6: the same 1080p30 content authored in both (text, shapes, an image, a video layer and audio, about 120 s), each tool's fastest documented path on the same machine, wall time from source to finished MP4, plus output size and a VMAF or SSIM check against a shared reference. The run itself needs the user's explicit yes.
+**B3. Head-to-head protocol.** Define the comparison clip for plan 10 phase 6 against FFrames and raea: the same 1080p30 content authored in each (text, shapes, an image, a video layer and audio, about 120 s), each tool's fastest documented path on the same machine, wall time from source to finished MP4, plus output size and a VMAF or SSIM check against a shared reference. The run itself needs the user's explicit yes.
 Gate: the protocol, both sources and the scripts are committed before any number is published.
 
 **B4. Shader authoring candidate.** A user-authored SkSL layer for HTML (`<canvas data-sksl>` or a CSS custom property) with a GLSL-to-SkSL path for common Shadertoy uniforms. Decide after plan 10 phase 5, since plan 10 freezes the Paper translator.
+
+## Part C: raea comparison
+
+Sources: `github.com/shinyobjectz/raea` at `925bc03` (created 2026-10-18, 198 stars, canary, FSL-1.1-ALv2) and `raea.io` (`/`, `/why/`, `/learn/`), read on 2026-11-05.
+
+raea is a Rust engine on Bevy 0.20. Compositions are React/TSX on a Remotion-shaped API (`AbsoluteFill`, `useCurrentFrame`, `interpolate`, `Sequence`, `registerRoot`) run by JavaScriptCore on macOS and QuickJS elsewhere, with HTML laid out by patched Stylo, Blitz and Parley. One file renders to video, plays live as a game, or exports as a game. Its agent layer is an installable skill, craft guides printed by `raea guide`, and `raea check` on a finished export.
+
+**License.** FSL-1.1-ALv2 lets anyone use raea free, including companies and commercial videos, and forbids a commercial product or service that competes with raea. Each version becomes Apache-2.0 two years after release. End users face fewer limits than under Remotion's company license; platforms, hosted renderers and editors cannot build on it. Director is MIT. Director is a competing use, so Director takes ideas and public platform facts from raea and copies no raea code, tests or text.
+
+### Scorecard
+
+| Area | raea | Director today | Owner |
+| --- | --- | --- | --- |
+| Authoring | React/TSX on a Remotion-shaped API, Tailwind, npm packages through its own installer | HTML/CSS (primary), GSAP translated to native tracks, Rhai | Holds; Remotion compatibility is out of scope |
+| 3D | Bevy PBR, glTF, Gaussian splats, matchmove through COLMAP | CSS `preserve-3d`; real meshes planned | Plan 10 issue 9 |
+| Export QA | `raea check`: loudness and true peak, dead stops, static stretches, dark blotching, voice against bed, clipped text, platform zones, reading time, caption contrast, cues on words, text over faces, taste rules | `Session::qa`: clipped text, safe zones, captions over faces, reframed subjects, static stretches, loudness, peak and clipping | C2, plan 10 phase 6 |
+| Agent craft guides | A floor (verify, refuse, never), a P0 to P3 rubric with model-judged questions, named edit moves, brief and storyboard gate | Generated skills, MCP, QA score | C3 |
+| Music timing | Song map with beats, downbeats, builds and drops | Beat grid as beat times, `director.beat` | Plan 10 issue 8 |
+| Media CLI | `raea ffmpeg` and `raea ffprobe` read ffmpeg command lines in process | One FFmpeg process per export | C4 candidate |
+| Speed claim | Pong 1080p at 5.3 ms a frame and a platformer at 4.4 ms, M5 Pro with VideoToolbox H.264; no named competitor | Measured in the plan 10 table | B3 protocol, plan 10 phase 6 run |
+
+### Workstreams
+
+**C1. Keep the scorecard true.** Re-read the raea README, `apps/check` docs and site whenever a plan 10 phase closes, as B1 does for FFrames.
+
+**C2. Export QA checks.** The checks listed under plan 10 phase 6. Thresholds follow published platform guidance and the standards they cite (WCAG contrast, EBU R128 loudness) and are calibrated on Director's own fixtures.
+Gate: each check has a fixture that fails it and a fixed variant that passes, through `Session::qa` and on a finished MP4.
+
+**C3. Craft guides in the generated skills.** A quality floor an agent reads before each edit, a P0 to P3 rubric, and named edit moves mapping a person's note to one playbook. A brief and storyboard gate belongs at the orchestration layer outside the render core.
+
+**C4. ffmpeg-style media commands candidate.** `director-engine media` accepting common ffmpeg and ffprobe command lines over Director's own decode and encode. Decide after the plan 10 phase 3 encoder path.
 
 ## Open decisions
 

@@ -85,7 +85,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - When asked for advice, provide options rather than a single path. When a chosen option finishes, report the measured result and the next steps.
 - Never use `pip` for Python package installation; use `uv`.
 - Writing style for docs, commits, and replies: affirmative statements, no em dashes, and no contrastive "X, not Y" constructions.
-- Director's product goal is to replace HyperFrames, FFrames and Remotion with a superior native video platform. Assess authoring, motion and media quality, preview/editing, agent tooling, deployment and measured rendering efficiency together; compiler throughput alone does not establish product superiority.
+- Director's product goal is to replace HyperFrames, FFrames, Remotion and raea with a superior native video platform. Assess authoring, motion and media quality, preview/editing, agent tooling, deployment and measured rendering efficiency together; compiler throughput alone does not establish product superiority.
 - Director is library-first. Delete in-repo frontend code; a future editor (a Tauri app in the style of the HyperFrames and Remotion studios) links the host session API. Remotion source compatibility stays out of scope.
 - Major overhauls are welcome. Earlier architecture came from weaker models; judge it on merit and replace it when a better design wins.
 - HTML/CSS is the primary authoring front door. Rhai is an optional generator.
