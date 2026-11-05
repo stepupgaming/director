@@ -5,6 +5,7 @@
 mod blotch;
 mod mix;
 mod text;
+mod video;
 
 use crate::error::{ErrorCode, HostError};
 use crate::session::Session;
@@ -19,7 +20,7 @@ use director_scene::NodeRef;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// 10 minutes of stereo at 48 kHz. Longer mixes skip loudness analysis.
@@ -231,16 +232,7 @@ impl Session {
     /// [`Session::qa`] that calls `progress(done, total)` as the layout
     /// samples, the detector grid, the audio and the static pass finish.
     pub fn qa_with_progress(&mut self, options: &QaOptions, progress: &mut dyn FnMut(usize, usize)) -> Result<QaReport, HostError> {
-        let invalid = |message: String| HostError::new(ErrorCode::InvalidArgument, message);
-        if !(options.every.is_finite() && options.every > 0.0) {
-            return Err(invalid("every must be finite and positive".into()));
-        }
-        if !options.loudness_target.is_finite() {
-            return Err(invalid("loudness_target must be finite".into()));
-        }
-        if let Some(word) = options.words.iter().find(|word| !(word.start.is_finite() && word.end.is_finite() && 0.0 <= word.start && word.start <= word.end)) {
-            return Err(invalid(format!("word '{}' needs finite times with 0 <= start <= end", word.text)));
-        }
+        validate(options)?;
         let height = self.document().height as f32;
         let zone = match options.safe_zone.as_deref() {
             None => None,
@@ -284,7 +276,7 @@ impl Session {
         let scan = texts.as_ref().map(|(targets, _)| text::scan_times(targets, &steps));
         let painted = scan.as_ref().map_or(steps.len(), Vec::len);
         let video = match &options.video {
-            Some(path) => Some(blotch::Video::open(path, &steps)?),
+            Some(path) => Some(video::Video::open(path, &video::probe(path)?, &steps, video::Pixels::Luma)?),
             None => None,
         };
         let compared = video.as_ref().map_or(0, |(_, frames)| frames.len());
@@ -363,26 +355,12 @@ impl Session {
             let (rate, fps) = (director.audio_mixer.sample_rate, director.fps);
             let total = duration_to_frame_count(director.timeline_duration(), fps).saturating_mul(audio_samples_per_video_frame(rate, fps, 1) as u64 * 2);
             if total > MAX_QA_AUDIO_SAMPLES {
-                report.push(QaIssue {
-                    kind: "audio_unmeasured",
-                    severity: IssueSeverity::Info,
-                    node: None,
-                    name: None,
-                    start: 0.0,
-                    end,
-                    count: 1,
-                    detail: format!("the mix has {total} samples, above the {MAX_QA_AUDIO_SAMPLES} analysis limit"),
-                    fix: None,
-                });
+                report.push(unmeasured(total, end));
                 None
             } else {
                 let wav = self.audio_wav()?;
                 let samples: Vec<f32> = wav[44..].as_chunks::<4>().0.iter().map(|bytes| f32::from_le_bytes(*bytes)).collect();
-                let audio = audio_issues(&samples, rate, tracks, options.loudness_target, end, &mut report);
-                if audio.integrated_lufs.is_some() {
-                    mix::mix_issues(&samples, rate, &options.words, &mut report);
-                }
-                Some(audio)
+                Some(audio_report(&samples, rate, tracks, options, end, &mut report))
             }
         };
 
@@ -395,26 +373,18 @@ impl Session {
                 progress(done, total);
             }
         }
-        for (start, stop) in motion.finish(duration) {
-            report.push(QaIssue {
-                kind: "static",
-                severity: IssueSeverity::Info,
-                node: None,
-                name: None,
-                start,
-                end: stop,
-                count: 1,
-                detail: format!("no visible change from {start:.2}s to {stop:.2}s"),
-                fix: Some("Add motion, a cut or B-roll".into()),
-            });
-        }
+        static_issues(motion, duration, &mut report);
 
         if let Some((mut video, frames)) = video {
             let mut blotched: Vec<(f64, blotch::Blotch)> = Vec::new();
             for &(index, time) in &frames {
                 let encoded = video.next(index)?;
                 let frame = self.render_frame(time)?;
-                let found = video.measure(&frame, &encoded)?;
+                if (frame.width, frame.height) != video.size() {
+                    let (width, height) = video.size();
+                    return Err(invalid(format!("the video is {width}x{height} and the canvas paints {}x{}; export at scale 1", frame.width, frame.height)));
+                }
+                let found = blotch::measure(&frame, &encoded);
                 if found.visible() {
                     blotched.push((time, found));
                 }
@@ -447,19 +417,117 @@ impl Session {
         for issue in &mut report {
             issue.name = issue.node.and_then(|id| names.get(&(id.index, id.generation)).cloned());
         }
-        report.sort_by(|a, b| rank(a.severity).cmp(&rank(b.severity)).then(a.start.total_cmp(&b.start)));
-        let errors = report.iter().filter(|issue| issue.severity == IssueSeverity::Error).count();
-        let warnings = report.iter().filter(|issue| issue.severity == IssueSeverity::Warning).count();
-        Ok(QaReport {
-            revision: self.revision(),
-            score: 100u32.saturating_sub(20 * errors as u32 + 5 * warnings as u32),
-            pass: errors == 0,
-            errors,
-            warnings,
-            samples: times.len(),
-            issues: report,
-            audio,
-        })
+        Ok(finish(self.revision(), times.len(), report, audio))
+    }
+}
+
+/// QA of a finished video file without its project: static stretches on the
+/// decoded frames at the static-pass steps, and the loudness, peak, clipping
+/// and mix checks on its first audio stream. `every`, `safe_zone` and `video`
+/// are unused; `revision` is 0 and `samples` counts the decoded frames.
+pub fn qa_video(path: &Path, options: &QaOptions, progress: &mut dyn FnMut(usize, usize)) -> Result<QaReport, HostError> {
+    validate(options)?;
+    let probe = video::probe(path)?;
+    let duration = probe.duration;
+    let steps = sample_times(duration, MOTION_STEP);
+    let (mut decoder, frames) = video::Video::open(path, &probe, &steps, video::Pixels::Rgba)?;
+    let total = frames.len() + 1;
+    progress(0, total);
+    let mut motion = Motion::default();
+    for (done, &(index, time)) in frames.iter().enumerate() {
+        let rgba = decoder.next(index)?;
+        motion.push(time, Frame { width: probe.width, height: probe.height, rgba });
+        progress(done + 1, total);
+    }
+    drop(decoder);
+    let mut report = Vec::new();
+    let audio = if probe.audio == 0 {
+        None
+    } else {
+        let samples = (duration * f64::from(video::AUDIO_RATE)).ceil() as u64 * 2;
+        if samples > MAX_QA_AUDIO_SAMPLES {
+            report.push(unmeasured(samples, duration));
+            None
+        } else {
+            let samples = video::audio(path)?;
+            Some(audio_report(&samples, video::AUDIO_RATE, probe.audio, options, duration, &mut report))
+        }
+    };
+    static_issues(motion, duration, &mut report);
+    progress(total, total);
+    Ok(finish(0, frames.len(), report, audio))
+}
+
+fn invalid(message: String) -> HostError {
+    HostError::new(ErrorCode::InvalidArgument, message)
+}
+
+fn validate(options: &QaOptions) -> Result<(), HostError> {
+    if !(options.every.is_finite() && options.every > 0.0) {
+        return Err(invalid("every must be finite and positive".into()));
+    }
+    if !options.loudness_target.is_finite() {
+        return Err(invalid("loudness_target must be finite".into()));
+    }
+    if let Some(word) = options.words.iter().find(|word| !(word.start.is_finite() && word.end.is_finite() && 0.0 <= word.start && word.start <= word.end)) {
+        return Err(invalid(format!("word '{}' needs finite times with 0 <= start <= end", word.text)));
+    }
+    Ok(())
+}
+
+fn unmeasured(samples: u64, end: f64) -> QaIssue {
+    QaIssue {
+        kind: "audio_unmeasured",
+        severity: IssueSeverity::Info,
+        node: None,
+        name: None,
+        start: 0.0,
+        end,
+        count: 1,
+        detail: format!("the mix has {samples} samples, above the {MAX_QA_AUDIO_SAMPLES} analysis limit"),
+        fix: None,
+    }
+}
+
+/// Loudness, peak and clipping of the mix, then the mix checks when it is measurable.
+fn audio_report(samples: &[f32], rate: u32, tracks: usize, options: &QaOptions, end: f64, report: &mut Vec<QaIssue>) -> QaAudio {
+    let audio = audio_issues(samples, rate, tracks, options.loudness_target, end, report);
+    if audio.integrated_lufs.is_some() {
+        mix::mix_issues(samples, rate, &options.words, report);
+    }
+    audio
+}
+
+fn static_issues(motion: Motion, duration: f64, report: &mut Vec<QaIssue>) {
+    for (start, stop) in motion.finish(duration) {
+        report.push(QaIssue {
+            kind: "static",
+            severity: IssueSeverity::Info,
+            node: None,
+            name: None,
+            start,
+            end: stop,
+            count: 1,
+            detail: format!("no visible change from {start:.2}s to {stop:.2}s"),
+            fix: Some("Add motion, a cut or B-roll".into()),
+        });
+    }
+}
+
+/// Sorts the issues errors first and scores them.
+fn finish(revision: u64, samples: usize, mut report: Vec<QaIssue>, audio: Option<QaAudio>) -> QaReport {
+    report.sort_by(|a, b| rank(a.severity).cmp(&rank(b.severity)).then(a.start.total_cmp(&b.start)));
+    let errors = report.iter().filter(|issue| issue.severity == IssueSeverity::Error).count();
+    let warnings = report.iter().filter(|issue| issue.severity == IssueSeverity::Warning).count();
+    QaReport {
+        revision,
+        score: 100u32.saturating_sub(20 * errors as u32 + 5 * warnings as u32),
+        pass: errors == 0,
+        errors,
+        warnings,
+        samples,
+        issues: report,
+        audio,
     }
 }
 

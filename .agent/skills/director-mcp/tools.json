@@ -450,6 +450,60 @@
     },
     {
       "annotations": {
+        "readOnlyHint": true
+      },
+      "description": "Score a finished video file 0-100 without its project. Errors cost 20: clipped or non-finite audio. Warnings cost 5: true peak above -1 dBTP, silent audio, loudness more than 2 LU off target, a steady audio bed that stops dead, and with `words`: speech peaks less than 12 dB over the bed and voiceless stretches louder than the voice. Static stretches (no visible change for 2 s at 0.5 s steps) are info. Text, layout and blotching checks need the project: use `qa` on a session. Reports progress when the request carries a `progressToken`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "loudness_target": {
+            "default": -14.0,
+            "description": "Integrated loudness target of the audio in LUFS",
+            "format": "double",
+            "type": "number"
+          },
+          "path": {
+            "description": "Video file inside the server directory or an `--allow-dir` root",
+            "type": "string"
+          },
+          "words": {
+            "default": [],
+            "description": "Transcript words `{text, start, end}` in video seconds, marking speech for the voice-against-bed and voiceless-loudness checks",
+            "items": {
+              "description": "One spoken word of a transcript, in timeline seconds.",
+              "properties": {
+                "end": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "start": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "text": {
+                  "description": "The word as spoken. `word` is accepted as well.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "end",
+                "start",
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "qa_video"
+    },
+    {
+      "annotations": {
         "readOnlyHint": false
       },
       "description": "Paint one frame of the current revision as PNG.",

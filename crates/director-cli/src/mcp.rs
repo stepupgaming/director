@@ -6,7 +6,7 @@
 use crate::input::Encoder;
 use base64::Engine;
 use clap::Parser;
-use director_host::{ErrorCode, ExportSettings, HostError, NodeSelector, PatchOp, QaOptions, QaWord, Session, Source};
+use director_host::{qa_video, ErrorCode, ExportSettings, HostError, NodeSelector, PatchOp, QaOptions, QaWord, Session, Source};
 use schemars::gen::SchemaSettings;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -207,6 +207,19 @@ impl Server {
                 };
                 Ok(structured(json!(report)))
             }),
+            "qa_video" => parse(arguments).and_then(|args: QaVideoArgs| {
+                let path = self.output_path("", &args.path)?;
+                let options = QaOptions {
+                    loudness_target: args.loudness_target,
+                    words: args.words,
+                    ..QaOptions::default()
+                };
+                let report = match &progress {
+                    Some(progress) => qa_video(&path, &options, &mut |done, total| progress(done, total))?,
+                    None => qa_video(&path, &options, &mut |_, _| {})?,
+                };
+                Ok(structured(json!(report)))
+            }),
             "render_frame" => parse(arguments).and_then(|args| self.render_frame(args)),
             "export" => parse(arguments).and_then(|args| self.export(args, progress)),
             _ => return Err((-32602, format!("unknown tool: {name}"))),
@@ -399,6 +412,19 @@ struct QaArgs {
     video: Option<PathBuf>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct QaVideoArgs {
+    /// Video file inside the server directory or an `--allow-dir` root
+    path: PathBuf,
+    /// Integrated loudness target of the audio in LUFS
+    #[serde(default = "default_loudness_target")]
+    loudness_target: f64,
+    /// Transcript words `{text, start, end}` in video seconds, marking speech for the voice-against-bed and voiceless-loudness checks
+    #[serde(default)]
+    words: Vec<QaWord>,
+}
+
 fn default_every() -> f64 {
     QaOptions::default().every
 }
@@ -476,6 +502,7 @@ pub fn tools() -> Vec<Value> {
         tool::<PatchArgs>("patch", "Apply patch ops atomically and return the new revision. `set` replaces the value at a JSON pointer in a node record (`{\"op\":\"set\",\"node\":\"box\",\"path\":\"/opacity\",\"value\":0.5}`), `set_document` one in the document, `remove` drops a subtree.", false),
         tool::<InspectArgs>("inspect", "Source ids, layout bounds, timeline and audio of the current revision at a time.", true),
         tool::<QaArgs>("qa", "Score the current revision 0-100 for publishing. Errors cost 20: missing fonts, nodes never on the canvas, clipped or non-finite audio. Warnings cost 5: text clipped by the canvas edge or inside the safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target, text on screen for less than 0.3 s a word (1 s at least) unless the voice reads it, text glyphs under 3:1 contrast against the pixels behind them, a steady audio bed that stops dead, and with `words`: text starting more than 0.2 s after its first spoken word, speech peaks less than 12 dB over the bed and voiceless stretches louder than the voice, and with `video`: encoder blotching in dark flat areas of that export. Static stretches are info. `pass` holds with no errors. Each issue carries the authored node name, time range and a fix. Reports progress when the request carries a `progressToken`.", true),
+        tool::<QaVideoArgs>("qa_video", "Score a finished video file 0-100 without its project. Errors cost 20: clipped or non-finite audio. Warnings cost 5: true peak above -1 dBTP, silent audio, loudness more than 2 LU off target, a steady audio bed that stops dead, and with `words`: speech peaks less than 12 dB over the bed and voiceless stretches louder than the voice. Static stretches (no visible change for 2 s at 0.5 s steps) are info. Text, layout and blotching checks need the project: use `qa` on a session. Reports progress when the request carries a `progressToken`.", true),
         tool::<FrameArgs>("render_frame", "Paint one frame of the current revision as PNG.", false),
         tool::<ExportArgs>("export", "Export the current revision as a video file, with an audio stream only when the scene has audio tracks. Reports encoded frames as progress when the request carries a `progressToken`. Fails with `missing_font` when required fonts are absent and `output_outside_root` for a path outside the allowed roots.", false),
     ]
@@ -572,7 +599,7 @@ mod tests {
 
         let tools = request(&mut server, "tools/list", json!({}))["result"]["tools"].clone();
         let names: Vec<&str> = tools.as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["open", "close", "outline", "node", "diff", "patch", "inspect", "qa", "render_frame", "export"]);
+        assert_eq!(names, ["open", "close", "outline", "node", "diff", "patch", "inspect", "qa", "qa_video", "render_frame", "export"]);
         let patch = &tools[5]["inputSchema"];
         assert_eq!(patch["type"], "object");
         assert_eq!(patch["required"], json!(["ops", "session"]));

@@ -112,6 +112,16 @@ Read only.
 - `video` (string, optional): A finished export of this revision at scale 1, inside the server directory, the session's input directory or an `--allow-dir` root. Its frames at 0.5 s steps are checked for encoder blotching in dark flat areas
 - `words` (array of {end, start, text}, optional, default `[]`): Transcript words `{text, start, end}` in timeline seconds. They waive the reading time of text the voice reads, check that text starts on its first spoken word, and mark speech for the voice-against-bed and voiceless-loudness checks
 
+### `qa_video`
+
+Score a finished video file 0-100 without its project. Errors cost 20: clipped or non-finite audio. Warnings cost 5: true peak above -1 dBTP, silent audio, loudness more than 2 LU off target, a steady audio bed that stops dead, and with `words`: speech peaks less than 12 dB over the bed and voiceless stretches louder than the voice. Static stretches (no visible change for 2 s at 0.5 s steps) are info. Text, layout and blotching checks need the project: use `qa` on a session. Reports progress when the request carries a `progressToken`.
+
+Read only.
+
+- `path` (string, required): Video file inside the server directory or an `--allow-dir` root
+- `loudness_target` (number, optional, default `-14.0`): Integrated loudness target of the audio in LUFS
+- `words` (array of {end, start, text}, optional, default `[]`): Transcript words `{text, start, end}` in video seconds, marking speech for the voice-against-bed and voiceless-loudness checks
+
 ### `render_frame`
 
 Paint one frame of the current revision as PNG.

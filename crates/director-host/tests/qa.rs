@@ -1,5 +1,5 @@
 use director_core::video_wrapper::EncoderMode;
-use director_host::{ErrorCode, ExportSettings, QaIssue, QaOptions, QaReport, QaWord, Session, Source};
+use director_host::{qa_video, ErrorCode, ExportSettings, QaIssue, QaOptions, QaReport, QaWord, Session, Source};
 use serde_json::json;
 
 /// A white 320x180 composition, three seconds long, holding `body`.
@@ -101,4 +101,59 @@ fn a_missing_video_is_an_invalid_argument() {
         ..QaOptions::default()
     };
     assert_eq!(session.qa(&options).unwrap_err().code, ErrorCode::InvalidArgument);
+}
+
+/// A 3 s 160x90 MP4 encoded by FFmpeg from a lavfi video source and an
+/// optional lavfi audio graph.
+fn clip(dir: &std::path::Path, name: &str, video: &str, audio: Option<&str>) -> std::path::PathBuf {
+    let path = dir.join(name);
+    let mut command = std::process::Command::new("ffmpeg");
+    command.args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", video]);
+    if let Some(audio) = audio {
+        command.args(["-f", "lavfi", "-i", audio, "-c:a", "aac", "-b:a", "192k"]);
+    }
+    let status = command.args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-t", "3"]).arg(&path).status().unwrap();
+    assert!(status.success());
+    path
+}
+
+fn video_kinds(report: &QaReport) -> Vec<&'static str> {
+    report.issues.iter().map(|issue| issue.kind).collect()
+}
+
+#[test]
+fn finished_videos_report_static_stretches_from_their_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let still = clip(dir.path(), "still.mp4", "color=c=0x336699:s=160x90:r=30:d=3", None);
+    let report = qa_video(&still, &QaOptions::default(), &mut |_, _| {}).unwrap();
+    assert_eq!(video_kinds(&report), ["static"], "{}", json!(report));
+    assert_eq!((report.revision, report.samples, report.audio.is_none()), (0, 7, true), "{}", json!(report));
+
+    let moving = clip(dir.path(), "moving.mp4", "testsrc2=s=160x90:r=30:d=3", None);
+    let report = qa_video(&moving, &QaOptions::default(), &mut |_, _| {}).unwrap();
+    assert!(report.issues.is_empty() && report.score == 100, "{}", json!(report));
+}
+
+#[test]
+fn finished_videos_check_loudness_and_dead_stops_on_their_audio() {
+    let dir = tempfile::tempdir().unwrap();
+    let still = "color=c=0x336699:s=160x90:r=30:d=3";
+    // 220 Hz at -2 dBFS that cuts to silence at 2 s.
+    let loud = clip(dir.path(), "loud.mp4", still, Some("sine=f=220:d=3,volume=16dB,volume=enable='gte(t,2)':volume=0"));
+    let report = qa_video(&loud, &QaOptions::default(), &mut |_, _| {}).unwrap();
+    let kinds = video_kinds(&report);
+    assert!(kinds.contains(&"loudness") && kinds.contains(&"dead_stop"), "{}", json!(report));
+    assert_eq!(report.audio.as_ref().map(|audio| audio.tracks), Some(1));
+
+    // The same tone near -14 LUFS, fading out over 0.9 s.
+    let fixed = clip(dir.path(), "fixed.mp4", still, Some("sine=f=220:d=3,volume=9dB,afade=t=out:st=2:d=0.9"));
+    let report = qa_video(&fixed, &QaOptions::default(), &mut |_, _| {}).unwrap();
+    assert_eq!(report.warnings + report.errors, 0, "{}", json!(report));
+}
+
+#[test]
+fn a_missing_file_is_an_invalid_argument_for_video_qa() {
+    let dir = tempfile::tempdir().unwrap();
+    let error = qa_video(&dir.path().join("missing.mp4"), &QaOptions::default(), &mut |_, _| {}).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidArgument);
 }

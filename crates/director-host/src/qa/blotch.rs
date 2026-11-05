@@ -1,12 +1,7 @@
 //! Encoder blotching: the luma of a finished encode against the painted
 //! frames, in dark flat areas where block quantization shows as steps.
 
-use crate::error::{ErrorCode, HostError};
-use director_core::video_wrapper::{probe_video, FFmpegDriver};
 use director_render::Frame;
-use std::io::{BufReader, Read};
-use std::path::Path;
-use std::process::{Child, ChildStdout, Command, Stdio};
 
 /// H.264 macroblock edge in pixels. HEVC and AV1 block edges fall on it too.
 const BLOCK: usize = 16;
@@ -24,86 +19,6 @@ const STEP: f64 = 0.75;
 const MIN_AREA: f64 = 0.02;
 /// A frame blotches when this share of its dark flat edges step.
 const BLOTCHED: f64 = 0.1;
-
-fn invalid(message: String) -> HostError {
-    HostError::new(ErrorCode::InvalidArgument, message)
-}
-
-/// Selected frames of a video as full-range luma planes, in frame order.
-pub(super) struct Video {
-    child: Child,
-    reader: BufReader<ChildStdout>,
-    width: usize,
-    height: usize,
-    frame_len: usize,
-}
-
-impl Video {
-    /// Frame indices of `times` on the video's clock, deduplicated.
-    pub(super) fn open(path: &Path, times: &[f64]) -> Result<(Self, Vec<(u64, f64)>), HostError> {
-        if !path.is_file() {
-            return Err(invalid(format!("video {} is not a file", path.display())));
-        }
-        let probe = probe_video(path).map_err(|error| invalid(format!("video {}: {error}", path.display())))?;
-        let mut frames: Vec<(u64, f64)> = Vec::new();
-        for &time in times {
-            let index = (time * probe.fps + 1e-6).floor() as u64;
-            if frames.last().is_none_or(|(last, _)| *last < index) {
-                frames.push((index, index as f64 / probe.fps));
-            }
-        }
-        let select: Vec<String> = frames.iter().map(|(index, _)| format!("eq(n\\,{index})")).collect();
-        let mut child = Command::new(FFmpegDriver::binary())
-            .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
-            .arg(path)
-            .arg("-vf")
-            .arg(format!("select='{}',scale=out_range=full", select.join("+")))
-            .args(["-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| invalid(format!("decoding {}: {error}", path.display())))?;
-        let stdout = child.stdout.take().ok_or_else(|| invalid("ffmpeg decoder stdout unavailable".into()))?;
-        let (width, height) = (probe.width as usize, probe.height as usize);
-        let chroma = width.div_ceil(2) * height.div_ceil(2);
-        let video = Self {
-            child,
-            reader: BufReader::new(stdout),
-            width,
-            height,
-            frame_len: width * height + 2 * chroma,
-        };
-        Ok((video, frames))
-    }
-
-    /// The luma plane of the next selected frame.
-    pub(super) fn next(&mut self, index: u64) -> Result<Vec<u8>, HostError> {
-        let mut buffer = vec![0u8; self.frame_len];
-        self.reader.read_exact(&mut buffer).map_err(|_| invalid(format!("the video ends before frame {index}")))?;
-        buffer.truncate(self.width * self.height);
-        Ok(buffer)
-    }
-}
-
-impl Video {
-    /// Blotching of `encoded`, the video's luma plane at the time `frame` painted.
-    pub(super) fn measure(&self, frame: &Frame, encoded: &[u8]) -> Result<Blotch, HostError> {
-        if (frame.width as usize, frame.height as usize) != (self.width, self.height) {
-            return Err(invalid(format!(
-                "the video is {}x{} and the canvas paints {}x{}; export at scale 1",
-                self.width, self.height, frame.width, frame.height
-            )));
-        }
-        Ok(measure(frame, encoded))
-    }
-}
-
-impl Drop for Video {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
 
 /// Blotching in one frame.
 #[derive(Clone, Copy, Debug, PartialEq)]

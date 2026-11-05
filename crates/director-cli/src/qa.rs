@@ -3,7 +3,7 @@
 use crate::input::Input;
 use crate::outline::fail;
 use clap::Parser;
-use director_host::{HostError, QaOptions, QaWord, Session};
+use director_host::{qa_video, HostError, QaOptions, QaWord, Session};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -45,6 +45,12 @@ fn read_words(path: &PathBuf) -> Result<Vec<QaWord>, HostError> {
     }
 }
 
+/// Finished videos get the file report of `qa_video`.
+fn is_video(path: &std::path::Path) -> bool {
+    let extension = path.extension().and_then(|extension| extension.to_str()).unwrap_or_default().to_ascii_lowercase();
+    matches!(extension.as_str(), "mp4" | "m4v" | "mov" | "webm" | "mkv")
+}
+
 /// Print the report and exit 0 when it passes, 2 when an issue is an error.
 pub fn run(args: QaArgs) -> i32 {
     let words = match args.words.as_ref().map(read_words).transpose() {
@@ -58,7 +64,12 @@ pub fn run(args: QaArgs) -> i32 {
         words,
         video: args.video,
     };
-    match Session::open(&args.input.source()).and_then(|mut session| session.qa(&options)) {
+    let report = if is_video(&args.input.input) {
+        qa_video(&args.input.input, &options, &mut |_, _| {})
+    } else {
+        Session::open(&args.input.source()).and_then(|mut session| session.qa(&options))
+    };
+    match report {
         Ok(report) => {
             println!("{}", serde_json::json!(report));
             if report.pass {
