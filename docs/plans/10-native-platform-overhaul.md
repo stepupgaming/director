@@ -81,14 +81,13 @@ Gate: the Hyper CN corpus compiles through the typed style path with no new refu
 
 - A public benchmark harness against HyperFrames, FFrames, Remotion and raea (needs the user's explicit yes before running).
 - Motion blur on every paint path, 10-bit and HDR export, LUFS normalization and ducking.
-- Export QA on painted pixels, the mix and the transcript, ranked P0 to P3 with a fix, in `Session::qa` and on a finished MP4 ([plan 11 C2](11-transcription-and-competitive-gaps.md#part-c-raea-comparison)):
-  - caption contrast of at least 3:1 against the pixels behind each glyph, at the caption's middle frame;
+- Export QA on painted pixels, the mix and the transcript, as errors, warnings and info with a fix, in `Session::qa` and on a finished MP4 ([plan 11 C2](11-transcription-and-competitive-gaps.md#part-c-raea-comparison)). Landed in `Session::qa` 2026-11-05, each with a failing and a passing fixture:
+  - caption contrast of at least 3:1 against the pixels behind each glyph, at the scanned frame nearest the caption's middle;
   - reading time of about 0.3 s a word and at least 1 s, waived for captions the voice reads while they show;
   - captions and word-tied cues starting on the first word they carry, from the transcript's word times;
   - the voice against its bed: music under speech at least 12 dB down, and no voiceless stretch louder than the voice's median (the pass condition for ducking);
-  - dead stops: a steady bed that drops 12 dB or more in one 10 ms step instead of fading;
-  - encoder blotching in flat dark areas;
-  - project rules: mechanical checks a project declares, failing as P1.
+  - dead stops: a steady bed that drops 12 dB or more within 20 ms and stays down instead of fading.
+- Still open for C2: the same checks on a finished MP4, encoder blotching in flat dark areas, and project rules (mechanical checks a project declares, failing as errors).
 
 Later candidates: a Tauri editor over the host protocol, a WASM player, distributed chunked rendering.
 
@@ -105,8 +104,10 @@ One row per check, holding the most recent passing count. Replace the row when a
 | workspace release tests | 1143, 3 ignored | 2026-10-30 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 25 | 2026-10-28 | `cargo test -p director-render --release` |
-| director-host | 25 | 2026-10-26 | `cargo test -p director-host --release` |
-| director-cli | 52 | 2026-10-27 | `cargo test -p director-cli --release` |
+| director-host | 31 | 2026-11-05 | `cargo test -p director-host --release` |
+| host QA text fixtures (reading time, contrast, late cues) | 2 | 2026-11-05 | `cargo test -p director-host --release --test integration qa::` |
+| `qa` wall time with the text and mix checks (static pass shares the text scan; edges settle only for runs a check could fail) | reel 43.3 s (24.7 s before the text pass), showreel 2.8 s; findings unchanged from frame-precision runs | 2026-11-05 | `director-engine qa examples/html/reel/reel.html`, `director-engine qa examples/html/showreel.html` |
+| director-cli | 53, 1 ignored | 2026-11-05 | `cargo test -p director-cli --release` |
 | 1080p HTML export, serial live `render_export` vs `Renderer::export` (pipelined, FFmpeg spawned from the document before the audio import, premixed audio over a loopback input, `pool_for` = 6 workers; 90 frames, x264, 24 threads, median of 3) | export native-motion 1195 vs 561 ms (2.13x), image-background 599 vs 404 ms (1.48x), nested-rule 381 vs 370 ms (1.03x), text-decoration 388 vs 374 ms (1.04x); single-pass encode-only floor 421, 350, 324, 335 ms; outputs frame-identical (framemd5) | 2026-10-25 | `cargo run -p director-render --release --example export_bench -- examples/html/<name>.html target/export-bench/<name> 3 software` |
 | 1080p HTML export on Vulkan, CLI `html render --gpu` serial `render_export_at_scale` vs pipelined `export_on` (one session, four frames in flight; 90 frames, x264, median of 3; CPU pool export for reference) | native-motion 565 vs 505 ms (CPU 546), image-background 483 vs 415 ms (CPU 396), nested-rule 474 vs 421 ms (CPU 371), text-decoration 485 vs 417 ms (CPU 379); GPU outputs frame-identical to the serial GPU export (framemd5) | 2026-10-25 | `director-engine html render examples/html/<name>.html -o <out>.mp4 --gpu` from `cargo build -p director-cli --release --features vulkan` |
 | scene_import lib | 2 | 2026-10-25 | `cargo test -p director-core --release --lib scene_import` |
@@ -157,7 +158,7 @@ Linux CI run 39719292637 failed only the 12 text goldens: FreeType anti-aliases 
 
 ## Next action
 
-1. Phase 5 is met. Start phase 6 (the benchmark harness needs the user's yes; export QA and media quality run locally), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text) and SMIL `calcMode="spline"`. Issue 8 (kinetic film) continues with film QA metrics, a block library and 4K60 throughput (rewind landed as `time` tracks, the beat grid as beat times, `director.beat` and `data-sfx`, and slot-reel counters as `data-reel`); its extruded 3D type waits on issue 9. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports, QA checks on painted pixels, and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
+1. Phase 5 is met. Phase 6 export QA has its text and mix checks in `Session::qa`; next come blotching, project rules and QA on a finished MP4 (the benchmark harness needs the user's yes; media quality runs locally), or continue issue 6: styled static inline boxes (padding, border or background on a span inside text) and SMIL `calcMode="spline"`. Issue 8 (kinetic film) continues with film QA metrics, a block library and 4K60 throughput (rewind landed as `time` tracks, the beat grid as beat times, `director.beat` and `data-sfx`, and slot-reel counters as `data-reel`); its extruded 3D type waits on issue 9. Rerun Chromium parity on the real-GSAP pipeline (needs the user's yes). Grid templates, placements, gradients and clip paths stay on the text path until a typed port pays for itself. Phase 4 follow-ups stay available: MCP cancellation for long exports and `html render|still|benchmark` on `Session`. GPU follow-ups (YUV420 on the GPU, two Vulkan sessions) stay available.
    Plan 11 phase A1 (`director-asr` with Whisper) touches a new crate only and can run beside any of these.
 2. Push when asked. Linux CI still fails the 12 Windows-rendered text goldens until Linux goldens land.
 

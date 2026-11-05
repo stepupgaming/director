@@ -23,5 +23,5 @@ pub use error::{ErrorCode, HostError};
 pub use frames::{FrameStamp, SharedFrame, SharedFrames};
 pub use load::{Loaded, Source};
 pub use patch::{NodeSelector, Patch, PatchOp};
-pub use qa::{QaAudio, QaIssue, QaOptions, QaReport};
+pub use qa::{QaAudio, QaIssue, QaOptions, QaReport, QaWord};
 pub use session::{import_registry, AudioWindow, ExportSettings, NodeView, Outline, OutlineClip, OutlineNode, Session, MAX_AUDIO_WINDOW};

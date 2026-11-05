@@ -108,7 +108,7 @@ enum Commands {
     Audio(audio_report::AudioArgs),
     /// Report elements outside the canvas and missing fonts
     Check(check::CheckArgs),
-    /// Score publishing quality: layout, safe zones, faces, motion and audio loudness
+    /// Score publishing quality: layout, safe zones, faces, motion, text legibility, cues and the audio mix
     Qa(qa::QaArgs),
     /// Compare one frame to a golden PNG
     Snapshot(snapshot::SnapshotArgs),

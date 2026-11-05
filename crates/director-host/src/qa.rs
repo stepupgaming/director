@@ -1,5 +1,9 @@
-//! QA report: one pass over sampled layout, the render manifest detectors and
-//! the audio mix, with a 0-100 score and a suggested fix per issue.
+//! QA report: one pass over sampled layout, the render manifest detectors,
+//! the painted text and the audio mix, with a 0-100 score and a suggested fix
+//! per issue.
+
+mod mix;
+mod text;
 
 use crate::error::{ErrorCode, HostError};
 use crate::session::Session;
@@ -11,8 +15,10 @@ use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_c
 use director_core::types::{NodeId, SafeZone};
 use director_render::Frame;
 use director_scene::NodeRef;
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// 10 minutes of stereo at 48 kHz. Longer mixes skip loudness analysis.
 pub const MAX_QA_AUDIO_SAMPLES: u64 = 48_000 * 2 * 600;
@@ -36,6 +42,9 @@ pub struct QaOptions {
     pub safe_zone: Option<String>,
     /// Integrated loudness target of the mix in LUFS.
     pub loudness_target: f64,
+    /// Spoken words of the voice track on the timeline clock. They waive the
+    /// reading time of text the voice reads, place cues and mark speech in the mix.
+    pub words: Vec<QaWord>,
 }
 
 impl Default for QaOptions {
@@ -44,8 +53,24 @@ impl Default for QaOptions {
             every: 0.25,
             safe_zone: None,
             loudness_target: -14.0,
+            words: Vec::new(),
         }
     }
+}
+
+/// One spoken word of a transcript, in timeline seconds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct QaWord {
+    /// The word as spoken. `word` is accepted as well.
+    #[serde(alias = "word")]
+    pub text: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+/// Lowercase letters and digits of a word, for matching text against speech.
+fn normalize(word: &str) -> String {
+    word.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -207,6 +232,9 @@ impl Session {
         if !options.loudness_target.is_finite() {
             return Err(invalid("loudness_target must be finite".into()));
         }
+        if let Some(word) = options.words.iter().find(|word| !(word.start.is_finite() && word.end.is_finite() && 0.0 <= word.start && word.start <= word.end)) {
+            return Err(invalid(format!("word '{}' needs finite times with 0 <= start <= end", word.text)));
+        }
         let height = self.document().height as f32;
         let zone = match options.safe_zone.as_deref() {
             None => None,
@@ -234,7 +262,22 @@ impl Session {
 
         let times = sample_times(duration, options.every);
         let grid = sample_times(duration, 1.0);
-        let total = times.len() + grid.len() + 2;
+        let document = Arc::clone(self.document());
+        let texts = match text::targets(&document) {
+            Some((targets, plate)) => {
+                let render = |error: director_render::RenderError| HostError::new(ErrorCode::Render, error.to_string());
+                let frames = self.renderer(Arc::clone(&document)).session().map_err(render)?;
+                let plates = self.renderer(Arc::new(plate)).session().map_err(render)?;
+                Some((targets, (frames, plates)))
+            }
+            None => None,
+        };
+        // Frames MOTION_STEP apart feed the static pass. With text they come
+        // from the text scan, which adds short text spans between steps.
+        let steps = sample_times(duration, MOTION_STEP);
+        let scan = texts.as_ref().map(|(targets, _)| text::scan_times(targets, &steps));
+        let painted = scan.as_ref().map_or(steps.len(), Vec::len);
+        let total = times.len() + grid.len() + 1 + painted;
         let mut done = 0;
         progress(done, total);
         let step = if times.len() > 1 { times[1] - times[0] } else { end };
@@ -286,6 +329,22 @@ impl Session {
             }
         }
 
+        let mut motion = Motion::default();
+        let scanned = texts.is_some();
+        if let (Some((targets, sessions)), Some(scan)) = (texts, scan) {
+            let step_times: Vec<u64> = steps.iter().map(|time| time.to_bits()).collect();
+            let mut frame_at = |time: f64, frame: Frame| {
+                if step_times.contains(&time.to_bits()) {
+                    motion.push(time, frame);
+                }
+            };
+            let mut tick = || {
+                done += 1;
+                progress(done, total);
+            };
+            report.extend(text::text_issues(&document, director, targets, sessions, &scan, &options.words, &mut frame_at, &mut tick)?);
+        }
+
         let tracks = director.audio_mixer.tracks.iter().flatten().count();
         let audio = if tracks == 0 {
             None
@@ -308,13 +367,24 @@ impl Session {
             } else {
                 let wav = self.audio_wav()?;
                 let samples: Vec<f32> = wav[44..].as_chunks::<4>().0.iter().map(|bytes| f32::from_le_bytes(*bytes)).collect();
-                Some(audio_issues(&samples, rate, tracks, options.loudness_target, end, &mut report))
+                let audio = audio_issues(&samples, rate, tracks, options.loudness_target, end, &mut report);
+                if audio.integrated_lufs.is_some() {
+                    mix::mix_issues(&samples, rate, &options.words, &mut report);
+                }
+                Some(audio)
             }
         };
 
         done += 1;
         progress(done, total);
-        for (start, stop) in self.static_stretches(duration)? {
+        if !scanned {
+            for &time in &steps {
+                motion.push(time, self.render_frame(time)?);
+                done += 1;
+                progress(done, total);
+            }
+        }
+        for (start, stop) in motion.finish(duration) {
             report.push(QaIssue {
                 kind: "static",
                 severity: IssueSeverity::Info,
@@ -349,27 +419,31 @@ impl Session {
     }
 }
 
-impl Session {
-    /// Time ranges of at least [`STATIC_SECONDS`] where painted frames
-    /// [`MOTION_STEP`] apart show no visible change.
-    fn static_stretches(&mut self, duration: f64) -> Result<Vec<(f64, f64)>, HostError> {
-        let mut stretches = Vec::new();
-        let mut previous: Option<(f64, Frame)> = None;
-        let mut run: Option<(f64, f64)> = None;
-        for time in sample_times(duration, MOTION_STEP) {
-            let frame = self.render_frame(time)?;
-            if let Some((before, last)) = &previous {
-                if changed(last, &frame) {
-                    stretches.extend(run.take());
-                } else {
-                    run.get_or_insert((*before, time)).1 = time;
-                }
+/// Static stretches from painted frames [`MOTION_STEP`] apart, in time order.
+#[derive(Default)]
+struct Motion {
+    previous: Option<(f64, Frame)>,
+    run: Option<(f64, f64)>,
+    stretches: Vec<(f64, f64)>,
+}
+
+impl Motion {
+    fn push(&mut self, time: f64, frame: Frame) {
+        if let Some((before, last)) = &self.previous {
+            if changed(last, &frame) {
+                self.stretches.extend(self.run.take());
+            } else {
+                self.run.get_or_insert((*before, time)).1 = time;
             }
-            previous = Some((time, frame));
         }
-        stretches.extend(run);
-        stretches.retain(|(start, end)| end - start >= STATIC_SECONDS.min(duration * 0.99));
-        Ok(stretches)
+        self.previous = Some((time, frame));
+    }
+
+    /// Time ranges of at least [`STATIC_SECONDS`] with no visible change.
+    fn finish(mut self, duration: f64) -> Vec<(f64, f64)> {
+        self.stretches.extend(self.run);
+        self.stretches.retain(|(start, end)| end - start >= STATIC_SECONDS.min(duration * 0.99));
+        self.stretches
     }
 }
 

@@ -4,6 +4,7 @@
 //! tests: `cargo test -p director-host --release --test integration <name>::`.
 
 mod editor;
+mod qa;
 mod session;
 
 #[test]

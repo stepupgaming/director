@@ -62,7 +62,7 @@ The CLI gives an agent ways to check a video without watching it:
 | Command | What it reports |
 |---------|-----------------|
 | `inspect`, `outline` | Layout, timeline and audio as JSON, and the node tree |
-| `check`, `qa` | Elements off canvas, missing fonts, safe zones, motion and loudness |
+| `check`, `qa` | Elements off canvas, missing fonts, safe zones, motion, text contrast and reading time, caption cues and the audio mix |
 | `sheet`, `onion`, `still` | Contact sheets, blended motion trails and single frames |
 | `snapshot`, `diff` | A frame against a golden PNG, and two scene documents against each other |
 | `audio` | Loudness, clipping and silence |

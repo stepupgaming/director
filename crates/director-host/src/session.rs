@@ -574,7 +574,7 @@ impl Session {
         })
     }
 
-    fn renderer(&self, document: Arc<SceneDocument>) -> Renderer {
+    pub(crate) fn renderer(&self, document: Arc<SceneDocument>) -> Renderer {
         Renderer::new(document, self.loader.clone()).with_registry(self.registry.clone())
     }
 
