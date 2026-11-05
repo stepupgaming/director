@@ -101,7 +101,7 @@ Read only.
 
 ### `qa`
 
-Score the current revision 0-100 for publishing. Errors cost 20: missing fonts, nodes never on the canvas, clipped or non-finite audio. Warnings cost 5: text clipped by the canvas edge or inside the safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target, text on screen for less than 0.3 s a word (1 s at least) unless the voice reads it, text glyphs under 3:1 contrast against the pixels behind them, a steady audio bed that stops dead, and with `words`: text starting more than 0.2 s after its first spoken word, speech peaks less than 12 dB over the bed and voiceless stretches louder than the voice. Static stretches are info. `pass` holds with no errors. Each issue carries the authored node name, time range and a fix. Reports progress when the request carries a `progressToken`.
+Score the current revision 0-100 for publishing. Errors cost 20: missing fonts, nodes never on the canvas, clipped or non-finite audio. Warnings cost 5: text clipped by the canvas edge or inside the safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target, text on screen for less than 0.3 s a word (1 s at least) unless the voice reads it, text glyphs under 3:1 contrast against the pixels behind them, a steady audio bed that stops dead, and with `words`: text starting more than 0.2 s after its first spoken word, speech peaks less than 12 dB over the bed and voiceless stretches louder than the voice, and with `video`: encoder blotching in dark flat areas of that export. Static stretches are info. `pass` holds with no errors. Each issue carries the authored node name, time range and a fix. Reports progress when the request carries a `progressToken`.
 
 Read only.
 
@@ -109,6 +109,7 @@ Read only.
 - `every` (number, optional, default `0.25`): Seconds between layout samples
 - `loudness_target` (number, optional, default `-14.0`): Integrated loudness target of the audio mix in LUFS
 - `safe_zone` (string, optional): Safe-zone preset for text: `tiktok`, `youtube_shorts`, `instagram_reel`, `instagram_story`, `linkedin`, `twitter`, `mobile` or `desktop`
+- `video` (string, optional): A finished export of this revision at scale 1, inside the server directory, the session's input directory or an `--allow-dir` root. Its frames at 0.5 s steps are checked for encoder blotching in dark flat areas
 - `words` (array of {end, start, text}, optional, default `[]`): Transcript words `{text, start, end}` in timeline seconds. They waive the reading time of text the voice reads, check that text starts on its first spoken word, and mark speech for the voice-against-bed and voiceless-loudness checks
 
 ### `render_frame`

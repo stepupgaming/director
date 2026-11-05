@@ -2,6 +2,7 @@
 //! the painted text and the audio mix, with a 0-100 score and a suggested fix
 //! per issue.
 
+mod blotch;
 mod mix;
 mod text;
 
@@ -18,6 +19,7 @@ use director_scene::NodeRef;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// 10 minutes of stereo at 48 kHz. Longer mixes skip loudness analysis.
@@ -45,6 +47,9 @@ pub struct QaOptions {
     /// Spoken words of the voice track on the timeline clock. They waive the
     /// reading time of text the voice reads, place cues and mark speech in the mix.
     pub words: Vec<QaWord>,
+    /// A finished encode of this revision. Its frames at the static-pass steps
+    /// are checked for encoder blotching in dark flat areas.
+    pub video: Option<PathBuf>,
 }
 
 impl Default for QaOptions {
@@ -54,6 +59,7 @@ impl Default for QaOptions {
             safe_zone: None,
             loudness_target: -14.0,
             words: Vec::new(),
+            video: None,
         }
     }
 }
@@ -277,7 +283,12 @@ impl Session {
         let steps = sample_times(duration, MOTION_STEP);
         let scan = texts.as_ref().map(|(targets, _)| text::scan_times(targets, &steps));
         let painted = scan.as_ref().map_or(steps.len(), Vec::len);
-        let total = times.len() + grid.len() + 1 + painted;
+        let video = match &options.video {
+            Some(path) => Some(blotch::Video::open(path, &steps)?),
+            None => None,
+        };
+        let compared = video.as_ref().map_or(0, |(_, frames)| frames.len());
+        let total = times.len() + grid.len() + 1 + painted + compared;
         let mut done = 0;
         progress(done, total);
         let step = if times.len() > 1 { times[1] - times[0] } else { end };
@@ -396,6 +407,39 @@ impl Session {
                 detail: format!("no visible change from {start:.2}s to {stop:.2}s"),
                 fix: Some("Add motion, a cut or B-roll".into()),
             });
+        }
+
+        if let Some((mut video, frames)) = video {
+            let mut blotched: Vec<(f64, blotch::Blotch)> = Vec::new();
+            for &(index, time) in &frames {
+                let encoded = video.next(index)?;
+                let frame = self.render_frame(time)?;
+                let found = video.measure(&frame, &encoded)?;
+                if found.visible() {
+                    blotched.push((time, found));
+                }
+                done += 1;
+                progress(done, total);
+            }
+            if let (Some(first), Some(last)) = (blotched.first(), blotched.last()) {
+                let (worst, at) = blotched.iter().map(|(time, found)| (found.stepped, *time)).fold((0.0, 0.0), |a, b| if b.0 > a.0 { b } else { a });
+                report.push(QaIssue {
+                    kind: "blotching",
+                    severity: IssueSeverity::Warning,
+                    node: None,
+                    name: None,
+                    start: first.0,
+                    end: last.0,
+                    count: blotched.len(),
+                    detail: format!(
+                        "{} of {} compared frames show encoder block steps in dark flat areas, worst at {at:.2}s on {:.0}% of their block edges",
+                        blotched.len(),
+                        frames.len(),
+                        worst * 100.0
+                    ),
+                    fix: Some("Export at the final software x264 quality or a lower CRF, or add grain or dither to dark gradients".into()),
+                });
+            }
         }
 
         progress(total, total);

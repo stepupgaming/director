@@ -24,6 +24,10 @@ pub struct QaArgs {
     /// with a `words` array, in timeline seconds
     #[arg(long)]
     words: Option<PathBuf>,
+    /// A finished encode of the input, checked for encoder blotching in dark
+    /// flat areas at the canvas size
+    #[arg(long)]
+    video: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -52,6 +56,7 @@ pub fn run(args: QaArgs) -> i32 {
         safe_zone: args.safe_zone,
         loudness_target: args.loudness_target,
         words,
+        video: args.video,
     };
     match Session::open(&args.input.source()).and_then(|mut session| session.qa(&options)) {
         Ok(report) => {

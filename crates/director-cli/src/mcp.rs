@@ -198,6 +198,7 @@ impl Server {
                     safe_zone: args.safe_zone,
                     loudness_target: args.loudness_target,
                     words: args.words,
+                    video: args.video.as_deref().map(|video| self.output_path(&args.session, video)).transpose()?,
                 };
                 let session = self.session(&args.session)?;
                 let report = match &progress {
@@ -394,6 +395,8 @@ struct QaArgs {
     /// Transcript words `{text, start, end}` in timeline seconds. They waive the reading time of text the voice reads, check that text starts on its first spoken word, and mark speech for the voice-against-bed and voiceless-loudness checks
     #[serde(default)]
     words: Vec<QaWord>,
+    /// A finished export of this revision at scale 1, inside the server directory, the session's input directory or an `--allow-dir` root. Its frames at 0.5 s steps are checked for encoder blotching in dark flat areas
+    video: Option<PathBuf>,
 }
 
 fn default_every() -> f64 {
@@ -472,7 +475,7 @@ pub fn tools() -> Vec<Value> {
         tool::<DiffArgs>("diff", "Document, added, removed, moved and changed nodes between two sessions as JSON pointers, with `patch`: the ops that turn `before` into `after` when `patchable`.", true),
         tool::<PatchArgs>("patch", "Apply patch ops atomically and return the new revision. `set` replaces the value at a JSON pointer in a node record (`{\"op\":\"set\",\"node\":\"box\",\"path\":\"/opacity\",\"value\":0.5}`), `set_document` one in the document, `remove` drops a subtree.", false),
         tool::<InspectArgs>("inspect", "Source ids, layout bounds, timeline and audio of the current revision at a time.", true),
-        tool::<QaArgs>("qa", "Score the current revision 0-100 for publishing. Errors cost 20: missing fonts, nodes never on the canvas, clipped or non-finite audio. Warnings cost 5: text clipped by the canvas edge or inside the safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target, text on screen for less than 0.3 s a word (1 s at least) unless the voice reads it, text glyphs under 3:1 contrast against the pixels behind them, a steady audio bed that stops dead, and with `words`: text starting more than 0.2 s after its first spoken word, speech peaks less than 12 dB over the bed and voiceless stretches louder than the voice. Static stretches are info. `pass` holds with no errors. Each issue carries the authored node name, time range and a fix. Reports progress when the request carries a `progressToken`.", true),
+        tool::<QaArgs>("qa", "Score the current revision 0-100 for publishing. Errors cost 20: missing fonts, nodes never on the canvas, clipped or non-finite audio. Warnings cost 5: text clipped by the canvas edge or inside the safe-zone inset for a second or more, captions over faces, reframed subjects out of frame, true peak above -1 dBTP, a silent mix, loudness more than 2 LU off target, text on screen for less than 0.3 s a word (1 s at least) unless the voice reads it, text glyphs under 3:1 contrast against the pixels behind them, a steady audio bed that stops dead, and with `words`: text starting more than 0.2 s after its first spoken word, speech peaks less than 12 dB over the bed and voiceless stretches louder than the voice, and with `video`: encoder blotching in dark flat areas of that export. Static stretches are info. `pass` holds with no errors. Each issue carries the authored node name, time range and a fix. Reports progress when the request carries a `progressToken`.", true),
         tool::<FrameArgs>("render_frame", "Paint one frame of the current revision as PNG.", false),
         tool::<ExportArgs>("export", "Export the current revision as a video file, with an audio stream only when the scene has audio tracks. Reports encoded frames as progress when the request carries a `progressToken`. Fails with `missing_font` when required fonts are absent and `output_outside_root` for a path outside the allowed roots.", false),
     ]

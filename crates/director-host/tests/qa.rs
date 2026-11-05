@@ -1,4 +1,5 @@
-use director_host::{QaIssue, QaOptions, QaReport, QaWord, Session, Source};
+use director_core::video_wrapper::EncoderMode;
+use director_host::{ErrorCode, ExportSettings, QaIssue, QaOptions, QaReport, QaWord, Session, Source};
 use serde_json::json;
 
 /// A white 320x180 composition, three seconds long, holding `body`.
@@ -58,4 +59,46 @@ fn text_the_voice_reads_waives_reading_time_and_late_cues_warn() {
     let on_time = report(line, vec![word("Hello", 0.95), word("world", 1.25)]);
     assert!(kinds(&on_time, "line").is_empty(), "{}", json!(on_time));
     assert!(on_time.pass && on_time.warnings == 0);
+}
+
+/// QA of a dark radial gradient against its own software export, at draft
+/// quality (x264 ultrafast, CRF 30) or the final quality.
+fn encoded(draft: bool) -> QaReport {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("dark.html");
+    let html = "<style>body{margin:0}main{background:radial-gradient(circle at 30% 40%,#2c313c,#06070a 70%)}</style>         <main data-composition-id='main' data-width='640' data-height='360' data-duration='2'></main>";
+    std::fs::write(&input, html).unwrap();
+    let mut session = Session::open(&Source::new(input)).unwrap();
+    let video = dir.path().join("dark.mp4");
+    let mut settings = ExportSettings::default();
+    settings.options.draft = draft;
+    settings.options.mode = EncoderMode::Software;
+    session.export(&video, &settings, None).unwrap();
+    session.qa(&QaOptions { video: Some(video), ..QaOptions::default() }).unwrap()
+}
+
+#[test]
+fn draft_encodes_of_dark_gradients_blotch_and_final_encodes_pass() {
+    let draft = encoded(true);
+    let blotching: Vec<_> = draft.issues.iter().filter(|issue| issue.kind == "blotching").collect();
+    assert_eq!(blotching.len(), 1, "{}", json!(draft));
+    assert_eq!((blotching[0].start, blotching[0].count), (0.0, 5), "{}", json!(blotching));
+    assert!(blotching[0].fix.is_some());
+
+    let final_quality = encoded(false);
+    assert!(final_quality.issues.iter().all(|issue| issue.kind != "blotching"), "{}", json!(final_quality));
+    assert_eq!(final_quality.warnings, 0);
+}
+
+#[test]
+fn a_missing_video_is_an_invalid_argument() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("scene.html");
+    std::fs::write(&input, "<main data-composition-id='main' data-width='64' data-height='64' data-duration='1'></main>").unwrap();
+    let mut session = Session::open(&Source::new(input)).unwrap();
+    let options = QaOptions {
+        video: Some(dir.path().join("missing.mp4")),
+        ..QaOptions::default()
+    };
+    assert_eq!(session.qa(&options).unwrap_err().code, ErrorCode::InvalidArgument);
 }

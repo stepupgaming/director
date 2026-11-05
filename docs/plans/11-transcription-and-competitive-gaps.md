@@ -121,7 +121,7 @@ raea is a Rust engine on Bevy 0.20. Compositions are React/TSX on a Remotion-sha
 | --- | --- | --- | --- |
 | Authoring | React/TSX on a Remotion-shaped API, Tailwind, npm packages through its own installer | HTML/CSS (primary), GSAP translated to native tracks, Rhai | Holds; Remotion compatibility is out of scope |
 | 3D | Bevy PBR, glTF, Gaussian splats, matchmove through COLMAP | CSS `preserve-3d`; real meshes planned | Plan 10 issue 9 |
-| Export QA | `raea check`: loudness and true peak, dead stops, static stretches, dark blotching, voice against bed, clipped text, platform zones, reading time, caption contrast, cues on words, text over faces, taste rules | `Session::qa`: clipped text, safe zones, captions over faces, reframed subjects, static stretches, loudness, peak and clipping, caption contrast, reading time, cues on words, voice against bed, voiceless swells and dead stops | C2, plan 10 phase 6 |
+| Export QA | `raea check`: loudness and true peak, dead stops, static stretches, dark blotching, voice against bed, clipped text, platform zones, reading time, caption contrast, cues on words, text over faces, taste rules | `Session::qa`: clipped text, safe zones, captions over faces, reframed subjects, static stretches, loudness, peak and clipping, caption contrast, reading time, cues on words, voice against bed, voiceless swells, dead stops and blotching in a finished export | C2, plan 10 phase 6 |
 | Agent craft guides | A floor (verify, refuse, never), a P0 to P3 rubric with model-judged questions, named edit moves, brief and storyboard gate | Generated skills, MCP, QA score | C3 |
 | Music timing | Song map with beats, downbeats, builds and drops | Beat grid as beat times, `director.beat` | Plan 10 issue 8 |
 | Media CLI | `raea ffmpeg` and `raea ffprobe` read ffmpeg command lines in process | One FFmpeg process per export | C4 candidate |
@@ -132,7 +132,7 @@ raea is a Rust engine on Bevy 0.20. Compositions are React/TSX on a Remotion-sha
 **C1. Keep the scorecard true.** Re-read the raea README, `apps/check` docs and site whenever a plan 10 phase closes, as B1 does for FFrames.
 
 **C2. Export QA checks.** The checks listed under plan 10 phase 6. Thresholds follow published platform guidance and the standards they cite (WCAG contrast, EBU R128 loudness) and are calibrated on Director's own fixtures.
-Gate: each check has a fixture that fails it and a fixed variant that passes, through `Session::qa` and on a finished MP4. Status 2026-11-05: contrast, reading time, cues, voice against bed and dead stops pass the gate through `Session::qa`; blotching, project rules and the MP4 path remain.
+Gate: each check has a fixture that fails it and a fixed variant that passes, through `Session::qa` and on a finished MP4. Status 2026-11-05: contrast, reading time, cues, voice against bed and dead stops pass the gate through `Session::qa`, and blotching passes it on a finished MP4 through `Session::qa`; project rules and the remaining checks on a finished MP4 remain.
 
 **C3. Craft guides in the generated skills.** A quality floor an agent reads before each edit, a P0 to P3 rubric, and named edit moves mapping a person's note to one playbook. A brief and storyboard gate belongs at the orchestration layer outside the render core.
 
