@@ -780,6 +780,7 @@ fn build(
     let root_id = builder.node(
         root,
         &parent,
+        None,
         0.0,
         true,
         style::ContainingBlock::from_axes(
@@ -1362,10 +1363,12 @@ impl Builder {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn node(
         &mut self,
         el: ElementRef<'_>,
         parent: &ComputedStyle,
+        cascaded: Option<ComputedStyle>,
         composition_start: f64,
         root: bool,
         containing_block: style::ContainingBlock,
@@ -1378,7 +1381,10 @@ impl Builder {
         }
         let tag = el.value().name();
         let context = label(el);
-        let mut values = self.css.cascade(el, parent)?;
+        let mut values = match cascaded {
+            Some(values) => values,
+            None => self.css.cascade(el, parent)?,
+        };
         if tag == "svg" && !self.css.has_local_property(el, "color") {
             if let Some(color) = el.value().attr_text("color") {
                 values.insert("color", color);
@@ -1559,6 +1565,9 @@ impl Builder {
         let mut svg_viewport: Option<(f32, f32)> = None;
         let mut atomics = Vec::new();
         let mut positioned = Vec::new();
+        // Child styles cascaded over `values` while classifying the children,
+        // kept for the children's own builds.
+        let mut cascaded = HashMap::new();
         let content: Option<Box<dyn Element>> = match tag {
             "img" => {
                 let src = el
@@ -1758,7 +1767,9 @@ impl Builder {
                 let mut text_block = true;
                 for child in &children {
                     let child_values = self.css.cascade(*child, &values)?;
-                    match self.level(*child, &child_values) {
+                    let level = self.level(*child, &child_values);
+                    cascaded.insert(child.id(), child_values);
+                    match level {
                         Level::Block => {
                             text_block = false;
                             break;
@@ -1772,7 +1783,7 @@ impl Builder {
                 }
                 if text_block {
                     let mut spans = Vec::new();
-                    self.rich_text(el, &values, &paint, style_block, &mut spans, &mut atomics, true, paint.visible)?;
+                    self.rich_text(el, &values, &paint, style_block, &mut spans, &mut atomics, &mut cascaded, true, paint.visible)?;
                     normalize(&mut spans, paint.preserve_space);
                     if !atomics.is_empty() && self.text_tracked(el) {
                         return Err(CompileError::Input(format!(
@@ -2033,7 +2044,7 @@ impl Builder {
             }
         }
         for child in children {
-            let child_id = self.node(child, &values, next_start, false, child_block, depth + 1)?;
+            let child_id = self.node(child, &values, cascaded.remove(&child.id()), next_start, false, child_block, depth + 1)?;
             // Taffy absolute offsets use the parent node, so fixed is a child of the composition root.
             if !root && self.fixed.contains(&child_id) {
                 if self.clocked > 0 {
@@ -2283,7 +2294,7 @@ impl Builder {
             if matches!(child.value().name(), "script" | "style" | "link") {
                 continue;
             }
-            let child_id = self.node(child, &cascaded, start, false, block, depth + 1)?;
+            let child_id = self.node(child, &cascaded, None, start, false, block, depth + 1)?;
             if self.fixed.contains(&child_id) {
                 self.director.scene.add_child(
                     self.root_id
@@ -2312,7 +2323,7 @@ impl Builder {
         let mut boxes = Vec::new();
         for (slot, (child, values)) in atomics.iter().enumerate() {
             self.atomic.insert(child.id());
-            let id = self.node(*child, values, start, false, block, depth + 1);
+            let id = self.node(*child, values, None, start, false, block, depth + 1);
             self.atomic.remove(&child.id());
             let id = id?;
             let (placeholder, sizing) = self.size_atomic(id, *child)?;
@@ -2412,6 +2423,7 @@ impl Builder {
         block: style::ContainingBlock,
         spans: &mut Vec<TextSpan>,
         atomics: &mut Vec<(ElementRef<'a>, ComputedStyle)>,
+        cascaded: &mut HashMap<ego_tree::NodeId, ComputedStyle>,
         top: bool,
         visible: bool,
     ) -> Result<(), CompileError> {
@@ -2427,7 +2439,10 @@ impl Builder {
                 if matches!(child.value().name(), "script" | "style" | "link") {
                     continue;
                 }
-                let mut child_values = self.css.cascade(child, values)?;
+                let mut child_values = match cascaded.remove(&child.id()) {
+                    Some(child_values) => child_values,
+                    None => self.css.cascade(child, values)?,
+                };
                 match self.level(child, &child_values) {
                     Level::Skip => continue,
                     Level::Atomic => {
@@ -2442,7 +2457,10 @@ impl Builder {
                         )))
                     }
                     // The text block compiles its own positioned children beside its text.
-                    Level::Positioned if top => continue,
+                    Level::Positioned if top => {
+                        cascaded.insert(child.id(), child_values);
+                        continue;
+                    }
                     Level::Positioned => {
                         return Err(CompileError::Input(format!(
                             "{}: a positioned box inside an inline box requires extraction",
@@ -2472,7 +2490,7 @@ impl Builder {
                 )
                 .map_err(|e| CompileError::Input(e.join("; ")))?;
                 let before = spans.len();
-                self.rich_text(child, &child_values, &child_paint, block, spans, atomics, false, visible)?;
+                self.rich_text(child, &child_values, &child_paint, block, spans, atomics, &mut HashMap::new(), false, visible)?;
                 if self.css.has_local_property(child, "color") {
                     for span in &mut spans[before..] {
                         if span.color.is_none() {
