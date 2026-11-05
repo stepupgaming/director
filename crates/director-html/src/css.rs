@@ -198,6 +198,15 @@ impl Css {
             rule.selector.matches(&el) && rule.declarations.iter().any(|d| d.name == name)
         })
     }
+    /// The property names stylesheet rules matching `el` declare, matching
+    /// each selector once for a caller that asks about many names.
+    pub fn stylesheet_properties(&self, el: ElementRef<'_>) -> Vec<&str> {
+        self.rules
+            .iter()
+            .filter(|rule| rule.selector.matches(&el))
+            .flat_map(|rule| rule.declarations.iter().map(|d| d.name.as_str()))
+            .collect()
+    }
     pub fn has_local_property(&self, el: ElementRef<'_>, name: &str) -> bool {
         self.has_stylesheet_property(el, name)
             || el

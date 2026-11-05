@@ -110,16 +110,17 @@ fn write_svg_children(
                 let child_path = crate::smil::child_path(parent_path, index);
                 index += 1;
                 let values = css.cascade(child, parent)?;
+                let declared = css.stylesheet_properties(child);
                 let mut extra = String::new();
                 for name in SVG_EXTERNAL_PRESENTATION {
                     // lightningcss stores the mask shorthand as mask-image.
                     // usvg reads the presentation name mask.
-                    let lookup = if *name == "mask" && !css.has_stylesheet_property(child, name) {
+                    let lookup = if *name == "mask" && !declared.contains(name) {
                         "mask-image"
                     } else {
                         *name
                     };
-                    if css.has_stylesheet_property(child, lookup) {
+                    if declared.contains(&lookup) {
                         if let Some(value) = values.get(lookup) {
                             extra.push_str(name);
                             extra.push(':');
@@ -1593,8 +1594,9 @@ impl Builder {
                     .filter_map(ElementRef::wrap)
                     .filter(|child| child.id() != el.id())
                 {
+                    let declared = self.css.stylesheet_properties(child);
                     for property in SVG_ANIMATION_PROPERTIES {
-                        if self.css.has_stylesheet_property(child, property) {
+                        if declared.contains(property) {
                             return Err(CompileError::Input(format!("{}: external stylesheet 'animation' inside SVG requires extraction; author SVG presentation attributes or an internal stylesheet", label(child))));
                         }
                     }
