@@ -289,6 +289,7 @@ fn benchmark(
     for run in 0..runs {
         let mut render_seconds = 0.0;
         let mut readback_seconds = 0.0;
+        let mut each = Vec::with_capacity(count);
         let wall = Instant::now();
         for frame in 0..count {
             let started = Instant::now();
@@ -299,7 +300,9 @@ fn benchmark(
             let readback = Instant::now();
             crate::gpu::read_pixels(&mut surface, &mut context, &mut pixels).map_err(|e| (2, e))?;
             readback_seconds += readback.elapsed().as_secs_f64();
-            render_seconds += started.elapsed().as_secs_f64();
+            let spent = started.elapsed().as_secs_f64();
+            render_seconds += spent;
+            each.push(spent * 1000.0);
             if run == 0 {
                 if let Some(dir) = &frames_dir {
                     write_png(
@@ -310,7 +313,9 @@ fn benchmark(
                 }
             }
         }
-        measurements.push(serde_json::json!({"kind":if run==0{"first"}else{"warm"},"frames":count,"render_ms":render_seconds*1000.0,"readback_ms":readback_seconds*1000.0,"fps":count as f64/render_seconds,"wall_ms":wall.elapsed().as_secs_f64()*1000.0}));
+        each.sort_by(f64::total_cmp);
+        let at = |q: f64| each[((each.len() - 1) as f64 * q).round() as usize];
+        measurements.push(serde_json::json!({"kind":if run==0{"first"}else{"warm"},"frames":count,"render_ms":render_seconds*1000.0,"readback_ms":readback_seconds*1000.0,"fps":count as f64/render_seconds,"median_frame_ms":at(0.5),"p95_frame_ms":at(0.95),"wall_ms":wall.elapsed().as_secs_f64()*1000.0}));
     }
     let warm_started = Instant::now();
     let warm = input.load_html().map_err(|e| (1, e.to_string()))?;

@@ -42,7 +42,7 @@
 - `inspect --sample <seconds>` may be repeated. With no sample, inspect prints one object at `--time`. With samples, it loads once and prints `{"samples":[{"time","inspection"}]}` in order. A non-finite or negative sample exits 1.
 - Explicit `--gpu` requires Vulkan across top-level render/still/editor as well as HTML commands. Render accepts independent `--encoder software|nvenc`.
 - HTML `render` and `benchmark` accept independent `--gpu` and `--encoder software|nvenc`; `still` accepts `--gpu`. An explicit GPU request requires the Vulkan build and a GPU surface; failures exit 2. Default HTML rendering/encoding remains CPU/software.
-- HTML benchmark FPS includes layout, paint, submission and RGBA readback on both CPU and GPU. Report the backend, codec and setup cost; PNG encoding remains outside the frame timer.
+- HTML benchmark FPS includes layout, paint, submission and RGBA readback on both CPU and GPU. Report the backend, codec and setup cost; PNG encoding remains outside the frame timer. Each run also reports `median_frame_ms` and `p95_frame_ms`.
 - CLI changes that expose or require Rhai API behavior must stay aligned with `director-core`.
 - Rendering, stills, inspection and the editor load Rhai with `Export` semantics so media seek behavior matches export. Composition listing uses `Preview`.
 - Named compositions: host keeps `CompositionRegistry` + compiled `AST`; builders are invoked via `FnPtr::call`, never `call_fn` by name.
