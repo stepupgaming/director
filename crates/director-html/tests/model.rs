@@ -254,18 +254,22 @@ fn changed_in(a: &[u8], b: &[u8], columns: std::ops::Range<i32>) -> usize {
         .count()
 }
 
+/// The skinned and morphing test rig.
+fn rig() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../director-3d/tests/fixtures/rig.glb")
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 #[test]
 fn skins_and_morph_targets_follow_the_element_clock() {
     if !gpu() {
         return;
     }
-    let rig = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../director-3d/tests/fixtures/rig.glb")
-        .canonicalize()
-        .unwrap()
-        .to_string_lossy()
-        .replace('\\', "/");
-    let mut c = build(&page("", "").replace(&fixture(), &rig));
+    let mut c = build(&page("", "").replace(&fixture(), &rig()));
     let start = frame(&mut c, 0.0);
     let end = frame(&mut c, 1.95);
     let bend = changed_in(&start, &end, 0..W / 2);
@@ -320,5 +324,83 @@ fn a_lens_blurs_off_the_focus_plane_alike_in_preview_and_export() {
     ] {
         let error = compile(&page(style, ""), options()).err().expect(style).to_string();
         assert!(error.contains(message), "{style}: {error}");
+    }
+}
+
+#[test]
+fn each_shot_sets_the_probe_intensity_of_a_shared_stage() {
+    if !gpu() {
+        return;
+    }
+    let shot = |intensity: &str| {
+        let source = page("", "").replace("></model>", &format!(" environment-intensity='{intensity}'></model>"));
+        frame(&mut build(&source), 1.0)
+    };
+    let (bright, dim) = (shot("2000"), shot("50"));
+    assert!(changed(&bright, &dim) > (W * H / 3) as usize, "a dimmer probe darkens the scene");
+    assert_eq!(changed(&bright, &shot("2000")), 0, "the stage takes each shot's intensity");
+}
+
+/// A model under a dim probe with `lights` inside it.
+fn lit(lights: &str, attrs: &str) -> String {
+    page("", "").replace("></model>", &format!(" environment-intensity='50' {attrs}>{lights}</model>"))
+}
+
+/// Pixels in the shadow rows whose luminance sits between the darkest and
+/// brightest fifth of `reference` there: shadow edges and the ground's shading.
+fn penumbra(p: &[u8], reference: &[u8]) -> usize {
+    let rows = || (H / 2..H * 3 / 4).flat_map(|y| (0..W).map(move |x| (x, y)));
+    let luma = |p: &[u8], (x, y): (i32, i32)| pixel(p, x, y).iter().map(|&c| c as i32).sum::<i32>();
+    let (lo, hi) = rows().fold((i32::MAX, 0), |(lo, hi), at| (lo.min(luma(reference, at)), hi.max(luma(reference, at))));
+    let (lo, hi) = (lo + (hi - lo) / 5, hi - (hi - lo) / 5);
+    rows().filter(|&at| (lo..hi).contains(&luma(p, at))).count()
+}
+
+#[test]
+fn added_lights_cast_shadows_softened_by_their_emitter_size() {
+    if !gpu() {
+        return;
+    }
+    let sun = "<light type='sun' position='3 4 2' intensity='20000'></light>";
+    let dark = frame(&mut build(&lit("", "")), 1.0);
+    let mut hard = build(&lit(sun, "samples='16'"));
+    let hard_frame = frame(&mut hard, 1.0);
+    assert!(changed(&dark, &hard_frame) > (W * H / 3) as usize, "a sun lights the scene");
+    let soft = frame(&mut build(&lit(&sun.replace("'20000'", "'20000' angle='30'"), "")), 1.0);
+    let (hard_mid, soft_mid) = (penumbra(&hard_frame, &hard_frame), penumbra(&soft, &hard_frame));
+    eprintln!("mid-tone ground pixels: hard sun {hard_mid}, 30 degree sun {soft_mid}");
+    assert!(soft_mid > hard_mid + 60, "a wide sun spreads its shadow edges");
+
+    let rect = "<light type='rect' position='2 3 2' width='2' height='2' intensity='100000'></light>";
+    let mut c = build(&lit(rect, ""));
+    let live = frame(&mut c, 1.0);
+    assert!(changed(&dark, &live) > (W * H / 3) as usize, "a rect light lights the scene");
+    assert_eq!(changed(&live, &frame(&mut build(&lit(rect, "samples='16'")), 1.0)), 0, "a sized light renders 16 samples at either level");
+    assert_eq!(changed(&hard_frame, &frame(&mut hard, 1.0)), 0, "lights respawn the same after another light set");
+    frame(&mut build(&page("", "").replace(&fixture(), &rig())), 1.0);
+    assert_eq!(changed(&live, &frame(&mut c, 1.0)), 0, "lit shadows come back with their stage");
+    let document = SceneDocument::from_json(&export_scene(&c.director).unwrap().to_json().unwrap()).unwrap();
+    let mut registry = director_core::scene_import::ImportRegistry::core();
+    director_html::register_import(&mut registry);
+    let renderer = director_render::Renderer::new(Arc::new(document), Arc::new(director_core::DefaultAssetLoader))
+        .with_registry(registry);
+    assert_eq!(changed(&renderer.render_frame(1.0).unwrap().rgba, &live), 0, "the document keeps the lights");
+
+    let point = "<light type='point' position='2 3 2' radius='0.5' color='#ffcc88' shadows='false'></light>";
+    let body = model_body(&build(&lit(point, "")));
+    let light = &body.lights[0];
+    assert_eq!(light.kind, director_scene::ModelLightKind::Point);
+    assert_eq!((light.position, light.target, light.radius, light.shadows), (Some([2.0, 3.0, 2.0]), None, 0.5, false));
+    assert_eq!(light.intensity, 1_000_000.0);
+    assert!((light.color[1] - 0.8).abs() < 1e-3, "{:?}", light.color);
+    assert!(model_body(&build(&page("", ""))).lights.is_empty());
+
+    for (light, message) in [
+        ("<light type='area'></light>", "must be sun, point, spot or rect"),
+        ("<light position='1 2'></light>", "must be three numbers in metres"),
+        ("<light radius='-1'></light>", "must be a number from 0"),
+    ] {
+        let error = compile(&lit(light, ""), options()).err().expect(light).to_string();
+        assert!(error.contains(message), "{light}: {error}");
     }
 }

@@ -29,6 +29,62 @@ pub struct ModelBody {
     /// level; more is the Export level.
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub samples: u32,
+    /// Lights Director adds to the file's own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lights: Vec<ModelLight>,
+}
+
+/// What a `ModelLight` emits from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelLightKind {
+    /// Parallel light from a disc in the sky.
+    Sun,
+    /// A sphere that lights every direction.
+    Point,
+    /// A sphere that lights a cone.
+    Spot,
+    /// A one-sided rectangle, like a softbox.
+    Rect,
+}
+
+/// A light in the model's world space: metres, Y up, with the framing camera
+/// on +Z. A light with an emitter size (`radius`, `angle` or a rectangle)
+/// averages renders lit from points across the emitter, which softens its
+/// shadows the way a real source does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelLight {
+    pub kind: ModelLightKind,
+    /// sRGB colour, each channel 0 to 1.
+    pub color: [f32; 3],
+    /// Illuminance in lux for a sun, luminous power in lumens otherwise.
+    pub intensity: f32,
+    /// Where the light sits. `None` places it up and to the front right of
+    /// the bounding sphere. A sun uses only its direction to `target`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<[f32; 3]>,
+    /// The point the light faces. `None` is the bounding sphere centre.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<[f32; 3]>,
+    /// Emitter radius in metres for a point or spot light.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub radius: f32,
+    /// Angular diameter of a sun in degrees.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub angle: f32,
+    /// Full cone angle of a spot light in degrees.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cone: f32,
+    /// Width and height of a rect light in metres.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub width: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub height: f32,
+    /// Metres beyond which a point, spot or rect light stops. 0 picks a
+    /// range that covers the scene.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub range: f32,
+    pub shadows: bool,
 }
 
 fn one() -> u32 {

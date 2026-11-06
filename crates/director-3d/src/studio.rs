@@ -26,7 +26,7 @@ use bevy::{
     core_pipeline::tonemapping::Tonemapping,
     gltf::GltfAssetLabel,
     image::Image,
-    light::{GeneratedEnvironmentMapLight, Skybox},
+    light::{EnvironmentMapLight, GeneratedEnvironmentMapLight, Skybox},
     log::LogPlugin,
     mesh::morph::MeshMorphWeights,
     post_process::bloom::Bloom,
@@ -46,9 +46,11 @@ use bevy::{
     window::ExitCondition,
     world_serialization::WorldAssetRoot,
 };
-use director_scene::ModelView;
+use director_scene::{ModelLight, ModelView};
 
 use crate::accumulate::Accumulator;
+use crate::lights;
+use crate::node::lights_hash;
 use crate::Asset;
 
 /// Everything one frame of a model depends on.
@@ -67,6 +69,8 @@ pub struct Shot {
     pub height: u32,
     /// Jittered sub-pixel renders averaged into the frame.
     pub samples: u32,
+    /// Lights added to the file's own.
+    pub lights: Arc<Vec<ModelLight>>,
 }
 
 /// Premultiplied sRGB RGBA8 pixels, rows packed.
@@ -282,8 +286,8 @@ fn orbit(
 /// Bevy's default sensor: Super 35, 18.66 mm tall.
 const SENSOR_HEIGHT: f32 = 0.01866;
 
-/// The fewest renders a lens with an aperture averages.
-const LENS_SAMPLES: u32 = 16;
+/// The fewest renders a lens with an aperture or a sized light averages.
+const SOFT_SAMPLES: u32 = 16;
 
 struct Stage {
     root: Entity,
@@ -299,6 +303,9 @@ struct Stage {
     warm: HashSet<(u32, u32)>,
     /// The scene holds morph-target meshes.
     morphs: bool,
+    /// The added lights and the hash of the set they came from.
+    lights: Vec<lights::Placed>,
+    lit: u64,
 }
 
 struct Target {
@@ -310,13 +317,14 @@ struct Target {
 }
 
 type StageKey = (u64, Option<u64>);
-type ShotKey = (StageKey, usize, u64, [u32; 9]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 9]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     (
         stage,
         shot.clips,
         shot.time.to_bits(),
+        lights_hash(&shot.lights),
         [
             shot.view.yaw.to_bits(),
             shot.view.pitch.to_bits(),
@@ -465,6 +473,11 @@ impl Studio {
             } else {
                 e.remove::<Skybox>();
             }
+            // Bevy copies the probe intensity into the generated
+            // `EnvironmentMapLight` once, and the view reads it from there.
+            if let Some(mut light) = e.get_mut::<EnvironmentMapLight>() {
+                light.intensity = shot.environment_intensity;
+            }
             let mut c = e.get_mut::<Camera>().expect("director camera");
             c.is_active = true;
             c.clear_color = ClearColorConfig::Custom(Color::NONE);
@@ -489,13 +502,24 @@ impl Studio {
             jitter: Vec2::ZERO,
             lens: Vec2::ZERO,
         });
-        // A lens averages at least `LENS_SAMPLES` eye positions, at either
-        // level, so preview and export blur alike.
-        let samples = if shot.view.aperture > 0.0 {
-            shot.samples.max(LENS_SAMPLES)
+        // A lens or a sized light averages at least `SOFT_SAMPLES` renders,
+        // at either level, so preview and export blur alike.
+        let soft = lights::sized(&shot.lights);
+        let samples = if shot.view.aperture > 0.0 || soft {
+            shot.samples.max(SOFT_SAMPLES)
         } else {
             shot.samples.max(1)
         };
+        let lit = lights_hash(&shot.lights);
+        let stage = self.stages.get_mut(&key).expect("stage");
+        let world = self.apps.main.world_mut();
+        let respawned = stage.lit != lit;
+        if respawned {
+            lights::despawn(world, std::mem::take(&mut stage.lights));
+            stage.lights = lights::spawn(world, stage.root, &shot.lights, center, radius);
+            stage.lit = lit;
+        }
+        lights::place(world, &stage.lights, None);
         if samples > 1 {
             world.entity_mut(camera).insert(TemporalJitter::default());
         } else {
@@ -507,10 +531,11 @@ impl Studio {
             }
             self.stages.get_mut(&key).expect("stage").warm.insert(size);
         }
-        // A morph mesh that just came back into view gets its morph
-        // descriptor one frame after its mesh instance (see
-        // `touch_morph_meshes`), so a stage switch takes one extra frame.
-        if warm && morphs && self.shown != Some(key) {
+        // A stage that just came back into view gets its morph descriptors
+        // (see `touch_morph_meshes`) and its lights' shadow casters late, and
+        // so does a new light set, so either takes two extra frames.
+        if warm && (self.shown != Some(key) || respawned) {
+            self.step();
             self.step();
         }
         self.shown = Some(key);
@@ -523,6 +548,12 @@ impl Studio {
                 let p = orbit.0.as_mut().expect("placement");
                 p.jitter = jitter(sample);
                 p.lens = lens(sample);
+                if soft {
+                    let square = Vec2::new(halton(sample + 1, 11), halton(sample + 1, 13));
+                    let stage = &self.stages[&key];
+                    let world = self.apps.main.world_mut();
+                    lights::place(world, &stage.lights, Some((square, disk(square * 2.0 - 1.0))));
+                }
             }
             // Queue order keeps each sample's render ahead of its share, so
             // only the last sample waits for the GPU.
@@ -702,6 +733,8 @@ impl Studio {
                 probe,
                 warm: HashSet::new(),
                 morphs,
+                lights: Vec::new(),
+                lit: lights_hash(&[]),
             },
         );
         Ok(key)
@@ -860,7 +893,11 @@ fn jitter(i: u32) -> Vec2 {
 /// Lens point of sample `i` on the unit disk: Halton (5, 7) through
 /// Shirley's concentric map, which keeps the points evenly spread.
 fn lens(i: u32) -> Vec2 {
-    let (a, b) = (2.0 * halton(i + 1, 5) - 1.0, 2.0 * halton(i + 1, 7) - 1.0);
+    disk(Vec2::new(halton(i + 1, 5), halton(i + 1, 7)) * 2.0 - 1.0)
+}
+
+/// Shirley's concentric map from the square [-1, 1]² to the unit disk.
+fn disk(Vec2 { x: a, y: b }: Vec2) -> Vec2 {
     if a == 0.0 && b == 0.0 {
         return Vec2::ZERO;
     }

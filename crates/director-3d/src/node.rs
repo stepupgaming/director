@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use director_core::scene_export::{ElementExport, ExportContext, ExportError};
 use director_core::scene_import::{ImportContext, ImportError, ImportRegistry};
 use director_core::{Element, RenderError};
-use director_scene::{Channel, ModelBody, ModelView, NodeBody, NodeRecord};
+use director_scene::{Channel, ModelBody, ModelLight, ModelView, NodeBody, NodeRecord};
 use skia_safe::gpu::{backend_textures, vk as sk_vk, DirectContext, SurfaceOrigin};
 use skia_safe::{images, AlphaType, Canvas, Color4f, ColorSpace, ColorType, Data, Image, ImageInfo, Paint, Rect};
 use taffy::Style;
@@ -79,7 +79,28 @@ impl std::fmt::Debug for Asset {
     }
 }
 
-type FrameKey = (u64, Option<u64>, u32, u32, [u32; 10]);
+type FrameKey = (u64, Option<u64>, u64, u32, u32, [u32; 10]);
+
+/// A hash of every field of `lights`, which keys frames and the studio's
+/// spawned lights.
+pub(crate) fn lights_hash(lights: &[ModelLight]) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    for light in lights {
+        light.kind.hash(&mut hasher);
+        let sizes = [light.intensity, light.radius, light.angle, light.cone, light.width, light.height, light.range];
+        let numbers = light
+            .color
+            .iter()
+            .chain(light.position.iter().flatten())
+            .chain(light.target.iter().flatten())
+            .chain(&sizes);
+        for n in numbers {
+            n.to_bits().hash(&mut hasher);
+        }
+        (light.position.is_some(), light.target.is_some(), light.shadows).hash(&mut hasher);
+    }
+    hasher.finish()
+}
 
 static TEXTURE_DRAWS: AtomicU64 = AtomicU64::new(0);
 
@@ -110,6 +131,8 @@ pub struct ModelNode {
     pub base: ModelView,
     /// The orbit this frame. The HTML element writes its animated camera here.
     pub view: ModelView,
+    /// Lights added to the file's own.
+    pub lights: Arc<Vec<ModelLight>>,
     pub info: GlbInfo,
     time: f64,
     frame: Mutex<Option<(FrameKey, Arc<Vec<u8>>)>>,
@@ -129,6 +152,7 @@ impl ModelNode {
             samples: 1,
             base: ModelView::default(),
             view: ModelView::default(),
+            lights: Arc::new(Vec::new()),
             info,
             time: 0.0,
             frame: Mutex::new(None),
@@ -157,6 +181,7 @@ impl ModelNode {
             looped: self.looped,
             view: self.base,
             samples: self.samples,
+            lights: self.lights.to_vec(),
         }
     }
 }
@@ -174,6 +199,7 @@ impl Clone for ModelNode {
             samples: self.samples,
             base: self.base,
             view: self.view,
+            lights: self.lights.clone(),
             info: self.info,
             time: self.time,
             frame: Mutex::new(None),
@@ -241,6 +267,7 @@ impl Element for ModelNode {
         let key: FrameKey = (
             self.model.hash,
             self.environment.as_ref().map(|e| e.hash),
+            lights_hash(&self.lights),
             width,
             height,
             [
@@ -275,6 +302,7 @@ impl Element for ModelNode {
             width,
             height,
             samples: self.samples,
+            lights: self.lights.clone(),
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -397,6 +425,7 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     node.samples = body.samples.clamp(1, 256);
     node.base = body.view;
     node.view = body.view;
+    node.lights = Arc::new(body.lights.clone());
     Ok(Box::new(node))
 }
 

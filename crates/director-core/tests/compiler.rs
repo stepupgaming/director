@@ -685,17 +685,25 @@ fn compile_logs_an_unchanged_violation_list_once() {
         .with_ansi(false)
         .finish();
 
-    let mut d = empty_director();
-    let mut text = TextNode::new(vec![], Arc::new(Mutex::new(FontCollection::new())));
-    text.default_font_size.current_value = 250.0;
-    let id = d.scene.add_node(Box::new(text));
-    d.scene.get_node_mut(id).unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
-    d.push_scene_root(id, 2.0);
+    let scene = || {
+        let mut d = empty_director();
+        let mut text = TextNode::new(vec![], Arc::new(Mutex::new(FontCollection::new())));
+        text.default_font_size.current_value = 250.0;
+        let id = d.scene.add_node(Box::new(text));
+        d.scene.get_node_mut(id).unwrap().layout_rect = skia_safe::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
+        d.push_scene_root(id, 2.0);
+        (d, id)
+    };
+    // Tests share this process. Another thread that registers the warning's
+    // callsite while this subscriber starts can store "never" for it after
+    // the rebuild below, so this thread registers it first.
+    scene().0.compile();
+    let (mut d, id) = scene();
 
     // The HTML frontend compiles, then export compiles the same scene again.
     tracing::subscriber::with_default(subscriber, || {
-        // Tests share this process. Another thread may have hit the warning's
-        // callsite first and cached "never" for it, before this subscriber.
+        // Another thread may have hit the callsite before this subscriber
+        // existed and cached "never" for it.
         tracing::callsite::rebuild_interest_cache();
         d.compile();
         d.compile();

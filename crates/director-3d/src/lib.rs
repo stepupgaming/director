@@ -8,6 +8,7 @@
 
 mod accumulate;
 mod glb;
+mod lights;
 mod gpu;
 mod node;
 mod studio;

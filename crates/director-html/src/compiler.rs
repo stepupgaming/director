@@ -1713,6 +1713,7 @@ impl Builder {
                     return Err(CompileError::Input(format!("{context}: samples must be a whole number from 1 to 256")));
                 }
                 model.samples = samples as u32;
+                model.lights = std::sync::Arc::new(model_lights(el).map_err(input)?);
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if !values.contains_key("width") {
@@ -2721,4 +2722,57 @@ pub fn compile_file(
     let source = std::fs::read_to_string(path)
         .map_err(|e| CompileError::Input(format!("HTML {}: {e}", path.display())))?;
     compile(&source, options)
+}
+
+/// The `<light>` children of a `<model>`.
+fn model_lights(model: ElementRef<'_>) -> Result<Vec<director_scene::ModelLight>, String> {
+    use director_scene::{ModelLight, ModelLightKind};
+    let mut lights = Vec::new();
+    for el in model.children().filter_map(ElementRef::wrap).filter(|el| el.value().name() == "light") {
+        let attr = |name: &str| el.value().attr_text(name).map(str::trim);
+        let kind = match attr("type").unwrap_or("point") {
+            "sun" => ModelLightKind::Sun,
+            "point" => ModelLightKind::Point,
+            "spot" => ModelLightKind::Spot,
+            "rect" => ModelLightKind::Rect,
+            other => return Err(format!("light type '{other}' must be sun, point, spot or rect")),
+        };
+        let number = |name: &str, default: f32| -> Result<f32, String> {
+            match attr(name) {
+                None => Ok(default),
+                Some(v) => match v.parse::<f32>() {
+                    Ok(n) if n >= 0.0 && n.is_finite() => Ok(n),
+                    _ => Err(format!("light {name} '{v}' must be a number from 0")),
+                },
+            }
+        };
+        let point = |name: &str| -> Result<Option<[f32; 3]>, String> {
+            let Some(v) = attr(name) else { return Ok(None) };
+            let parts: Vec<f32> = v.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+            match parts[..] {
+                [x, y, z] if parts.iter().all(|n| n.is_finite()) && v.split_whitespace().count() == 3 => Ok(Some([x, y, z])),
+                _ => Err(format!("light {name} '{v}' must be three numbers in metres: x y z")),
+            }
+        };
+        let color = match attr("color") {
+            Some(c) => crate::style::color(c, director_core::types::Color::WHITE).map_err(|e| format!("light {e}"))?,
+            None => director_core::types::Color::WHITE,
+        };
+        let intensity = number("intensity", if kind == ModelLightKind::Sun { 2000.0 } else { 1_000_000.0 })?;
+        lights.push(ModelLight {
+            kind,
+            color: [color.r, color.g, color.b],
+            intensity,
+            position: point("position")?,
+            target: point("target")?,
+            radius: number("radius", 0.0)?,
+            angle: number("angle", 0.0)?,
+            cone: number("cone", 0.0)?,
+            width: number("width", 0.0)?,
+            height: number("height", 0.0)?,
+            range: number("range", 0.0)?,
+            shadows: attr("shadows") != Some("false"),
+        });
+    }
+    Ok(lights)
 }
