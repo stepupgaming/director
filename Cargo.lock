@@ -3142,6 +3142,7 @@ dependencies = [
  "director-scene",
  "half",
  "lyon_tessellation",
+ "rayon",
  "serde_json",
  "skia-safe",
  "taffy 0.9.2",

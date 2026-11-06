@@ -49,6 +49,7 @@ mod rich_text;
 mod scene_document;
 mod shader;
 mod shrink_wrap;
+mod sky;
 mod splat;
 mod svg_markers;
 mod svg_presentation;

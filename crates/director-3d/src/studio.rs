@@ -1012,6 +1012,7 @@ impl Studio {
         if self.stages.contains_key(&key) {
             return Ok(key);
         }
+        self.idle();
         let model = format!("{:016x}.glb", shot.model.hash);
         self.dir.insert_asset(Path::new(&model), shot.model.bytes.to_vec());
         let environment = shot.environment.as_ref().map(|e| {
@@ -1284,6 +1285,25 @@ impl Studio {
             },
         );
         Ok(key)
+    }
+
+    /// Stops every camera before frames that film no shot, such as a new
+    /// stage's loading frames. A camera left on would film its stage into
+    /// a target again, so each target forgets the shot it holds, and the
+    /// next shot of any stage warms it as one coming back into view.
+    fn idle(&mut self) {
+        let cameras: Vec<Entity> =
+            self.stages.values().flat_map(|s| std::iter::once(s.camera).chain(s.mirror.as_ref().map(|m| m.camera))).collect();
+        let world = self.apps.main.world_mut();
+        for camera in cameras {
+            if let Some(mut c) = world.get_mut::<Camera>(camera) {
+                c.is_active = false;
+            }
+        }
+        self.shown = None;
+        for target in self.targets.values_mut() {
+            target.holds = None;
+        }
     }
 
     fn target(&mut self, (width, height): (u32, u32)) {

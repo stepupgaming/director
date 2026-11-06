@@ -1,6 +1,7 @@
 //! One integration binary for `director-3d`.
 
 mod glb;
+mod sky;
 mod text;
 
 #[test]

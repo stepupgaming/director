@@ -1740,23 +1740,43 @@ impl Builder {
                 if plate_light && attr("environment").is_some() {
                     return Err(input("track-light and environment both light the model; give one".into()));
                 }
+                let sky = model_sky(el).map_err(input)?;
+                if sky.is_some() && (attr("environment").is_some() || plate_light) {
+                    return Err(input("a <sky> lights the model, so it cannot take an environment or track-light".into()));
+                }
+                if sky.is_some() && plate_sun {
+                    return Err(input("a <sky> and track-sun both add a sun; give one".into()));
+                }
                 if let Some(environment) = attr("environment") {
                     let path = (!environment.starts_with("data:")).then(|| environment.to_string());
                     model.environment =
                         Some(director_3d::Asset::environment(self.assets.read(environment)?, path).map_err(input)?);
                 }
-                model.exposure = numeric("exposure", 9.7)? as f32;
+                // Daylight meters near EV100 14, where a grey card in the
+                // sun and sky lands near the middle of the tone curve.
+                model.exposure = numeric("exposure", if sky.is_some() { 14.0 } else { 9.7 })? as f32;
                 // A probe of the plate's linear light renders each of its
                 // values back at that value before the tone curve.
                 let unity = 1.2 * 2f64.powf(model.exposure as f64);
-                model.environment_intensity = numeric("environment-intensity", if plate_light { unity } else { 1000.0 })? as f32;
+                let intensity = match &sky {
+                    Some((_, lux)) => *lux,
+                    None if plate_light => unity,
+                    None => 1000.0,
+                };
+                model.environment_intensity = numeric("environment-intensity", intensity)? as f32;
                 model.background = attr("background").is_some_and(|v| v != "false");
                 model.looped = attr("loop").is_some_and(|v| v != "false");
                 let samples = numeric("samples", 1.0)?;
                 if samples.fract() != 0.0 || !(1.0..=256.0).contains(&samples) {
                     return Err(CompileError::Input(format!("{context}: samples must be a whole number from 1 to 256")));
                 }
-                model.lights = std::sync::Arc::new(model_lights(el).map_err(input)?);
+                let mut lights = model_lights(el).map_err(input)?;
+                if let Some((options, lux)) = &sky {
+                    let (hdr, sun) = sky_probe(options, *lux);
+                    model.environment = Some(director_3d::Asset::environment(hdr, None).map_err(input)?);
+                    lights.extend(sun);
+                }
+                model.lights = std::sync::Arc::new(lights);
                 model.samples = samples as u32;
                 let paths = numeric("paths", 0.0)?;
                 if paths.fract() != 0.0 || !(0.0..=director_3d::MAX_PATHS as f64).contains(&paths) {
@@ -1786,7 +1806,7 @@ impl Builder {
                     }
                     if let Some(sun) = sun {
                         let mut lights = (*model.lights).clone();
-                        lights.push(sun_light(&sun, unity));
+                        lights.push(sun_light(sun.direction, sun.irradiance, unity));
                         model.lights = std::sync::Arc::new(lights);
                     }
                 }
@@ -2892,14 +2912,14 @@ const PROBE_WIDTH: usize = 512;
 /// The plate's linear light renders back at its own value with `unity` lux
 /// per unit of irradiance, so a white card facing the light reads on the
 /// model as it would on the plate.
-fn sun_light(sun: &director_track::Sun, unity: f64) -> director_scene::ModelLight {
-    let peak = sun.irradiance.iter().copied().fold(1e-9, f64::max);
+fn sun_light(direction: [f64; 3], irradiance: [f64; 3], unity: f64) -> director_scene::ModelLight {
+    let peak = irradiance.iter().copied().fold(1e-9, f64::max);
     let encode = |v: f64| if v <= 0.0031308 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
     director_scene::ModelLight {
         kind: director_scene::ModelLightKind::Sun,
-        color: sun.irradiance.map(|c| encode(c / peak) as f32),
+        color: irradiance.map(|c| encode(c / peak) as f32),
         intensity: (peak * unity) as f32,
-        position: Some(sun.direction.map(|v| v as f32)),
+        position: Some(direction.map(|v| v as f32)),
         target: Some([0.0; 3]),
         radius: 0.0,
         angle: 0.0,
@@ -3085,6 +3105,52 @@ fn model_fog(model: ElementRef<'_>) -> Result<Option<director_scene::ModelFog>, 
         return Err("fog needs a visibility or a density above 0".into());
     }
     Ok(Some(director_scene::ModelFog { color: [color.r, color.g, color.b], visibility, density }))
+}
+
+/// The `<sky>` child of a `<model>`: the sky's options and the sun's lux
+/// above the atmosphere.
+fn model_sky(model: ElementRef<'_>) -> Result<Option<(director_3d::SkyOptions, f64)>, String> {
+    let mut skies = model.children().filter_map(ElementRef::wrap).filter(|el| el.value().name() == "sky");
+    let Some(el) = skies.next() else { return Ok(None) };
+    if skies.next().is_some() {
+        return Err("a model takes one <sky>".into());
+    }
+    let attr = |name: &str| el.value().attr_text(name).map(str::trim);
+    let number = |name: &str, default: f64, range: std::ops::RangeInclusive<f64>, unit: &str| -> Result<f64, String> {
+        let Some(v) = attr(name) else { return Ok(default) };
+        match v.trim_end_matches(unit).parse::<f64>() {
+            Ok(n) if range.contains(&n) => Ok(n),
+            _ => Err(format!("sky {name} '{v}' must be a number from {} to {}", range.start(), range.end())),
+        }
+    };
+    let elevation = number("elevation", 30.0, -10.0..=90.0, "deg")?;
+    let azimuth = number("azimuth", 45.0, -360.0..=360.0, "deg")?;
+    let haze = number("haze", 1.0, 0.0..=50.0, "")?;
+    let lux = number("intensity", 130_000.0, 0.0..=1e7, "")?;
+    let grey = director_core::types::Color::new(0.58, 0.58, 0.58, 1.0);
+    let ground = match attr("ground") {
+        Some(c) => crate::style::color(c, grey).map_err(|e| format!("sky ground {e}"))?,
+        None => grey,
+    };
+    let linear = |c: f32| {
+        let c = c as f64;
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    };
+    let ground = [linear(ground.r), linear(ground.g), linear(ground.b)];
+    Ok(Some((director_3d::SkyOptions { elevation, azimuth, haze, ground }, lux)))
+}
+
+/// The width in texels of the probe a `<sky>` renders.
+const SKY_WIDTH: usize = 1024;
+
+/// A `<sky>` as a Radiance probe in radiance per lux of sunlight above the
+/// atmosphere, and its sun as a shadow-casting light while it is up.
+fn sky_probe(options: &director_3d::SkyOptions, lux: f64) -> (Vec<u8>, Option<director_scene::ModelLight>) {
+    let sky = director_3d::sky(options, SKY_WIDTH);
+    let texels = sky.texels.len();
+    let probe = director_track::Probe { width: sky.width, height: sky.height, texels: sky.texels, coverage: vec![1.0; texels] };
+    let lit = sky.irradiance.iter().any(|&c| c > 1e-6);
+    (probe.hdr(), lit.then(|| sun_light(sky.sun, sky.irradiance, lux)))
 }
 
 /// The `<light>` children of a `<model>`.

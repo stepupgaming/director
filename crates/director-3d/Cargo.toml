@@ -16,6 +16,7 @@ taffy = "0.9.2"
 bevy = { version = "=0.20.1", default-features = false, features = ["default_app", "std", "3d_bevy_render", "exr", "hdr", "bevy_world_serialization", "raw_vulkan_init", "bevy_solari"] }
 wgpu = { version = "=30.0.1", default-features = false, features = ["vulkan"] }
 half = "2"
+rayon = "1.10"
 # Triangulates the faces of extruded type.
 lyon_tessellation = "1.0.23"
 # Gaussian splats: PLY and gcloud files, spherical harmonics to degree 3, and the GPU radix sort,
