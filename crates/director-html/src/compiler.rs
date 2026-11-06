@@ -1731,11 +1731,6 @@ impl Builder {
                     )));
                 }
                 model.paths = paths as u32;
-                if model.paths > 0 && !model.splats.is_empty() {
-                    return Err(CompileError::Input(format!(
-                        "{context}: a path traced model draws meshes only; render <splat> clouds with samples"
-                    )));
-                }
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if !values.contains_key("width") {

@@ -2,9 +2,11 @@
 //!
 //! Solari's `RaytracingScenePlugin` keeps a TLAS of every entity with a
 //! `RaytracingMesh3d`, its materials, its suns and the active camera's
-//! environment. `HeroPlugin` adds one compute pass after the main pass that
-//! overwrites the view target with path traced radiance for the camera that
-//! carries a `HeroPass`, then the usual tonemapping, bloom and SMAA run.
+//! environment. `HeroPlugin` adds one compute pass after the opaque and
+//! transmissive passes that overwrites the view target with path traced
+//! radiance for the camera that carries a `HeroPass`. The transparent pass
+//! then draws Gaussian splats over it against the raster depth, and the
+//! usual tonemapping, bloom and SMAA run.
 //! Solari has no point or spot lights, so the pass samples them itself from
 //! the `Lamp`s its camera carries.
 
@@ -13,7 +15,10 @@ use std::sync::Arc;
 
 use bevy::{
     asset::{embedded_asset, load_embedded_asset, RenderAssetUsages},
-    core_pipeline::schedule::{Core3d, Core3dSystems},
+    core_pipeline::{
+        core_3d::{main_opaque_pass_3d, main_transparent_pass_3d},
+        schedule::{Core3d, Core3dSystems},
+    },
     mesh::{
         morph::{MeshMorphWeights, MorphAttributes, MorphWeights},
         skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
@@ -34,6 +39,7 @@ use bevy::{
         view::{ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
         Extract, ExtractSchedule, RenderApp, RenderStartup,
     },
+    pbr::main_transmissive_pass_3d,
     solari::{scene::RaytracingSceneBindings, SolariPlugins},
 };
 
@@ -157,7 +163,14 @@ impl Plugin for HeroPlugin {
             .insert_resource(traced)
             .add_systems(RenderStartup, init.after(init_gpu_resource::<RaytracingSceneBindings>))
             .add_systems(ExtractSchedule, extract)
-            .add_systems(Core3d, trace.after(Core3dSystems::MainPass).before(Core3dSystems::EarlyPostProcess));
+            .add_systems(
+                Core3d,
+                trace
+                    .after(main_opaque_pass_3d)
+                    .after(main_transmissive_pass_3d)
+                    .before(main_transparent_pass_3d)
+                    .in_set(Core3dSystems::MainPass),
+            );
         app.insert_resource(Traceable(true));
     }
 }

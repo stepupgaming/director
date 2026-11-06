@@ -336,10 +336,14 @@ struct Stage {
     traced: Option<Vec<hero::TracedMesh>>,
     /// The copies are in the ray traced scene.
     tracing: bool,
-    /// The ray traced emitters of the point and rect lights, and the hash of
-    /// the light set they came from.
+    /// The ray traced emitters of the rect lights, and the hash of the light
+    /// set they came from.
     emitters: Vec<Entity>,
     emitted: Option<u64>,
+    /// Mesh entities with blended materials. The path tracer traces them
+    /// itself, so Hero shots hide them from the raster's transparent pass,
+    /// which draws over the traced image.
+    blended: Vec<Entity>,
 }
 
 struct Target {
@@ -471,13 +475,24 @@ impl Studio {
 
     /// Renders `shot` of stage `key` into the target of `size`.
     fn film(&mut self, key: StageKey, shot: &Shot, size: (u32, u32)) -> Result<(), String> {
-        let hero = shot.paths > 0;
-        let mut retraced = if hero {
-            self.check_hero(shot)?;
-            self.trace_only(key)?
+        // A model made only of splats has nothing to trace and rasterizes.
+        let (hero, mut retraced) = if shot.paths > 0 {
+            self.check_hero()?;
+            match self.trace_only(key, !shot.splats.is_empty())? {
+                Some(changed) => (true, changed),
+                None => (false, false),
+            }
         } else {
-            false
+            (false, false)
         };
+        {
+            let stage = &self.stages[&key];
+            let world = self.apps.main.world_mut();
+            let shown = if hero { Visibility::Hidden } else { Visibility::Inherited };
+            for &e in &stage.blended {
+                world.entity_mut(e).insert(shown);
+            }
+        }
         let target = self.targets[&size].image.clone();
         let stage = &self.stages[&key];
         let (camera, source, center, radius, probe) = (stage.camera, stage.source, stage.center, stage.radius, stage.probe.clone());
@@ -687,21 +702,18 @@ impl Studio {
         Ok(())
     }
 
-    /// Refuses a Hero shot the path tracer would render unfaithfully.
-    fn check_hero(&self, shot: &Shot) -> Result<(), String> {
+    /// Refuses a Hero shot on a GPU that cannot trace rays.
+    fn check_hero(&self) -> Result<(), String> {
         if !self.apps.main.world().resource::<Traceable>().0 {
             return Err("Hero path tracing needs a GPU with hardware ray tracing".into());
-        }
-        if !shot.splats.is_empty() {
-            return Err("Hero path tracing draws meshes only; render <splat> clouds with samples".into());
         }
         Ok(())
     }
 
     /// Puts the mesh copies of stage `key` alone in the ray traced scene,
     /// building them on its first Hero shot. Returns whether the scene
-    /// changed.
-    fn trace_only(&mut self, key: StageKey) -> Result<bool, String> {
+    /// changed, or `None` for a stage of splats with no triangle meshes.
+    fn trace_only(&mut self, key: StageKey, splats: bool) -> Result<Option<bool>, String> {
         let mut changed = false;
         let world = self.apps.main.world_mut();
         for (k, stage) in self.stages.iter_mut() {
@@ -720,14 +732,21 @@ impl Studio {
         }
         let stage = self.stages.get_mut(&key).expect("stage");
         if stage.tracing {
-            return Ok(changed);
+            return Ok(Some(changed));
         }
         if stage.traced.is_none() {
             let mut copies = Vec::new();
             for entity in descendants(world, stage.root) {
                 let Some(mesh) = world.get::<Mesh3d>(entity).map(|m| m.0.clone()) else { continue };
-                if world.get::<MeshMaterial3d<StandardMaterial>>(entity).is_none() {
+                let Some(material) = world.get::<MeshMaterial3d<StandardMaterial>>(entity).map(|m| m.0.clone()) else {
                     continue;
+                };
+                let blends = world
+                    .resource::<Assets<StandardMaterial>>()
+                    .get(&material)
+                    .is_some_and(|m| !matches!(m.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_)));
+                if blends {
+                    stage.blended.push(entity);
                 }
                 let meshes = world.resource::<Assets<Mesh>>();
                 let Some(source) = meshes.get(&mesh) else { continue };
@@ -735,16 +754,20 @@ impl Studio {
                 let rest = hero::rest(source, &copy).map(Arc::new);
                 copies.push((entity, world.resource_mut::<Assets<Mesh>>().add(copy), rest));
             }
-            if copies.is_empty() {
-                return Err("Hero path tracing needs a model with triangle meshes".into());
-            }
             stage.traced = Some(copies);
+        }
+        if stage.traced.as_ref().is_some_and(Vec::is_empty) {
+            return if splats {
+                Ok(None)
+            } else {
+                Err("Hero path tracing needs a model with triangle meshes".into())
+            };
         }
         for (entity, copy, _) in stage.traced.iter().flatten() {
             world.entity_mut(*entity).insert(RaytracingMesh3d(copy.clone()));
         }
         stage.tracing = true;
-        Ok(true)
+        Ok(Some(true))
     }
 
     /// The render device, queue and GPU texture of the target of `size`.
@@ -1003,6 +1026,7 @@ impl Studio {
                 tracing: false,
                 emitters: Vec::new(),
                 emitted: None,
+                blended: Vec::new(),
             },
         );
         Ok(key)

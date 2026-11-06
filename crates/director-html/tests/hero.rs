@@ -229,6 +229,53 @@ fn skins_and_morph_targets_pose_the_path_traced_scene() {
     assert!(posed < edges + rest / 8, "the Hero frame takes the pose of its time: {posed} pixels miss, {edges} at the edges");
 }
 
+fn green(p: &[u8]) -> bool {
+    p[1] > 150 && p[0] < 80 && p[2] < 100
+}
+
+/// Pixels green in either frame, and in both.
+fn greens(a: &[u8], b: &[u8]) -> (usize, usize) {
+    let pairs = || a.chunks(4).zip(b.chunks(4));
+    (pairs().filter(|(p, q)| green(p) || green(q)).count(), pairs().filter(|(p, q)| green(p) && green(q)).count())
+}
+
+/// The transparent pass draws the clouds over the traced meshes against the
+/// raster depth, so they land where the raster puts them, and the meshes
+/// still trace.
+#[test]
+fn splats_draw_over_the_path_traced_meshes() {
+    if !gpu() {
+        return;
+    }
+    let cloud = format!("<splat src='{}' position='0 1.5 0' scale='0.5'></splat>", fixture("splats.ply"));
+    let raster = shot(&page("", &cloud));
+    let hero = shot(&page("paths='16'", &cloud));
+    let meshes = shot(&page("paths='16'", ""));
+    let (either, both) = greens(&raster, &hero);
+    eprintln!("green: {either} in either, {both} in both");
+    assert!(both > 20, "the green ball shows in the Hero frame: {both} pixels");
+    assert!(both * 10 > either * 8, "it lands where the raster draws it: {both} of {either}");
+    assert_eq!(meshes.chunks(4).filter(|p| green(p)).count(), 0, "the meshes alone have no green");
+    assert!(changed(&hero, &raster) > 500, "the meshes are path traced");
+    let edges = coverage_differs(&hero, &raster);
+    assert!(edges < (W * H) as usize / 50, "both levels cover the same pixels: {edges} differ");
+}
+
+/// A model of splats alone has nothing to trace and rasterizes.
+#[test]
+fn a_model_of_splats_alone_rasterizes_under_paths() {
+    if !gpu() {
+        return;
+    }
+    let balls = |attrs: &str| {
+        format!(
+            "<style>body{{margin:0}}model{{display:block;width:{W}px;height:{H}px}}</style>             <div id='main' data-composition-id='main' data-width='{W}' data-height='{H}' data-duration='2'>             <model id='m' {attrs}><splat src='{}'></splat></model></div>",
+            fixture("splats.ply")
+        )
+    };
+    assert_eq!(changed(&shot(&balls("paths='16'")), &shot(&balls(""))), 0);
+}
+
 #[test]
 fn the_scene_document_keeps_the_paths() {
     if !gpu() {
@@ -265,6 +312,4 @@ fn unsupported_hero_inputs_fail_to_compile() {
     assert!(e.contains("paths must be a whole number from 0 to 4096"), "{e}");
     let e = error(&page("paths='1.5'", ""));
     assert!(e.contains("paths must be a whole number"), "{e}");
-    let e = error(&page("paths='8'", &format!("<splat src='{}'></splat>", fixture("splats.ply"))));
-    assert!(e.contains("render <splat> clouds with samples"), "{e}");
 }
