@@ -14,6 +14,12 @@ use crate::tracks::{track, Track};
 const MIN_ANGLE: f64 = 1.5 * std::f64::consts::PI / 180.0;
 /// A new point must land within this many pixels of every view.
 const MAX_ERROR: f64 = 2.0;
+/// The bundle passes while frames register move only the cameras of this
+/// many most recently placed frames.
+const WINDOW: usize = 24;
+/// A start pair's best pose must hold more than this many times the tracks
+/// of any distinct pose.
+const AMBIGUITY: f64 = 0.8;
 /// After the solve, points missing any view by more pixels than this go.
 const PRUNE: f64 = 3.0;
 
@@ -61,6 +67,14 @@ pub struct CameraSolve {
     pub points: Vec<[f32; 3]>,
     /// The root mean square reprojection error in footage pixels.
     pub error: f64,
+}
+
+/// Whether two relative poses differ by more than 1 degree of rotation or
+/// 10 degrees in the direction of travel.
+fn distinct(a: &Cam, b: &Cam) -> bool {
+    let turn = Rotation3::from_matrix(&(a.r * b.r.transpose())).angle();
+    let (ta, tb) = (a.centre().normalize(), b.centre().normalize());
+    turn > 1f64.to_radians() || ta.dot(&tb).clamp(-1.0, 1.0).acos() > 10f64.to_radians()
 }
 
 struct Scene {
@@ -133,6 +147,46 @@ impl Scene {
         }
     }
 
+    /// Refines the cameras of the frames in `free` and every point they see,
+    /// with the other placed cameras that see those points held still.
+    fn adjust_local(&mut self, tracks: &[Track], intr: &mut Intrinsics, free: &[usize], iterations: usize) {
+        let mut moving = vec![false; self.cams.len()];
+        free.iter().for_each(|&k| moving[k] = true);
+        let seen: Vec<usize> = (0..self.points.len())
+            .filter(|&p| {
+                let t = &tracks[self.point_track[p]];
+                (t.start..t.end()).any(|k| moving[k] && self.cams[k].is_some())
+            })
+            .collect();
+        let mut slot = vec![None; self.cams.len()];
+        let mut frames = Vec::new();
+        let mut obs = Vec::new();
+        for (local, &p) in seen.iter().enumerate() {
+            let t = &tracks[self.point_track[p]];
+            for (i, uv) in t.points.iter().enumerate() {
+                let k = t.start + i;
+                if self.cams[k].is_none() {
+                    continue;
+                }
+                let cam = *slot[k].get_or_insert_with(|| {
+                    frames.push(k);
+                    frames.len() - 1
+                });
+                obs.push(Obs { cam, point: local, uv: pixel(*uv) });
+            }
+        }
+        let mut cams: Vec<Cam> = frames.iter().map(|&k| self.cams[k].expect("a placed camera")).collect();
+        let fixed: Vec<bool> = frames.iter().map(|&k| !moving[k]).collect();
+        let mut points: Vec<Vector3<f64>> = seen.iter().map(|&p| self.points[p]).collect();
+        adjust(&mut cams, &mut points, &obs, &fixed, intr, false, iterations);
+        for (cam, &k) in cams.into_iter().zip(&frames) {
+            self.cams[k] = Some(cam);
+        }
+        for (x, &p) in points.into_iter().zip(&seen) {
+            self.points[p] = x;
+        }
+    }
+
     /// Drops every point that misses one of its views by more than `limit` pixels.
     fn prune(&mut self, tracks: &[Track], intr: &Intrinsics, limit: f64) {
         let mut keep = vec![true; self.points.len()];
@@ -178,8 +232,9 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
     let tracks = track(&footage.frames);
     let mut rng = Rng::new(7);
 
-    // The starting pair: frame 0 and the frame whose shared tracks give the
-    // most triangulated points times their median parallax, capped at 4 degrees.
+    // The starting pair: frame 0 and, among the frames whose tracks single
+    // out one pose, the frame whose shared tracks give the most triangulated
+    // points times their median parallax, capped at 4 degrees.
     let a = 0;
     let mut best: Option<(usize, Cam, f64, f64)> = None;
     for b in (a + 2..n).step_by(2) {
@@ -199,16 +254,25 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         if let Some(h) = homography_ransac(&x1, &x2, 2.0 * threshold, 300, &mut rng) {
             candidates.extend(factor_homography(&h));
         }
-        let Some((cam, front)) = candidates
+        let scored: Vec<(Cam, Vec<bool>, usize)> = candidates
             .into_iter()
             .map(|cam| {
                 let front = supported(&cam, &x1, &x2, threshold);
-                (cam, front)
+                let count = front.iter().filter(|&&f| f).count();
+                (cam, front, count)
             })
-            .max_by_key(|(_, front)| front.iter().filter(|&&f| f).count())
-        else {
+            .collect();
+        let Some(best_index) = (0..scored.len()).max_by_key(|&i| scored[i].2) else {
             continue;
         };
+        let (cam, ref front, count) = scored[best_index];
+        // Over a short baseline or a flat scene several distinct poses
+        // explain the tracks about as well, and the wrong one folds the
+        // scene, so the pair must single one out.
+        let rival = scored.iter().filter(|(other, _, _)| distinct(&cam, other)).map(|s| s.2).max().unwrap_or(0);
+        if rival as f64 > AMBIGUITY * count as f64 {
+            continue;
+        }
         let centre = cam.centre();
         let mut angles: Vec<f64> = (0..x1.len())
             .filter(|&i| front[i])
@@ -256,7 +320,8 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         scene.cams[k] = Some(cam);
         scene.triangulate(&tracks, &intr);
         if (i + 1) % 8 == 0 {
-            scene.adjust(&tracks, &mut intr, a, false, 10);
+            let recent = &order[(i + 1).saturating_sub(WINDOW)..=i];
+            scene.adjust_local(&tracks, &mut intr, recent, 10);
         }
     }
     scene.adjust(&tracks, &mut intr, a, options.refine_focal, 60);

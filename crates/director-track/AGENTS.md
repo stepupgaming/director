@@ -12,17 +12,20 @@
 - `src/geometry.rs` - normalized eight-point essential matrices and four-point homographies with RANSAC, their factoring into candidate poses, cheirality and Sampson support, triangulation and PnP resection.
 - `src/bundle.rs` - Levenberg-Marquardt bundle adjustment with a Schur complement over cameras, points and optionally the focal length.
 - `src/solve.rs` - `solve`, `SolveOptions`, `CameraSolve` and `Pose`: the incremental reconstruction and the ground-plane world.
+- `examples/solve.rs` - `cargo run --release -p director-track --example solve -- <footage> [--fov DEG] [--fixed] [--height M] [--json OUT]` prints the tracking and solve timings, track lengths, the lens, the reprojection error and the camera path, and writes the `CameraSolve` as JSON.
 
 ## Local Contracts
 
 - The crate links no Skia and no GPU. It depends on `nalgebra`, `rayon` and `serde`, and `read_footage` needs `ffmpeg` and `ffprobe` in PATH.
 - `track` follows up to 500 corners at least 10 px apart through a 4-level pyramid with bicubic sampling. A step survives a forward-backward round trip within 0.5 px, then an affine match against the track's first 17x17 appearance corrects it, moving it at most 1.5 px with a mean absolute difference below 10, so long tracks do not drift. New corners seed where live ones thinned out. Tracks shorter than 3 frames drop.
-- `solve` picks the start pair with the most parallax among frames whose shared tracks support a pose: the essential matrix and the homography each give candidate poses, and the candidate with the most tracks inside a Sampson error of 1/f pixels and in front of both cameras wins, so a planar yard starts as well as a deep one. Each further frame registers by PnP against the triangulated points, new tracks triangulate once their rays part by enough angle, and bundle adjustment with outlier pruning refines the whole solve. `refine_focal` lets the bundle refine the lens from `yfov`.
+- `solve` picks the start pair with the most parallax among frames whose shared tracks support a pose: the essential matrix and the homography each give candidate poses, and the candidate with the most tracks inside a Sampson error of 1/f pixels and in front of both cameras wins, so a planar yard starts as well as a deep one. A pair counts only when no distinct pose (more than 1 degree of rotation or 10 degrees of travel direction away) holds 0.8 of the winner's tracks: over a short baseline or flat ground several poses fit, and the wrong one folds the scene. Each further frame registers by PnP against the triangulated points and new tracks triangulate once their rays part by enough angle. Every eighth frame a bundle pass moves the 24 most recently placed cameras and the points they see with older cameras held, and at the end bundle adjustment with outlier pruning refines the whole solve. `refine_focal` lets the bundle refine the lens from `yfov`; footage that mostly translates, such as a drone flying straight, leaves the focal length nearly unobservable, and the lens stays near its guess.
 - The world puts the dominant ground plane under frame 0 at y = 0, the origin where frame 0's optical axis meets it, frame 0's view along -Z with +Y up, and scales it so frame 0's camera stands `camera_height` metres above the ground. A `Pose` is a camera position and a glTF rotation (x, y, z, w) looking down its local -Z. `error` is the rms reprojection error in pixels.
 - Footage with too little motion or texture fails with a message, and so does a missing file, which names its path.
 - `director-html` calls `solve` at compile time for `<model track>` and stores the cameras in `director_scene::ModelTrack`.
 
 ## Work Guidance
+
+- Before changing the start pair, the bundle or the world alignment, run the solve example on real footage as well as the tests. The reference clip is `F:/director-spikes/matchmove/land16.mp4`, the first 16 s of AeroFlix 4D's CC BY 4.0 drone shot `003_4K25 Ultra HD Free Drone Stock Footage.mp4` from archive.org item `4-k-25-ultra-hd-free-drone-stock-footage`, solved with `--fixed --height 30`; it is not committed.
 
 ## Verification
 
