@@ -31,6 +31,7 @@ use bevy::{
     post_process::bloom::Bloom,
     prelude::*,
     render::{
+        camera::TemporalJitter,
         render_asset::RenderAssets,
         render_resource::{
             Extent3d, PollType, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
@@ -46,6 +47,7 @@ use bevy::{
 };
 use director_scene::ModelView;
 
+use crate::accumulate::Accumulator;
 use crate::Asset;
 
 /// Everything one frame of a model depends on.
@@ -62,6 +64,8 @@ pub struct Shot {
     pub time: f64,
     pub width: u32,
     pub height: u32,
+    /// Jittered sub-pixel renders averaged into the frame.
+    pub samples: u32,
 }
 
 /// Premultiplied sRGB RGBA8 pixels, rows packed.
@@ -262,7 +266,7 @@ struct Target {
 }
 
 type StageKey = (u64, Option<u64>);
-type ShotKey = (StageKey, usize, u64, [u32; 6]);
+type ShotKey = (StageKey, usize, u64, [u32; 7]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     (
@@ -276,6 +280,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             shot.exposure.to_bits(),
             shot.environment_intensity.to_bits(),
             shot.background as u32,
+            shot.samples,
         ],
     )
 }
@@ -285,6 +290,7 @@ struct Studio {
     dir: Dir,
     stages: HashMap<StageKey, Stage>,
     targets: HashMap<(u32, u32), Target>,
+    accumulator: Option<Accumulator>,
 }
 
 impl Studio {
@@ -330,6 +336,7 @@ impl Studio {
             dir,
             stages: HashMap::new(),
             targets: HashMap::new(),
+            accumulator: None,
         }
     }
 
@@ -353,7 +360,7 @@ impl Studio {
         self.target(size);
         let holds = Some(shot_key(key, shot));
         if self.targets[&size].holds != holds {
-            self.film(key, shot, size);
+            self.film(key, shot, size)?;
             self.targets.get_mut(&size).expect("target").holds = holds;
         }
         if texture {
@@ -364,7 +371,7 @@ impl Studio {
     }
 
     /// Renders `shot` of stage `key` into the target of `size`.
-    fn film(&mut self, key: StageKey, shot: &Shot, size: (u32, u32)) {
+    fn film(&mut self, key: StageKey, shot: &Shot, size: (u32, u32)) -> Result<(), String> {
         let target = self.targets[&size].image.clone();
         let stage = &self.stages[&key];
         let (camera, source, center, radius, probe) = (stage.camera, stage.source, stage.center, stage.radius, stage.probe.clone());
@@ -435,7 +442,52 @@ impl Studio {
             }
             self.stages.get_mut(&key).expect("stage").warm.insert(size);
         }
-        self.step();
+        let samples = shot.samples.max(1);
+        for sample in 0..samples {
+            let mut e = self.apps.main.world_mut().entity_mut(camera);
+            if samples == 1 {
+                e.remove::<TemporalJitter>();
+            } else {
+                e.insert(TemporalJitter { offset: jitter(sample) });
+            }
+            // Queue order keeps each sample's render ahead of its share, so
+            // only the last sample waits for the GPU.
+            if sample + 1 == samples {
+                self.step();
+            } else {
+                self.apps.update();
+            }
+            if samples > 1 {
+                let (device, queue, texture) = self.gpu_target(size)?;
+                self.accumulator
+                    .get_or_insert_with(|| Accumulator::new(&device))
+                    .add(&device, &queue, &texture, sample, samples);
+            }
+        }
+        if samples > 1 {
+            let (device, queue, texture) = self.gpu_target(size)?;
+            self.accumulator.as_ref().expect("accumulator").resolve(&device, &queue, &texture);
+        }
+        Ok(())
+    }
+
+    /// The render device, queue and GPU texture of the target of `size`.
+    fn gpu_target(&self, size: (u32, u32)) -> Result<(wgpu::Device, wgpu::Queue, wgpu::Texture), String> {
+        let render = self
+            .apps
+            .sub_apps
+            .get(&RenderApp.intern())
+            .ok_or("no render app")?
+            .world();
+        let gpu = render
+            .resource::<RenderAssets<GpuImage>>()
+            .get(&self.targets[&size].image)
+            .ok_or("render target is not on the GPU")?;
+        Ok((
+            render.resource::<RenderDevice>().wgpu_device().clone(),
+            (**render.resource::<RenderQueue>()).clone(),
+            (*gpu.texture).clone(),
+        ))
     }
 
     /// Loads the model and probe of `shot` once, keyed by their bytes.
@@ -711,6 +763,21 @@ impl Studio {
         target.buffer.unmap();
         Ok(Frame { rgba })
     }
+}
+
+/// Sub-pixel offset of sample `i`: the Halton (2, 3) sequence about the
+/// pixel centre, so any sample count covers the pixel evenly.
+fn jitter(i: u32) -> Vec2 {
+    let halton = |mut i: u32, base: u32| {
+        let (mut f, mut r) = (1.0, 0.0);
+        while i > 0 {
+            f /= base as f32;
+            r += f * (i % base) as f32;
+            i /= base;
+        }
+        r
+    };
+    Vec2::new(halton(i + 1, 2), halton(i + 1, 3)) - 0.5
 }
 
 fn stage_root(stages: &HashMap<StageKey, Stage>, key: StageKey) -> Entity {

@@ -204,6 +204,45 @@ fn a_gpu_canvas_samples_the_frame_where_bevy_left_it() {
     assert_eq!(director_3d::texture_draws() - before, 3, "every frame sampled the studio texture");
 }
 
+fn model_body(c: &CompiledHtml) -> director_scene::ModelBody {
+    let document = export_scene(&c.director).unwrap();
+    document
+        .nodes
+        .iter()
+        .find_map(|node| match &node.body {
+            NodeBody::Html(html) => html.content.as_ref().and_then(|c| match &c.body {
+                NodeBody::Model(model) => Some(model.clone()),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("a model body")
+}
+
+#[test]
+fn export_samples_smooth_edges_and_keep_the_frame() {
+    if !gpu() {
+        return;
+    }
+    let sampled = page("", "").replace("<model id='m'", "<model id='m' samples='16'");
+    let live = frame(&mut build(&page("", "")), 0.0);
+    let mut c = build(&sampled);
+    let export = frame(&mut c, 0.0);
+    let differ = changed(&live, &export);
+    let total = (W * H) as usize;
+    eprintln!("16 samples change {differ} of {total} pixels");
+    assert!(differ > 20 && differ < total / 4, "{differ} of {total} pixels change");
+    frame(&mut c, 1.0);
+    assert_eq!(changed(&export, &frame(&mut c, 0.0)), 0, "a sampled frame depends only on its time");
+    assert_eq!(model_body(&c).samples, 16);
+    assert_eq!(model_body(&build(&page("", ""))).samples, 1);
+    let error = compile(&page("", "").replace("<model id='m'", "<model id='m' samples='0'"), options())
+        .err()
+        .expect("samples below 1")
+        .to_string();
+    assert!(error.contains("samples must be a whole number from 1 to 256"), "{error}");
+}
+
 #[test]
 fn a_model_without_a_glb_is_an_error() {
     let source = "<model src='data:application/octet-stream;base64,AAAA'></model>";

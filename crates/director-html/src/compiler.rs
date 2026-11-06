@@ -1708,6 +1708,11 @@ impl Builder {
                 model.exposure = numeric("exposure", 9.7)? as f32;
                 model.background = attr("background").is_some_and(|v| v != "false");
                 model.looped = attr("loop").is_some_and(|v| v != "false");
+                let samples = numeric("samples", 1.0)?;
+                if samples.fract() != 0.0 || !(1.0..=256.0).contains(&samples) {
+                    return Err(CompileError::Input(format!("{context}: samples must be a whole number from 1 to 256")));
+                }
+                model.samples = samples as u32;
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if !values.contains_key("width") {

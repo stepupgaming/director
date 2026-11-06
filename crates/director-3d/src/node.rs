@@ -79,7 +79,7 @@ impl std::fmt::Debug for Asset {
     }
 }
 
-type FrameKey = (u64, Option<u64>, u32, u32, [u32; 7]);
+type FrameKey = (u64, Option<u64>, u32, u32, [u32; 8]);
 
 static TEXTURE_DRAWS: AtomicU64 = AtomicU64::new(0);
 
@@ -104,6 +104,8 @@ pub struct ModelNode {
     pub background: bool,
     /// Wrap clips at the longest clip. Without it clips hold their last pose.
     pub looped: bool,
+    /// Jittered sub-pixel renders averaged into each frame, 1 to 256.
+    pub samples: u32,
     /// The orbit before any animation, which an export records.
     pub base: ModelView,
     /// The orbit this frame. The HTML element writes its animated camera here.
@@ -124,6 +126,7 @@ impl ModelNode {
             exposure: 9.7,
             background: false,
             looped: false,
+            samples: 1,
             base: ModelView::default(),
             view: ModelView::default(),
             info,
@@ -153,6 +156,7 @@ impl ModelNode {
             background: self.background,
             looped: self.looped,
             view: self.base,
+            samples: self.samples,
         }
     }
 }
@@ -167,6 +171,7 @@ impl Clone for ModelNode {
             exposure: self.exposure,
             background: self.background,
             looped: self.looped,
+            samples: self.samples,
             base: self.base,
             view: self.view,
             info: self.info,
@@ -246,6 +251,7 @@ impl Element for ModelNode {
                 self.exposure.to_bits(),
                 self.environment_intensity.to_bits(),
                 self.background as u32,
+                self.samples,
             ],
         );
         let cached = self
@@ -266,6 +272,7 @@ impl Element for ModelNode {
             time,
             width,
             height,
+            samples: self.samples,
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -385,6 +392,7 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     node.exposure = body.exposure;
     node.background = body.background;
     node.looped = body.looped;
+    node.samples = body.samples.clamp(1, 256);
     node.base = body.view;
     node.view = body.view;
     Ok(Box::new(node))

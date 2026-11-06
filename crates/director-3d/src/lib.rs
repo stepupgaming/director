@@ -6,6 +6,7 @@
 //! frame stays a GPU image Skia samples in place. Any other canvas gets
 //! premultiplied sRGB pixels back, which Skia draws like any image.
 
+mod accumulate;
 mod glb;
 mod gpu;
 mod node;

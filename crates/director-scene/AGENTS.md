@@ -6,7 +6,7 @@
 
 - `src/lib.rs` owns `SceneDocument`, `NodeRecord`, `Filter`, `PathAnimation`, `PathMorph`, `AudioBinding`, `AssetRecord`, `FontFace`, `VERSION`, JSON read/write and the JSON Schema.
 - `src/body.rs` owns `NodeBody` and the box, text, media, shape, vector, Lottie, composition, effect and spectrum bodies.
-- `src/model.rs` owns `ModelBody` (a `director-3d` glTF scene: its asset, optional environment, exposure, probe intensity, background, loop) and `ModelView` (yaw and pitch in degrees, distance as a factor).
+- `src/model.rs` owns `ModelBody` (a `director-3d` glTF scene: its asset, optional environment, exposure, probe intensity, background, loop, and `samples`, omitted from JSON at its default of 1) and `ModelView` (yaw and pitch in degrees, distance as a factor).
 - `src/caption.rs` owns the caption, smart caption and active speaker camera bodies.
 - `src/channel.rs` owns `Channel`, `Keyframe`, `Easing` and `Rgba`.
 - `src/effect.rs` owns `Effect`, `EffectParam` and `Uniform`.

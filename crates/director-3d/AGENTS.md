@@ -4,6 +4,7 @@
 
 ## Ownership
 
+- `src/accumulate.rs` - `Accumulator`: the Export level's `Rgba16Float` sample sum per target size and its resolve back into the target.
 - `src/glb.rs` - `inspect`: the clip count, the longest clip duration and the camera count of a GLB, read from its JSON chunk with no GPU.
 - `src/gpu.rs` - the shared Vulkan device and `gpu_context`, which hands out Skia contexts on it.
 - `src/node.rs` - `Asset` (bytes, content hash, loader extension, optional source path), `ModelNode` (the `model` element), its document export, `decode`, `register_import` and `texture_draws`.
@@ -19,8 +20,9 @@
 - The camera starts from the file's first camera at this frame's animated pose and lens, or from a framing camera with a 30 degree vertical field of view that fits the bounding sphere. `ModelView` then orbits it about the bounding sphere centre: yaw about world Y, pitch about the camera's right axis (clamped to 89 degrees, positive raises the camera) and distance scaling the offset.
 - Frames render in HDR with TonyMcMapface, `Bloom::NATURAL`, SMAA and screen-space transmission into an `Rgba8UnormSrgb` target that also allows an `Rgba8Unorm` view. Bevy renders through the sRGB view. Without `background` the clear is transparent and the page shows through the sky. Each target remembers the shot it holds and refilms only when a shot input changes.
 - A pixel shot reads the target back as premultiplied sRGB RGBA8. A texture shot moves it to `SHADER_READ_ONLY_OPTIMAL` and returns the raw `VkImage`. Every shot holds the studio lease, and a texture shot's `Lease` keeps it until Skia has sampled the image, so no shot refilms a target in between.
+- `samples` above 1 is the Export level. The studio renders the shot that many times with a `TemporalJitter` sub-pixel offset from the Halton (2, 3) sequence, adds 1/N of each render's linear colour to the sum and resolves the sum through the target's sRGB view. Only the last sample waits for the GPU. One sample renders without jitter. Preview and export render the same sample count, so they match pixel for pixel at either level.
 - `ModelNode` on a canvas whose context came from `gpu_context` borrows the texture as an `R8G8B8A8_UNORM` sRGB Skia image, draws it, syncs the context and counts the draw in `texture_draws()`. Any other canvas paints the pixel shot at the device size of its layout box and caches the last frame by every shot input. Clip time is the element time, wrapped at the longest clip with `looped` and held at its ends otherwise.
-- A document records the model as a `NodeBody::Model`: a `model/gltf-binary` asset (by path when the source has one, embedded otherwise), an optional `image/vnd.radiance` or `image/x-exr` environment, exposure, probe intensity, background, loop and the view before animation. `decode` rebuilds the same element.
+- A document records the model as a `NodeBody::Model`: a `model/gltf-binary` asset (by path when the source has one, embedded otherwise), an optional `image/vnd.radiance` or `image/x-exr` environment, exposure, probe intensity, background, loop and the view before animation. `decode` rebuilds the same element, with `samples` clamped to 1 to 256.
 - `director-3d` never links a second Skia: it depends on the workspace `skia-safe`, and Bevy's `wgpu` stays at the version Bevy pins.
 
 ## Work Guidance
@@ -30,7 +32,7 @@
 ## Verification
 
 - `cargo test -p director-3d --release --test integration`
-- `cargo test -p director-html --release --test integration model::` paints the fixture through `<model>`: transparency, clip time, render order, CSS and GSAP camera, the document round trip, and a GPU canvas that samples the studio texture and matches the CPU frame.
+- `cargo test -p director-html --release --test integration model::` paints the fixture through `<model>`: transparency, clip time, render order, CSS and GSAP camera, the document round trip, Export-level samples, and a GPU canvas that samples the studio texture and matches the CPU frame.
 
 ## Child DOX Index
 

@@ -25,6 +25,18 @@ pub struct ModelBody {
     pub looped: bool,
     /// The camera orbit before animation.
     pub view: ModelView,
+    /// Jittered sub-pixel renders averaged into each frame. 1 is the Live
+    /// level; more is the Export level.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub samples: u32,
+}
+
+fn one() -> u32 {
+    1
+}
+
+fn is_one(n: &u32) -> bool {
+    *n == 1
 }
 
 /// An orbit about the model's bounding sphere centre, applied on top of the
