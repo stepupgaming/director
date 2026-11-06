@@ -2798,7 +2798,7 @@ pub fn compile_file(
 /// `track-mask` names a matte of the footage, white over whatever moves on
 /// its own, and the solve tracks nothing there. `track-pitch` is frame 0's
 /// tilt below the horizon in degrees, which footage from a camera that only
-/// turns needs. `track-zoom` gives such a camera a lens that zooms, solved
+/// turns needs. `track-zoom` gives the camera a lens that zooms, solved
 /// frame by frame from `track-fov` as frame 0's. With `light` it also
 /// stitches the plate through the solved cameras into a light probe and
 /// returns it as a Radiance `.hdr` file, and with `sun` it reads the sun

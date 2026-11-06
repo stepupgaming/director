@@ -3,7 +3,7 @@
 use nalgebra::{Matrix3, Rotation3, SymmetricEigen, UnitQuaternion, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
-use crate::bundle::{adjust, resect, rms, Obs, Refine};
+use crate::bundle::{adjust, adjust_zoom, lens_of, resect, resect_zoom, rms, Obs, Refine};
 use crate::footage::Footage;
 use crate::geometry::{
     essential_ransac, factor_essential, factor_homography, homography_ransac, ray_angle, supported, triangulate, Cam, Intrinsics, Rng,
@@ -47,8 +47,7 @@ pub struct SolveOptions {
     /// distortion, none when unset. `None` solves a moving camera.
     pub pitch: Option<f64>,
     /// The lens zooms: every frame solves its own focal length, and `yfov`
-    /// is frame 0's guess, held unless `refine_focal`. Only a camera that
-    /// only turns, given its `pitch`, zooms.
+    /// is frame 0's guess, held unless `refine_focal`.
     pub zoom: bool,
 }
 
@@ -92,6 +91,33 @@ pub struct CameraSolve {
     pub error: f64,
 }
 
+/// A starting pair with a zoom holds no depth when a turn and a focal ratio
+/// explain this share of the tracks its best pose explains.
+const TURN_AND_ZOOM: f64 = 0.95;
+
+/// How many of the tracks a camera that only turns and zooms explains within
+/// `threshold`, from the homography `h` between the normalized views factored
+/// as a focal ratio times a rotation.
+fn turn_and_zoom(h: &Matrix3<f64>, x1: &[Vector2<f64>], x2: &[Vector2<f64>], threshold: f64) -> usize {
+    let scale = (h.row(0).norm() + h.row(1).norm()) / (2.0 * h.row(2).norm());
+    let mut m = Matrix3::from_diagonal(&Vector3::new(1.0 / scale, 1.0 / scale, 1.0)) * h;
+    if m.determinant() < 0.0 {
+        m = -m;
+    }
+    let svd = m.svd(true, true);
+    let (Some(u), Some(v_t)) = (svd.u, svd.v_t) else {
+        return 0;
+    };
+    let r = u * v_t;
+    x1.iter()
+        .zip(x2)
+        .filter(|(a, b)| {
+            let ray = r * Vector3::new(a.x, a.y, 1.0);
+            ray.z > 0.0 && (Vector2::new(ray.x, ray.y) * (scale / ray.z) - **b).norm() < threshold
+        })
+        .count()
+}
+
 /// Whether two relative poses differ by more than 1 degree of rotation or
 /// 10 degrees in the direction of travel.
 fn distinct(a: &Cam, b: &Cam) -> bool {
@@ -106,13 +132,46 @@ struct Scene {
     points: Vec<Vector3<f64>>,
     point_track: Vec<usize>,
     track_point: Vec<Option<usize>>,
+    /// Each frame's focal length when the lens zooms.
+    focals: Option<Vec<f64>>,
 }
 
 fn pixel(p: [f32; 2]) -> Vector2<f64> {
     Vector2::new(p[0] as f64, p[1] as f64)
 }
 
+/// A bundle pass over the placed cameras of `frames`, each at its own focal
+/// length from `all` (one per footage frame) when the lens zooms.
+#[allow(clippy::too_many_arguments)]
+fn bundle(
+    all: Option<&mut [f64]>,
+    frames: &[usize],
+    cams: &mut [Cam],
+    points: &mut [Vector3<f64>],
+    obs: &[Obs],
+    fixed: &[bool],
+    intr: &mut Intrinsics,
+    refine: Refine,
+    iterations: usize,
+) {
+    match all {
+        Some(all) => {
+            let mut focals: Vec<f64> = frames.iter().map(|&k| all[k]).collect();
+            adjust_zoom(cams, &mut focals, points, obs, fixed, intr, refine, iterations);
+            for (f, &k) in focals.into_iter().zip(frames) {
+                all[k] = f;
+            }
+        }
+        None => adjust(cams, points, obs, fixed, intr, refine, iterations),
+    }
+}
+
 impl Scene {
+    /// Frame `k`'s lens.
+    fn lens(&self, intr: &Intrinsics, k: usize) -> Intrinsics {
+        lens_of(intr, self.focals.as_deref(), k)
+    }
+
     /// Triangulates every track without a point that two placed cameras see
     /// with enough parallax and that lands within `MAX_ERROR` in every view.
     fn triangulate(&mut self, tracks: &[Track], intr: &Intrinsics) {
@@ -120,19 +179,19 @@ impl Scene {
             if self.track_point[ti].is_some() {
                 continue;
             }
-            let views: Vec<(Cam, [f32; 2])> = (t.start..t.end()).filter_map(|k| Some((self.cams[k]?, t.at(k)?))).collect();
+            let views: Vec<(usize, Cam, [f32; 2])> = (t.start..t.end()).filter_map(|k| Some((k, self.cams[k]?, t.at(k)?))).collect();
             if views.len() < 2 {
                 continue;
             }
-            let rays: Vec<_> = views.iter().map(|(cam, p)| (*cam, intr.normalize(*p))).collect();
+            let rays: Vec<_> = views.iter().map(|(k, cam, p)| (*cam, self.lens(intr, *k).normalize(*p))).collect();
             let Some(x) = triangulate(&rays) else { continue };
-            let (first, last) = (views[0].0.centre(), views[views.len() - 1].0.centre());
+            let (first, last) = (views[0].1.centre(), views[views.len() - 1].1.centre());
             if ray_angle(&first, &last, &x) < MIN_ANGLE {
                 continue;
             }
             let fits = views
                 .iter()
-                .all(|(cam, p)| intr.project(cam, &x).is_some_and(|q| (q - pixel(*p)).norm() <= MAX_ERROR));
+                .all(|(k, cam, p)| self.lens(intr, *k).project(cam, &x).is_some_and(|q| (q - pixel(*p)).norm() <= MAX_ERROR));
             if fits {
                 self.track_point[ti] = Some(self.points.len());
                 self.points.push(x);
@@ -165,7 +224,7 @@ impl Scene {
         let (frames, _, obs) = self.observations(tracks);
         let mut cams: Vec<Cam> = frames.iter().map(|&k| self.cams[k].expect("a placed camera")).collect();
         let fixed: Vec<bool> = frames.iter().map(|&k| k == fixed_frame).collect();
-        adjust(&mut cams, &mut self.points, &obs, &fixed, intr, refine, iterations);
+        bundle(self.focals.as_deref_mut(), &frames, &mut cams, &mut self.points, &obs, &fixed, intr, refine, iterations);
         for (cam, &k) in cams.into_iter().zip(&frames) {
             self.cams[k] = Some(cam);
         }
@@ -203,7 +262,7 @@ impl Scene {
         let mut cams: Vec<Cam> = frames.iter().map(|&k| self.cams[k].expect("a placed camera")).collect();
         let fixed: Vec<bool> = frames.iter().map(|&k| !moving[k]).collect();
         let mut points: Vec<Vector3<f64>> = seen.iter().map(|&p| self.points[p]).collect();
-        adjust(&mut cams, &mut points, &obs, &fixed, intr, refine, iterations);
+        bundle(self.focals.as_deref_mut(), &frames, &mut cams, &mut points, &obs, &fixed, intr, refine, iterations);
         for (cam, &k) in cams.into_iter().zip(&frames) {
             self.cams[k] = Some(cam);
         }
@@ -216,7 +275,8 @@ impl Scene {
     fn rms(&self, tracks: &[Track], intr: &Intrinsics) -> f64 {
         let (frames, _, obs) = self.observations(tracks);
         let cams: Vec<Cam> = frames.iter().map(|&k| self.cams[k].expect("placed")).collect();
-        rms(&cams, &self.points, &obs, intr)
+        let focals: Option<Vec<f64>> = self.focals.as_ref().map(|all| frames.iter().map(|&k| all[k]).collect());
+        rms(&cams, focals.as_deref(), &self.points, &obs, intr)
     }
 
     /// Drops every point that misses one of its views by more than `limit` pixels.
@@ -225,7 +285,7 @@ impl Scene {
         for (p, &ti) in self.point_track.iter().enumerate() {
             let t = &tracks[ti];
             keep[p] = t.points.iter().enumerate().all(|(i, uv)| match self.cams[t.start + i] {
-                Some(cam) => intr.project(&cam, &self.points[p]).is_some_and(|q| (q - pixel(*uv)).norm() <= limit),
+                Some(cam) => self.lens(intr, t.start + i).project(&cam, &self.points[p]).is_some_and(|q| (q - pixel(*uv)).norm() <= limit),
                 None => true,
             });
         }
@@ -270,9 +330,6 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
     let lens = Refine { focal: options.refine_focal, distortion: false };
     if footage.matte.iter().any(|m| (m.width, m.height) != (w, h)) {
         return Err(format!("a camera solve needs a matte of the footage's {w}x{h} frames"));
-    }
-    if options.zoom && options.pitch.is_none() {
-        return Err("a zooming lens solves only on a camera that only turns; give its pitch".into());
     }
     let tracks = track(&footage.frames, &footage.matte);
     if let Some(pitch) = options.pitch {
@@ -323,8 +380,9 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         if let Some((e, _)) = essential_ransac(&x1, &x2, threshold, 300, &mut rng) {
             candidates.extend(factor_essential(&e));
         }
-        if let Some(h) = homography_ransac(&x1, &x2, 2.0 * threshold, 300, &mut rng) {
-            candidates.extend(factor_homography(&h));
+        let homography = homography_ransac(&x1, &x2, 2.0 * threshold, 300, &mut rng);
+        if let Some(h) = &homography {
+            candidates.extend(factor_homography(h));
         }
         let scored: Vec<(Cam, Vec<bool>, usize)> = candidates
             .into_iter()
@@ -338,6 +396,12 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
             continue;
         };
         let (cam, ref front, count) = scored[best_index];
+        // A zoom between two frames of a camera that only turns passes for
+        // parallax, so a pair that a turn and a focal ratio explain as well
+        // holds no depth.
+        if options.zoom && homography.is_some_and(|h| turn_and_zoom(&h, &x1, &x2, 2.0 * threshold) as f64 >= TURN_AND_ZOOM * count as f64) {
+            continue;
+        }
         // Over a short baseline or a flat scene several distinct poses
         // explain the tracks about as well, and the wrong one folds the
         // scene, so the pair must single one out.
@@ -370,6 +434,7 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         points: Vec::new(),
         point_track: Vec::new(),
         track_point: vec![None; tracks.len()],
+        focals: options.zoom.then(|| vec![intr.f; n]),
     };
     scene.cams[a] = Some(Cam::identity());
     scene.cams[b] = Some(cam_b);
@@ -388,7 +453,16 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         if xs.len() < 12 {
             return Err(format!("frame {k} keeps too few solved points ({}) to place its camera", xs.len()));
         }
-        resect(&mut cam, &xs, &uvs, &intr, 30);
+        match scene.focals.as_mut() {
+            Some(all) => {
+                let mut focal = all[from];
+                resect_zoom(&mut cam, &mut focal, &xs, &uvs, &intr, 30);
+                all[k] = focal;
+            }
+            None => {
+                resect(&mut cam, &xs, &uvs, &intr, 30);
+            }
+        }
         scene.cams[k] = Some(cam);
         scene.triangulate(&tracks, &intr);
         if (i + 1) % 8 == 0 {
@@ -418,12 +492,19 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
     let error = scene.rms(&tracks, &intr) * footage.width as f64 / w as f64;
     let (frames, _, _) = scene.observations(&tracks);
     let cams: Vec<Cam> = frames.iter().map(|&k| scene.cams[k].expect("placed")).collect();
-    let (poses, points) = align(&cams, &scene.points, options.camera_height)?;
+    let (mut poses, points) = align(&cams, &scene.points, options.camera_height)?;
+    let yfov = |f: f64| 2.0 * ((h as f64 / 2.0) / f).atan();
+    if let Some(all) = &scene.focals {
+        for (pose, &k) in poses.iter_mut().zip(&frames) {
+            pose.yfov = Some(yfov(all[k]));
+        }
+        intr.f = all[a];
+    }
     Ok(CameraSolve {
         fps: footage.fps,
         width: footage.width,
         height: footage.height,
-        yfov: 2.0 * ((h as f64 / 2.0) / intr.f).atan(),
+        yfov: yfov(intr.f),
         distortion: [intr.k1, intr.k2],
         frames: poses,
         points,

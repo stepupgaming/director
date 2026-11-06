@@ -91,7 +91,7 @@ fn compare(solved: &CameraSolve, truth: &Truth) -> Errors {
         errors.position = errors.position.max((p - tp).norm());
         errors.rotation = errors.rotation.max(q.angle_to(&tq).to_degrees());
         for x in &grid {
-            let (a, b) = (project(&p, &q, solved.yfov, x), project(&tp, &tq, truth.yfov, x));
+            let (a, b) = (project(&p, &q, frame.yfov.unwrap_or(solved.yfov), x), project(&tp, &tq, truth.yfovs[i], x));
             errors.pixels = errors.pixels.max((a[0] - b[0]).hypot(a[1] - b[1]));
         }
     }
@@ -286,5 +286,45 @@ fn a_zooming_lens_solves_frame_by_frame() {
     assert!(solved.error < 0.4, "the zoom explains the tracks: {:.3} px", solved.error);
     assert!(fixed.error > 2.0 * solved.error, "a fixed lens fits the zoom worse: {:.3} px", fixed.error);
     let error = solve(&footage, &SolveOptions { zoom: true, ..SolveOptions::default() }).unwrap_err();
-    assert!(error.contains("a zooming lens solves only on a camera that only turns"), "{error}");
+    assert!(error.contains("its pitch"), "{error}");
+}
+
+/// The worst lens error of a zoom solve in degrees.
+fn worst_lens(solved: &CameraSolve, truth: &Truth) -> f64 {
+    solved.frames.iter().zip(&truth.yfovs).map(|(f, t)| (f.yfov.expect("a lens per frame") - t).abs().to_degrees()).fold(0.0, f64::max)
+}
+
+#[test]
+fn a_moving_camera_zooms_frame_by_frame() {
+    // `dolly.mp4` walks the path of `solve.mp4` while the lens zooms from 42
+    // to 28 degrees.
+    let truth = truth_of("dolly.json");
+    let footage = read_footage(&fixture("dolly.mp4"), 960).unwrap();
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: Some([0.0, 0.0]), camera_height: truth.height, pitch: None, zoom: true };
+    let start = std::time::Instant::now();
+    let solved = solve(&footage, &options).unwrap();
+    let seconds = start.elapsed().as_secs_f64();
+    let Errors { position, rotation, pixels } = compare(&solved, &truth);
+    let lens = worst_lens(&solved, &truth);
+    let guessed = solve(&footage, &SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, ..options.clone() }).unwrap();
+    let from_guess = compare(&guessed, &truth);
+    let fixed = solve(&footage, &SolveOptions { zoom: false, ..options.clone() }).unwrap();
+    eprintln!(
+        "dolly zoom in {seconds:.2} s: worst lens {lens:.3} deg, {:.3} px rms, worst position {position:.3} m, rotation {rotation:.3} deg, grid {pixels:.2} px; from 36 deg: frame 0 {:.3} deg, worst lens {:.3} deg, position {:.3} m, grid {:.2} px; a fixed lens fits to {:.3} px",
+        solved.error,
+        guessed.yfov.to_degrees(),
+        worst_lens(&guessed, &truth),
+        from_guess.position,
+        from_guess.pixels,
+        fixed.error
+    );
+    // A zoom trades against travel along the view, so the path holds a
+    // little looser than the fixed lens's walk.
+    assert!(lens < 0.25, "every frame's lens within 0.25 degrees: {lens:.3}");
+    assert!(solved.error < 0.4, "the zoom explains the tracks: {:.3} px", solved.error);
+    assert!(position < 0.15 && rotation < 0.2, "the path holds: {position:.3} m, {rotation:.3} deg");
+    assert!(pixels < 1.2, "a model near the origin lands within 1.2 px of where Blender drew it: {pixels:.2} px");
+    assert!((guessed.yfov / truth.yfov - 1.0).abs() < 0.01, "frame 0's field of view from a guess within 1 %");
+    assert!(worst_lens(&guessed, &truth) < 0.5 && from_guess.pixels < 2.5, "the zoom holds from a guess");
+    assert!(fixed.error > 2.0 * solved.error, "a fixed lens fits the zoom worse: {:.3} px", fixed.error);
 }

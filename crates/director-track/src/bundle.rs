@@ -2,7 +2,7 @@
 //! points, and a single camera's resection against fixed points. Residuals
 //! are in pixels under a Huber loss.
 
-use nalgebra::{DMatrix, DVector, Matrix2, Matrix2x3, Matrix3, Matrix6, Rotation3, SMatrix, Vector2, Vector3, Vector6};
+use nalgebra::{DMatrix, DVector, Matrix2, Matrix2x3, Matrix3, Rotation3, SMatrix, Vector2, Vector3};
 
 use crate::geometry::{Cam, Intrinsics};
 use rayon::prelude::*;
@@ -101,20 +101,30 @@ fn nudge(cam: &mut Cam, d: &[f64]) {
     cam.t += Vector3::new(d[3], d[4], d[5]);
 }
 
-fn cost(cams: &[Cam], points: &[Vector3<f64>], obs: &[Obs], intr: &Intrinsics) -> f64 {
+/// The lens camera `c` sees through: `intr`, at its own focal length when
+/// `focals` holds one per camera.
+pub fn lens_of(intr: &Intrinsics, focals: Option<&[f64]>, c: usize) -> Intrinsics {
+    match focals {
+        Some(f) => Intrinsics { f: f[c], ..*intr },
+        None => *intr,
+    }
+}
+
+fn cost(cams: &[Cam], focals: Option<&[f64]>, points: &[Vector3<f64>], obs: &[Obs], intr: &Intrinsics) -> f64 {
     obs.iter()
-        .map(|o| match intr.project(&cams[o.cam], &points[o.point]) {
+        .map(|o| match lens_of(intr, focals, o.cam).project(&cams[o.cam], &points[o.point]) {
             Some(p) => loss((p - o.uv).norm()),
             None => loss(1e3),
         })
         .sum()
 }
 
-/// The root mean square reprojection error of `obs` in pixels.
-pub fn rms(cams: &[Cam], points: &[Vector3<f64>], obs: &[Obs], intr: &Intrinsics) -> f64 {
+/// The root mean square reprojection error of `obs` in pixels, each camera
+/// at its own focal length when `focals` holds one per camera.
+pub fn rms(cams: &[Cam], focals: Option<&[f64]>, points: &[Vector3<f64>], obs: &[Obs], intr: &Intrinsics) -> f64 {
     let sum: f64 = obs
         .iter()
-        .map(|o| intr.project(&cams[o.cam], &points[o.point]).map_or(1e6, |p| (p - o.uv).norm_squared()))
+        .map(|o| lens_of(intr, focals, o.cam).project(&cams[o.cam], &points[o.point]).map_or(1e6, |p| (p - o.uv).norm_squared()))
         .sum();
     (sum / obs.len().max(1) as f64).sqrt()
 }
@@ -130,6 +140,60 @@ pub fn adjust(
     refine: Refine,
     iterations: usize,
 ) {
+    adjust_blocks::<6>(cams, None, points, obs, fixed, intr, refine, iterations);
+}
+
+/// `adjust` for a zooming lens: every camera has its own focal length in
+/// `focals`, refined with each camera not marked `fixed`. `refine.focal`
+/// scales every focal length together, so a fixed camera's lens refines
+/// while its pose holds.
+#[allow(clippy::too_many_arguments)]
+pub fn adjust_zoom(
+    cams: &mut [Cam],
+    focals: &mut [f64],
+    points: &mut [Vector3<f64>],
+    obs: &[Obs],
+    fixed: &[bool],
+    intr: &mut Intrinsics,
+    refine: Refine,
+    iterations: usize,
+) {
+    adjust_blocks::<7>(cams, Some(focals), points, obs, fixed, intr, refine, iterations);
+}
+
+/// The Jacobian of a residual by a camera block of `C` parameters: the
+/// rotation and translation, then with 7 the camera's focal length.
+fn camera_jacobian<const C: usize>(l: &Linear) -> SMatrix<f64, 2, C> {
+    let mut jc = SMatrix::<f64, 2, C>::zeros();
+    jc.fixed_view_mut::<2, 6>(0, 0).copy_from(&l.jc);
+    if C == 7 {
+        jc.set_column(6, &l.jl.column(0));
+    }
+    jc
+}
+
+/// Moves a camera by a block step: rotation and translation, then with a
+/// seventh parameter its focal length.
+fn nudge_block(cam: &mut Cam, focal: Option<&mut f64>, d: &[f64]) {
+    nudge(cam, d);
+    if let Some(f) = focal {
+        *f += d[6];
+    }
+}
+
+/// The bundle adjustment with camera blocks of `C` parameters: 6 for a lens
+/// every camera shares, 7 with each camera's focal length in `focals`.
+#[allow(clippy::too_many_arguments)]
+fn adjust_blocks<const C: usize>(
+    cams: &mut [Cam],
+    mut focals: Option<&mut [f64]>,
+    points: &mut [Vector3<f64>],
+    obs: &[Obs],
+    fixed: &[bool],
+    intr: &mut Intrinsics,
+    refine: Refine,
+    iterations: usize,
+) {
     let lens = refine.columns();
     let nl = lens.len();
     let mut offset = vec![None; cams.len()];
@@ -137,14 +201,14 @@ pub fn adjust(
     for (c, slot) in offset.iter_mut().enumerate() {
         if !fixed[c] {
             *slot = Some(np);
-            np += 6;
+            np += C;
         }
     }
     let mut by_point = vec![Vec::new(); points.len()];
     for (i, o) in obs.iter().enumerate() {
         by_point[o.point].push(i);
     }
-    let mut current = cost(cams, points, obs, intr);
+    let mut current = cost(cams, focals.as_deref(), points, obs, intr);
     let mut lambda = 1e-4;
     for _ in 0..iterations {
         let mut u = DMatrix::<f64>::zeros(np, np);
@@ -153,29 +217,36 @@ pub fn adjust(
         let mut bp = vec![Vector3::<f64>::zeros(); points.len()];
         // Per point: the camera-point blocks of its moving cameras at their
         // offsets, and its lens rows.
-        let mut w: Vec<Vec<(usize, SMatrix<f64, 6, 3>)>> = vec![Vec::new(); points.len()];
+        let mut w: Vec<Vec<(usize, SMatrix<f64, C, 3>)>> = vec![Vec::new(); points.len()];
         let mut wl = vec![[Vector3::<f64>::zeros(); 3]; points.len()];
         for p in 0..points.len() {
             for &i in &by_point[p] {
                 let o = &obs[i];
-                let Some(l) = linearize(&cams[o.cam], intr, &points[p], &o.uv) else { continue };
+                let Some(mut l) = linearize(&cams[o.cam], &lens_of(intr, focals.as_deref(), o.cam), &points[p], &o.uv) else { continue };
+                let jc = camera_jacobian::<C>(&l);
+                if let Some(f) = focals.as_deref() {
+                    // With a focal length per camera the lens column scales
+                    // them all: d r / d log scale.
+                    let scaled = l.jl.column(0) * f[o.cam];
+                    l.jl.set_column(0, &scaled);
+                }
                 let wt = weight(l.r.norm());
                 v[p] += wt * l.jp.transpose() * l.jp;
                 bp[p] -= wt * l.jp.transpose() * l.r;
                 if let Some(off) = offset[o.cam] {
-                    let jtj: Matrix6<f64> = wt * l.jc.transpose() * l.jc;
-                    let g: Vector6<f64> = wt * l.jc.transpose() * l.r;
-                    let wcp: SMatrix<f64, 6, 3> = wt * l.jc.transpose() * l.jp;
-                    for a in 0..6 {
+                    let jtj: SMatrix<f64, C, C> = wt * jc.transpose() * jc;
+                    let g: SMatrix<f64, C, 1> = wt * jc.transpose() * l.r;
+                    let wcp: SMatrix<f64, C, 3> = wt * jc.transpose() * l.jp;
+                    for a in 0..C {
                         bc[off + a] -= g[a];
-                        for b in 0..6 {
+                        for b in 0..C {
                             u[(off + a, off + b)] += jtj[(a, b)];
                         }
                     }
                     w[p].push((off, wcp));
                     for (i, &col) in lens.iter().enumerate() {
-                        let cross: Vector6<f64> = wt * l.jc.transpose() * l.jl.column(col);
-                        for a in 0..6 {
+                        let cross: SMatrix<f64, C, 1> = wt * jc.transpose() * l.jl.column(col);
+                        for a in 0..C {
                             u[(off + a, i)] += cross[a];
                             u[(i, off + a)] += cross[a];
                         }
@@ -192,10 +263,10 @@ pub fn adjust(
             }
         }
         // The blocks each moving camera's row of the reduced system gathers.
-        let mut by_cam = vec![Vec::new(); (np - nl) / 6];
+        let mut by_cam = vec![Vec::new(); (np - nl) / C];
         for (p, blocks) in w.iter().enumerate() {
             for (j, &(off, _)) in blocks.iter().enumerate() {
-                by_cam[(off - nl) / 6].push((p, j));
+                by_cam[(off - nl) / C].push((p, j));
             }
         }
         let improved = loop {
@@ -218,15 +289,18 @@ pub fn adjust(
                 }
                 continue;
             };
-            let saved = (cams.to_vec(), points.to_vec(), *intr);
+            let saved = (cams.to_vec(), points.to_vec(), *intr, focals.as_deref().map(<[f64]>::to_vec));
             for (c, cam) in cams.iter_mut().enumerate() {
                 if let Some(off) = offset[c] {
-                    nudge(cam, &dc.as_slice()[off..off + 6]);
+                    nudge_block(cam, focals.as_deref_mut().map(|f| &mut f[c]), &dc.as_slice()[off..off + C]);
                 }
             }
             for (i, &col) in lens.iter().enumerate() {
                 match col {
-                    0 => intr.f += dc[i],
+                    0 => match focals.as_deref_mut() {
+                        Some(focals) => focals.iter_mut().for_each(|f| *f *= dc[i].exp()),
+                        None => intr.f += dc[i],
+                    },
                     1 => intr.k1 += dc[i],
                     _ => intr.k2 += dc[i],
                 }
@@ -234,14 +308,14 @@ pub fn adjust(
             for p in 0..points.len() {
                 let mut g = bp[p];
                 for &(off, wb) in &w[p] {
-                    g -= wb.transpose() * dc.fixed_rows::<6>(off);
+                    g -= wb.transpose() * dc.fixed_rows::<C>(off);
                 }
                 for (i, row) in wl[p].iter().enumerate().take(nl) {
                     g -= row * dc[i];
                 }
                 points[p] += vinv[p] * g;
             }
-            let next = cost(cams, points, obs, intr);
+            let next = cost(cams, focals.as_deref(), points, obs, intr);
             if next < current {
                 let gain = (current - next) / current.max(1e-30);
                 current = next;
@@ -251,6 +325,9 @@ pub fn adjust(
             cams.copy_from_slice(&saved.0);
             points.copy_from_slice(&saved.1);
             *intr = saved.2;
+            if let (Some(f), Some(old)) = (focals.as_deref_mut(), saved.3) {
+                f.copy_from_slice(&old);
+            }
             lambda *= 4.0;
             if lambda > 1e10 {
                 break false;
@@ -264,15 +341,15 @@ pub fn adjust(
 
 /// The camera system with the points eliminated: `u` and `bc` damped by
 /// `lambda` less each point's blocks through its damped inverse `vinv`. Each
-/// moving camera's 6-row strip gathers on its own thread; `u` is symmetric,
-/// so its column-major storage reads as row-major.
+/// moving camera's `C`-row strip gathers on its own thread; `u` is
+/// symmetric, so its column-major storage reads as row-major.
 #[allow(clippy::type_complexity)]
-fn reduce(
+fn reduce<const C: usize>(
     u: &DMatrix<f64>,
     bc: &DVector<f64>,
     lambda: f64,
     nl: usize,
-    (w, wl, by_cam): (&[Vec<(usize, SMatrix<f64, 6, 3>)>], &[[Vector3<f64>; 3]], &[Vec<(usize, usize)>]),
+    (w, wl, by_cam): (&[Vec<(usize, SMatrix<f64, C, 3>)>], &[[Vector3<f64>; 3]], &[Vec<(usize, usize)>]),
     (vinv, bp): (&[Matrix3<f64>], &[Vector3<f64>]),
 ) -> (Vec<f64>, DVector<f64>) {
     let np = u.nrows();
@@ -283,17 +360,17 @@ fn reduce(
     let mut rhs = bc.clone();
     let (lens_rows, cam_rows) = buf.split_at_mut(nl * np);
     let (lens_rhs, cam_rhs) = rhs.as_mut_slice().split_at_mut(nl);
-    cam_rows.par_chunks_mut(6 * np).zip(cam_rhs.par_chunks_mut(6)).zip(by_cam.par_iter()).for_each(|((strip, r), seen)| {
+    cam_rows.par_chunks_mut(C * np).zip(cam_rhs.par_chunks_mut(C)).zip(by_cam.par_iter()).for_each(|((strip, r), seen)| {
         for &(p, j) in seen {
-            let y: SMatrix<f64, 6, 3> = w[p][j].1 * vinv[p];
+            let y: SMatrix<f64, C, 3> = w[p][j].1 * vinv[p];
             let g = y * bp[p];
-            for a in 0..6 {
+            for a in 0..C {
                 r[a] -= g[a];
             }
             for &(off, wb) in &w[p] {
-                let block: Matrix6<f64> = y * wb.transpose();
-                for a in 0..6 {
-                    let row = &mut strip[a * np + off..a * np + off + 6];
+                let block: SMatrix<f64, C, C> = y * wb.transpose();
+                for a in 0..C {
+                    let row = &mut strip[a * np + off..a * np + off + C];
                     for (b, v) in row.iter_mut().enumerate() {
                         *v -= block[(a, b)];
                     }
@@ -301,7 +378,7 @@ fn reduce(
             }
             for (i, l) in wl[p].iter().enumerate().take(nl) {
                 let cross = y * l;
-                for a in 0..6 {
+                for a in 0..C {
                     strip[a * np + i] -= cross[a];
                 }
             }
@@ -314,7 +391,7 @@ fn reduce(
             let row = &mut lens_rows[i * np..(i + 1) * np];
             for &(off, wb) in &w[p] {
                 let cross = wb * y;
-                for a in 0..6 {
+                for a in 0..C {
                     row[off + a] -= cross[a];
                 }
             }
@@ -403,40 +480,56 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 /// Refines one camera against fixed points seen at `uvs` with Gauss-Newton
 /// under the Huber loss, and returns each observation's error in pixels.
 pub fn resect(cam: &mut Cam, points: &[Vector3<f64>], uvs: &[Vector2<f64>], intr: &Intrinsics, iterations: usize) -> Vec<f64> {
-    let total = |cam: &Cam| -> f64 {
+    let mut focal = intr.f;
+    resect_blocks::<6>(cam, &mut focal, points, uvs, intr, iterations)
+}
+
+/// `resect` for a zooming lens: the camera's own focal length `focal`
+/// refines with its pose.
+pub fn resect_zoom(cam: &mut Cam, focal: &mut f64, points: &[Vector3<f64>], uvs: &[Vector2<f64>], intr: &Intrinsics, iterations: usize) -> Vec<f64> {
+    resect_blocks::<7>(cam, focal, points, uvs, intr, iterations)
+}
+
+fn resect_blocks<const C: usize>(cam: &mut Cam, focal: &mut f64, points: &[Vector3<f64>], uvs: &[Vector2<f64>], intr: &Intrinsics, iterations: usize) -> Vec<f64> {
+    let at = |f: f64| Intrinsics { f, ..*intr };
+    let total = |cam: &Cam, f: f64| -> f64 {
+        let lens = at(f);
         points
             .iter()
             .zip(uvs)
-            .map(|(x, uv)| intr.project(cam, x).map_or(loss(1e3), |p| loss((p - uv).norm())))
+            .map(|(x, uv)| lens.project(cam, x).map_or(loss(1e3), |p| loss((p - uv).norm())))
             .sum()
     };
-    let mut current = total(cam);
+    let mut current = total(cam, *focal);
     let mut lambda = 1e-4;
     for _ in 0..iterations {
-        let mut h = Matrix6::<f64>::zeros();
-        let mut g = Vector6::<f64>::zeros();
+        let mut h = SMatrix::<f64, C, C>::zeros();
+        let mut g = SMatrix::<f64, C, 1>::zeros();
+        let lens = at(*focal);
         for (x, uv) in points.iter().zip(uvs) {
-            let Some(l) = linearize(cam, intr, x, uv) else { continue };
+            let Some(l) = linearize(cam, &lens, x, uv) else { continue };
             let wt = weight(l.r.norm());
-            h += wt * l.jc.transpose() * l.jc;
-            g -= wt * l.jc.transpose() * l.r;
+            let jc = camera_jacobian::<C>(&l);
+            h += wt * jc.transpose() * jc;
+            g -= wt * jc.transpose() * l.r;
         }
         let mut stepped = false;
         while lambda < 1e10 {
             let mut damped = h;
-            for k in 0..6 {
+            for k in 0..C {
                 damped[(k, k)] += lambda * h[(k, k)] + 1e-12;
             }
             let Some(d) = damped.cholesky().map(|ch| ch.solve(&g)) else {
                 lambda *= 10.0;
                 continue;
             };
-            let mut next = *cam;
-            nudge(&mut next, d.as_slice());
-            let c = total(&next);
+            let (mut next, mut f) = (*cam, *focal);
+            nudge_block(&mut next, (C == 7).then_some(&mut f), d.as_slice());
+            let c = total(&next, f);
             if c < current {
                 let gain = (current - c) / current.max(1e-30);
                 *cam = next;
+                *focal = f;
                 current = c;
                 lambda = (lambda / 3.0).max(1e-9);
                 stepped = gain > 1e-9;
@@ -451,6 +544,6 @@ pub fn resect(cam: &mut Cam, points: &[Vector3<f64>], uvs: &[Vector2<f64>], intr
     points
         .iter()
         .zip(uvs)
-        .map(|(x, uv)| intr.project(cam, x).map_or(f64::INFINITY, |p| (p - uv).norm()))
+        .map(|(x, uv)| at(*focal).project(cam, x).map_or(f64::INFINITY, |p| (p - uv).norm()))
         .collect()
 }

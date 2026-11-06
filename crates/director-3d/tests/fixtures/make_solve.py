@@ -61,6 +61,14 @@ of view, eased in and out.
 - `zoom.json`: the true camera in the format of `solve.json`, with each
   frame's vertical field of view in radians as its `yfov`.
 - `zoom-10.png` and `zoom-50.png`: frames 10 and 50 with the box.
+
+With `--dolly` the script writes only the moving zoom fixture: the walk of
+`solve.mp4` while the lens zooms in from 42 to 28 degrees of vertical field
+of view, eased in and out. Frame 0 matches the walk's.
+
+- `dolly.mp4`: the plate, H.264 yuv420p.
+- `dolly.json`: the true camera in the format of `zoom.json`.
+- `dolly-10.png` and `dolly-50.png`: frames 10 and 50 with the box.
 """
 
 import json
@@ -79,6 +87,7 @@ out = os.path.abspath(args[0])
 LENS = "--lens" in args[1:]
 MOVING = "--moving" in args[1:]
 ZOOM = "--zoom" in args[1:]
+DOLLY = "--dolly" in args[1:]
 PAN = "--pan" in args[1:] or ZOOM
 FRAMES = 60
 K1, K2 = -0.15, 0.03
@@ -217,6 +226,10 @@ for frame in range(FRAMES):
     else:
         camera.location = Vector((-2.2 + 4.0 * t, -6.5 + 1.0 * t, 1.6 + 0.15 * math.sin(math.pi * t)))
         target = Vector((-0.4 + 1.4 * t, 1.0, 0.5))
+        if DOLLY:
+            ease = t * t * (3 - 2 * t)
+            camera.data.angle_y = math.radians(42 - 14 * ease)
+            camera.data.keyframe_insert("lens", frame=frame)
     camera.rotation_euler = (target - camera.location).to_track_quat("-Z", "Y").to_euler()
     camera.keyframe_insert("location", frame=frame)
     camera.keyframe_insert("rotation_euler", frame=frame)
@@ -272,11 +285,11 @@ for frame in range(FRAMES):
     m = camera.matrix_world
     q = (basis @ m.to_3x3()).to_quaternion()
     truth["frames"].append({"position": list(solve_point(m.translation)), "rotation": [q.x, q.y, q.z, q.w]})
-    if ZOOM:
+    if ZOOM or DOLLY:
         truth["frames"][-1]["yfov"] = camera.data.angle_y
 scene.frame_set(0)
 truth["yfov"] = camera.data.angle_y
-name = "zoom" if ZOOM else "pan" if PAN else "solve"
+name = "zoom" if ZOOM else "pan" if PAN else "dolly" if DOLLY else "solve"
 if not (LENS or MOVING):
     with open(os.path.join(out, f"{name}.json"), "w") as f:
         json.dump(truth, f, indent=1)
@@ -391,7 +404,7 @@ source = ["-framerate", "30", "-start_number", "0", "-i", os.path.join(frames, "
 subprocess.run(encode(source, os.path.join(out, f"{name}.mp4")), check=True)
 shutil.rmtree(frames)
 box.hide_render = False
-if PAN:
+if PAN or DOLLY:
     print("wrote", out)
     sys.exit(0)
 

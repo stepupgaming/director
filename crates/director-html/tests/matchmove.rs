@@ -5,7 +5,8 @@
 //! with the box; `make_solve.py` writes all four, with `--lens` the same
 //! plate and renders through a barrel-distorted lens, with `--moving`
 //! the shot with movers in it and their matte, with `--pan` the yard
-//! from a camera that only turns, and with `--zoom` that camera zooming in. The masks take the box's
+//! from a camera that only turns, with `--zoom` that camera zooming in, and
+//! with `--dolly` the walk zooming in. The masks take the box's
 //! lit faces by colour and the shadow by its darkening, each only where the
 //! image moves away from the decoded plate. Each GPU test skips on a
 //! machine without a Vulkan adapter.
@@ -42,7 +43,7 @@ fn gpu() -> bool {
 const K1: f64 = -0.15;
 const K2: f64 = 0.03;
 
-/// The `plate` (`solve`, `lens`, `moving`, `pan` or `zoom`) under `solve.glb` with the sky and units
+/// The `plate` (`solve`, `lens`, `moving`, `pan`, `zoom` or `dolly`) under `solve.glb` with the sky and units
 /// of `tests/eevee.rs`, its ground a catcher and its camera solved from the
 /// plate with `track` attributes. An empty `track` leaves the plate alone,
 /// and a `track` with `track-light` lights the model from the plate in
@@ -247,6 +248,16 @@ fn a_model_holds_still_through_a_zoom() {
 }
 
 #[test]
+fn a_model_holds_still_through_a_dolly_zoom() {
+    if gpu() {
+        // `dolly.mp4` walks the yard while the lens zooms from 42 to 28
+        // degrees. The zoom trades against travel along the view, so the
+        // path holds a little looser than the fixed lens's walk.
+        matches_eevee("dolly", "track-fov='42' track-height='1.6' track-distortion='0 0' track-zoom", 0.88);
+    }
+}
+
+#[test]
 fn the_plate_lights_the_model() {
     if gpu() {
         // The probe stitched from the pan holds its sky and yard, so the box
@@ -434,8 +445,6 @@ fn a_lens_out_of_range_fails_to_compile() {
     assert!(error.contains("track-distortion must be two numbers, k1 and k2"), "{error}");
     let error = fails("track-pitch='90'");
     assert!(error.contains("track-pitch must be from -89 to 89 degrees"), "{error}");
-    let error = fails("track-zoom");
-    assert!(error.contains("a zooming lens solves only on a camera that only turns"), "{error}");
     let error = fails("track-light environment='sky.hdr'");
     assert!(error.contains("track-light and environment both light the model; give one"), "{error}");
     let error = compile(
