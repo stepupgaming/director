@@ -27,3 +27,4 @@ repomix-output.xml
 vendor/*
 !vendor/AGENTS.md
 !vendor/skia-safe/
+!vendor/bevy_pbr/

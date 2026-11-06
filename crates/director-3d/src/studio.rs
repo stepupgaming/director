@@ -28,9 +28,10 @@ use bevy::{
     core_pipeline::tonemapping::{DebandDither, Tonemapping},
     gltf::Gltf,
     image::Image,
-    light::{EnvironmentMapLight, GeneratedEnvironmentMapLight, Skybox},
+    light::{EnvironmentMapLight, FogVolume, GeneratedEnvironmentMapLight, Skybox, VolumetricFog, VolumetricLight},
     log::LogPlugin,
     mesh::morph::MeshMorphWeights,
+    pbr::{DistanceFog, FogFalloff},
     post_process::bloom::Bloom,
     prelude::*,
     render::{
@@ -52,7 +53,7 @@ use bevy::{
 use bevy_gaussian_splatting::{
     CloudSettings, GaussianCamera, GaussianSplattingPlugin, PlanarGaussian3d, PlanarGaussian3dHandle,
 };
-use director_scene::{ModelLight, ModelLightKind, ModelView};
+use director_scene::{ModelFog, ModelLight, ModelLightKind, ModelView};
 
 use crate::accumulate::Accumulator;
 use crate::catcher::ShadowCatcher;
@@ -100,6 +101,13 @@ pub struct Shot {
     /// the samples sweep from one through `camera` to the other, so the
     /// model blurs as the footage does.
     pub shutter: Option<[ShotCamera; 2]>,
+    /// Distance haze and a sunlit fog volume.
+    pub fog: Option<ModelFog>,
+}
+
+/// The bits of a shot's fog for frame cache keys, all zero without one.
+pub(crate) fn fog_bits(fog: Option<ModelFog>) -> [u32; 5] {
+    fog.map_or([0; 5], |f| [f.color[0], f.color[1], f.color[2], f.visibility, f.density].map(f32::to_bits))
 }
 
 /// A camera pose in the model's world, looking down -Z with +Y up, and its
@@ -418,6 +426,9 @@ struct Stage {
     center: Vec3,
     radius: f32,
     probe: Handle<Image>,
+    /// The probe's mean radiance in linear RGB before its intensity, the
+    /// ambient light a fog volume scatters.
+    ambient: [f32; 3],
     /// Target sizes this stage has rendered, so their pipelines and the
     /// filtered probe exist before a shot's frame.
     warm: HashSet<(u32, u32)>,
@@ -464,9 +475,10 @@ struct Target {
 
 /// (model hash, environment hash, splat set hash, shadow catcher hash).
 type StageKey = (u64, Option<u64>, u64, u64, u64);
-type ShotKey = (StageKey, usize, u64, u64, [u32; 12], [u32; 8], [[u32; 8]; 2]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 17], [u32; 8], [[u32; 8]; 2]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
+    let fog = fog_bits(shot.fog);
     (
         stage,
         shot.clips,
@@ -485,6 +497,11 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             shot.paths,
             shot.denoise as u32,
             shot.reflection.to_bits(),
+            fog[0],
+            fog[1],
+            fog[2],
+            fog[3],
+            fog[4],
         ],
         camera_bits(shot.camera),
         shot.shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
@@ -607,7 +624,8 @@ impl Studio {
         }
         let target = self.targets[&size].image.clone();
         let stage = &self.stages[&key];
-        let (camera, source, center, radius, probe) = (stage.camera, stage.source, stage.center, stage.radius, stage.probe.clone());
+        let (camera, source, center, radius, probe, ambient) =
+            (stage.camera, stage.source, stage.center, stage.radius, stage.probe.clone(), stage.ambient);
         let players = stage.players.clone();
         let nodes = stage.nodes.clone();
         let warm = stage.warm.contains(&size);
@@ -658,6 +676,48 @@ impl Studio {
             } else {
                 e.remove::<(Skybox, Bloom)>();
             }
+            // Haze fades each surface toward the fog colour with its
+            // distance from the camera, and a fog volume scatters the
+            // probe's light and the suns', which their shadows cut into
+            // shafts. The vendored `bevy_pbr` integrates the ambient term
+            // with the density and blends the volume's coverage into alpha.
+            match shot.fog.filter(|f| f.visibility > 0.0) {
+                Some(fog) => {
+                    e.insert(DistanceFog {
+                        color: Color::srgb(fog.color[0], fog.color[1], fog.color[2]),
+                        falloff: FogFalloff::from_visibility(fog.visibility),
+                        ..default()
+                    });
+                }
+                None => {
+                    e.remove::<DistanceFog>();
+                }
+            }
+            let volume = shot.fog.filter(|f| f.density > 0.0);
+            if volume.is_some() {
+                e.insert(VolumetricFog {
+                    ambient_color: Color::linear_rgb(ambient[0], ambient[1], ambient[2]),
+                    ambient_intensity: shot.environment_intensity,
+                    ..default()
+                });
+            } else {
+                e.remove::<VolumetricFog>();
+            }
+            let old: Vec<Entity> = world.query_filtered::<Entity, With<FogVolume>>().iter(world).collect();
+            for entity in old {
+                world.despawn(entity);
+            }
+            if let Some(fog) = volume {
+                world.spawn((
+                    FogVolume {
+                        fog_color: Color::srgb(fog.color[0], fog.color[1], fog.color[2]),
+                        density_factor: fog.density,
+                        ..default()
+                    },
+                    Transform::from_translation(center).with_scale(Vec3::splat(4.0 * radius)),
+                ));
+            }
+            let mut e = world.entity_mut(camera);
             // Bevy copies the probe intensity into the generated
             // `EnvironmentMapLight` once, and the view reads it from there.
             if let Some(mut light) = e.get_mut::<EnvironmentMapLight>() {
@@ -727,6 +787,15 @@ impl Studio {
             stage.lit = lit;
         }
         lights::place(world, &stage.lights, None);
+        // The fog volume scatters every sun, the file's and the added ones.
+        let suns: Vec<Entity> = world.query_filtered::<Entity, With<DirectionalLight>>().iter(world).collect();
+        for sun in suns {
+            if shot.fog.is_some_and(|f| f.density > 0.0) {
+                world.entity_mut(sun).insert(VolumetricLight);
+            } else {
+                world.entity_mut(sun).remove::<VolumetricLight>();
+            }
+        }
         if hero && stage.emitted != Some(lit) {
             for e in std::mem::take(&mut stage.emitters) {
                 world.despawn(e);
@@ -1138,6 +1207,7 @@ impl Studio {
             }
             None => studio_probe(64),
         };
+        let ambient = cube_mean(&cube);
         let probe = world.resource_mut::<Assets<Image>>().add(cube);
         let camera = world
             .spawn((
@@ -1200,6 +1270,7 @@ impl Studio {
                 center,
                 radius,
                 probe,
+                ambient,
                 warm: HashSet::new(),
                 morphs,
                 lights: Vec::new(),
@@ -1729,6 +1800,25 @@ fn studio_probe(size: u32) -> Image {
         let v = sky + 6.0 * d.dot(key).max(0.0).powf(32.0);
         [v, v, v]
     })
+}
+
+/// The mean of an Rgba16Float cube's colour over the sphere, each texel
+/// weighted by its solid angle.
+fn cube_mean(cube: &Image) -> [f32; 3] {
+    let size = cube.width() as usize;
+    let Some(data) = cube.data.as_ref() else { return [1.0; 3] };
+    let (mut sum, mut weight) = ([0.0f64; 3], 0.0f64);
+    for (i, texel) in data.as_chunks::<8>().0.iter().enumerate() {
+        let (x, y) = (i % size, i / size % size);
+        let s = (x as f64 + 0.5) / size as f64 * 2.0 - 1.0;
+        let t = (y as f64 + 0.5) / size as f64 * 2.0 - 1.0;
+        let w = (1.0 + s * s + t * t).powf(-1.5);
+        for (k, total) in sum.iter_mut().enumerate() {
+            *total += w * half::f16::from_le_bytes([texel[k * 2], texel[k * 2 + 1]]).to_f32() as f64;
+        }
+        weight += w;
+    }
+    sum.map(|s| (s / weight.max(1e-12)) as f32)
 }
 
 /// Samples an equirectangular float image into an Rgba16Float cube.

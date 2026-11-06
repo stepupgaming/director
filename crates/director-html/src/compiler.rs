@@ -1770,6 +1770,10 @@ impl Builder {
                 if model.denoise && model.paths == 0 {
                     return Err(CompileError::Input(format!("{context}: denoise needs paths")));
                 }
+                model.fog = model_fog(el).map_err(input)?;
+                if model.fog.is_some() && model.paths > 0 {
+                    return Err(input("fog renders at the rasterized levels, so it cannot take paths".into()));
+                }
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {
@@ -3052,6 +3056,35 @@ fn model_texts(
         });
     }
     Ok(texts)
+}
+
+/// The `<fog>` child of a `<model>`.
+fn model_fog(model: ElementRef<'_>) -> Result<Option<director_scene::ModelFog>, String> {
+    let mut fogs = model.children().filter_map(ElementRef::wrap).filter(|el| el.value().name() == "fog");
+    let Some(el) = fogs.next() else { return Ok(None) };
+    if fogs.next().is_some() {
+        return Err("a model takes one <fog>".into());
+    }
+    let attr = |name: &str| el.value().attr_text(name).map(str::trim);
+    let number = |name: &str| -> Result<f32, String> {
+        match attr(name) {
+            None => Ok(0.0),
+            Some(v) => match v.trim_end_matches('m').parse::<f32>() {
+                Ok(n) if n >= 0.0 && n.is_finite() => Ok(n),
+                _ => Err(format!("fog {name} '{v}' must be a number from 0")),
+            },
+        }
+    };
+    let haze = director_core::types::Color::new(0.78, 0.82, 0.86, 1.0);
+    let color = match attr("color") {
+        Some(c) => crate::style::color(c, haze).map_err(|e| format!("fog {e}"))?,
+        None => haze,
+    };
+    let (visibility, density) = (number("visibility")?, number("density")?);
+    if visibility == 0.0 && density == 0.0 {
+        return Err("fog needs a visibility or a density above 0".into());
+    }
+    Ok(Some(director_scene::ModelFog { color: [color.r, color.g, color.b], visibility, density }))
 }
 
 /// The `<light>` children of a `<model>`.

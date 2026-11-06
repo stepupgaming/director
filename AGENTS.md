@@ -114,6 +114,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Product direction: high-quality native video production for agents and developers, covering short-form and long-form (Shorts, Reels, TikTok, YouTube). Keep preview, editing, inspection and export consistent across supported authoring inputs. Web research as an input belongs at orchestration layers outside the render core.
 - `vendor/` contains third-party source selected by local Cargo patches. Do not modify vendor sources without updating its `AGENTS.md`; exclude vendored packages from workspace membership.
 - `vendor/skia-safe/` is skia-safe 0.153.3 with three edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.
+- `vendor/bevy_pbr/` is bevy_pbr 0.20.1 with two volumetric fog edits (alpha coverage and per-step ambient in-scatter) documented in `vendor/AGENTS.md`; reapply them on a Bevy upgrade.
 
 ## Verification
 

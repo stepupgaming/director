@@ -18,6 +18,7 @@ mod css_nesting;
 mod depth_nested;
 mod depth_sort;
 mod eevee;
+mod fog;
 mod ellipse_clip;
 mod filter_fns;
 mod fixed_position;

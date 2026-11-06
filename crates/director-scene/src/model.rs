@@ -59,6 +59,26 @@ pub struct ModelBody {
     /// show, in place of the file's camera.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track: Option<ModelTrack>,
+    /// Haze and fog between the camera and the scene.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fog: Option<ModelFog>,
+}
+
+/// Haze and fog in the model's metres. The rasterized levels render it; the
+/// Hero level does not take it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelFog {
+    /// sRGB colour, each channel 0 to 1: the colour distance haze fades
+    /// surfaces toward and the colour the fog volume scatters.
+    pub color: [f32; 3],
+    /// Metres at which distance haze leaves 5% of a surface's contrast,
+    /// thinning exponentially with distance from the camera. 0 adds no haze.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub visibility: f32,
+    /// Density of a fog volume around the scene, lit by its suns, whose
+    /// shadows cut light shafts through it. 0 adds no volume.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub density: f32,
 }
 
 /// A camera per footage frame, in a world of metres with the ground at
