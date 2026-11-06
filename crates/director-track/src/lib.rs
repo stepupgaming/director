@@ -19,6 +19,7 @@ mod footage;
 mod geometry;
 mod image;
 mod klt;
+mod rotation;
 mod solve;
 mod tracks;
 

@@ -1,5 +1,6 @@
 //! The camera solve on `solve.mp4`, Eevee's plate of a yard walked past by a
-//! camera whose true path `solve.json` holds in the solve's world.
+//! camera whose true path `solve.json` holds in the solve's world, and on
+//! `pan.mp4`, the same yard from a camera on a tripod with its path in `pan.json`.
 
 use director_track::{read_footage, solve, CameraSolve, Footage, SolveOptions};
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
@@ -18,7 +19,11 @@ struct Truth {
 }
 
 fn truth() -> Truth {
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(fixture("solve.json")).unwrap()).unwrap();
+    truth_of("solve.json")
+}
+
+fn truth_of(name: &str) -> Truth {
+    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(fixture(name)).unwrap()).unwrap();
     let frames = json["frames"].as_array().unwrap();
     let v = |a: &serde_json::Value, i: usize| a[i].as_f64().unwrap();
     Truth {
@@ -93,7 +98,7 @@ fn the_solve_walks_the_true_camera_path() {
     let truth = truth();
     let footage = footage();
     assert_eq!((footage.width, footage.height, footage.frames.len()), (480, 270, 60));
-    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height };
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height, pitch: None };
     let start = std::time::Instant::now();
     let solved = solve(footage, &options).unwrap();
     let Errors { position, rotation, pixels } = compare(&solved, &truth);
@@ -119,7 +124,7 @@ fn the_solve_walks_the_true_camera_path() {
 #[test]
 fn the_solve_recovers_the_lens_from_a_wrong_guess() {
     let truth = truth();
-    let options = SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, distortion: None, camera_height: truth.height };
+    let options = SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, distortion: None, camera_height: truth.height, pitch: None };
     let solved = solve(footage(), &options).unwrap();
     let Errors { position, rotation, pixels } = compare(&solved, &truth);
     eprintln!(
@@ -155,7 +160,7 @@ fn the_solve_finds_the_lens_distortion() {
     // `lens.mp4` is the same shot through a lens with k1 = -0.15, k2 = 0.03.
     let truth = truth();
     let footage = read_footage(&fixture("lens.mp4"), 960).unwrap();
-    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height };
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height, pitch: None };
     let solved = solve(&footage, &options).unwrap();
     let Errors { position, rotation, .. } = compare(&solved, &truth);
     // k1 and k2 trade against each other, so compare where each lens sends
@@ -178,7 +183,7 @@ fn a_matte_keeps_moving_things_out_of_the_solve() {
     // `moving.mp4` is the same walk past a van, a walker and a rippling
     // pool, and `moving-matte.mp4` is white over them.
     let truth = truth();
-    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height };
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height, pitch: None };
     let mut footage = read_footage(&fixture("moving.mp4"), 960).unwrap();
     let unmasked = compare(&solve(&footage, &options).unwrap(), &truth);
     footage.read_matte(&fixture("moving-matte.mp4")).unwrap();
@@ -201,4 +206,45 @@ fn a_matte_must_match_the_frames() {
     let footage = Footage { width: 480, height: 270, fps: 30.0, frames: footage().frames.clone(), matte: vec![small] };
     let error = solve(&footage, &SolveOptions::default()).unwrap_err();
     assert!(error.contains("matte of the footage's 480x270 frames"), "{error}");
+}
+
+/// Frame 0's true tilt below the horizon in radians.
+fn pitch(truth: &Truth) -> f64 {
+    let view = truth.rotations[0] * Vector3::new(0.0, 0.0, -1.0);
+    (-view.y).asin()
+}
+
+#[test]
+fn a_camera_that_only_turns_solves_from_its_pitch() {
+    let truth = truth_of("pan.json");
+    let footage = read_footage(&fixture("pan.mp4"), 960).unwrap();
+    let fixed = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: Some([0.0, 0.0]), camera_height: truth.height, pitch: Some(pitch(&truth)) };
+    let solved = solve(&footage, &fixed).unwrap();
+    let Errors { position, rotation, pixels } = compare(&solved, &truth);
+    let guessed = solve(&footage, &SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, ..fixed }).unwrap();
+    let from_guess = compare(&guessed, &truth);
+    eprintln!(
+        "pan at pitch {:.2} deg: {:.3} px rms, worst position {position:.3} m, rotation {rotation:.3} deg, grid {pixels:.2} px; from 36 deg: {:.3} deg, rotation {:.3} deg, grid {:.2} px",
+        pitch(&truth).to_degrees(),
+        solved.error,
+        guessed.yfov.to_degrees(),
+        from_guess.rotation,
+        from_guess.pixels
+    );
+    assert!(solved.points.is_empty(), "a turning camera triangulates nothing");
+    assert!(solved.error < 0.4, "the turns explain the tracks: {:.3} px", solved.error);
+    assert!(position < 0.01, "the camera stays on its tripod: {position:.3} m");
+    assert!(rotation < 0.1, "every camera turns within 0.1 degrees of the truth: {rotation:.3}");
+    assert!(pixels < 1.0, "a model near the origin lands within a pixel of where Blender drew it: {pixels:.2} px");
+    assert!((guessed.yfov / truth.yfov - 1.0).abs() < 0.005, "the turn finds the field of view within 0.5 %");
+    assert!(from_guess.rotation < 0.1 && from_guess.pixels < 1.0, "the path holds from the guess: {:.3} deg, {:.2} px", from_guess.rotation, from_guess.pixels);
+}
+
+#[test]
+fn a_turning_camera_needs_its_pitch() {
+    let footage = read_footage(&fixture("pan.mp4"), 960).unwrap();
+    let error = solve(&footage, &SolveOptions { yfov: 42f64.to_radians(), ..SolveOptions::default() }).unwrap_err();
+    assert!(error.contains("its pitch"), "{error}");
+    let error = solve(&footage, &SolveOptions { pitch: Some(2.0), ..SolveOptions::default() }).unwrap_err();
+    assert!(error.contains("pitch between -90 and 90"), "{error}");
 }

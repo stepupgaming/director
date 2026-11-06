@@ -1756,7 +1756,7 @@ impl Builder {
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {
                     let lens = (attr("track-fov").is_some(), attr("track-distortion"));
-                    let plate = (plate, attr("track-mask"));
+                    let plate = (plate, attr("track-mask"), attr("track-pitch"));
                     model.track = Some(std::sync::Arc::new(solve_track(&self.assets, plate, &numeric, lens, &context)?));
                 }
                 if !values.contains_key("width") {
@@ -2773,10 +2773,12 @@ pub fn compile_file(
 /// as "k1 k2", and without it the solve finds it. `track-height` is frame
 /// 0's camera height above the ground in metres, which sets the scale.
 /// `track-mask` names a matte of the footage, white over whatever moves on
-/// its own, and the solve tracks nothing there.
+/// its own, and the solve tracks nothing there. `track-pitch` is frame 0's
+/// tilt below the horizon in degrees, which footage from a camera that only
+/// turns needs.
 fn solve_track(
     assets: &AssetStore,
-    (plate, mask): (&str, Option<&str>),
+    (plate, mask, tilt): (&str, Option<&str>, Option<&str>),
     numeric: &dyn Fn(&str, f64) -> Result<f64, CompileError>,
     (fixed_lens, distortion): (bool, Option<&str>),
     context: &str,
@@ -2793,6 +2795,16 @@ fn solve_track(
         return Err(CompileError::Input(format!("{context}: track-fov must be from 1 to 179 degrees")));
     }
     let height = numeric("track-height", 1.6)?;
+    let pitch = match tilt {
+        None => None,
+        Some(_) => {
+            let pitch = numeric("track-pitch", 0.0)?;
+            if !(-89.0..=89.0).contains(&pitch) {
+                return Err(CompileError::Input(format!("{context}: track-pitch must be from -89 to 89 degrees")));
+            }
+            Some(pitch.to_radians())
+        }
+    };
     if height.is_nan() || height <= 0.0 {
         return Err(CompileError::Input(format!("{context}: track-height must be above 0 metres")));
     }
@@ -2803,7 +2815,7 @@ fn solve_track(
         let path = assets.media_path(mask)?;
         footage.read_matte(&path).map_err(|e| CompileError::Input(format!("{context}: track-mask '{mask}': {e}")))?;
     }
-    let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, distortion, camera_height: height };
+    let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, distortion, camera_height: height, pitch };
     let solved = director_track::solve(&footage, &options).map_err(input)?;
     Ok(director_scene::ModelTrack {
         fps: solved.fps,

@@ -1,6 +1,6 @@
 """Write the director-3d camera solve fixture.
 
-Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures [--lens | --moving]
+Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures [--lens | --moving | --pan]
 
 A yard of Voronoi cells holds five textured crates and two pillars under a sun
 and `sky.hdr`, and a handheld-height camera walks sideways past them over 60
@@ -43,6 +43,15 @@ change.
 - `moving-matte.mp4`: white where a mover or the pool shows and black
   elsewhere, H.264 yuv420p.
 - `moving-10.png` and `moving-50.png`: frames 10 and 50 with the box.
+
+With `--pan` the script writes only the tripod fixture: the camera stays
+where the walk starts and only turns, panning about 33 degrees right while
+it tilts up and back. Frame 0 matches the walk's, so the solve's world and
+`solve.glb` stay the same.
+
+- `pan.mp4`: the plate, H.264 yuv420p.
+- `pan.json`: the true camera, in the format of `solve.json`.
+- `pan-10.png` and `pan-50.png`: frames 10 and 50 with the box.
 """
 
 import json
@@ -60,6 +69,7 @@ args = sys.argv[sys.argv.index("--") + 1 :]
 out = os.path.abspath(args[0])
 LENS = "--lens" in args[1:]
 MOVING = "--moving" in args[1:]
+PAN = "--pan" in args[1:]
 FRAMES = 60
 K1, K2 = -0.15, 0.03
 WIDE = (600, 338)
@@ -185,8 +195,12 @@ camera.data.clip_start = 0.05
 scene.camera = camera
 for frame in range(FRAMES):
     t = frame / (FRAMES - 1)
-    camera.location = Vector((-2.2 + 4.0 * t, -6.5 + 1.0 * t, 1.6 + 0.15 * math.sin(math.pi * t)))
-    target = Vector((-0.4 + 1.4 * t, 1.0, 0.5))
+    if PAN:
+        camera.location = Vector((-2.2, -6.5, 1.6))
+        target = Vector((-0.4 + 4.9 * t, 1.0 - 0.5 * t, 0.5 + 0.8 * math.sin(math.pi * t)))
+    else:
+        camera.location = Vector((-2.2 + 4.0 * t, -6.5 + 1.0 * t, 1.6 + 0.15 * math.sin(math.pi * t)))
+        target = Vector((-0.4 + 1.4 * t, 1.0, 0.5))
     camera.rotation_euler = (target - camera.location).to_track_quat("-Z", "Y").to_euler()
     camera.keyframe_insert("location", frame=frame)
     camera.keyframe_insert("rotation_euler", frame=frame)
@@ -242,7 +256,7 @@ for frame in range(FRAMES):
     q = (basis @ m.to_3x3()).to_quaternion()
     truth["frames"].append({"position": list(solve_point(m.translation)), "rotation": [q.x, q.y, q.z, q.w]})
 if not (LENS or MOVING):
-    with open(os.path.join(out, "solve.json"), "w") as f:
+    with open(os.path.join(out, "pan.json" if PAN else "solve.json"), "w") as f:
         json.dump(truth, f, indent=1)
 
 
@@ -342,9 +356,10 @@ if MOVING:
     print("wrote", out)
     sys.exit(0)
 
+name = "pan" if PAN else "solve"
 for frame in (10, 50):
     scene.frame_set(frame)
-    render(os.path.join(out, f"solve-{frame}.png"))
+    render(os.path.join(out, f"{name}-{frame}.png"))
 
 box.hide_render = True
 frames = tempfile.mkdtemp(prefix="director-solve-")
@@ -352,9 +367,12 @@ for frame in range(FRAMES):
     scene.frame_set(frame)
     render(os.path.join(frames, f"plate-{frame:04d}.png"))
 source = ["-framerate", "30", "-start_number", "0", "-i", os.path.join(frames, "plate-%04d.png")]
-subprocess.run(encode(source, os.path.join(out, "solve.mp4")), check=True)
+subprocess.run(encode(source, os.path.join(out, f"{name}.mp4")), check=True)
 shutil.rmtree(frames)
 box.hide_render = False
+if PAN:
+    print("wrote", out)
+    sys.exit(0)
 
 # Export the box, a plain ground and the sun in the solve's world. glTF's
 # exporter maps Blender (x, y, z) to (x, z, -y), so the root takes the solve

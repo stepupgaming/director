@@ -1,7 +1,7 @@
 //! Solves the camera of a clip and prints how the solve went.
 //!
 //! `solve <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M]
-//! [--matte FILE] [--json OUT]` reads the footage at most 960 px wide and
+//! [--pitch DEG] [--matte FILE] [--json OUT]` reads the footage at most 960 px wide and
 //! the matte of regions to leave out at its size, solves it with the
 //! lens starting from `--fov` (default 40, refined unless `--fixed`), the
 //! radial distortion fixed by `--distortion` or solved, and frame 0's camera
@@ -16,7 +16,7 @@ use std::time::Instant;
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut path = None;
-    let (mut fov, mut fixed, mut height, mut json, mut distortion, mut matte) = (40.0f64, false, 1.6f64, None, None, None);
+    let (mut fov, mut fixed, mut height, mut json, mut distortion, mut matte, mut pitch) = (40.0f64, false, 1.6f64, None, None, None, None);
     let number = |v: Option<String>| -> f64 { v.and_then(|v| v.parse().ok()).expect("--distortion K1 K2") };
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -24,12 +24,13 @@ fn main() {
             "--fixed" => fixed = true,
             "--distortion" => distortion = Some([number(args.next()), number(args.next())]),
             "--height" => height = args.next().and_then(|v| v.parse().ok()).expect("--height M"),
+            "--pitch" => pitch = Some(args.next().and_then(|v| v.parse::<f64>().ok()).expect("--pitch DEG").to_radians()),
             "--matte" => matte = Some(PathBuf::from(args.next().expect("--matte FILE"))),
             "--json" => json = Some(PathBuf::from(args.next().expect("--json OUT"))),
             _ => path = Some(PathBuf::from(arg)),
         }
     }
-    let path = path.expect("usage: solve <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M] [--matte FILE] [--json OUT]");
+    let path = path.expect("usage: solve <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M] [--pitch DEG] [--matte FILE] [--json OUT]");
 
     let start = Instant::now();
     let mut footage = read_footage(&path, 960).unwrap_or_else(|e| panic!("{e}"));
@@ -57,7 +58,7 @@ fn main() {
         live(frames.saturating_sub(1))
     );
 
-    let options = SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed, distortion, camera_height: height };
+    let options = SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed, distortion, camera_height: height, pitch };
     let start = Instant::now();
     let solved = match solve(&footage, &options) {
         Ok(solved) => solved,

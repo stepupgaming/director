@@ -8,6 +8,7 @@ use crate::footage::Footage;
 use crate::geometry::{
     essential_ransac, factor_essential, factor_homography, homography_ransac, ray_angle, supported, triangulate, Cam, Intrinsics, Rng,
 };
+use crate::rotation;
 use crate::tracks::{track, Track};
 
 /// A new point needs rays at least this far apart, in radians.
@@ -39,11 +40,17 @@ pub struct SolveOptions {
     pub distortion: Option<[f64; 2]>,
     /// Frame 0's camera height above the ground in metres, which sets the scale.
     pub camera_height: f64,
+    /// Declares a camera that only turns, as on a tripod, with frame 0
+    /// tilted this many radians below the horizon and no roll. Such footage
+    /// shows no depth and so no ground, and the solve finds the rotations
+    /// alone (and the focal length with `refine_focal`) with the given
+    /// distortion, none when unset. `None` solves a moving camera.
+    pub pitch: Option<f64>,
 }
 
 impl Default for SolveOptions {
     fn default() -> Self {
-        Self { yfov: 40f64.to_radians(), refine_focal: false, distortion: None, camera_height: 1.6 }
+        Self { yfov: 40f64.to_radians(), refine_focal: false, distortion: None, camera_height: 1.6, pitch: None }
     }
 }
 
@@ -258,6 +265,26 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         return Err(format!("a camera solve needs a matte of the footage's {w}x{h} frames"));
     }
     let tracks = track(&footage.frames, &footage.matte);
+    if let Some(pitch) = options.pitch {
+        if pitch.is_nan() || pitch.abs() >= std::f64::consts::FRAC_PI_2 {
+            return Err("a camera solve needs a pitch between -90 and 90 degrees".into());
+        }
+        let (cams, error) = rotation::solve(&tracks, &mut intr, options.refine_focal, n)?;
+        // Frame 0 sees the ground's up tilted towards its view by the pitch,
+        // with the ground a unit below; height then sets the scale.
+        let up = Vector3::new(0.0, -pitch.cos(), -pitch.sin());
+        let (poses, _) = place(&cams, &[], up, -1.0, options.camera_height);
+        return Ok(CameraSolve {
+            fps: footage.fps,
+            width: footage.width,
+            height: footage.height,
+            yfov: 2.0 * ((h as f64 / 2.0) / intr.f).atan(),
+            distortion: [intr.k1, intr.k2],
+            frames: poses,
+            points: Vec::new(),
+            error: error * footage.width as f64 / w as f64,
+        });
+    }
     let mut rng = Rng::new(7);
 
     // The starting pair: frame 0 and, among the frames whose tracks single
@@ -318,7 +345,7 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         }
     }
     let Some((b, cam_b, _, _)) = best.filter(|(_, _, _, median)| *median >= 0.5) else {
-        return Err("the footage shows too little camera motion or texture to solve a camera".into());
+        return Err("the footage shows too little camera motion or texture to solve a camera; give a camera that only turns its pitch".into());
     };
 
     let mut scene = Scene {
@@ -393,7 +420,6 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
 fn align(cams: &[Cam], points: &[Vector3<f64>], height: f64) -> Result<(Vec<Pose>, Vec<[f32; 3]>), String> {
     let first = cams[0];
     let centre = first.centre();
-    let forward = first.r.transpose() * Vector3::z();
     let up = first.r.transpose() * -Vector3::y();
     if points.len() < 3 {
         return Err("the camera solve kept too few points to find the ground".into());
@@ -428,10 +454,21 @@ fn align(cams: &[Cam], points: &[Vector3<f64>], height: f64) -> Result<(Vec<Pose
         normal = -normal;
     }
     let offset = normal.dot(&mean);
-    let above = normal.dot(&centre) - offset;
-    if above <= 0.0 {
+    if normal.dot(&centre) - offset <= 0.0 {
         return Err("the first camera stands below the ground the solve found".into());
     }
+    Ok(place(cams, points, normal, offset, height))
+}
+
+/// Moves the cameras and points into the world whose ground is the plane
+/// `normal . x = offset` (normal up) and whose frame 0 camera stands
+/// `height` metres above it.
+fn place(cams: &[Cam], points: &[Vector3<f64>], normal: Vector3<f64>, offset: f64, height: f64) -> (Vec<Pose>, Vec<[f32; 3]>) {
+    let first = cams[0];
+    let centre = first.centre();
+    let forward = first.r.transpose() * Vector3::z();
+    let up = first.r.transpose() * -Vector3::y();
+    let above = normal.dot(&centre) - offset;
     let along = normal.dot(&forward);
     let reach = -above / along;
     let origin = if along < -1e-6 && reach.is_finite() { centre + forward * reach } else { centre - normal * above };
@@ -465,5 +502,5 @@ fn align(cams: &[Cam], points: &[Vector3<f64>], height: f64) -> Result<(Vec<Pose
             [q.x as f32, q.y as f32, q.z as f32]
         })
         .collect();
-    Ok((poses, points))
+    (poses, points)
 }
