@@ -6,8 +6,8 @@
 
 - `engine-3d/` - issue 9 engine spike. Each candidate renders the same glTF scene under IBL with shadows and bloom, composites a Skia 2D layer on the same GPU, and prints per-frame medians and p95 at the requested size.
   - `scene/make_scene.py` - Blender script that writes `spike.glb`: bevelled type, chrome, plastic, clearcoat and glass spheres, an emissive ring, a monkey head, a sun, a spot light and a 4 s camera orbit.
-  - `bevy/` - Bevy 0.20 on wgpu Vulkan. Skia wraps the render target image on Bevy's device.
-  - `filament/` - Filament 1.80 through a C++ shim (`shim.cpp`, `stub/bluevk/BlueVK.h` stands in for the header the SDK lacks). Skia runs on Filament's Vulkan device; an `ash` copy moves each headless swapchain image into a Skia texture, because those images lack SAMPLED usage.
+  - `bevy/` - Bevy 0.20 on wgpu Vulkan, the chosen engine. Skia wraps the render target image on Bevy's device.
+  - `filament/` - the speed reference for `director-3d`: Filament 1.80 through a C++ shim (`shim.cpp`, `stub/bluevk/BlueVK.h` stands in for the header the SDK lacks). Skia runs on Filament's Vulkan device; an `ash` copy moves each headless swapchain image into a Skia texture, because those images lack SAMPLED usage.
   - `threejs/` - Three.js r185 in headless Chromium with ANGLE on Vulkan. `run.mjs` serves `page.html`, times render and full-frame `readPixels` in the page, and times CDP screenshots as the hand-off a browser process pays.
 
 ## Local Contracts
