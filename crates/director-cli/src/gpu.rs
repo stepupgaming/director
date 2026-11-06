@@ -6,8 +6,14 @@ use std::ffi::CStr;
 use tracing::info;
 
 /// Create a Skia Vulkan direct context when the `vulkan` feature is enabled.
+/// Contexts come from the `director-3d` device first, so model frames stay on
+/// the GPU; a context on its own device follows once that device's spare
+/// queues run out.
 #[cfg(feature = "vulkan")]
 pub fn create_vulkan_context() -> Option<skia_safe::gpu::DirectContext> {
+    if let Some(context) = director_3d::gpu_context() {
+        return Some(context);
+    }
     use ash::vk::Handle;
     use skia_safe::gpu::direct_contexts;
     use skia_safe::gpu::vk::{self as sk_vk, BackendContext, GetProcOf};

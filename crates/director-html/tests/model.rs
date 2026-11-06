@@ -168,6 +168,43 @@ fn the_scene_document_renders_what_the_preview_shows() {
 }
 
 #[test]
+fn a_gpu_canvas_samples_the_frame_where_bevy_left_it() {
+    if !gpu() {
+        return;
+    }
+    let mut context = director_3d::gpu_context().expect("a Skia context on the 3D device");
+    let info = skia_safe::ImageInfo::new(
+        (W, H),
+        skia_safe::ColorType::RGBA8888,
+        skia_safe::AlphaType::Premul,
+        Some(skia_safe::ColorSpace::new_srgb()),
+    );
+    let mut surface = skia_safe::gpu::surfaces::render_target(
+        &mut context,
+        skia_safe::gpu::Budgeted::No,
+        &info,
+        0,
+        None,
+        None,
+        false,
+        false,
+    )
+    .expect("a Vulkan surface");
+    let mut on_gpu = build(&page("--camera-yaw:-20deg", ""));
+    let mut on_cpu = build(&page("--camera-yaw:-20deg", ""));
+    let before = director_3d::texture_draws();
+    for time in [1.25, 0.0, 1.25] {
+        render_frame(&mut on_gpu.director, time, &mut surface).unwrap();
+        context.flush_and_submit();
+        let read = skia_safe::ImageInfo::new((W, H), skia_safe::ColorType::RGBA8888, skia_safe::AlphaType::Unpremul, None);
+        let mut pixels = vec![0; (W * H * 4) as usize];
+        assert!(surface.read_pixels(&read, &mut pixels, W as usize * 4, (0, 0)));
+        assert_eq!(changed(&pixels, &frame(&mut on_cpu, time)), 0, "t={time}");
+    }
+    assert_eq!(director_3d::texture_draws() - before, 3, "every frame sampled the studio texture");
+}
+
+#[test]
 fn a_model_without_a_glb_is_an_error() {
     let source = "<model src='data:application/octet-stream;base64,AAAA'></model>";
     let error = compile(source, options()).err().expect("an invalid model").to_string();

@@ -1,14 +1,17 @@
-//! The studio: one headless Bevy app on Vulkan, owned by its own thread.
+//! The studio: one headless Bevy app on the shared Vulkan device, owned by
+//! its own thread.
 //!
 //! Every model in the process loads into this app once as a stage. A shot
-//! picks a stage, seeks its clips, places the camera, renders one frame into
-//! an sRGB target of the requested size and reads the pixels back. A shot
+//! picks a stage, seeks its clips, places the camera and renders one frame
+//! into an sRGB target of the requested size. The frame either reads back to
+//! the CPU or stays on the GPU as a Vulkan image ready for sampling. A shot
 //! sets every input it depends on, so shots render the same in any order.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
 
+use ash::vk::Handle as _;
 use bevy::{
     anti_alias::smaa::Smaa,
     app::{AnimationSystems, AppLabel, SubApps},
@@ -32,8 +35,8 @@ use bevy::{
         render_resource::{
             Extent3d, PollType, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
         },
-        renderer::{RenderDevice, RenderQueue},
-        settings::{Backends, RenderCreation, WgpuSettings},
+        renderer::{RenderAdapter, RenderAdapterInfo, RenderDevice, RenderInstance, RenderQueue},
+        settings::{RenderCreation, RenderResources},
         texture::GpuImage,
         RenderApp, RenderPlugin,
     },
@@ -66,7 +69,23 @@ pub struct Frame {
     pub rgba: Vec<u8>,
 }
 
-type Job = (Shot, mpsc::Sender<Result<Frame, String>>);
+/// A frame left on the shared device: an `R8G8B8A8_SRGB` Vulkan image that
+/// allows an `R8G8B8A8_UNORM` view, in `SHADER_READ_ONLY_OPTIMAL` layout,
+/// holding premultiplied sRGB colour. It stays valid until the next shot of
+/// the same size.
+#[derive(Clone, Copy, Debug)]
+pub struct Texture {
+    pub image: u64,
+    pub width: u32,
+    pub height: u32,
+}
+
+enum Rendered {
+    Pixels(Frame),
+    Texture(Texture),
+}
+
+type Job = (Shot, bool, mpsc::Sender<Result<Rendered, String>>);
 
 static STUDIO: OnceLock<Result<mpsc::Sender<Job>, String>> = OnceLock::new();
 
@@ -75,25 +94,48 @@ pub fn available() -> bool {
     STUDIO.get_or_init(start).is_ok()
 }
 
-/// Renders one shot on the studio thread.
-pub fn render(shot: Shot) -> Result<Frame, String> {
+fn send(shot: Shot, texture: bool) -> Result<Rendered, String> {
     let studio = STUDIO.get_or_init(start).as_ref().map_err(Clone::clone)?;
     let (reply, answer) = mpsc::channel();
-    studio.send((shot, reply)).map_err(|_| "the 3D studio stopped".to_string())?;
+    studio.send((shot, texture, reply)).map_err(|_| "the 3D studio stopped".to_string())?;
     answer.recv().map_err(|_| "the 3D studio stopped".to_string())?
 }
 
+/// Held from a shot until its frame is no longer read, so no other shot
+/// refilms a target while Skia samples it.
+static LEASE: Mutex<()> = Mutex::new(());
+
+fn lease() -> MutexGuard<'static, ()> {
+    LEASE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A texture shot and the lease that keeps its target unchanged.
+pub struct Lease {
+    pub texture: Texture,
+    _guard: MutexGuard<'static, ()>,
+}
+
+/// Renders one shot on the studio thread and reads it back.
+pub fn render(shot: Shot) -> Result<Frame, String> {
+    let _guard = lease();
+    match send(shot, false)? {
+        Rendered::Pixels(frame) => Ok(frame),
+        Rendered::Texture(_) => Err("the studio answered a pixel shot with a texture".into()),
+    }
+}
+
+/// Renders one shot on the studio thread and leaves it on the shared device.
+/// The texture stays valid while the returned lease lives.
+pub fn render_texture(shot: Shot) -> Result<Lease, String> {
+    let guard = lease();
+    match send(shot, true)? {
+        Rendered::Texture(texture) => Ok(Lease { texture, _guard: guard }),
+        Rendered::Pixels(_) => Err("the studio answered a texture shot with pixels".into()),
+    }
+}
+
 fn start() -> Result<mpsc::Sender<Job>, String> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    bevy::tasks::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .map_err(|e| format!("3D needs a Vulkan adapter: {e}"))?;
-    drop(instance);
+    crate::gpu::device()?;
     let (jobs, queue) = mpsc::channel::<Job>();
     let (ready, booted) = mpsc::channel();
     std::thread::Builder::new()
@@ -109,8 +151,8 @@ fn start() -> Result<mpsc::Sender<Job>, String> {
                     return;
                 }
             };
-            for (shot, reply) in queue {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| studio.shoot(&shot)))
+            for (shot, texture, reply) in queue {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| studio.shoot(&shot, texture)))
                     .unwrap_or_else(|_| Err("the 3D studio panicked".to_string()));
                 let _ = reply.send(result);
             }
@@ -215,9 +257,28 @@ struct Target {
     image: Handle<Image>,
     buffer: wgpu::Buffer,
     row: u32,
+    /// The shot whose frame the target holds.
+    holds: Option<ShotKey>,
 }
 
 type StageKey = (u64, Option<u64>);
+type ShotKey = (StageKey, usize, u64, [u32; 6]);
+
+fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
+    (
+        stage,
+        shot.clips,
+        shot.time.to_bits(),
+        [
+            shot.view.yaw.to_bits(),
+            shot.view.pitch.to_bits(),
+            shot.view.distance.to_bits(),
+            shot.exposure.to_bits(),
+            shot.environment_intensity.to_bits(),
+            shot.background as u32,
+        ],
+    )
+}
 
 struct Studio {
     apps: SubApps,
@@ -230,6 +291,15 @@ impl Studio {
     fn new() -> Self {
         let dir = Dir::new(PathBuf::new());
         let reader = dir.clone();
+        let shared = crate::gpu::device().expect("the studio starts after the device");
+        let resources = RenderResources(
+            RenderDevice::from(shared.device.clone()),
+            RenderQueue::new(shared.queue.clone()),
+            RenderAdapterInfo::new(shared.adapter.get_info()),
+            RenderAdapter::new(shared.adapter.clone()),
+            RenderInstance::new(shared.instance.clone()),
+            Default::default(),
+        );
         let mut app = App::new();
         app.register_asset_source(
             "director",
@@ -245,10 +315,7 @@ impl Studio {
                     ..default()
                 })
                 .set(RenderPlugin {
-                    render_creation: RenderCreation::Automatic(Box::new(WgpuSettings {
-                        backends: Some(Backends::VULKAN),
-                        ..default()
-                    })),
+                    render_creation: RenderCreation::Manual(Box::new(resources)),
                     synchronous_pipeline_compilation: true,
                     ..default()
                 }),
@@ -280,10 +347,24 @@ impl Studio {
             .expect("wgpu poll");
     }
 
-    fn shoot(&mut self, shot: &Shot) -> Result<Frame, String> {
+    fn shoot(&mut self, shot: &Shot, texture: bool) -> Result<Rendered, String> {
         let key = self.stage(shot)?;
         let size = (shot.width, shot.height);
         self.target(size);
+        let holds = Some(shot_key(key, shot));
+        if self.targets[&size].holds != holds {
+            self.film(key, shot, size);
+            self.targets.get_mut(&size).expect("target").holds = holds;
+        }
+        if texture {
+            self.texture(size).map(Rendered::Texture)
+        } else {
+            self.read(size).map(Rendered::Pixels)
+        }
+    }
+
+    /// Renders `shot` of stage `key` into the target of `size`.
+    fn film(&mut self, key: StageKey, shot: &Shot, size: (u32, u32)) {
         let target = self.targets[&size].image.clone();
         let stage = &self.stages[&key];
         let (camera, source, center, radius, probe) = (stage.camera, stage.source, stage.center, stage.radius, stage.probe.clone());
@@ -355,7 +436,6 @@ impl Studio {
             self.stages.get_mut(&key).expect("stage").warm.insert(size);
         }
         self.step();
-        self.read(size)
     }
 
     /// Loads the model and probe of `shot` once, keyed by their bytes.
@@ -505,6 +585,10 @@ impl Studio {
         }
         let world = self.apps.main.world_mut();
         let mut image = Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);
+        // Bevy renders through the sRGB view. The allowed UNORM view lets
+        // Skia sample the encoded values the way its sRGB raster images hold
+        // them.
+        image.texture_descriptor.view_formats = &[TextureFormat::Rgba8Unorm];
         image.texture_descriptor.usage |= wgpu::TextureUsages::COPY_SRC;
         image.asset_usage = RenderAssetUsages::RENDER_WORLD;
         let image = world.resource_mut::<Assets<Image>>().add(image);
@@ -515,7 +599,53 @@ impl Studio {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        self.targets.insert((width, height), Target { image, buffer, row });
+        self.targets.insert(
+            (width, height),
+            Target {
+                image,
+                buffer,
+                row,
+                holds: None,
+            },
+        );
+    }
+
+    /// Moves the target to shader-read layout and returns its Vulkan image.
+    fn texture(&self, (width, height): (u32, u32)) -> Result<Texture, String> {
+        let target = &self.targets[&(width, height)];
+        let render = self
+            .apps
+            .sub_apps
+            .get(&RenderApp.intern())
+            .ok_or("no render app")?
+            .world();
+        let gpu = render
+            .resource::<RenderAssets<GpuImage>>()
+            .get(&target.image)
+            .ok_or("render target is not on the GPU")?;
+        let device = render.resource::<RenderDevice>().wgpu_device();
+        let queue = render.resource::<RenderQueue>();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.transition_resources(
+            std::iter::empty::<wgpu::BufferTransition<&wgpu::Buffer>>(),
+            std::iter::once(wgpu::TextureTransition {
+                texture: &*gpu.texture,
+                selector: None,
+                state: wgpu::TextureUses::RESOURCE,
+            }),
+        );
+        queue.submit([encoder.finish()]);
+        device
+            .poll(PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .map_err(|e| format!("texture poll: {e}"))?;
+        // SAFETY: the target keeps this Vulkan texture alive.
+        let image = unsafe { gpu.texture.as_hal::<wgpu::hal::api::Vulkan>() }
+            .map(|t| unsafe { t.raw_handle() }.as_raw())
+            .ok_or("render target is not a Vulkan image")?;
+        Ok(Texture { image, width, height })
     }
 
     /// Copies the target into its buffer and unpads the rows.

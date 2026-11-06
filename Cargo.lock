@@ -2586,6 +2586,7 @@ name = "director-3d"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ash",
  "bevy",
  "director-core",
  "director-scene",
@@ -2604,6 +2605,7 @@ dependencies = [
  "ash",
  "base64 0.22.1",
  "clap",
+ "director-3d",
  "director-core",
  "director-host",
  "director-html",

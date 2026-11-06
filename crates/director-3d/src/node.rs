@@ -2,13 +2,15 @@
 
 use std::any::Any;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use director_core::scene_export::{ElementExport, ExportContext, ExportError};
 use director_core::scene_import::{ImportContext, ImportError, ImportRegistry};
 use director_core::{Element, RenderError};
 use director_scene::{Channel, ModelBody, ModelView, NodeBody, NodeRecord};
-use skia_safe::{images, AlphaType, Canvas, Color4f, ColorSpace, ColorType, Data, ImageInfo, Paint, Rect};
+use skia_safe::gpu::{backend_textures, vk as sk_vk, DirectContext, SurfaceOrigin};
+use skia_safe::{images, AlphaType, Canvas, Color4f, ColorSpace, ColorType, Data, Image, ImageInfo, Paint, Rect};
 use taffy::Style;
 
 use crate::glb::{inspect, GlbInfo};
@@ -78,6 +80,13 @@ impl std::fmt::Debug for Asset {
 }
 
 type FrameKey = (u64, Option<u64>, u32, u32, [u32; 7]);
+
+static TEXTURE_DRAWS: AtomicU64 = AtomicU64::new(0);
+
+/// Model frames this process has drawn from a GPU texture in place.
+pub fn texture_draws() -> u64 {
+    TEXTURE_DRAWS.load(Ordering::Relaxed)
+}
 
 /// A glTF binary scene lit by an environment probe and filmed by the file's
 /// first camera, or by a framing camera when the file has none, then orbited
@@ -246,22 +255,36 @@ impl Element for ModelNode {
             .as_ref()
             .filter(|(k, _)| *k == key)
             .map(|(_, rgba)| rgba.clone());
+        let shot = Shot {
+            model: self.model.clone(),
+            clips: self.info.clips,
+            environment: self.environment.clone(),
+            environment_intensity: self.environment_intensity,
+            exposure: self.exposure,
+            background: self.background,
+            view: self.view,
+            time,
+            width,
+            height,
+        };
+        let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
+        let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
+        if let Some(mut context) = canvas.direct_context().filter(crate::gpu::shares_device) {
+            let lease = studio::render_texture(shot).map_err(RenderError::SkiaError)?;
+            let texture = lease.texture;
+            let image = borrow(&mut context, texture)?;
+            canvas.draw_image_rect_with_sampling_options(&image, None, rect, sampling, &paint);
+            drop(image);
+            context.flush_submit_and_sync_cpu();
+            drop(lease);
+            TEXTURE_DRAWS.fetch_add(1, Ordering::Relaxed);
+            draw_children(canvas);
+            return Ok(());
+        }
         let rgba = match cached {
             Some(rgba) => rgba,
             None => {
-                let frame = studio::render(Shot {
-                    model: self.model.clone(),
-                    clips: self.info.clips,
-                    environment: self.environment.clone(),
-                    environment_intensity: self.environment_intensity,
-                    exposure: self.exposure,
-                    background: self.background,
-                    view: self.view,
-                    time,
-                    width,
-                    height,
-                })
-                .map_err(RenderError::SkiaError)?;
+                let frame = studio::render(shot).map_err(RenderError::SkiaError)?;
                 let rgba = Arc::new(frame.rgba);
                 *self.frame.lock().expect("model frame cache") = Some((key, rgba.clone()));
                 rgba
@@ -275,14 +298,7 @@ impl Element for ModelNode {
         );
         let image = images::raster_from_data(&info, Data::new_copy(&rgba), width as usize * 4)
             .ok_or_else(|| RenderError::SkiaError("model frame image".into()))?;
-        let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
-        canvas.draw_image_rect_with_sampling_options(
-            &image,
-            None,
-            rect,
-            skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None),
-            &paint,
-        );
+        canvas.draw_image_rect_with_sampling_options(&image, None, rect, sampling, &paint);
         draw_children(canvas);
         Ok(())
     }
@@ -304,6 +320,45 @@ impl Element for ModelNode {
             body: NodeBody::Model(self.body(cx)),
         })
     }
+}
+
+/// Wraps a studio texture as a Skia image on the shared device. The UNORM
+/// view reads the sRGB-encoded premultiplied values unchanged, matching the
+/// raster image the CPU path builds.
+fn borrow(context: &mut DirectContext, texture: studio::Texture) -> Result<Image, RenderError> {
+    use ash::vk::{Handle, ImageUsageFlags};
+    let usage = ImageUsageFlags::SAMPLED
+        | ImageUsageFlags::COLOR_ATTACHMENT
+        | ImageUsageFlags::TRANSFER_SRC
+        | ImageUsageFlags::TRANSFER_DST;
+    let size = (texture.width as i32, texture.height as i32);
+    // SAFETY: the studio keeps the image alive, and the caller holds the
+    // texture lease until Skia has finished with it.
+    let backend = unsafe {
+        let mut info = sk_vk::ImageInfo::new(
+            ash::vk::Image::from_raw(texture.image).as_raw() as sk_vk::Image,
+            sk_vk::Alloc::default(),
+            sk_vk::ImageTiling::OPTIMAL,
+            sk_vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            sk_vk::Format::R8G8B8A8_UNORM,
+            1,
+            crate::gpu::family(),
+            None,
+            None,
+            None,
+        );
+        info.image_usage_flags = usage.as_raw();
+        backend_textures::make_vk(size, &info, "director-3d model")
+    };
+    skia_safe::gpu::images::borrow_texture_from(
+        context,
+        &backend,
+        SurfaceOrigin::TopLeft,
+        ColorType::RGBA8888,
+        AlphaType::Premul,
+        ColorSpace::new_srgb(),
+    )
+    .ok_or_else(|| RenderError::SkiaError("Skia could not wrap the model texture".into()))
 }
 
 /// Rebuilds a model from its document body.

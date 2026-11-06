@@ -16,6 +16,8 @@ taffy = "0.9.2"
 bevy = { version = "=0.20.1", default-features = false, features = ["default_app", "std", "3d_bevy_render", "exr", "hdr", "bevy_world_serialization", "raw_vulkan_init"] }
 wgpu = { version = "=30.0.1", default-features = false, features = ["vulkan"] }
 half = "2"
+# Same features as director-cli, so both build one copy of ash and wgpu-hal.
+ash = { version = "0.38", features = ["loaded"] }
 
 
 # tests/main.rs declares every tests/*.rs as a module: one test binary.
