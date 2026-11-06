@@ -2,6 +2,7 @@
 name = "director-track"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "Feature tracking and camera solving from footage for Director matchmoves."
 license = "MIT"
 

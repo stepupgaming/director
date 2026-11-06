@@ -1729,13 +1729,23 @@ impl Builder {
                 }
                 model.reflection = reflection as f32;
                 model.shadow_catchers = std::sync::Arc::new(catchers);
+                let plate_light = attr("track-light").is_some_and(|v| v != "false");
+                if plate_light && attr("track").is_none() {
+                    return Err(input("track-light needs a track to light the model from".into()));
+                }
+                if plate_light && attr("environment").is_some() {
+                    return Err(input("track-light and environment both light the model; give one".into()));
+                }
                 if let Some(environment) = attr("environment") {
                     let path = (!environment.starts_with("data:")).then(|| environment.to_string());
                     model.environment =
                         Some(director_3d::Asset::environment(self.assets.read(environment)?, path).map_err(input)?);
                 }
-                model.environment_intensity = numeric("environment-intensity", 1000.0)? as f32;
                 model.exposure = numeric("exposure", 9.7)? as f32;
+                // A probe of the plate's linear light renders each of its
+                // values back at that value before the tone curve.
+                let unity = 1.2 * 2f64.powf(model.exposure as f64);
+                model.environment_intensity = numeric("environment-intensity", if plate_light { unity } else { 1000.0 })? as f32;
                 model.background = attr("background").is_some_and(|v| v != "false");
                 model.looped = attr("loop").is_some_and(|v| v != "false");
                 let samples = numeric("samples", 1.0)?;
@@ -1757,7 +1767,11 @@ impl Builder {
                 if let Some(plate) = attr("track") {
                     let lens = (attr("track-fov").is_some(), attr("track-distortion"), attr("track-zoom").is_some_and(|v| v != "false"));
                     let plate = (plate, attr("track-mask"), attr("track-pitch"));
-                    model.track = Some(std::sync::Arc::new(solve_track(&self.assets, plate, &numeric, lens, &context)?));
+                    let (track, probe) = solve_track(&self.assets, plate, &numeric, lens, plate_light, &context)?;
+                    model.track = Some(std::sync::Arc::new(track));
+                    if let Some(hdr) = probe {
+                        model.environment = Some(director_3d::Asset::environment(hdr, None).map_err(input)?);
+                    }
                 }
                 if !values.contains_key("width") {
                     layout.size.width = taffy::prelude::length(300.0_f32);
@@ -2776,14 +2790,17 @@ pub fn compile_file(
 /// its own, and the solve tracks nothing there. `track-pitch` is frame 0's
 /// tilt below the horizon in degrees, which footage from a camera that only
 /// turns needs. `track-zoom` gives such a camera a lens that zooms, solved
-/// frame by frame from `track-fov` as frame 0's.
+/// frame by frame from `track-fov` as frame 0's. With `light` it also
+/// stitches the plate through the solved cameras into a light probe and
+/// returns it as a Radiance `.hdr` file.
 fn solve_track(
     assets: &AssetStore,
     (plate, mask, tilt): (&str, Option<&str>, Option<&str>),
     numeric: &dyn Fn(&str, f64) -> Result<f64, CompileError>,
     (fixed_lens, distortion, zoom): (bool, Option<&str>, bool),
+    light: bool,
     context: &str,
-) -> Result<director_scene::ModelTrack, CompileError> {
+) -> Result<(director_scene::ModelTrack, Option<Vec<u8>>), CompileError> {
     let distortion = match distortion {
         None => None,
         Some(v) => match v.split_whitespace().map(str::parse::<f64>).collect::<Result<Vec<_>, _>>().as_deref() {
@@ -2818,7 +2835,11 @@ fn solve_track(
     }
     let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, distortion, camera_height: height, pitch, zoom };
     let solved = director_track::solve(&footage, &options).map_err(input)?;
-    Ok(director_scene::ModelTrack {
+    let probe = match light {
+        true => Some(director_track::light_probe(&path, &solved, PROBE_WIDTH).map_err(input)?.hdr()),
+        false => None,
+    };
+    let track = director_scene::ModelTrack {
         fps: solved.fps,
         fov: solved.yfov.to_degrees() as f32,
         distortion: solved.distortion.map(|k| k as f32),
@@ -2827,8 +2848,12 @@ fn solve_track(
             .iter()
             .map(|f| director_scene::ModelTrackFrame { position: f.position, rotation: f.rotation, fov: f.yfov.map(|v| v.to_degrees() as f32) })
             .collect(),
-    })
+    };
+    Ok((track, probe))
 }
+
+/// The width in texels of the light probe `track-light` stitches.
+const PROBE_WIDTH: usize = 512;
 
 /// The `<splat>` children of a `<model>`: Gaussian splat `.ply` files read
 /// through the compile asset store and placed in the scene's metres.

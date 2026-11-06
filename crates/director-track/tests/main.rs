@@ -1,6 +1,7 @@
 //! One integration binary for `director-track`.
 
 mod klt;
+mod probe;
 mod solve;
 
 #[test]

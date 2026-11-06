@@ -44,24 +44,32 @@ const K2: f64 = 0.03;
 
 /// The `plate` (`solve`, `lens`, `moving`, `pan` or `zoom`) under `solve.glb` with the sky and units
 /// of `tests/eevee.rs`, its ground a catcher and its camera solved from the
-/// plate with `track` attributes. An empty `track` leaves the plate alone.
+/// plate with `track` attributes. An empty `track` leaves the plate alone,
+/// and a `track` with `track-light` lights the model from the plate in
+/// place of the sky.
 fn page(plate: &str, track: &str) -> String {
+    page_at(&fixture(&format!("{plate}.mp4")), track)
+}
+
+/// `page` over the footage at the path `plate`.
+fn page_at(plate: &str, track: &str) -> String {
+    let sky = match track.contains("track-light") {
+        true => String::new(),
+        false => format!("environment='{}' environment-intensity='683' ", fixture("sky.hdr")),
+    };
     let layer = if track.is_empty() {
         String::new()
     } else {
         format!(
-            "<model src='{}' environment='{}' environment-intensity='683' exposure='{}' shadow-catcher='Ground' track='{}' {track}></model>",
+            "<model src='{}' {sky}exposure='{}' shadow-catcher='Ground' track='{plate}' {track}></model>",
             fixture("solve.glb"),
-            fixture("sky.hdr"),
             (683.0f64 / 1.2).log2(),
-            fixture(&format!("{plate}.mp4"))
         )
     };
     format!(
         "<style>body{{margin:0}}video,model{{position:absolute;left:0;top:0;width:{W}px;height:{H}px}}</style>\
          <div id='main' data-composition-id='main' data-width='{W}' data-height='{H}' data-duration='2'>\
-         <video muted src='{}'></video>{layer}</div>",
-        fixture(&format!("{plate}.mp4"))
+         <video muted src='{plate}'></video>{layer}</div>"
     )
 }
 
@@ -197,6 +205,55 @@ fn a_model_holds_still_through_a_zoom() {
 }
 
 #[test]
+fn the_plate_lights_the_model() {
+    if gpu() {
+        // The probe stitched from the pan holds its sky and yard, so the box
+        // lit by it lands as close to Eevee's sky-lit render as the sky does.
+        matches_eevee("pan", "track-height='1.6' track-pitch='8.12' track-light", 0.9);
+    }
+}
+
+/// The mean colour of the box's lit faces in `composite`, with the box
+/// found where the `neutral` composite shows it over the bare `plate`.
+fn box_colour(composite: &[u8], neutral: &[u8], plate: &[u8]) -> [f64; 3] {
+    let n = (W * H) as usize;
+    let mask: Vec<usize> = (0..n).filter(|&i| boxed(rgb(neutral, i)) && diff(neutral, plate, i) > 30).collect();
+    assert!(mask.len() > 500, "the box shows: {} px", mask.len());
+    std::array::from_fn(|k| mask.iter().map(|&i| rgb(composite, i)[k] as f64).sum::<f64>() / mask.len() as f64)
+}
+
+#[test]
+fn a_warm_plate_warms_the_model() {
+    let warm = std::env::temp_dir().join(format!("director-warm-pan-{}.mp4", std::process::id()));
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-i", &fixture("pan.mp4"), "-vf", "colorchannelmixer=rr=1:gg=0.8:bb=0.55"])
+        .args(["-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p"])
+        .arg(&warm)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let warm_path = warm.to_string_lossy().replace('\\', "/");
+    let lit = "track-fov='42' track-height='1.6' track-pitch='8.12' track-light";
+    let mut warmed = build(&page_at(&warm_path, lit));
+    let document = export_scene(&warmed.director).unwrap();
+    assert_eq!(SceneDocument::from_json(&document.to_json().unwrap()).unwrap(), document);
+    let body = model(&warmed);
+    assert!(body.environment.is_some(), "the document keeps the plate's probe");
+    assert!((body.environment_intensity - 683.0).abs() < 0.5, "the probe renders the plate's light back at its value");
+    if gpu() {
+        let mut neutral = build(&page("pan", lit));
+        let mut bare = build(&page("pan", ""));
+        let time = 1.0;
+        let (neutral, bare, warmed) = (frame(&mut neutral, time), frame(&mut bare, time), frame(&mut warmed, time));
+        let (a, b) = (box_colour(&neutral, &neutral, &bare), box_colour(&warmed, &neutral, &bare));
+        eprintln!("box under the neutral plate {a:?}, under the warm plate {b:?}");
+        let warmth = |c: [f64; 3]| c[0] - c[2];
+        assert!(warmth(b) > warmth(a) + 8.0, "the warm plate's light reddens the box: {a:?} to {b:?}");
+    }
+    std::fs::remove_file(&warm).ok();
+}
+
+#[test]
 fn the_document_keeps_each_frame_of_a_zoom() {
     let compiled = build(&page("zoom", "track-fov='42' track-height='1.6' track-pitch='8.12' track-zoom"));
     let document = export_scene(&compiled.director).unwrap();
@@ -216,20 +273,25 @@ fn a_model_bends_with_the_lens_of_its_plate() {
     }
 }
 
-/// The track a compiled page's model keeps.
-fn track(compiled: &CompiledHtml) -> director_scene::ModelTrack {
+/// The model body of a compiled page.
+fn model(compiled: &CompiledHtml) -> director_scene::ModelBody {
     let document = export_scene(&compiled.director).unwrap();
     document
         .nodes
         .iter()
         .find_map(|node| match &node.body {
             NodeBody::Html(html) => html.content.as_ref().and_then(|c| match &c.body {
-                NodeBody::Model(model) => model.track.clone(),
+                NodeBody::Model(model) => Some(model.clone()),
                 _ => None,
             }),
             _ => None,
         })
-        .expect("a model track")
+        .expect("a model")
+}
+
+/// The track a compiled page's model keeps.
+fn track(compiled: &CompiledHtml) -> director_scene::ModelTrack {
+    model(compiled).track.expect("a model track")
 }
 
 #[test]
@@ -305,6 +367,16 @@ fn a_lens_out_of_range_fails_to_compile() {
     assert!(error.contains("track-pitch must be from -89 to 89 degrees"), "{error}");
     let error = fails("track-zoom");
     assert!(error.contains("a zooming lens solves only on a camera that only turns"), "{error}");
+    let error = fails("track-light environment='sky.hdr'");
+    assert!(error.contains("track-light and environment both light the model; give one"), "{error}");
+    let error = compile(
+        &page("solve", "").replace("</div>", &format!("<model src='{}' track-light></model></div>", fixture("solve.glb"))),
+        CompileOptions { width: W, height: H, duration: 2.0, ..Default::default() },
+    )
+    .err()
+    .expect("a compile error")
+    .to_string();
+    assert!(error.contains("track-light needs a track to light the model from"), "{error}");
     let error = fails("track-mask='no-such-matte.mp4'");
     assert!(error.contains("no-such-matte.mp4"), "{error}");
 }
