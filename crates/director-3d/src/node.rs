@@ -15,7 +15,7 @@ use skia_safe::{images, AlphaType, Canvas, Color4f, ColorSpace, ColorType, Data,
 use taffy::Style;
 
 use crate::glb::{inspect, GlbInfo};
-use crate::studio::{self, camera_bits, Shot, ShotCamera};
+use crate::studio::{self, camera_bits, Shot, ShotCamera, Sweep};
 use crate::text::{texts_hash, Text3d};
 
 /// Bytes a model reads, with a content hash that keys the studio's stages.
@@ -113,7 +113,19 @@ impl std::fmt::Debug for Asset {
 /// The most path traced paths per pixel a sample takes.
 pub const MAX_PATHS: u32 = 4096;
 
-type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 23], [u32; 8], [[u32; 8]; 2]);
+type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 23], [u32; 8], [[u32; 8]; 2], [u64; 6]);
+
+/// Clip seconds at element time `t` for clips `duration` long, wrapped when
+/// `looped` and held at either end otherwise.
+pub(crate) fn clip_seconds(t: f64, duration: f64, looped: bool) -> f64 {
+    if duration <= 0.0 {
+        0.0
+    } else if looped {
+        t.rem_euclid(duration)
+    } else {
+        t.clamp(0.0, duration)
+    }
+}
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -227,6 +239,14 @@ pub struct ModelNode {
     /// The roughness up to which surfaces take screen-space reflections, 0
     /// for none.
     pub screen_reflections: f32,
+    /// Seconds the model's own shutter stays open from each frame's time,
+    /// 0 for a sharp model. The samples sweep the clips and the orbit
+    /// across it.
+    pub shutter: f64,
+    /// The element time and orbit at this frame's shutter close. The HTML
+    /// element writes them each frame; without them the clips run on to
+    /// `time + shutter` under a still orbit.
+    pub close: Option<(f64, ModelView)>,
     pub info: GlbInfo,
     time: f64,
     frame: Mutex<Option<(FrameKey, Arc<Vec<u8>>)>>,
@@ -258,6 +278,8 @@ impl ModelNode {
             optics: None,
             occlusion: 0.0,
             screen_reflections: 0.0,
+            shutter: 0.0,
+            close: None,
             info,
             time: 0.0,
             frame: Mutex::new(None),
@@ -266,14 +288,23 @@ impl ModelNode {
 
     /// Clip seconds at element time `t`.
     pub fn clip_time(&self, t: f64) -> f64 {
-        let d = self.info.duration;
-        if d <= 0.0 {
-            0.0
-        } else if self.looped {
-            t.rem_euclid(d)
-        } else {
-            t.clamp(0.0, d)
+        clip_seconds(t, self.info.duration, self.looped)
+    }
+
+    /// The shutter's sweep from this frame's time, or `None` when nothing
+    /// moves while it is open.
+    pub fn sweep(&self) -> Option<Sweep> {
+        if self.shutter <= 0.0 {
+            return None;
         }
+        let (close, view) = self.close.unwrap_or((self.time + self.shutter, self.view));
+        let clips = self.info.clips > 0 && self.clip_time(self.time) != self.clip_time(close);
+        (clips || view != self.view).then_some(Sweep {
+            clip: [self.time, close],
+            duration: self.info.duration,
+            looped: self.looped,
+            view,
+        })
     }
 
     /// The solved camera of the footage frame on show at element time `t`,
@@ -343,6 +374,7 @@ impl ModelNode {
             optics: self.optics,
             occlusion: self.occlusion,
             screen_reflections: self.screen_reflections,
+            shutter: self.shutter as f32,
         }
     }
 }
@@ -372,6 +404,8 @@ impl Clone for ModelNode {
             optics: self.optics,
             occlusion: self.occlusion,
             screen_reflections: self.screen_reflections,
+            shutter: self.shutter,
+            close: self.close,
             info: self.info,
             time: self.time,
             frame: Mutex::new(None),
@@ -393,6 +427,7 @@ impl std::fmt::Debug for ModelNode {
             .field("optics", &self.optics)
             .field("occlusion", &self.occlusion)
             .field("screen_reflections", &self.screen_reflections)
+            .field("shutter", &self.shutter)
             .field("view", &self.view)
             .field("info", &self.info)
             .field("time", &self.time)
@@ -466,6 +501,7 @@ impl Element for ModelNode {
         }
         let fog_bits = studio::fog_bits(self.fog);
         let optics_bits = studio::optics_bits(self.optics);
+        let sweep = self.sweep();
         let key: FrameKey = (
             self.model.hash,
             self.environment.as_ref().map(|e| e.hash),
@@ -502,6 +538,7 @@ impl Element for ModelNode {
             ],
             camera_bits(camera),
             shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
+            studio::sweep_bits(sweep),
         );
         let cached = self
             .frame
@@ -535,6 +572,7 @@ impl Element for ModelNode {
             optics: self.optics,
             occlusion: self.occlusion,
             screen_reflections: self.screen_reflections,
+            sweep,
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -713,6 +751,10 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
         return Err(ImportError::Invalid("model screen reflections need a roughness from 0 to 1 on a rasterized model".into()));
     }
     node.screen_reflections = ssr;
+    if !(body.shutter.is_finite() && body.shutter >= 0.0) || (body.shutter > 0.0 && body.track.is_some()) {
+        return Err(ImportError::Invalid("a model shutter needs seconds from 0 on an untracked model".into()));
+    }
+    node.shutter = body.shutter as f64;
     if let Some(track) = &body.track {
         let fov = |f: f32| f > 0.0 && f < 180.0;
         let lens = fov(track.fov) && track.frames.iter().all(|f| f.fov.is_none_or(fov)) && track.distortion.iter().all(|k| k.is_finite());

@@ -594,10 +594,23 @@ impl Element for HtmlElement {
                     text.shadows = shadows.clone();
                 }
             }
+            let media = |t: f64| self.media_start + (t - self.start).max(0.0) * self.playback_rate;
             if let Some(model) = content.as_any_mut().downcast_mut::<director_3d::ModelNode>() {
                 model.view = self.paint.camera;
+                // The model's shutter sweeps its orbit to where the camera
+                // channels stand at the close.
+                if model.shutter > 0.0 {
+                    let close = time + model.shutter;
+                    let (mut style, mut paint, mut parts) = (self.base_style.clone(), self.base_paint.clone(), None);
+                    for animation in &self.animations {
+                        if animation.properties().any(crate::animation::is_camera) {
+                            animation.apply(close, &mut style, &mut paint, &mut parts);
+                        }
+                    }
+                    model.close = Some((media(close), paint.camera));
+                }
             }
-            content.update(self.media_start + (time - self.start).max(0.0) * self.playback_rate);
+            content.update(media(time));
         }
         // An animated atomic box publishes its live margin box for its text line.
         if let Some(InlineLink::Box(flow, slot, sizing)) = self.inline.clone() {

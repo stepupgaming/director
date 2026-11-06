@@ -76,6 +76,11 @@ pub struct ModelBody {
     /// itself.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub screen_reflections: f32,
+    /// The seconds the model's own shutter stays open from each frame's
+    /// time. Its renders sweep the clips and the camera across that span,
+    /// so the model blurs at the cost of its samples. 0 keeps it sharp.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub shutter: f32,
 }
 
 /// Lens effects over a model's frame, applied in linear light before the

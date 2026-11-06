@@ -119,6 +119,56 @@ pub struct Shot {
     /// The roughness up to which surfaces take screen-space reflections, 0
     /// for none.
     pub screen_reflections: f32,
+    /// The model's own shutter: the samples sweep the clips and the orbit
+    /// from `time` and `view` to its close, so the model blurs.
+    pub sweep: Option<Sweep>,
+}
+
+/// A shutter that opens at a shot's clip time and orbit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sweep {
+    /// Element seconds at the shutter's open and close, before the clips
+    /// loop or hold.
+    pub clip: [f64; 2],
+    /// The longest clip's seconds.
+    pub duration: f64,
+    /// Whether the clips wrap at `duration`.
+    pub looped: bool,
+    /// The orbit at the close; the shot's `view` is the orbit at the open.
+    pub view: ModelView,
+}
+
+impl Sweep {
+    /// Clip seconds `s` of the way through the shutter.
+    fn time(&self, s: f64) -> f64 {
+        crate::node::clip_seconds(self.clip[0] + (self.clip[1] - self.clip[0]) * s, self.duration, self.looped)
+    }
+
+    /// The orbit `s` of the way from `open` to the close.
+    fn view(&self, open: ModelView, s: f32) -> ModelView {
+        let mix = |a: f32, b: f32| a + (b - a) * s;
+        let close = self.view;
+        ModelView {
+            yaw: mix(open.yaw, close.yaw),
+            pitch: mix(open.pitch, close.pitch),
+            distance: mix(open.distance, close.distance),
+            focus: mix(open.focus, close.focus),
+            aperture: mix(open.aperture, close.aperture),
+        }
+    }
+}
+
+/// The bits of a shot's sweep for frame cache keys, all zero without one.
+pub(crate) fn sweep_bits(sweep: Option<Sweep>) -> [u64; 6] {
+    sweep.map_or([0; 6], |s| {
+        let v = s.view;
+        let view = [v.yaw, v.pitch, v.distance, v.focus, v.aperture].map(|x| x.to_bits() as u64);
+        let mut bits = [s.clip[0].to_bits(), s.clip[1].to_bits(), s.duration.to_bits() ^ s.looped as u64, 0, 0, 0];
+        bits[3] = view[0] | view[1] << 32;
+        bits[4] = view[2] | view[3] << 32;
+        bits[5] = view[4];
+        bits
+    })
 }
 
 /// The bits of a shot's lens effects for frame cache keys, all zero
@@ -497,7 +547,7 @@ struct Target {
 
 /// (model hash, environment hash, splat set hash, shadow catcher hash).
 type StageKey = (u64, Option<u64>, u64, u64, u64);
-type ShotKey = (StageKey, usize, u64, u64, [u32; 22], [u32; 8], [[u32; 8]; 2]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 22], [u32; 8], [[u32; 8]; 2], [u64; 6]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     let fog = fog_bits(shot.fog);
@@ -533,6 +583,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
         ],
         camera_bits(shot.camera),
         shot.shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
+        sweep_bits(shot.sweep),
     )
 }
 
@@ -833,7 +884,7 @@ impl Studio {
             c.clear_color = ClearColorConfig::Custom(Color::NONE);
         }
         let (mirror, mirror_steps) = film_mirror(self.stages.get_mut(&key).expect("stage"), world, shot, size, &probe)?;
-        for player in players {
+        for &player in &players {
             if let Some(mut player) = world.get_mut::<AnimationPlayer>(player) {
                 for node in &nodes {
                     if let Some(active) = player.animation_mut(*node) {
@@ -865,7 +916,7 @@ impl Studio {
         } else {
             lights::sized(&shot.lights)
         };
-        let samples = if shot.view.aperture > 0.0 || soft || shot.shutter.is_some() {
+        let samples = if shot.view.aperture > 0.0 || soft || shot.shutter.is_some() || shot.sweep.is_some() {
             shot.samples.max(SOFT_SAMPLES)
         } else {
             shot.samples.max(1)
@@ -955,8 +1006,37 @@ impl Studio {
             hero::deform(self.apps.main.world_mut(), &posed);
             self.step();
         }
-        let start = traced.count();
+        let mut start = traced.count();
         for sample in 0..samples {
+            // The model's shutter moves the clips and the orbit to this
+            // sample's time. Path traced skins and morph targets pose on
+            // the CPU, so they take a pose and a rebuild first, through
+            // one-path frames that leave the count of traced samples.
+            if let Some(sweep) = shot.sweep.filter(|_| samples > 1) {
+                let s = (sample as f64 + 0.5) / samples as f64;
+                let world = self.apps.main.world_mut();
+                for &player in &players {
+                    if let Some(mut player) = world.get_mut::<AnimationPlayer>(player) {
+                        for node in &nodes {
+                            if let Some(active) = player.animation_mut(*node) {
+                                active.seek_to(sweep.time(s) as f32);
+                            }
+                        }
+                    }
+                }
+                let mut orbit = world.resource_mut::<Orbit>();
+                let p = orbit.0.as_mut().expect("placement");
+                p.view = sweep.view(shot.view, s as f32);
+                if hero && !posed.is_empty() && shot.clips > 0 {
+                    let before = traced.count();
+                    let world = self.apps.main.world_mut();
+                    world.get_mut::<HeroPass>(camera).expect("hero pass").paths = 1;
+                    self.step();
+                    hero::deform(self.apps.main.world_mut(), &posed);
+                    self.step();
+                    start = start.wrapping_add(traced.count().wrapping_sub(before));
+                }
+            }
             if hero {
                 let world = self.apps.main.world_mut();
                 let mut pass = world.get_mut::<HeroPass>(camera).expect("hero pass");

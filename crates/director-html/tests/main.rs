@@ -36,6 +36,7 @@ mod matchmove;
 mod media;
 mod mixed_calc;
 mod model;
+mod model_motion_blur;
 mod motion_blur;
 mod motion_policy;
 mod object_position_css;

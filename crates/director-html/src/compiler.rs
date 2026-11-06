@@ -1821,6 +1821,19 @@ impl Builder {
                 if model.screen_reflections > 0.0 && model.paths > 0 {
                     return Err(input("paths trace reflections themselves, so they cannot take screen-reflections".into()));
                 }
+                // The model's own shutter opens at each frame's time, as the
+                // composition's motion blur does.
+                let shutter = numeric("shutter", 0.0)?;
+                if !(0.0..=360.0).contains(&shutter) {
+                    return Err(input(format!("shutter '{shutter}' must be degrees from 0 to 360")));
+                }
+                if shutter > 0.0 && attr("track").is_some() {
+                    return Err(input("a tracked model blurs with track-shutter, so it cannot take shutter".into()));
+                }
+                if shutter > 0.0 && self.director.samples_per_frame > 1 {
+                    return Err(input("data-motion-blur on the composition already blurs the model, so it cannot take shutter".into()));
+                }
+                model.shutter = shutter / 360.0 / self.director.fps;
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {
