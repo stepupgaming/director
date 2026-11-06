@@ -426,7 +426,7 @@ impl Studio {
                     ..default()
                 }),
         );
-        app.add_plugins((GaussianSplattingPlugin, RaytracingScenePlugin, hero::HeroPlugin));
+        app.add_plugins((GaussianSplattingPlugin, RaytracingScenePlugin, hero::HeroPlugin, crate::display::DisplayPlugin));
         app.init_resource::<Orbit>();
         app.add_systems(PostUpdate, orbit.after(AnimationSystems).before(TransformSystems::Propagate).before(bevy::camera::CameraUpdateSystems));
         app.finish();
@@ -999,13 +999,9 @@ impl Studio {
                 Transform::IDENTITY,
             ))
             .id();
-        // Splat captures hold display colours, which a filmic curve and bloom
-        // would change, so a stage with splats shows them as captured.
-        if clouds.is_empty() {
-            world.entity_mut(camera).insert((Tonemapping::TonyMcMapface, Bloom::NATURAL));
-        } else {
-            world.entity_mut(camera).insert(Tonemapping::None);
-        }
+        // Splats skip the filmic curve and bloom in `display`, so every stage
+        // takes both.
+        world.entity_mut(camera).insert((Tonemapping::TonyMcMapface, Bloom::NATURAL));
         self.stages.insert(
             key,
             Stage {

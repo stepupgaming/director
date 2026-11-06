@@ -7,6 +7,7 @@
 //! premultiplied sRGB pixels back, which Skia draws like any image.
 
 mod accumulate;
+mod display;
 mod glb;
 mod lights;
 mod gpu;

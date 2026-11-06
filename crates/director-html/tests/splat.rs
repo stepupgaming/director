@@ -162,6 +162,28 @@ fn splats_share_a_stage_with_the_glb_meshes() {
     assert_eq!(changed(&alone, &shot(&page("", &mesh))), 0, "the mesh stage shows no cloud after the splat stage");
 }
 
+/// The meshes keep the filmic curve and bloom beside a cloud: under the
+/// file's camera a small cloud in front of them changes only the pixels it
+/// covers, and its balls keep their captured colours.
+#[test]
+fn meshes_beside_splats_keep_the_filmic_curve() {
+    if !gpu() {
+        return;
+    }
+    let mesh = format!("<model id='m' src='{}'></model>", fixture("model.glb"));
+    let both = format!(
+        "<model id='m' src='{}'><splat src='{}' position='0 0.6 1.5' scale='0.3'></splat></model>",
+        fixture("model.glb"),
+        fixture("splats.ply")
+    );
+    let alone = shot(&page("", &mesh));
+    let mixed = shot(&page("", &both));
+    let balls = mixed.chunks(4).filter(|p| red([p[0], p[1], p[2]]) || green([p[0], p[1], p[2]])).count();
+    let moved = changed(&alone, &mixed);
+    assert!(balls > 20, "the cloud shows in front of the meshes: {balls} ball pixels");
+    assert!(moved < balls * 2, "only the cloud's pixels change: {moved} changed for {balls} ball pixels");
+}
+
 #[test]
 fn export_samples_keep_a_splat_frame_stable() {
     if !gpu() {
