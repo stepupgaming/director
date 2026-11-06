@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use director_core::scene_export::{ElementExport, ExportContext, ExportError};
 use director_core::scene_import::{ImportContext, ImportError, ImportRegistry};
 use director_core::{Element, RenderError};
-use director_scene::{Channel, ModelBody, ModelLight, ModelView, NodeBody, NodeRecord};
+use director_scene::{Channel, ModelBody, ModelLight, ModelSplat, ModelView, NodeBody, NodeRecord};
 use skia_safe::gpu::{backend_textures, vk as sk_vk, DirectContext, SurfaceOrigin};
 use skia_safe::{images, AlphaType, Canvas, Color4f, ColorSpace, ColorType, Data, Image, ImageInfo, Paint, Rect};
 use taffy::Style;
@@ -21,7 +21,7 @@ use crate::studio::{self, Shot};
 pub struct Asset {
     pub bytes: Arc<[u8]>,
     pub hash: u64,
-    /// File extension Bevy's loader picks by: `glb`, `hdr` or `exr`.
+    /// File extension Bevy's loader picks by: `glb`, `hdr`, `exr` or `ply`.
     pub ext: &'static str,
     /// Source path, kept so an export references the file.
     pub path: Option<String>,
@@ -52,9 +52,23 @@ impl Asset {
         Ok(Self::new(bytes, ext, path))
     }
 
+    /// A Gaussian splat cloud in the 3DGS `.ply` layout.
+    pub fn splat(bytes: Vec<u8>, path: Option<String>) -> Result<Self, String> {
+        if !(bytes.starts_with(b"ply\n") || bytes.starts_with(b"ply\r\n")) {
+            return Err("splat src must be a Gaussian splat .ply file".into());
+        }
+        Ok(Self::new(bytes, "ply", path))
+    }
+
+    /// The scene of a model made only of splats: one empty node.
+    pub fn empty_scene() -> Self {
+        Self::new(crate::glb::empty(), "glb", None)
+    }
+
     fn media_type(&self) -> &'static str {
         match self.ext {
             "glb" => "model/gltf-binary",
+            "ply" => "application/x-ply",
             "hdr" => "image/vnd.radiance",
             _ => "image/x-exr",
         }
@@ -79,7 +93,34 @@ impl std::fmt::Debug for Asset {
     }
 }
 
-type FrameKey = (u64, Option<u64>, u64, u32, u32, [u32; 10]);
+type FrameKey = (u64, Option<u64>, u64, u64, u32, u32, [u32; 10]);
+
+/// A Gaussian splat cloud placed in a model's world space.
+#[derive(Clone, Debug)]
+pub struct Splat {
+    pub cloud: Asset,
+    /// Metres.
+    pub position: [f32; 3],
+    /// Degrees about the world X axis, then Y, then Z.
+    pub rotation: [f32; 3],
+    pub scale: f32,
+    /// Multiplies every gaussian's opacity.
+    pub opacity: f32,
+}
+
+/// A hash of every splat's cloud and placement, which keys the studio's
+/// stages and frames.
+pub(crate) fn splats_hash(splats: &[Splat]) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    for splat in splats {
+        splat.cloud.hash.hash(&mut hasher);
+        let numbers = splat.position.iter().chain(&splat.rotation).chain([&splat.scale, &splat.opacity]);
+        for n in numbers {
+            n.to_bits().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
 
 /// A hash of every field of `lights`, which keys frames and the studio's
 /// spawned lights.
@@ -133,6 +174,8 @@ pub struct ModelNode {
     pub view: ModelView,
     /// Lights added to the file's own.
     pub lights: Arc<Vec<ModelLight>>,
+    /// Gaussian splat clouds beside the file's meshes.
+    pub splats: Arc<Vec<Splat>>,
     pub info: GlbInfo,
     time: f64,
     frame: Mutex<Option<(FrameKey, Arc<Vec<u8>>)>>,
@@ -153,6 +196,7 @@ impl ModelNode {
             base: ModelView::default(),
             view: ModelView::default(),
             lights: Arc::new(Vec::new()),
+            splats: Arc::new(Vec::new()),
             info,
             time: 0.0,
             frame: Mutex::new(None),
@@ -182,6 +226,17 @@ impl ModelNode {
             view: self.base,
             samples: self.samples,
             lights: self.lights.to_vec(),
+            splats: self
+                .splats
+                .iter()
+                .map(|s| ModelSplat {
+                    asset: s.cloud.export(cx, "splat"),
+                    position: s.position,
+                    rotation: s.rotation,
+                    scale: s.scale,
+                    opacity: s.opacity,
+                })
+                .collect(),
         }
     }
 }
@@ -200,6 +255,7 @@ impl Clone for ModelNode {
             base: self.base,
             view: self.view,
             lights: self.lights.clone(),
+            splats: self.splats.clone(),
             info: self.info,
             time: self.time,
             frame: Mutex::new(None),
@@ -212,6 +268,7 @@ impl std::fmt::Debug for ModelNode {
         f.debug_struct("ModelNode")
             .field("model", &self.model)
             .field("environment", &self.environment)
+            .field("splats", &self.splats)
             .field("view", &self.view)
             .field("info", &self.info)
             .field("time", &self.time)
@@ -268,6 +325,7 @@ impl Element for ModelNode {
             self.model.hash,
             self.environment.as_ref().map(|e| e.hash),
             lights_hash(&self.lights),
+            splats_hash(&self.splats),
             width,
             height,
             [
@@ -303,6 +361,7 @@ impl Element for ModelNode {
             height,
             samples: self.samples,
             lights: self.lights.clone(),
+            splats: self.splats.clone(),
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -426,6 +485,21 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     node.base = body.view;
     node.view = body.view;
     node.lights = Arc::new(body.lights.clone());
+    let mut splats = Vec::with_capacity(body.splats.len());
+    for splat in &body.splats {
+        let (bytes, path) = asset(cx, &splat.asset)?;
+        splats.push(Splat {
+            cloud: Asset::splat(bytes, path).map_err(|reason| ImportError::Asset {
+                id: splat.asset.clone(),
+                reason,
+            })?,
+            position: splat.position,
+            rotation: splat.rotation,
+            scale: splat.scale,
+            opacity: splat.opacity,
+        });
+    }
+    node.splats = Arc::new(splats);
     Ok(Box::new(node))
 }
 

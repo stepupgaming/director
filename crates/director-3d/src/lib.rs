@@ -15,5 +15,5 @@ mod studio;
 
 pub use glb::{inspect, GlbInfo};
 pub use gpu::gpu_context;
-pub use node::{decode, register_import, texture_draws, Asset, ModelNode};
+pub use node::{decode, register_import, texture_draws, Asset, ModelNode, Splat};
 pub use studio::available;

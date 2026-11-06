@@ -1694,11 +1694,20 @@ impl Builder {
             }
             "model" => {
                 let attr = |name: &str| el.value().attr_text(name);
-                let src = attr("src").ok_or_else(|| CompileError::Input(format!("{context}: model without src")))?;
-                let path = (!src.starts_with("data:")).then(|| src.to_string());
                 let input = |e: String| CompileError::Input(format!("{context}: {e}"));
-                let asset = director_3d::Asset::new(self.assets.read(src)?, "glb", path);
+                let splats = model_splats(el, &self.assets, &context)?;
+                let asset = match attr("src") {
+                    Some(src) => {
+                        let path = (!src.starts_with("data:")).then(|| src.to_string());
+                        director_3d::Asset::new(self.assets.read(src)?, "glb", path)
+                    }
+                    None if !splats.is_empty() => director_3d::Asset::empty_scene(),
+                    None => {
+                        return Err(CompileError::Input(format!("{context}: model without src or <splat> children")))
+                    }
+                };
                 let mut model = director_3d::ModelNode::new(asset).map_err(input)?;
+                model.splats = std::sync::Arc::new(splats);
                 if let Some(environment) = attr("environment") {
                     let path = (!environment.starts_with("data:")).then(|| environment.to_string());
                     model.environment =
@@ -2722,6 +2731,43 @@ pub fn compile_file(
     let source = std::fs::read_to_string(path)
         .map_err(|e| CompileError::Input(format!("HTML {}: {e}", path.display())))?;
     compile(&source, options)
+}
+
+/// The `<splat>` children of a `<model>`: Gaussian splat `.ply` files read
+/// through the compile asset store and placed in the scene's metres.
+fn model_splats(model: ElementRef<'_>, assets: &AssetStore, context: &str) -> Result<Vec<director_3d::Splat>, CompileError> {
+    let fail = |e: String| CompileError::Input(format!("{context}: {e}"));
+    let mut splats = Vec::new();
+    for el in model.children().filter_map(ElementRef::wrap).filter(|el| el.value().name() == "splat") {
+        let attr = |name: &str| el.value().attr_text(name).map(str::trim);
+        let src = attr("src").ok_or_else(|| fail("splat without src".into()))?;
+        let path = (!src.starts_with("data:")).then(|| src.to_string());
+        let cloud = director_3d::Asset::splat(assets.read(src)?, path).map_err(fail)?;
+        let triple = |name: &str, default: [f32; 3], unit: &str| -> Result<[f32; 3], CompileError> {
+            let Some(v) = attr(name) else { return Ok(default) };
+            let parts: Vec<f32> = v.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+            match parts[..] {
+                [x, y, z] if parts.iter().all(|n| n.is_finite()) && v.split_whitespace().count() == 3 => Ok([x, y, z]),
+                _ => Err(fail(format!("splat {name} '{v}' must be three numbers in {unit}: x y z"))),
+            }
+        };
+        let number = |name: &str, default: f32, max: f32| -> Result<f32, CompileError> {
+            let Some(v) = attr(name) else { return Ok(default) };
+            match v.parse::<f32>() {
+                Ok(n) if n >= 0.0 && n <= max && n.is_finite() => Ok(n),
+                _ if max.is_finite() => Err(fail(format!("splat {name} '{v}' must be a number from 0 to {max}"))),
+                _ => Err(fail(format!("splat {name} '{v}' must be a number from 0"))),
+            }
+        };
+        splats.push(director_3d::Splat {
+            cloud,
+            position: triple("position", [0.0; 3], "metres")?,
+            rotation: triple("rotation", [0.0; 3], "degrees")?,
+            scale: number("scale", 1.0, f32::INFINITY)?,
+            opacity: number("opacity", 1.0, 1.0)?,
+        });
+    }
+    Ok(splats)
 }
 
 /// The `<light>` children of a `<model>`.

@@ -16,6 +16,9 @@ taffy = "0.9.2"
 bevy = { version = "=0.20.1", default-features = false, features = ["default_app", "std", "3d_bevy_render", "exr", "hdr", "bevy_world_serialization", "raw_vulkan_init"] }
 wgpu = { version = "=30.0.1", default-features = false, features = ["vulkan"] }
 half = "2"
+# Gaussian splats: PLY and gcloud files, spherical harmonics to degree 3, and the GPU radix sort,
+# which orders every view each frame so a frame depends only on its camera.
+bevy_gaussian_splatting = { version = "=9.0.0", default-features = false, features = ["io_flexbuffers", "io_ply", "planar", "buffer_storage", "sh3", "sort_radix"] }
 # Same features as director-cli, so both build one copy of ash and wgpu-hal.
 ash = { version = "0.38", features = ["loaded"] }
 

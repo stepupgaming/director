@@ -22,9 +22,9 @@ use bevy::{
         },
         RenderAssetUsages,
     },
-    camera::{primitives::Aabb, Exposure, Hdr, ImageRenderTarget, RenderTarget},
+    camera::{primitives::Aabb, Exposure, Hdr, ImageRenderTarget, RenderTarget, SubCameraView},
     core_pipeline::tonemapping::Tonemapping,
-    gltf::GltfAssetLabel,
+    gltf::Gltf,
     image::Image,
     light::{EnvironmentMapLight, GeneratedEnvironmentMapLight, Skybox},
     log::LogPlugin,
@@ -32,7 +32,6 @@ use bevy::{
     post_process::bloom::Bloom,
     prelude::*,
     render::{
-        camera::TemporalJitter,
         render_asset::RenderAssets,
         render_resource::{
             Extent3d, PollType, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
@@ -46,11 +45,14 @@ use bevy::{
     window::ExitCondition,
     world_serialization::WorldAssetRoot,
 };
+use bevy_gaussian_splatting::{
+    CloudSettings, GaussianCamera, GaussianSplattingPlugin, PlanarGaussian3d, PlanarGaussian3dHandle,
+};
 use director_scene::{ModelLight, ModelView};
 
 use crate::accumulate::Accumulator;
 use crate::lights;
-use crate::node::lights_hash;
+use crate::node::{lights_hash, splats_hash, Splat};
 use crate::Asset;
 
 /// Everything one frame of a model depends on.
@@ -71,6 +73,8 @@ pub struct Shot {
     pub samples: u32,
     /// Lights added to the file's own.
     pub lights: Arc<Vec<ModelLight>>,
+    /// Gaussian splat clouds beside the file's meshes.
+    pub splats: Arc<Vec<Splat>>,
 }
 
 /// Premultiplied sRGB RGBA8 pixels, rows packed.
@@ -188,8 +192,10 @@ struct Placement {
     radius: f32,
     view: ModelView,
     aspect: f32,
-    /// Target height in pixels.
-    height: f32,
+    /// Target size in pixels.
+    size: UVec2,
+    /// Whether the shot averages several renders.
+    sampled: bool,
     /// This sample's sub-pixel offset in pixels.
     jitter: Vec2,
     /// This sample's point on the unit lens disk.
@@ -207,12 +213,12 @@ fn orbit(
     nodes: Query<(&Transform, Option<&ChildOf>), Without<DirectorCamera>>,
     lenses: Query<&Projection, Without<DirectorCamera>>,
     mut cameras: Query<
-        (&mut Transform, &mut Projection, Option<&mut TemporalJitter>),
+        (&mut Transform, &mut Projection, &mut Camera),
         With<DirectorCamera>,
     >,
 ) {
     let Some(p) = orbit.0 else { return };
-    let Ok((mut transform, mut projection, jitter)) = cameras.get_mut(p.camera) else { return };
+    let Ok((mut transform, mut projection, mut camera)) = cameras.get_mut(p.camera) else { return };
     let (base, mut lens) = match p.source {
         Some(source) => {
             let mut world = Transform::IDENTITY;
@@ -267,18 +273,26 @@ fn orbit(
             (p.center - transform.translation).dot(forward).max(1e-3)
         };
         let half = (perspective.fov / 2.0).tan();
-        if jitter.is_some() {
+        if p.sampled {
             let focal = 0.5 * SENSOR_HEIGHT / half;
             let eye = p.lens * focal / (2.0 * p.view.aperture);
             let step = transform.rotation * eye.extend(0.0);
             transform.translation += step;
-            // Bevy's jitter moves the image by -2 * offset / size in NDC on
-            // x and +2 * offset / size on y.
-            shift = Vec2::new(-eye.x, eye.y) * p.height / (2.0 * half * focus);
+            // A sub view offset moves the image by -2 * offset / size in NDC
+            // on x and +2 * offset / size on y.
+            shift = Vec2::new(-eye.x, eye.y) * p.size.y as f32 / (2.0 * half * focus);
         }
     }
-    if let Some(mut jitter) = jitter {
-        jitter.offset = p.jitter + shift;
+    // The sample offset goes into the projection itself as a sub view, so
+    // meshes and splats (whose shader reads the unjittered projection) both
+    // move with it.
+    let sub = p.sampled.then(|| SubCameraView {
+        full_size: p.size,
+        offset: p.jitter + shift,
+        size: p.size,
+    });
+    if camera.sub_camera_view != sub {
+        camera.sub_camera_view = sub;
     }
     *projection = lens;
 }
@@ -290,6 +304,10 @@ const SENSOR_HEIGHT: f32 = 0.01866;
 const SOFT_SAMPLES: u32 = 16;
 
 struct Stage {
+    /// The loaded glTF. Stages of one file share its scene asset, and
+    /// dropping this handle would unload the file, so the next stage's load
+    /// would replace the scene and respawn every stage's instance of it.
+    _gltf: Handle<Gltf>,
     root: Entity,
     camera: Entity,
     source: Option<Entity>,
@@ -316,7 +334,8 @@ struct Target {
     holds: Option<ShotKey>,
 }
 
-type StageKey = (u64, Option<u64>);
+/// (model hash, environment hash, splat set hash).
+type StageKey = (u64, Option<u64>, u64);
 type ShotKey = (StageKey, usize, u64, u64, [u32; 9]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
@@ -371,6 +390,8 @@ impl Studio {
             DefaultPlugins
                 .build()
                 .disable::<LogPlugin>()
+                // The splat crate turns on Bevy's windowing; the studio has no window.
+                .disable::<bevy::winit::WinitPlugin>()
                 .set(WindowPlugin {
                     primary_window: None,
                     exit_condition: ExitCondition::DontExit,
@@ -382,8 +403,9 @@ impl Studio {
                     ..default()
                 }),
         );
+        app.add_plugins(GaussianSplattingPlugin);
         app.init_resource::<Orbit>();
-        app.add_systems(PostUpdate, orbit.after(AnimationSystems).before(TransformSystems::Propagate));
+        app.add_systems(PostUpdate, orbit.after(AnimationSystems).before(TransformSystems::Propagate).before(bevy::camera::CameraUpdateSystems));
         app.finish();
         app.cleanup();
         let apps = std::mem::take(app.sub_apps_mut());
@@ -498,7 +520,8 @@ impl Studio {
             radius,
             view: shot.view,
             aspect: shot.width as f32 / shot.height as f32,
-            height: shot.height as f32,
+            size: UVec2::new(shot.width, shot.height),
+            sampled: false,
             jitter: Vec2::ZERO,
             lens: Vec2::ZERO,
         });
@@ -520,10 +543,8 @@ impl Studio {
             stage.lit = lit;
         }
         lights::place(world, &stage.lights, None);
-        if samples > 1 {
-            world.entity_mut(camera).insert(TemporalJitter::default());
-        } else {
-            world.entity_mut(camera).remove::<TemporalJitter>();
+        if let Some(p) = &mut world.resource_mut::<Orbit>().0 {
+            p.sampled = samples > 1;
         }
         if !warm {
             for _ in 0..3 {
@@ -597,7 +618,7 @@ impl Studio {
 
     /// Loads the model and probe of `shot` once, keyed by their bytes.
     fn stage(&mut self, shot: &Shot) -> Result<StageKey, String> {
-        let key = (shot.model.hash, shot.environment.as_ref().map(|e| e.hash));
+        let key = (shot.model.hash, shot.environment.as_ref().map(|e| e.hash), splats_hash(&shot.splats));
         if self.stages.contains_key(&key) {
             return Ok(key);
         }
@@ -610,11 +631,28 @@ impl Studio {
         });
         let world = self.apps.main.world_mut();
         let server = world.resource::<AssetServer>().clone();
-        let path = format!("director://{model}");
-        let scene = server.load(GltfAssetLabel::Scene(0).from_asset(path.clone()));
-        let clips: Vec<Handle<AnimationClip>> = (0..shot.clips)
-            .map(|i| server.load(GltfAssetLabel::Animation(i).from_asset(path.clone())))
-            .collect();
+        // The splat crate's scene loader also claims `.glb`, and a labelled
+        // path picks its loader by extension, so the root loads by type and
+        // the scene and clips come from the loaded `Gltf`.
+        let gltf: Handle<Gltf> = server.load(format!("director://{model}"));
+        let mut parsed = None;
+        for _ in 0..4000 {
+            self.step();
+            let world = self.apps.main.world_mut();
+            if let Some(bevy::asset::LoadState::Failed(e)) = world.resource::<AssetServer>().get_load_state(&gltf) {
+                return Err(format!("glTF load failed: {e}"));
+            }
+            if let Some(g) = world.resource::<Assets<Gltf>>().get(&gltf) {
+                parsed = Some((g.scenes.first().cloned(), g.animations.clone()));
+                break;
+            }
+        }
+        let Some((Some(scene), animations)) = parsed else {
+            return Err("glTF scene never finished loading".into());
+        };
+        let world = self.apps.main.world_mut();
+        let server = world.resource::<AssetServer>().clone();
+        let clips: Vec<Handle<AnimationClip>> = animations.into_iter().take(shot.clips).collect();
         let (graph, nodes) = AnimationGraph::from_clips(clips);
         let graph = world.resource_mut::<Assets<AnimationGraph>>().add(graph);
         let equirect: Option<Handle<Image>> = environment.map(|name| server.load(format!("director://{name}")));
@@ -644,6 +682,63 @@ impl Studio {
         if !loaded {
             return Err("glTF scene never finished loading".into());
         }
+        // Splat clouds join the root once the scene has spawned beside them.
+        let mut clouds = Vec::new();
+        for splat in shot.splats.iter() {
+            let name = format!("{:016x}.ply", splat.cloud.hash);
+            self.dir.insert_asset(Path::new(&name), splat.cloud.bytes.to_vec());
+            let world = self.apps.main.world_mut();
+            let handle: Handle<PlanarGaussian3d> = world.resource::<AssetServer>().load(format!("director://{name}"));
+            let [x, y, z] = splat.rotation.map(f32::to_radians);
+            let transform = Transform {
+                translation: Vec3::from(splat.position),
+                rotation: Quat::from_euler(EulerRot::ZYX, z, y, x),
+                scale: Vec3::splat(splat.scale),
+            };
+            let entity = world
+                .spawn((
+                    PlanarGaussian3dHandle(handle.clone()),
+                    CloudSettings {
+                        global_opacity: splat.opacity,
+                        ..default()
+                    },
+                    // The studio sets the cloud's `Aabb` itself once it loads.
+                    bevy::camera::visibility::NoFrustumCulling,
+                    transform,
+                    Visibility::default(),
+                    ChildOf(root),
+                ))
+                .id();
+            clouds.push((entity, handle));
+        }
+        let mut ready = clouds.is_empty();
+        for _ in 0..4000 {
+            if ready {
+                break;
+            }
+            self.step();
+            let world = self.apps.main.world_mut();
+            let server = world.resource::<AssetServer>();
+            for (_, h) in &clouds {
+                if let Some(bevy::asset::LoadState::Failed(e)) = server.get_load_state(h) {
+                    return Err(format!("splat load failed: {e}"));
+                }
+            }
+            let assets = world.resource::<Assets<PlanarGaussian3d>>();
+            ready = clouds.iter().all(|(_, h)| assets.get(h).is_some());
+        }
+        if !ready {
+            return Err("splat cloud never finished loading".into());
+        }
+        // The splat draw queue needs an `Aabb` for its depth order, and the
+        // crate's own one spans every padding gaussian, so each cloud gets
+        // the box of its visible gaussians.
+        for (entity, handle) in &clouds {
+            let world = self.apps.main.world_mut();
+            let cloud = world.resource::<Assets<PlanarGaussian3d>>().get(handle).expect("cloud loaded");
+            let (l, h) = cloud_bounds(cloud, &GlobalTransform::IDENTITY);
+            world.entity_mut(*entity).insert(Aabb::from_min_max(l, h));
+        }
         // Bounds and global transforms of the spawned scene.
         self.step();
         let world = self.apps.main.world_mut();
@@ -668,6 +763,9 @@ impl Studio {
         }
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         for &entity in &below {
+            if clouds.iter().any(|(cloud, _)| *cloud == entity) {
+                continue;
+            }
             let (Some(aabb), Some(global)) = (world.get::<Aabb>(entity), world.get::<GlobalTransform>(entity)) else {
                 continue;
             };
@@ -678,6 +776,13 @@ impl Studio {
                 lo = lo.min(p);
                 hi = hi.max(p);
             }
+        }
+        for (entity, handle) in &clouds {
+            let global = world.get::<GlobalTransform>(*entity).copied().unwrap_or_default();
+            let cloud = world.resource::<Assets<PlanarGaussian3d>>().get(handle).expect("cloud loaded");
+            let (l, h) = cloud_bounds(cloud, &global);
+            lo = lo.min(l);
+            hi = hi.max(h);
         }
         let (center, radius) = if lo.x <= hi.x {
             ((lo + hi) / 2.0, ((hi - lo).length() / 2.0).max(1e-3))
@@ -711,18 +816,25 @@ impl Studio {
                     ..default()
                 },
                 Hdr,
-                Tonemapping::TonyMcMapface,
-                Bloom::NATURAL,
                 Msaa::Off,
                 Smaa::default(),
                 bevy::pbr::ScreenSpaceTransmission::default(),
+                GaussianCamera::default(),
                 Projection::default(),
                 Transform::IDENTITY,
             ))
             .id();
+        // Splat captures hold display colours, which a filmic curve and bloom
+        // would change, so a stage with splats shows them as captured.
+        if clouds.is_empty() {
+            world.entity_mut(camera).insert((Tonemapping::TonyMcMapface, Bloom::NATURAL));
+        } else {
+            world.entity_mut(camera).insert(Tonemapping::None);
+        }
         self.stages.insert(
             key,
             Stage {
+                _gltf: gltf,
                 root,
                 camera,
                 source,
@@ -904,6 +1016,35 @@ fn disk(Vec2 { x: a, y: b }: Vec2) -> Vec2 {
     let quarter = std::f32::consts::FRAC_PI_4;
     let (r, theta) = if a.abs() > b.abs() { (a, quarter * (b / a)) } else { (b, 2.0 * quarter - quarter * (a / b)) };
     Vec2::new(r * theta.cos(), r * theta.sin())
+}
+
+/// The box a cloud's gaussians fill in world space, from the 1st to the 99th
+/// percentile of their centres on each axis so stray floaters do not widen
+/// the framing, padded by three times the median gaussian size.
+fn cloud_bounds(cloud: &PlanarGaussian3d, global: &GlobalTransform) -> (Vec3, Vec3) {
+    let mut axes: [Vec<f32>; 3] = Default::default();
+    let mut sizes = Vec::new();
+    for (p, s) in cloud.position_visibility.iter().zip(&cloud.scale_opacity) {
+        if s.opacity <= 0.0 {
+            continue;
+        }
+        let world = global.transform_point(Vec3::from(p.position));
+        for (axis, v) in axes.iter_mut().zip(world.to_array()) {
+            axis.push(v);
+        }
+        sizes.push(s.scale.iter().copied().fold(0.0f32, f32::max));
+    }
+    if sizes.is_empty() {
+        return (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    }
+    let pick = |v: &mut Vec<f32>, q: f32| {
+        v.sort_by(f32::total_cmp);
+        v[((v.len() - 1) as f32 * q).round() as usize]
+    };
+    let pad = 3.0 * pick(&mut sizes, 0.5) * global.scale().max_element();
+    let lo = Vec3::new(pick(&mut axes[0], 0.01), pick(&mut axes[1], 0.01), pick(&mut axes[2], 0.01));
+    let hi = Vec3::new(pick(&mut axes[0], 0.99), pick(&mut axes[1], 0.99), pick(&mut axes[2], 0.99));
+    (lo - pad, hi + pad)
 }
 
 fn stage_root(stages: &HashMap<StageKey, Stage>, key: StageKey) -> Entity {

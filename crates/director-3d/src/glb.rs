@@ -53,3 +53,21 @@ pub fn inspect(bytes: &[u8]) -> Result<GlbInfo, String> {
         cameras: list("cameras").len(),
     })
 }
+
+/// A glTF binary whose one scene holds one empty node, the base of a model
+/// made only of splats.
+pub(crate) fn empty() -> Vec<u8> {
+    let mut json = br#"{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{}]}"#.to_vec();
+    while !json.len().is_multiple_of(4) {
+        json.push(b' ');
+    }
+    let total = 12 + 8 + json.len() as u32;
+    let mut glb = Vec::with_capacity(total as usize);
+    glb.extend_from_slice(b"glTF");
+    glb.extend_from_slice(&2u32.to_le_bytes());
+    glb.extend_from_slice(&total.to_le_bytes());
+    glb.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x4E4F_534Au32.to_le_bytes());
+    glb.extend_from_slice(&json);
+    glb
+}

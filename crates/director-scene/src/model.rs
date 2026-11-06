@@ -32,6 +32,25 @@ pub struct ModelBody {
     /// Lights Director adds to the file's own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lights: Vec<ModelLight>,
+    /// Gaussian splat clouds placed in the scene beside the file's meshes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub splats: Vec<ModelSplat>,
+}
+
+/// A Gaussian splat cloud from a 3DGS `.ply` file, placed in the model's
+/// world space: scaled about its own origin, then rotated, then moved.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelSplat {
+    /// The `.ply` file.
+    pub asset: AssetId,
+    /// Metres along X, Y and Z.
+    pub position: [f32; 3],
+    /// Degrees about X, then Y, then Z.
+    pub rotation: [f32; 3],
+    /// Uniform scale.
+    pub scale: f32,
+    /// Multiplies every gaussian's opacity, 0 to 1.
+    pub opacity: f32,
 }
 
 /// What a `ModelLight` emits from.
