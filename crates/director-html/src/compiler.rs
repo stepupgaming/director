@@ -1756,6 +1756,7 @@ impl Builder {
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {
                     let lens = (attr("track-fov").is_some(), attr("track-distortion"));
+                    let plate = (plate, attr("track-mask"));
                     model.track = Some(std::sync::Arc::new(solve_track(&self.assets, plate, &numeric, lens, &context)?));
                 }
                 if !values.contains_key("width") {
@@ -2771,9 +2772,11 @@ pub fn compile_file(
 /// its lens from 40 degrees. `track-distortion` fixes the radial distortion
 /// as "k1 k2", and without it the solve finds it. `track-height` is frame
 /// 0's camera height above the ground in metres, which sets the scale.
+/// `track-mask` names a matte of the footage, white over whatever moves on
+/// its own, and the solve tracks nothing there.
 fn solve_track(
     assets: &AssetStore,
-    plate: &str,
+    (plate, mask): (&str, Option<&str>),
     numeric: &dyn Fn(&str, f64) -> Result<f64, CompileError>,
     (fixed_lens, distortion): (bool, Option<&str>),
     context: &str,
@@ -2795,7 +2798,11 @@ fn solve_track(
     }
     let path = assets.media_path(plate)?;
     let input = |e: String| CompileError::Input(format!("{context}: track '{plate}': {e}"));
-    let footage = director_track::read_footage(&path, 960).map_err(input)?;
+    let mut footage = director_track::read_footage(&path, 960).map_err(input)?;
+    if let Some(mask) = mask {
+        let path = assets.media_path(mask)?;
+        footage.read_matte(&path).map_err(|e| CompileError::Input(format!("{context}: track-mask '{mask}': {e}")))?;
+    }
     let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, distortion, camera_height: height };
     let solved = director_track::solve(&footage, &options).map_err(input)?;
     Ok(director_scene::ModelTrack {

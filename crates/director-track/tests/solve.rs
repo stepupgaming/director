@@ -139,7 +139,7 @@ fn the_solve_recovers_the_lens_from_a_wrong_guess() {
 #[test]
 fn still_footage_has_nothing_to_solve() {
     let first = footage().frames[0].clone();
-    let still = Footage { width: 480, height: 270, fps: 30.0, frames: vec![first; 12] };
+    let still = Footage { width: 480, height: 270, fps: 30.0, frames: vec![first; 12], matte: Vec::new() };
     let error = solve(&still, &SolveOptions::default()).unwrap_err();
     assert!(error.contains("too little camera motion"), "{error}");
 }
@@ -171,4 +171,34 @@ fn the_solve_finds_the_lens_distortion() {
     assert!(solved.error < 0.4, "the cameras explain the tracks: {:.3} px", solved.error);
     // The true lens fixed gives 0.10 m and 0.16 degrees on this resampled plate.
     assert!(position < 0.12 && rotation < 0.25, "the path holds: {position:.3} m, {rotation:.3} deg");
+}
+
+#[test]
+fn a_matte_keeps_moving_things_out_of_the_solve() {
+    // `moving.mp4` is the same walk past a van, a walker and a rippling
+    // pool, and `moving-matte.mp4` is white over them.
+    let truth = truth();
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height };
+    let mut footage = read_footage(&fixture("moving.mp4"), 960).unwrap();
+    let unmasked = compare(&solve(&footage, &options).unwrap(), &truth);
+    footage.read_matte(&fixture("moving-matte.mp4")).unwrap();
+    assert_eq!(footage.matte.len(), 60, "a matte frame for every frame");
+    let solved = solve(&footage, &options).unwrap();
+    let Errors { position, rotation, pixels } = compare(&solved, &truth);
+    eprintln!(
+        "unmasked: worst position {:.3} m, rotation {:.3} deg, grid {:.2} px; masked: {} points, {:.3} px rms, worst position {position:.3} m, rotation {rotation:.3} deg, grid {pixels:.2} px",
+        unmasked.position, unmasked.rotation, unmasked.pixels, solved.points.len(), solved.error
+    );
+    assert!(unmasked.position > 0.3, "the movers pull the unmasked path: {:.3} m", unmasked.position);
+    assert!(position < 0.15 && rotation < 0.25, "the masked path holds: {position:.3} m, {rotation:.3} deg");
+    // Unmasked, the grid misses by 2.9 px.
+    assert!(pixels < 1.5, "a model near the origin lands within 1.5 px of where Blender drew it: {pixels:.2} px");
+}
+
+#[test]
+fn a_matte_must_match_the_frames() {
+    let small = director_track::Gray::new(240, 135, vec![0.0; 240 * 135]);
+    let footage = Footage { width: 480, height: 270, fps: 30.0, frames: footage().frames.clone(), matte: vec![small] };
+    let error = solve(&footage, &SolveOptions::default()).unwrap_err();
+    assert!(error.contains("matte of the footage's 480x270 frames"), "{error}");
 }

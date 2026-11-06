@@ -1,6 +1,6 @@
 """Write the director-3d camera solve fixture.
 
-Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures [--lens]
+Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures [--lens | --moving]
 
 A yard of Voronoi cells holds five textured crates and two pillars under a sun
 and `sky.hdr`, and a handheld-height camera walks sideways past them over 60
@@ -32,6 +32,17 @@ focal length about the image centre.
 Eevee renders each frame 600x338 at the same focal length in pixels, so its
 wider view covers every ray the distorted 480x270 frame needs, and numpy
 resamples it bilinearly into the distorted frame.
+
+With `--moving` the script writes only the moving fixture: the same shot with
+things in it that do not hold still. A textured van drives across the yard
+behind the crates against the camera's walk, a textured walker comes towards
+the camera, and a pool in the left foreground shows ripples that slide and
+change.
+
+- `moving.mp4`: the plate with the movers, H.264 yuv420p.
+- `moving-matte.mp4`: white where a mover or the pool shows and black
+  elsewhere, H.264 yuv420p.
+- `moving-10.png` and `moving-50.png`: frames 10 and 50 with the box.
 """
 
 import json
@@ -48,6 +59,7 @@ from mathutils import Matrix, Vector
 args = sys.argv[sys.argv.index("--") + 1 :]
 out = os.path.abspath(args[0])
 LENS = "--lens" in args[1:]
+MOVING = "--moving" in args[1:]
 FRAMES = 60
 K1, K2 = -0.15, 0.03
 WIDE = (600, 338)
@@ -121,6 +133,45 @@ box = bpy.context.object
 box.name = "Box"
 assign(box, material("Blue", (0.08, 0.25, 0.7), roughness=0.4))
 
+movers = []
+if MOVING:
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(5, 5.6, 0.7))
+    van = bpy.context.object
+    van.name = "Van"
+    van.scale = (2.4, 1.2, 1.4)
+    assign(van, cells("Van", 2.5, (0.95, 0.35, 0.3)))
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.25, depth=1.8, location=(-1.6, 3.6, 0.9))
+    walker = bpy.context.object
+    walker.name = "Walker"
+    assign(walker, cells("Walker", 5.0, (0.3, 0.5, 0.95)))
+    for frame in range(FRAMES):
+        t = frame / (FRAMES - 1)
+        van.location = (5.0 - 10.0 * t, 5.6, 0.7)
+        walker.location = (-1.6, 3.6 - 2.0 * t, 0.9)
+        van.keyframe_insert("location", frame=frame)
+        walker.keyframe_insert("location", frame=frame)
+    # The pool's ripples: 4D Voronoi cells that slide across it at 0.6 m/s
+    # while the fourth coordinate changes them, a hair above the yard.
+    bpy.ops.mesh.primitive_plane_add(size=1.0, location=(-1.0, -2.8, 0.005))
+    pool = bpy.context.object
+    pool.name = "Pool"
+    pool.scale = (2.6, 1.6, 1.0)
+    water = cells("Water", 3.0, (0.35, 0.6, 0.85))
+    nodes, links = water.node_tree.nodes, water.node_tree.links
+    voronoi = next(n for n in nodes if n.type == "TEX_VORONOI")
+    voronoi.voronoi_dimensions = "4D"
+    mapping = nodes.new("ShaderNodeMapping")
+    links.new(next(n for n in nodes if n.type == "TEX_COORD").outputs["Object"], mapping.inputs["Vector"])
+    links.new(mapping.outputs["Vector"], voronoi.inputs["Vector"])
+    for frame in range(FRAMES):
+        t = frame / (FRAMES - 1)
+        mapping.inputs["Location"].default_value = (1.2 * t / 2.6, 0.4 * t / 1.6, 0.0)
+        voronoi.inputs["W"].default_value = 0.8 * t
+        mapping.inputs["Location"].keyframe_insert("default_value", frame=frame)
+        voronoi.inputs["W"].keyframe_insert("default_value", frame=frame)
+    assign(pool, water)
+    movers = [van, walker, pool]
+
 bpy.ops.object.light_add(type="SUN", location=(0, 0, 6), rotation=(math.radians(-50), 0, math.radians(30)))
 sun = bpy.context.object
 sun.data.energy = 3.0
@@ -190,7 +241,7 @@ for frame in range(FRAMES):
     m = camera.matrix_world
     q = (basis @ m.to_3x3()).to_quaternion()
     truth["frames"].append({"position": list(solve_point(m.translation)), "rotation": [q.x, q.y, q.z, q.w]})
-if not LENS:
+if not (LENS or MOVING):
     with open(os.path.join(out, "solve.json"), "w") as f:
         json.dump(truth, f, indent=1)
 
@@ -253,6 +304,43 @@ if LENS:
     print("wrote", out)
     sys.exit(0)
 
+
+if MOVING:
+    folder = tempfile.mkdtemp(prefix="director-moving-")
+    for frame in (10, 50):
+        scene.frame_set(frame)
+        render(os.path.join(out, f"moving-{frame}.png"))
+    box.hide_render = True
+    for frame in range(FRAMES):
+        scene.frame_set(frame)
+        render(os.path.join(folder, f"plate-{frame:04d}.png"))
+    source = ["-framerate", "30", "-start_number", "0", "-i", os.path.join(folder, "plate-%04d.png")]
+    subprocess.run(encode(source, os.path.join(out, "moving.mp4")), check=True)
+    # The matte: the movers and the pool emit white, everything else black.
+    def flat(name, strength):
+        m = bpy.data.materials.new(name)
+        m.use_nodes = True
+        nodes = m.node_tree.nodes
+        nodes.remove(nodes["Principled BSDF"])
+        emission = nodes.new("ShaderNodeEmission")
+        emission.inputs["Strength"].default_value = strength
+        m.node_tree.links.new(emission.outputs["Emission"], nodes["Material Output"].inputs["Surface"])
+        return m
+    white, black = flat("White", 1.0), flat("Black", 0.0)
+    for obj in [ground] + props:
+        assign(obj, black)
+    for obj in movers:
+        assign(obj, white)
+    background.inputs["Strength"].default_value = 0.0
+    sun.data.energy = 0.0
+    for frame in range(FRAMES):
+        scene.frame_set(frame)
+        render(os.path.join(folder, f"matte-{frame:04d}.png"))
+    source = ["-framerate", "30", "-start_number", "0", "-i", os.path.join(folder, "matte-%04d.png")]
+    subprocess.run(encode(source, os.path.join(out, "moving-matte.mp4")), check=True)
+    shutil.rmtree(folder)
+    print("wrote", out)
+    sys.exit(0)
 
 for frame in (10, 50):
     scene.frame_set(frame)

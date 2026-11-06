@@ -14,6 +14,20 @@ pub struct Footage {
     pub fps: f64,
     /// Every frame in order, downscaled when the source is wider than asked.
     pub frames: Vec<Gray>,
+    /// The regions the solve leaves out, at the frames' size: luma above
+    /// half marks a pixel to ignore, such as a moving car or water. Frame k
+    /// reads matte k, and frames past the matte's end read its last frame,
+    /// so a still image covers the whole shot. Empty for none.
+    pub matte: Vec<Gray>,
+}
+
+impl Footage {
+    /// Reads the matte at `path`, a video or an image, at the frames' size.
+    pub fn read_matte(&mut self, path: &Path) -> Result<(), String> {
+        let first = self.frames.first().ok_or("footage without frames takes no matte")?;
+        self.matte = decode(path, first.width as u32, first.height as u32)?;
+        Ok(())
+    }
 }
 
 /// Reads every frame of `path` as luma. Footage wider than `max_width` is
@@ -46,6 +60,12 @@ pub fn read_footage(path: &Path, max_width: u32) -> Result<Footage, String> {
     } else {
         (width, height)
     };
+    let frames = decode(path, w, h)?;
+    Ok(Footage { width, height, fps, frames, matte: Vec::new() })
+}
+
+/// Every frame of `path` as luma scaled to `w` by `h` with area averaging.
+fn decode(path: &Path, w: u32, h: u32) -> Result<Vec<Gray>, String> {
     let decoded = Command::new("ffmpeg")
         .args(["-v", "error", "-i"])
         .arg(path)
@@ -64,5 +84,5 @@ pub fn read_footage(path: &Path, max_width: u32) -> Result<Footage, String> {
     if frames.is_empty() {
         return Err(format!("{} decoded no frames", path.display()));
     }
-    Ok(Footage { width, height, fps, frames })
+    Ok(frames)
 }

@@ -254,7 +254,10 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         k2,
     };
     let lens = Refine { focal: options.refine_focal, distortion: false };
-    let tracks = track(&footage.frames);
+    if footage.matte.iter().any(|m| (m.width, m.height) != (w, h)) {
+        return Err(format!("a camera solve needs a matte of the footage's {w}x{h} frames"));
+    }
+    let tracks = track(&footage.frames, &footage.matte);
     let mut rng = Rng::new(7);
 
     // The starting pair: frame 0 and, among the frames whose tracks single

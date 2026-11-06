@@ -1,7 +1,8 @@
 //! Solves the camera of a clip and prints how the solve went.
 //!
 //! `solve <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M]
-//! [--json OUT]` reads the footage at most 960 px wide, solves it with the
+//! [--matte FILE] [--json OUT]` reads the footage at most 960 px wide and
+//! the matte of regions to leave out at its size, solves it with the
 //! lens starting from `--fov` (default 40, refined unless `--fixed`), the
 //! radial distortion fixed by `--distortion` or solved, and frame 0's camera
 //! at `--height` metres (default 1.6), and prints the timings, the lens, the
@@ -15,7 +16,7 @@ use std::time::Instant;
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut path = None;
-    let (mut fov, mut fixed, mut height, mut json, mut distortion) = (40.0f64, false, 1.6f64, None, None);
+    let (mut fov, mut fixed, mut height, mut json, mut distortion, mut matte) = (40.0f64, false, 1.6f64, None, None, None);
     let number = |v: Option<String>| -> f64 { v.and_then(|v| v.parse().ok()).expect("--distortion K1 K2") };
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -23,21 +24,25 @@ fn main() {
             "--fixed" => fixed = true,
             "--distortion" => distortion = Some([number(args.next()), number(args.next())]),
             "--height" => height = args.next().and_then(|v| v.parse().ok()).expect("--height M"),
+            "--matte" => matte = Some(PathBuf::from(args.next().expect("--matte FILE"))),
             "--json" => json = Some(PathBuf::from(args.next().expect("--json OUT"))),
             _ => path = Some(PathBuf::from(arg)),
         }
     }
-    let path = path.expect("usage: solve <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M] [--json OUT]");
+    let path = path.expect("usage: solve <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M] [--matte FILE] [--json OUT]");
 
     let start = Instant::now();
-    let footage = read_footage(&path, 960).unwrap_or_else(|e| panic!("{e}"));
+    let mut footage = read_footage(&path, 960).unwrap_or_else(|e| panic!("{e}"));
+    if let Some(matte) = &matte {
+        footage.read_matte(matte).unwrap_or_else(|e| panic!("{e}"));
+    }
     let read = start.elapsed().as_secs_f64();
     let frames = footage.frames.len();
     let size = footage.frames.first().map(|f| (f.width, f.height)).unwrap_or_default();
     println!("footage {}x{} at {} fps, {frames} frames, decoded at {}x{} in {read:.2} s", footage.width, footage.height, footage.fps, size.0, size.1);
 
     let start = Instant::now();
-    let tracks = director_track::track(&footage.frames);
+    let tracks = director_track::track(&footage.frames, &footage.matte);
     let mut lengths: Vec<usize> = tracks.iter().map(|t| t.points.len()).collect();
     lengths.sort_unstable();
     let live = |k: usize| tracks.iter().filter(|t| t.at(k).is_some()).count();

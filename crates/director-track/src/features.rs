@@ -5,12 +5,15 @@ use crate::image::Gray;
 
 /// Up to `max` corners of `image` at least `min_distance` pixels from each
 /// other and from `existing`, strongest first, `margin` pixels inside the
-/// border. Corners weaker than 1 % of the strongest are dropped.
+/// border and outside `masked` (one flag per pixel, empty for none). Corners
+/// weaker than 1 % of the strongest are dropped.
+#[allow(clippy::too_many_arguments)]
 pub fn corners(
     image: &Gray,
     gx: &Gray,
     gy: &Gray,
     existing: &[[f32; 2]],
+    masked: &[bool],
     max: usize,
     min_distance: f32,
     margin: usize,
@@ -45,7 +48,7 @@ pub fn corners(
     for y in margin.max(1)..h - margin.max(1) {
         for x in margin.max(1)..w - margin.max(1) {
             let s = score[y * w + x];
-            if s < floor {
+            if s < floor || masked.get(y * w + x).copied().unwrap_or(false) {
                 continue;
             }
             let peak = (-1..=1isize).all(|dy| {
