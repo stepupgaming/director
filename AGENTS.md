@@ -115,6 +115,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - `vendor/` contains third-party source selected by local Cargo patches. Do not modify vendor sources without updating its `AGENTS.md`; exclude vendored packages from workspace membership.
 - `vendor/skia-safe/` is skia-safe 0.153.3 with three edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.
 - `vendor/bevy_pbr/` is bevy_pbr 0.20.1 with two volumetric fog edits (alpha coverage and per-step ambient in-scatter) documented in `vendor/AGENTS.md`; reapply them on a Bevy upgrade.
+- `vendor/bevy_post_process/` is bevy_post_process 0.20.1 with one effect stack edit that keeps the source alpha, documented in `vendor/AGENTS.md`; reapply it on a Bevy upgrade.
 
 ## Verification
 

@@ -62,6 +62,34 @@ pub struct ModelBody {
     /// Haze and fog between the camera and the scene.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fog: Option<ModelFog>,
+    /// Lens effects over the rendered frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optics: Option<ModelOptics>,
+    /// Screen-space ambient occlusion: the metres around each surface it
+    /// searches for occluders. 0 adds none. The rasterized levels render it;
+    /// the Hero level traces occlusion itself.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub occlusion: f32,
+}
+
+/// Lens effects over a model's frame, applied in linear light before the
+/// tone curve. Over a transparent sky they keep the frame's coverage in
+/// alpha, so they act on the model and leave the page beneath it alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelOptics {
+    /// How far the frame darkens toward its corners, 0 to 1. 0 adds none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vignette: f32,
+    /// Lateral chromatic aberration, 0 to 1: the fraction of the way toward
+    /// the frame's centre across which each pixel's colours spread into
+    /// fringes. 0 adds none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub aberration: f32,
+    /// Radial lens distortion (the Brown-Conrady k1), -1 to 1: positive
+    /// bulges the frame into a barrel and negative pinches it into a
+    /// pincushion. 0 adds none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub distortion: f32,
 }
 
 /// Haze and fog in the model's metres. The rasterized levels render it; the

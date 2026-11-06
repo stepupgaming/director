@@ -28,3 +28,4 @@ vendor/*
 !vendor/AGENTS.md
 !vendor/skia-safe/
 !vendor/bevy_pbr/
+!vendor/bevy_post_process/

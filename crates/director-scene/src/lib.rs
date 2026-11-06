@@ -23,7 +23,7 @@ pub use effect::{Effect, EffectParam, Uniform};
 pub use entity::{BoundingBox, Entity, EntityId, EntityKind, EntitySample};
 pub use html::{HtmlBody, HtmlCaptureBody, HtmlVideoBody, SvgSmilBody};
 pub use layout::LayoutStyle;
-pub use model::{ModelBody, ModelFog, ModelLight, ModelLightKind, ModelSplat, ModelText, ModelTrack, ModelTrackFrame, ModelView};
+pub use model::{ModelBody, ModelFog, ModelLight, ModelOptics, ModelLightKind, ModelSplat, ModelText, ModelTrack, ModelTrackFrame, ModelView};
 pub use timeline::{Clip, Timeline, Track, Transition};
 
 use schemars::JsonSchema;

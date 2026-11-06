@@ -1794,6 +1794,20 @@ impl Builder {
                 if model.fog.is_some() && model.paths > 0 {
                     return Err(input("fog renders at the rasterized levels, so it cannot take paths".into()));
                 }
+                model.optics = model_optics(el).map_err(input)?;
+                // A bare `ambient-occlusion` searches the 0.73 m around each
+                // surface that Bevy tunes its SSAO for.
+                model.occlusion = match attr("ambient-occlusion").map(str::trim) {
+                    None | Some("false") => 0.0,
+                    Some("" | "true") => 0.7285,
+                    Some(v) => match v.trim_end_matches('m').parse::<f32>() {
+                        Ok(r) if r > 0.0 && r.is_finite() => r,
+                        _ => return Err(input(format!("ambient-occlusion '{v}' must be a radius in metres above 0"))),
+                    },
+                };
+                if model.occlusion > 0.0 && model.paths > 0 {
+                    return Err(input("paths trace occlusion themselves, so they cannot take ambient-occlusion".into()));
+                }
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {
@@ -3076,6 +3090,29 @@ fn model_texts(
         });
     }
     Ok(texts)
+}
+
+/// A `<model>`'s lens effects from its `vignette`, `chromatic-aberration`
+/// and `lens-distortion` attributes, `None` without any.
+fn model_optics(el: ElementRef<'_>) -> Result<Option<director_scene::ModelOptics>, String> {
+    let attr = |name: &str| el.value().attr_text(name);
+    let number = |name: &str, range: std::ops::RangeInclusive<f32>| -> Result<f32, String> {
+        let Some(v) = attr(name).map(str::trim) else { return Ok(0.0) };
+        let parsed = match v.strip_suffix('%') {
+            Some(percent) => percent.trim().parse::<f32>().map(|p| p / 100.0),
+            None => v.parse::<f32>(),
+        };
+        match parsed {
+            Ok(n) if range.contains(&n) => Ok(n),
+            _ => Err(format!("{name} '{v}' must be a number from {} to {}", range.start(), range.end())),
+        }
+    };
+    let optics = director_scene::ModelOptics {
+        vignette: number("vignette", 0.0..=1.0)?,
+        aberration: number("chromatic-aberration", 0.0..=1.0)?,
+        distortion: number("lens-distortion", -1.0..=1.0)?,
+    };
+    Ok((optics != director_scene::ModelOptics::default()).then_some(optics))
 }
 
 /// The `<fog>` child of a `<model>`.

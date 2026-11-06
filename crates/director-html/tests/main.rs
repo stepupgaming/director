@@ -39,6 +39,7 @@ mod model;
 mod motion_blur;
 mod motion_policy;
 mod object_position_css;
+mod optics;
 mod padded_text;
 mod paint_gaps;
 mod project;

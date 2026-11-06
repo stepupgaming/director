@@ -31,8 +31,11 @@ use bevy::{
     light::{EnvironmentMapLight, FogVolume, GeneratedEnvironmentMapLight, Skybox, VolumetricFog, VolumetricLight},
     log::LogPlugin,
     mesh::morph::MeshMorphWeights,
-    pbr::{DistanceFog, FogFalloff},
-    post_process::bloom::Bloom,
+    pbr::{DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel},
+    post_process::{
+        bloom::Bloom,
+        effect_stack::{ChromaticAberration, LensDistortion, Vignette},
+    },
     prelude::*,
     render::{
         render_asset::RenderAssets,
@@ -53,7 +56,7 @@ use bevy::{
 use bevy_gaussian_splatting::{
     CloudSettings, GaussianCamera, GaussianSplattingPlugin, PlanarGaussian3d, PlanarGaussian3dHandle,
 };
-use director_scene::{ModelFog, ModelLight, ModelLightKind, ModelView};
+use director_scene::{ModelFog, ModelLight, ModelLightKind, ModelOptics, ModelView};
 
 use crate::accumulate::Accumulator;
 use crate::catcher::ShadowCatcher;
@@ -103,6 +106,16 @@ pub struct Shot {
     pub shutter: Option<[ShotCamera; 2]>,
     /// Distance haze and a sunlit fog volume.
     pub fog: Option<ModelFog>,
+    /// Vignette, chromatic aberration and lens distortion.
+    pub optics: Option<ModelOptics>,
+    /// Screen-space ambient occlusion radius in metres, 0 for none.
+    pub occlusion: f32,
+}
+
+/// The bits of a shot's lens effects for frame cache keys, all zero
+/// without them.
+pub(crate) fn optics_bits(optics: Option<ModelOptics>) -> [u32; 3] {
+    optics.map_or([0; 3], |o| [o.vignette, o.aberration, o.distortion].map(f32::to_bits))
 }
 
 /// The bits of a shot's fog for frame cache keys, all zero without one.
@@ -475,10 +488,11 @@ struct Target {
 
 /// (model hash, environment hash, splat set hash, shadow catcher hash).
 type StageKey = (u64, Option<u64>, u64, u64, u64);
-type ShotKey = (StageKey, usize, u64, u64, [u32; 17], [u32; 8], [[u32; 8]; 2]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 21], [u32; 8], [[u32; 8]; 2]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     let fog = fog_bits(shot.fog);
+    let optics = optics_bits(shot.optics);
     (
         stage,
         shot.clips,
@@ -502,6 +516,10 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             fog[2],
             fog[3],
             fog[4],
+            optics[0],
+            optics[1],
+            optics[2],
+            shot.occlusion.to_bits(),
         ],
         camera_bits(shot.camera),
         shot.shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
@@ -702,6 +720,46 @@ impl Studio {
                 });
             } else {
                 e.remove::<VolumetricFog>();
+            }
+            // Lens effects run in linear light after the depth of field and
+            // before the tone curve; the vendored `bevy_post_process` keeps
+            // the frame's coverage in alpha through them.
+            let optics = shot.optics.unwrap_or_default();
+            if optics.vignette > 0.0 {
+                e.insert(Vignette {
+                    intensity: optics.vignette,
+                    ..default()
+                });
+            } else {
+                e.remove::<Vignette>();
+            }
+            if optics.aberration > 0.0 {
+                e.insert(ChromaticAberration {
+                    intensity: optics.aberration,
+                    max_samples: 64,
+                    ..default()
+                });
+            } else {
+                e.remove::<ChromaticAberration>();
+            }
+            if optics.distortion != 0.0 {
+                e.insert(LensDistortion {
+                    intensity: optics.distortion,
+                    ..default()
+                });
+            } else {
+                e.remove::<LensDistortion>();
+            }
+            // Ambient occlusion darkens the probe's light where surfaces
+            // meet. The Hero level traces that occlusion itself.
+            if shot.occlusion > 0.0 && !hero {
+                e.insert(ScreenSpaceAmbientOcclusion {
+                    quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Ultra,
+                    radius: shot.occlusion,
+                    ..default()
+                });
+            } else {
+                e.remove::<ScreenSpaceAmbientOcclusion>();
             }
             let old: Vec<Entity> = world.query_filtered::<Entity, With<FogVolume>>().iter(world).collect();
             for entity in old {

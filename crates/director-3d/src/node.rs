@@ -9,7 +9,7 @@ use director_core::scene_export::{ElementExport, ExportContext, ExportError};
 use director_core::scene_import::{ImportContext, ImportError, ImportRegistry};
 use director_core::{Element, RenderError};
 use bevy::math::{Quat, Vec3};
-use director_scene::{Channel, ModelBody, ModelFog, ModelLight, ModelSplat, ModelText, ModelTrack, ModelView, NodeBody, NodeRecord};
+use director_scene::{Channel, ModelBody, ModelFog, ModelLight, ModelOptics, ModelSplat, ModelText, ModelTrack, ModelView, NodeBody, NodeRecord};
 use skia_safe::gpu::{backend_textures, vk as sk_vk, DirectContext, SurfaceOrigin};
 use skia_safe::{images, AlphaType, Canvas, Color4f, ColorSpace, ColorType, Data, Image, ImageInfo, Paint, Rect};
 use taffy::Style;
@@ -113,7 +113,7 @@ impl std::fmt::Debug for Asset {
 /// The most path traced paths per pixel a sample takes.
 pub const MAX_PATHS: u32 = 4096;
 
-type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 18], [u32; 8], [[u32; 8]; 2]);
+type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 22], [u32; 8], [[u32; 8]; 2]);
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -220,6 +220,10 @@ pub struct ModelNode {
     pub track: Option<Arc<ModelTrack>>,
     /// Distance haze and a sunlit fog volume.
     pub fog: Option<ModelFog>,
+    /// Vignette, chromatic aberration and lens distortion.
+    pub optics: Option<ModelOptics>,
+    /// Screen-space ambient occlusion radius in metres, 0 for none.
+    pub occlusion: f32,
     pub info: GlbInfo,
     time: f64,
     frame: Mutex<Option<(FrameKey, Arc<Vec<u8>>)>>,
@@ -248,6 +252,8 @@ impl ModelNode {
             texts: Arc::new(Vec::new()),
             track: None,
             fog: None,
+            optics: None,
+            occlusion: 0.0,
             info,
             time: 0.0,
             frame: Mutex::new(None),
@@ -330,6 +336,8 @@ impl ModelNode {
                 .collect(),
             track: self.track.as_deref().cloned(),
             fog: self.fog,
+            optics: self.optics,
+            occlusion: self.occlusion,
         }
     }
 }
@@ -356,6 +364,8 @@ impl Clone for ModelNode {
             texts: self.texts.clone(),
             track: self.track.clone(),
             fog: self.fog,
+            optics: self.optics,
+            occlusion: self.occlusion,
             info: self.info,
             time: self.time,
             frame: Mutex::new(None),
@@ -374,6 +384,8 @@ impl std::fmt::Debug for ModelNode {
             .field("texts", &self.texts)
             .field("track", &self.track.as_ref().map(|t| t.frames.len()))
             .field("fog", &self.fog)
+            .field("optics", &self.optics)
+            .field("occlusion", &self.occlusion)
             .field("view", &self.view)
             .field("info", &self.info)
             .field("time", &self.time)
@@ -446,6 +458,7 @@ impl Element for ModelNode {
             (width, height) = (lens.width, lens.height);
         }
         let fog_bits = studio::fog_bits(self.fog);
+        let optics_bits = studio::optics_bits(self.optics);
         let key: FrameKey = (
             self.model.hash,
             self.environment.as_ref().map(|e| e.hash),
@@ -474,6 +487,10 @@ impl Element for ModelNode {
                 fog_bits[2],
                 fog_bits[3],
                 fog_bits[4],
+                optics_bits[0],
+                optics_bits[1],
+                optics_bits[2],
+                self.occlusion.to_bits(),
             ],
             camera_bits(camera),
             shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
@@ -507,6 +524,8 @@ impl Element for ModelNode {
             camera,
             shutter,
             fog: self.fog,
+            optics: self.optics,
+            occlusion: self.occlusion,
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -667,6 +686,19 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
         }
         node.fog = Some(fog);
     }
+    if let Some(optics) = body.optics {
+        let unit = [optics.vignette, optics.aberration].iter().all(|v| (0.0..=1.0).contains(v));
+        if !(unit && (-1.0..=1.0).contains(&optics.distortion)) {
+            return Err(ImportError::Invalid(
+                "model optics need a vignette and an aberration from 0 to 1 and a distortion from -1 to 1".into(),
+            ));
+        }
+        node.optics = Some(optics);
+    }
+    if !(body.occlusion.is_finite() && body.occlusion >= 0.0) || (body.occlusion > 0.0 && body.paths > 0) {
+        return Err(ImportError::Invalid("model occlusion needs a radius from 0 metres on a rasterized model".into()));
+    }
+    node.occlusion = body.occlusion;
     if let Some(track) = &body.track {
         let fov = |f: f32| f > 0.0 && f < 180.0;
         let lens = fov(track.fov) && track.frames.iter().all(|f| f.fov.is_none_or(fov)) && track.distortion.iter().all(|k| k.is_finite());
