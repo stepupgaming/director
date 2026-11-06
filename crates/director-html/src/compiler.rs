@@ -1721,8 +1721,26 @@ impl Builder {
                 if samples.fract() != 0.0 || !(1.0..=256.0).contains(&samples) {
                     return Err(CompileError::Input(format!("{context}: samples must be a whole number from 1 to 256")));
                 }
-                model.samples = samples as u32;
                 model.lights = std::sync::Arc::new(model_lights(el).map_err(input)?);
+                model.samples = samples as u32;
+                let paths = numeric("paths", 0.0)?;
+                if paths.fract() != 0.0 || !(0.0..=director_3d::MAX_PATHS as f64).contains(&paths) {
+                    return Err(CompileError::Input(format!(
+                        "{context}: paths must be a whole number from 0 to {}",
+                        director_3d::MAX_PATHS
+                    )));
+                }
+                model.paths = paths as u32;
+                if model.paths > 0 && !model.splats.is_empty() {
+                    return Err(CompileError::Input(format!(
+                        "{context}: a path traced model draws meshes only; render <splat> clouds with samples"
+                    )));
+                }
+                if model.paths > 0 && model.lights.iter().any(|l| l.kind == director_scene::ModelLightKind::Spot) {
+                    return Err(CompileError::Input(format!(
+                        "{context}: a path traced model has no spot lights; render spot lights with samples"
+                    )));
+                }
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if !values.contains_key("width") {

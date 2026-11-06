@@ -27,6 +27,7 @@ mod gradient_tiles;
 mod grid_lines;
 mod grid_nested_named_lines;
 mod gsap;
+mod hero;
 mod line_clamp;
 mod media;
 mod mixed_calc;

@@ -1,11 +1,14 @@
 //! Lights a model's HTML element or document adds to the glTF scene. A light
 //! with an emitter size moves to a new point on its emitter for each of the
 //! shot's samples and casts hard shadows from there, so the averaged frame
-//! has the penumbra of the real source.
+//! has the penumbra of the real source. The path tracer ignores point and
+//! rect lights, so a Hero shot adds each as an emitter of the same power.
 
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
+use bevy::solari::scene::RaytracingMesh3d;
 use director_scene::{ModelLight, ModelLightKind};
+use std::f32::consts::PI;
 
 /// A spawned light and the emitter it samples.
 pub(crate) struct Placed {
@@ -34,17 +37,23 @@ pub(crate) fn sized(lights: &[ModelLight]) -> bool {
 /// emitter plane, and its squared falloff stands in for a softbox's cosine.
 const RECT_CONE: f32 = 85.0;
 
+/// Where `light` sits and the way it faces, its default position and target
+/// resolved against the bounding sphere.
+fn aim(light: &ModelLight, center: Vec3, radius: f32) -> (Vec3, Quat) {
+    let target = light.target.map_or(center, Vec3::from);
+    let from = light.position.map_or(center + Vec3::new(1.0, 2.0, 2.0) * radius, Vec3::from);
+    let forward = (target - from).try_normalize().unwrap_or(Vec3::NEG_Y);
+    let up = if forward.y.abs() > 0.999 { Vec3::Z } else { Vec3::Y };
+    (from, Transform::default().looking_to(forward, up).rotation)
+}
+
 /// Spawns `lights` under `root`, resolving default positions and targets
 /// against the bounding sphere.
 pub(crate) fn spawn(world: &mut World, root: Entity, lights: &[ModelLight], center: Vec3, radius: f32) -> Vec<Placed> {
     lights
         .iter()
         .map(|light| {
-            let target = light.target.map_or(center, Vec3::from);
-            let from = light.position.map_or(center + Vec3::new(1.0, 2.0, 2.0) * radius, Vec3::from);
-            let forward = (target - from).try_normalize().unwrap_or(Vec3::NEG_Y);
-            let up = if forward.y.abs() > 0.999 { Vec3::Z } else { Vec3::Y };
-            let facing = Transform::default().looking_to(forward, up).rotation;
+            let (from, facing) = aim(light, center, radius);
             let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
             let range = if light.range > 0.0 {
                 light.range
@@ -156,4 +165,44 @@ pub(crate) fn despawn(world: &mut World, placed: Vec<Placed>) {
     for p in placed {
         world.despawn(p.entity);
     }
+}
+
+/// Spawns the ray traced emitters of the point and rect lights in `lights`
+/// under `root`. A point light is a sphere of its radius (2 % of the scene
+/// radius when it has none) and a rect light a quad facing its target, each
+/// glowing with the radiance that emits the light's lumens: flux / (4 pi^2 r^2)
+/// for the sphere and flux / (pi area) for the one-sided quad.
+pub(crate) fn emitters(world: &mut World, root: Entity, lights: &[ModelLight], center: Vec3, radius: f32) -> Vec<Entity> {
+    let mut spawned = Vec::new();
+    for light in lights {
+        let (from, facing) = aim(light, center, radius);
+        let (mesh, rotation, radiance) = match light.kind {
+            ModelLightKind::Point => {
+                let r = if light.radius > 0.0 { light.radius } else { radius * 0.02 };
+                let Ok(mesh) = Sphere::new(r).mesh().ico(3) else { continue };
+                (mesh, facing, light.intensity / (4.0 * PI * PI * r * r))
+            }
+            ModelLightKind::Rect => {
+                let w = if light.width > 0.0 { light.width } else { 1.0 };
+                let h = if light.height > 0.0 { light.height } else { 1.0 };
+                // The quad faces +Z, and the light shines down its local -Z.
+                let rotation = facing * Quat::from_rotation_y(PI);
+                (Mesh::from(Rectangle::new(w, h)), rotation, light.intensity / (PI * w * h))
+            }
+            ModelLightKind::Sun | ModelLightKind::Spot => continue,
+        };
+        let Some(mesh) = crate::hero::solari_copy(&mesh) else { continue };
+        let color = LinearRgba::from(Color::srgb(light.color[0], light.color[1], light.color[2]));
+        let material = StandardMaterial {
+            base_color: Color::BLACK,
+            emissive: color * radiance,
+            perceptual_roughness: 1.0,
+            ..default()
+        };
+        let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+        let material = world.resource_mut::<Assets<StandardMaterial>>().add(material);
+        let transform = Transform::from_translation(from).with_rotation(rotation);
+        spawned.push(world.spawn((RaytracingMesh3d(mesh), MeshMaterial3d(material), transform, ChildOf(root))).id());
+    }
+    spawned
 }

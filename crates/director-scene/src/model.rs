@@ -29,6 +29,10 @@ pub struct ModelBody {
     /// level; more is the Export level.
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub samples: u32,
+    /// Path traced paths per pixel in each sample: the Hero level. 0
+    /// rasterizes the frame.
+    #[serde(default, skip_serializing_if = "is_rasterized")]
+    pub paths: u32,
     /// Lights Director adds to the file's own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lights: Vec<ModelLight>,
@@ -112,6 +116,10 @@ fn one() -> u32 {
 
 fn is_one(n: &u32) -> bool {
     *n == 1
+}
+
+fn is_rasterized(paths: &u32) -> bool {
+    *paths == 0
 }
 
 /// An orbit about the model's bounding sphere centre, applied on top of the

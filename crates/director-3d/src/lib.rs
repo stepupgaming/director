@@ -10,10 +10,12 @@ mod accumulate;
 mod glb;
 mod lights;
 mod gpu;
+mod hero;
 mod node;
 mod studio;
 
 pub use glb::{inspect, GlbInfo};
 pub use gpu::gpu_context;
-pub use node::{decode, register_import, texture_draws, Asset, ModelNode, Splat};
+pub use node::{decode, register_import, texture_draws, Asset, ModelNode, Splat, MAX_PATHS};
+pub use hero::traceable;
 pub use studio::available;

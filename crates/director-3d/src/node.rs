@@ -93,7 +93,10 @@ impl std::fmt::Debug for Asset {
     }
 }
 
-type FrameKey = (u64, Option<u64>, u64, u64, u32, u32, [u32; 10]);
+/// The most path traced paths per pixel a sample takes.
+pub const MAX_PATHS: u32 = 4096;
+
+type FrameKey = (u64, Option<u64>, u64, u64, u32, u32, [u32; 11]);
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -168,6 +171,8 @@ pub struct ModelNode {
     pub looped: bool,
     /// Jittered sub-pixel renders averaged into each frame, 1 to 256.
     pub samples: u32,
+    /// Path traced paths per pixel in each sample, 0 to 4096. 0 rasterizes.
+    pub paths: u32,
     /// The orbit before any animation, which an export records.
     pub base: ModelView,
     /// The orbit this frame. The HTML element writes its animated camera here.
@@ -193,6 +198,7 @@ impl ModelNode {
             background: false,
             looped: false,
             samples: 1,
+            paths: 0,
             base: ModelView::default(),
             view: ModelView::default(),
             lights: Arc::new(Vec::new()),
@@ -225,6 +231,7 @@ impl ModelNode {
             looped: self.looped,
             view: self.base,
             samples: self.samples,
+            paths: self.paths,
             lights: self.lights.to_vec(),
             splats: self
                 .splats
@@ -252,6 +259,7 @@ impl Clone for ModelNode {
             background: self.background,
             looped: self.looped,
             samples: self.samples,
+            paths: self.paths,
             base: self.base,
             view: self.view,
             lights: self.lights.clone(),
@@ -339,6 +347,7 @@ impl Element for ModelNode {
                 self.environment_intensity.to_bits(),
                 self.background as u32,
                 self.samples,
+                self.paths,
             ],
         );
         let cached = self
@@ -360,6 +369,7 @@ impl Element for ModelNode {
             width,
             height,
             samples: self.samples,
+            paths: self.paths,
             lights: self.lights.clone(),
             splats: self.splats.clone(),
         };
@@ -482,6 +492,7 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     node.background = body.background;
     node.looped = body.looped;
     node.samples = body.samples.clamp(1, 256);
+    node.paths = body.paths.min(MAX_PATHS);
     node.base = body.view;
     node.view = body.view;
     node.lights = Arc::new(body.lights.clone());

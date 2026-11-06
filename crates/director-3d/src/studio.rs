@@ -22,7 +22,9 @@ use bevy::{
         },
         RenderAssetUsages,
     },
-    camera::{primitives::Aabb, Exposure, Hdr, ImageRenderTarget, RenderTarget, SubCameraView},
+    camera::{
+        primitives::Aabb, CameraMainTextureUsages, Exposure, Hdr, ImageRenderTarget, RenderTarget, SubCameraView,
+    },
     core_pipeline::tonemapping::Tonemapping,
     gltf::Gltf,
     image::Image,
@@ -34,13 +36,15 @@ use bevy::{
     render::{
         render_asset::RenderAssets,
         render_resource::{
-            Extent3d, PollType, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
+            Extent3d, PollType, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
+            TextureViewDimension,
         },
         renderer::{RenderAdapter, RenderAdapterInfo, RenderDevice, RenderInstance, RenderQueue},
         settings::{RenderCreation, RenderResources},
         texture::GpuImage,
         RenderApp, RenderPlugin,
     },
+    solari::scene::{RaytracingMesh3d, RaytracingScenePlugin},
     transform::TransformSystems,
     window::ExitCondition,
     world_serialization::WorldAssetRoot,
@@ -48,9 +52,10 @@ use bevy::{
 use bevy_gaussian_splatting::{
     CloudSettings, GaussianCamera, GaussianSplattingPlugin, PlanarGaussian3d, PlanarGaussian3dHandle,
 };
-use director_scene::{ModelLight, ModelView};
+use director_scene::{ModelLight, ModelLightKind, ModelView};
 
 use crate::accumulate::Accumulator;
+use crate::hero::{self, HeroPass, Traceable, Traced};
 use crate::lights;
 use crate::node::{lights_hash, splats_hash, Splat};
 use crate::Asset;
@@ -71,6 +76,8 @@ pub struct Shot {
     pub height: u32,
     /// Jittered sub-pixel renders averaged into the frame.
     pub samples: u32,
+    /// Path traced paths per pixel in each sample. 0 rasterizes the frame.
+    pub paths: u32,
     /// Lights added to the file's own.
     pub lights: Arc<Vec<ModelLight>>,
     /// Gaussian splat clouds beside the file's meshes.
@@ -324,6 +331,15 @@ struct Stage {
     /// The added lights and the hash of the set they came from.
     lights: Vec<lights::Placed>,
     lit: u64,
+    /// Each mesh entity and its copy in Solari's vertex layout, built on the
+    /// stage's first Hero shot.
+    traced: Option<Vec<hero::TracedMesh>>,
+    /// The copies are in the ray traced scene.
+    tracing: bool,
+    /// The ray traced emitters of the point and rect lights, and the hash of
+    /// the light set they came from.
+    emitters: Vec<Entity>,
+    emitted: Option<u64>,
 }
 
 struct Target {
@@ -336,7 +352,7 @@ struct Target {
 
 /// (model hash, environment hash, splat set hash).
 type StageKey = (u64, Option<u64>, u64);
-type ShotKey = (StageKey, usize, u64, u64, [u32; 9]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 10]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     (
@@ -354,6 +370,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             shot.environment_intensity.to_bits(),
             shot.background as u32,
             shot.samples,
+            shot.paths,
         ],
     )
 }
@@ -366,6 +383,8 @@ struct Studio {
     accumulator: Option<Accumulator>,
     /// The stage the last shot rendered.
     shown: Option<StageKey>,
+    /// The Hero pass has dispatched once, so its pipeline exists.
+    traced_once: bool,
 }
 
 impl Studio {
@@ -403,7 +422,7 @@ impl Studio {
                     ..default()
                 }),
         );
-        app.add_plugins(GaussianSplattingPlugin);
+        app.add_plugins((GaussianSplattingPlugin, RaytracingScenePlugin, hero::HeroPlugin));
         app.init_resource::<Orbit>();
         app.add_systems(PostUpdate, orbit.after(AnimationSystems).before(TransformSystems::Propagate).before(bevy::camera::CameraUpdateSystems));
         app.finish();
@@ -416,6 +435,7 @@ impl Studio {
             targets: HashMap::new(),
             accumulator: None,
             shown: None,
+            traced_once: false,
         }
     }
 
@@ -451,6 +471,13 @@ impl Studio {
 
     /// Renders `shot` of stage `key` into the target of `size`.
     fn film(&mut self, key: StageKey, shot: &Shot, size: (u32, u32)) -> Result<(), String> {
+        let hero = shot.paths > 0;
+        let mut retraced = if hero {
+            self.check_hero(shot)?;
+            self.trace_only(key)?
+        } else {
+            false
+        };
         let target = self.targets[&size].image.clone();
         let stage = &self.stages[&key];
         let (camera, source, center, radius, probe) = (stage.camera, stage.source, stage.center, stage.radius, stage.probe.clone());
@@ -500,6 +527,16 @@ impl Studio {
             if let Some(mut light) = e.get_mut::<EnvironmentMapLight>() {
                 light.intensity = shot.environment_intensity;
             }
+            // Warm-up frames trace one path; the samples trace them all.
+            if hero {
+                e.insert(HeroPass {
+                    sample: 0,
+                    paths: 1,
+                    background: shot.background,
+                });
+            } else {
+                e.remove::<HeroPass>();
+            }
             let mut c = e.get_mut::<Camera>().expect("director camera");
             c.is_active = true;
             c.clear_color = ClearColorConfig::Custom(Color::NONE);
@@ -527,7 +564,13 @@ impl Studio {
         });
         // A lens or a sized light averages at least `SOFT_SAMPLES` renders,
         // at either level, so preview and export blur alike.
-        let soft = lights::sized(&shot.lights);
+        // A Hero shot samples the emitters of point and rect lights itself,
+        // so only a sized sun moves between its samples.
+        let soft = if hero {
+            shot.lights.iter().any(|l| l.kind == ModelLightKind::Sun && l.angle > 0.0)
+        } else {
+            lights::sized(&shot.lights)
+        };
         let samples = if shot.view.aperture > 0.0 || soft {
             shot.samples.max(SOFT_SAMPLES)
         } else {
@@ -543,6 +586,14 @@ impl Studio {
             stage.lit = lit;
         }
         lights::place(world, &stage.lights, None);
+        if hero && stage.emitted != Some(lit) {
+            for e in std::mem::take(&mut stage.emitters) {
+                world.despawn(e);
+            }
+            stage.emitters = lights::emitters(world, stage.root, &shot.lights, center, radius);
+            stage.emitted = Some(lit);
+            retraced = true;
+        }
         if let Some(p) = &mut world.resource_mut::<Orbit>().0 {
             p.sampled = samples > 1;
         }
@@ -563,11 +614,43 @@ impl Studio {
         if morphs {
             touch_morph_meshes(self.apps.main.world_mut());
         }
+        // A new ray traced scene builds its acceleration structures, and the
+        // first Hero shot its pipeline, before the samples count.
+        let traced = self.apps.main.world().resource::<Traced>().clone();
+        if hero && (retraced || !self.traced_once) {
+            let start = traced.count();
+            let mut steps = 0;
+            while steps < 3 || traced.count() == start {
+                if steps == 64 {
+                    return Err("the Hero path tracer never ran".into());
+                }
+                self.step();
+                steps += 1;
+            }
+            self.traced_once = true;
+        }
+        // Skins and morph targets pose on the CPU from this frame's joints
+        // and weights, then their acceleration structures rebuild.
+        let posed: Vec<_> = self.stages[&key].traced.iter().flatten().filter(|t| t.2.is_some()).cloned().collect();
+        if hero && !posed.is_empty() {
+            self.step();
+            hero::deform(self.apps.main.world_mut(), &posed);
+            self.step();
+        }
+        let start = traced.count();
         for sample in 0..samples {
+            if hero {
+                let world = self.apps.main.world_mut();
+                let mut pass = world.get_mut::<HeroPass>(camera).expect("hero pass");
+                pass.sample = sample;
+                pass.paths = shot.paths;
+            }
             if samples > 1 {
                 let mut orbit = self.apps.main.world_mut().resource_mut::<Orbit>();
                 let p = orbit.0.as_mut().expect("placement");
-                p.jitter = jitter(sample);
+                // Each path jitters within its pixel, so Hero samples keep
+                // the pixel grid and vary the lens and lights.
+                p.jitter = if hero { Vec2::ZERO } else { jitter(sample) };
                 p.lens = lens(sample);
                 if soft {
                     let square = Vec2::new(halton(sample + 1, 11), halton(sample + 1, 13));
@@ -590,11 +673,80 @@ impl Studio {
                     .add(&device, &queue, &texture, sample, samples);
             }
         }
+        if hero && traced.count().wrapping_sub(start) != samples {
+            return Err(format!(
+                "the Hero path tracer traced {} of {samples} samples",
+                traced.count().wrapping_sub(start)
+            ));
+        }
         if samples > 1 {
             let (device, queue, texture) = self.gpu_target(size)?;
             self.accumulator.as_ref().expect("accumulator").resolve(&device, &queue, &texture);
         }
         Ok(())
+    }
+
+    /// Refuses a Hero shot the path tracer would render unfaithfully.
+    fn check_hero(&self, shot: &Shot) -> Result<(), String> {
+        if !self.apps.main.world().resource::<Traceable>().0 {
+            return Err("Hero path tracing needs a GPU with hardware ray tracing".into());
+        }
+        if !shot.splats.is_empty() {
+            return Err("Hero path tracing draws meshes only; render <splat> clouds with samples".into());
+        }
+        if shot.lights.iter().any(|l| l.kind == ModelLightKind::Spot) {
+            return Err("Hero path tracing has no spot lights; render spot lights with samples".into());
+        }
+        Ok(())
+    }
+
+    /// Puts the mesh copies of stage `key` alone in the ray traced scene,
+    /// building them on its first Hero shot. Returns whether the scene
+    /// changed.
+    fn trace_only(&mut self, key: StageKey) -> Result<bool, String> {
+        let mut changed = false;
+        let world = self.apps.main.world_mut();
+        for (k, stage) in self.stages.iter_mut() {
+            if *k == key || !stage.tracing {
+                continue;
+            }
+            for (entity, ..) in stage.traced.iter().flatten() {
+                world.entity_mut(*entity).remove::<RaytracingMesh3d>();
+            }
+            for e in std::mem::take(&mut stage.emitters) {
+                world.despawn(e);
+            }
+            stage.emitted = None;
+            stage.tracing = false;
+            changed = true;
+        }
+        let stage = self.stages.get_mut(&key).expect("stage");
+        if stage.tracing {
+            return Ok(changed);
+        }
+        if stage.traced.is_none() {
+            let mut copies = Vec::new();
+            for entity in descendants(world, stage.root) {
+                let Some(mesh) = world.get::<Mesh3d>(entity).map(|m| m.0.clone()) else { continue };
+                if world.get::<MeshMaterial3d<StandardMaterial>>(entity).is_none() {
+                    continue;
+                }
+                let meshes = world.resource::<Assets<Mesh>>();
+                let Some(source) = meshes.get(&mesh) else { continue };
+                let Some(copy) = hero::solari_copy(source) else { continue };
+                let rest = hero::rest(source, &copy).map(Arc::new);
+                copies.push((entity, world.resource_mut::<Assets<Mesh>>().add(copy), rest));
+            }
+            if copies.is_empty() {
+                return Err("Hero path tracing needs a model with triangle meshes".into());
+            }
+            stage.traced = Some(copies);
+        }
+        for (entity, copy, _) in stage.traced.iter().flatten() {
+            world.entity_mut(*entity).insert(RaytracingMesh3d(copy.clone()));
+        }
+        stage.tracing = true;
+        Ok(true)
     }
 
     /// The render device, queue and GPU texture of the target of `size`.
@@ -816,6 +968,8 @@ impl Studio {
                     ..default()
                 },
                 Hdr,
+                // The Hero pass writes the main texture from a compute shader.
+                CameraMainTextureUsages::default().with(TextureUsages::STORAGE_BINDING),
                 Msaa::Off,
                 Smaa::default(),
                 bevy::pbr::ScreenSpaceTransmission::default(),
@@ -847,6 +1001,10 @@ impl Studio {
                 morphs,
                 lights: Vec::new(),
                 lit: lights_hash(&[]),
+                traced: None,
+                tracing: false,
+                emitters: Vec::new(),
+                emitted: None,
             },
         );
         Ok(key)

@@ -1,0 +1,247 @@
+//! `<model paths>`: the Hero level, path traced by `director-3d` over the
+//! test GLB, and its scene document round trip. Each test skips on a machine
+//! without a Vulkan adapter that traces rays.
+
+use director_core::scene_export::export_scene;
+use director_html::{compile, CompileOptions, CompiledHtml};
+use director_render::render_frame;
+use director_scene::{NodeBody, SceneDocument};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+const W: i32 = 160;
+const H: i32 = 90;
+
+fn fixture(name: &str) -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../director-3d/tests/fixtures")
+        .join(name)
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn gpu() -> bool {
+    let ok = director_3d::available() && director_3d::traceable();
+    if !ok {
+        eprintln!("skipped: no ray tracing Vulkan adapter for director-3d");
+    }
+    ok
+}
+
+fn options() -> CompileOptions {
+    CompileOptions {
+        width: W,
+        height: H,
+        duration: 2.0,
+        ..Default::default()
+    }
+}
+
+/// The test GLB over a red page, the model taking `attrs` and `children`.
+fn page(attrs: &str, children: &str) -> String {
+    format!(
+        "<style>body{{margin:0}}#main{{background:rgb(255,0,0)}}model{{display:block;width:{W}px;height:{H}px}}</style>\
+         <div id='main' data-composition-id='main' data-width='{W}' data-height='{H}' data-duration='2'>\
+         <model id='m' src='{}' {attrs}>{children}</model></div>",
+        fixture("model.glb")
+    )
+}
+
+fn build(source: &str) -> CompiledHtml {
+    compile(source, options()).unwrap_or_else(|e| panic!("{source}: {e}"))
+}
+
+fn frame(c: &mut CompiledHtml, time: f64) -> Vec<u8> {
+    let mut surface = skia_safe::surfaces::raster_n32_premul((W, H)).unwrap();
+    render_frame(&mut c.director, time, &mut surface).unwrap();
+    let info = skia_safe::ImageInfo::new((W, H), skia_safe::ColorType::RGBA8888, skia_safe::AlphaType::Unpremul, None);
+    let mut pixels = vec![0; (W * H * 4) as usize];
+    assert!(surface.read_pixels(&info, &mut pixels, W as usize * 4, (0, 0)));
+    pixels
+}
+
+fn shot(source: &str) -> Vec<u8> {
+    frame(&mut build(source), 0.0)
+}
+
+/// Pixels whose channels differ by more than 2.
+fn changed(a: &[u8], b: &[u8]) -> usize {
+    a.chunks(4).zip(b.chunks(4)).filter(|(p, q)| (0..3).any(|k| p[k].abs_diff(q[k]) > 2)).count()
+}
+
+/// Mean absolute channel difference.
+fn error(a: &[u8], b: &[u8]) -> f64 {
+    let sum: u64 = a.chunks(4).zip(b.chunks(4)).map(|(p, q)| (0..3).map(|k| p[k].abs_diff(q[k]) as u64).sum::<u64>()).sum();
+    sum as f64 / (W * H * 3) as f64
+}
+
+fn page_red(p: &[u8]) -> bool {
+    p[0] >= 250 && p[1] < 16 && p[2] < 16
+}
+
+/// Mean luminance of the pixels that are not the page.
+fn scene_luma(p: &[u8]) -> f64 {
+    let lit: Vec<f64> = p
+        .chunks(4)
+        .filter(|p| !page_red(p))
+        .map(|p| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64)
+        .collect();
+    lit.iter().sum::<f64>() / lit.len().max(1) as f64
+}
+
+#[test]
+fn a_path_traced_model_covers_what_the_raster_covers() {
+    if !gpu() {
+        return;
+    }
+    let raster = shot(&page("", ""));
+    let hero = shot(&page("paths='64'", ""));
+    assert!(page_red(&hero[..4]), "the sky stays transparent: {:?}", &hero[..4]);
+    let sky = |p: &[u8]| p.chunks(4).filter(|p| page_red(p)).count() as i64;
+    let (a, b) = (sky(&raster), sky(&hero));
+    assert!((a - b).abs() < (W * H) as i64 / 25, "raster shows {a} page pixels, Hero {b}");
+    assert!(changed(&raster, &hero) > 200, "path tracing changes the shading");
+    let (a, b) = (scene_luma(&raster), scene_luma(&hero));
+    assert!(b > a * 0.5 && b < a * 2.0, "raster scene luma {a:.1}, Hero {b:.1}");
+}
+
+#[test]
+fn a_hero_frame_depends_only_on_its_inputs() {
+    if !gpu() {
+        return;
+    }
+    let source = page("paths='8' samples='4'", "");
+    let first = shot(&source);
+    shot(&page("paths='8' style='--camera-yaw:40deg'", ""));
+    shot(&page("", ""));
+    assert_eq!(changed(&first, &shot(&source)), 0);
+}
+
+#[test]
+fn more_paths_converge_on_the_reference() {
+    if !gpu() {
+        return;
+    }
+    let reference = shot(&page("paths='1024'", ""));
+    let few = error(&shot(&page("paths='4'", "")), &reference);
+    let many = error(&shot(&page("paths='64'", "")), &reference);
+    assert!(many < few * 0.6, "64 paths miss by {many:.2}, 4 paths by {few:.2}");
+    let split = error(&shot(&page("paths='256' samples='4'", "")), &reference);
+    assert!(split < few * 0.6, "4 samples of 256 paths miss by {split:.2}");
+}
+
+#[test]
+fn the_background_fills_the_sky_with_the_environment() {
+    if !gpu() {
+        return;
+    }
+    let hero = shot(&page("paths='16' background", ""));
+    assert_eq!(hero.chunks(4).filter(|p| page_red(p)).count(), 0);
+    let raster = shot(&page("background", ""));
+    let (a, b) = (scene_luma(&raster), scene_luma(&hero));
+    assert!(b > a * 0.5 && b < a * 2.0, "raster frame luma {a:.1}, Hero {b:.1}");
+}
+
+#[test]
+fn a_lens_and_a_sized_sun_blur_the_path_traced_frame() {
+    if !gpu() {
+        return;
+    }
+    let sharp = shot(&page("paths='16'", ""));
+    let lens = shot(&page("paths='16' style='--camera-aperture:1.4;--camera-focus:0.5'", ""));
+    assert!(changed(&sharp, &lens) > 300, "a wide aperture defocuses the scene");
+    let sun = "<light type='sun' intensity='20000' angle='8' position='2 4 3'></light>";
+    let soft = shot(&page("paths='16'", sun));
+    assert!(changed(&sharp, &soft) > 200, "an added sun lights the scene");
+}
+
+/// How much `light` brightens the scene at a level, as a ratio of luma.
+fn gain(attrs: &str, light: &str) -> f64 {
+    scene_luma(&shot(&page(attrs, light))) / scene_luma(&shot(&page(attrs, "")))
+}
+
+#[test]
+fn point_and_rect_lights_glow_as_emitters_of_their_power() {
+    if !gpu() {
+        return;
+    }
+    let lights = [
+        "<light type='point' intensity='2000000' radius='0.2' position='1.5 2 2'></light>",
+        "<light type='rect' intensity='2000000' width='1.5' height='1' position='0 2.5 2.5'></light>",
+    ];
+    for light in lights {
+        let raster = gain("samples='16'", light);
+        let hero = gain("paths='64'", light);
+        assert!(hero > 1.1, "{light} brightens the Hero frame: {hero:.2}");
+        let ratio = (hero - 1.0) / (raster - 1.0);
+        assert!(ratio > 0.6 && ratio < 1.6, "{light}: raster gain {raster:.2}, Hero gain {hero:.2}");
+    }
+}
+
+/// Pixels where one frame shows the page and the other the scene.
+fn coverage_differs(a: &[u8], b: &[u8]) -> usize {
+    a.chunks(4).zip(b.chunks(4)).filter(|(p, q)| page_red(p) != page_red(q)).count()
+}
+
+#[test]
+fn skins_and_morph_targets_pose_the_path_traced_scene() {
+    if !gpu() {
+        return;
+    }
+    let rig = |attrs: &str| page(attrs, "").replace(&fixture("model.glb"), &fixture("rig.glb"));
+    let mut raster = build(&rig(""));
+    let (raster_start, raster_end) = (frame(&mut raster, 0.0), frame(&mut raster, 1.9));
+    let mut hero = build(&rig("paths='16'"));
+    let (start, end) = (frame(&mut hero, 0.0), frame(&mut hero, 1.9));
+    // The levels antialias edges differently, so they disagree on some edge
+    // pixels in any pose.
+    let edges = coverage_differs(&start, &raster_start);
+    let rest = coverage_differs(&start, &raster_end);
+    let posed = coverage_differs(&end, &raster_end);
+    assert!(rest > edges + 300, "the bend and the squash change the silhouette: {rest} pixels, {edges} at the edges");
+    assert!(posed < edges + rest / 8, "the Hero frame takes the pose of its time: {posed} pixels miss, {edges} at the edges");
+}
+
+#[test]
+fn the_scene_document_keeps_the_paths() {
+    if !gpu() {
+        return;
+    }
+    let mut compiled = build(&page("paths='16' samples='2'", ""));
+    let document = export_scene(&compiled.director).unwrap();
+    let parsed = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
+    assert_eq!(parsed, document);
+    let model = parsed
+        .nodes
+        .iter()
+        .find_map(|node| match &node.body {
+            NodeBody::Html(html) => html.content.as_ref().and_then(|c| match &c.body {
+                NodeBody::Model(model) => Some(model.clone()),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("a model body");
+    assert_eq!((model.paths, model.samples), (16, 2));
+    let mut registry = director_core::scene_import::ImportRegistry::core();
+    director_html::register_import(&mut registry);
+    let renderer = director_render::Renderer::new(Arc::new(parsed), Arc::new(director_core::DefaultAssetLoader))
+        .with_registry(registry);
+    let imported = renderer.render_frame(0.0).unwrap();
+    assert_eq!(changed(&imported.rgba, &frame(&mut compiled, 0.0)), 0);
+}
+
+#[test]
+fn unsupported_hero_inputs_fail_to_compile() {
+    let error = |source: &str| compile(source, options()).err().expect("a compile error").to_string();
+    let e = error(&page("paths='5000'", ""));
+    assert!(e.contains("paths must be a whole number from 0 to 4096"), "{e}");
+    let e = error(&page("paths='1.5'", ""));
+    assert!(e.contains("paths must be a whole number"), "{e}");
+    let e = error(&page("paths='8'", "<light type='spot' intensity='800'></light>"));
+    assert!(e.contains("render spot lights with samples"), "{e}");
+    let e = error(&page("paths='8'", &format!("<splat src='{}'></splat>", fixture("splats.ply"))));
+    assert!(e.contains("render <splat> clouds with samples"), "{e}");
+}
