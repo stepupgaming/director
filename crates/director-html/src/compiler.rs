@@ -1733,6 +1733,10 @@ impl Builder {
                 if plate_light && attr("track").is_none() {
                     return Err(input("track-light needs a track to light the model from".into()));
                 }
+                let plate_sun = attr("track-sun").is_some_and(|v| v != "false");
+                if plate_sun && attr("track").is_none() {
+                    return Err(input("track-sun needs a track to read the sun from".into()));
+                }
                 if plate_light && attr("environment").is_some() {
                     return Err(input("track-light and environment both light the model; give one".into()));
                 }
@@ -1767,10 +1771,15 @@ impl Builder {
                 if let Some(plate) = attr("track") {
                     let lens = (attr("track-fov").is_some(), attr("track-distortion"), attr("track-zoom").is_some_and(|v| v != "false"));
                     let plate = (plate, attr("track-mask"), attr("track-pitch"));
-                    let (track, probe) = solve_track(&self.assets, plate, &numeric, lens, plate_light, &context)?;
+                    let (track, probe, sun) = solve_track(&self.assets, plate, &numeric, lens, (plate_light, plate_sun), &context)?;
                     model.track = Some(std::sync::Arc::new(track));
                     if let Some(hdr) = probe {
                         model.environment = Some(director_3d::Asset::environment(hdr, None).map_err(input)?);
+                    }
+                    if let Some(sun) = sun {
+                        let mut lights = (*model.lights).clone();
+                        lights.push(sun_light(&sun, unity));
+                        model.lights = std::sync::Arc::new(lights);
                     }
                 }
                 if !values.contains_key("width") {
@@ -2792,15 +2801,16 @@ pub fn compile_file(
 /// turns needs. `track-zoom` gives such a camera a lens that zooms, solved
 /// frame by frame from `track-fov` as frame 0's. With `light` it also
 /// stitches the plate through the solved cameras into a light probe and
-/// returns it as a Radiance `.hdr` file.
+/// returns it as a Radiance `.hdr` file, and with `sun` it reads the sun
+/// from the shadows on the plate's ground, lit by that probe's sky.
 fn solve_track(
     assets: &AssetStore,
     (plate, mask, tilt): (&str, Option<&str>, Option<&str>),
     numeric: &dyn Fn(&str, f64) -> Result<f64, CompileError>,
     (fixed_lens, distortion, zoom): (bool, Option<&str>, bool),
-    light: bool,
+    (light, sun): (bool, bool),
     context: &str,
-) -> Result<(director_scene::ModelTrack, Option<Vec<u8>>), CompileError> {
+) -> Result<SolvedTrack, CompileError> {
     let distortion = match distortion {
         None => None,
         Some(v) => match v.split_whitespace().map(str::parse::<f64>).collect::<Result<Vec<_>, _>>().as_deref() {
@@ -2835,10 +2845,15 @@ fn solve_track(
     }
     let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, distortion, camera_height: height, pitch, zoom };
     let solved = director_track::solve(&footage, &options).map_err(input)?;
-    let probe = match light {
-        true => Some(director_track::light_probe(&path, &solved, PROBE_WIDTH).map_err(input)?.hdr()),
+    let probe = match light || sun {
+        true => Some(director_track::light_probe(&path, &solved, PROBE_WIDTH).map_err(input)?),
         false => None,
     };
+    let sun = match (sun, &probe) {
+        (true, Some(probe)) => Some(director_track::estimate_sun(&path, &solved, probe).map_err(input)?),
+        _ => None,
+    };
+    let probe = probe.filter(|_| light).map(|p| p.hdr());
     let track = director_scene::ModelTrack {
         fps: solved.fps,
         fov: solved.yfov.to_degrees() as f32,
@@ -2849,11 +2864,37 @@ fn solve_track(
             .map(|f| director_scene::ModelTrackFrame { position: f.position, rotation: f.rotation, fov: f.yfov.map(|v| v.to_degrees() as f32) })
             .collect(),
     };
-    Ok((track, probe))
+    Ok((track, probe, sun))
 }
+
+/// A plate's solved cameras, its light probe as a Radiance file and its sun.
+type SolvedTrack = (director_scene::ModelTrack, Option<Vec<u8>>, Option<director_track::Sun>);
 
 /// The width in texels of the light probe `track-light` stitches.
 const PROBE_WIDTH: usize = 512;
+
+/// The sun `track-sun` read from the plate as a shadow-casting sun light.
+/// The plate's linear light renders back at its own value with `unity` lux
+/// per unit of irradiance, so a white card facing the light reads on the
+/// model as it would on the plate.
+fn sun_light(sun: &director_track::Sun, unity: f64) -> director_scene::ModelLight {
+    let peak = sun.irradiance.iter().copied().fold(1e-9, f64::max);
+    let encode = |v: f64| if v <= 0.0031308 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+    director_scene::ModelLight {
+        kind: director_scene::ModelLightKind::Sun,
+        color: sun.irradiance.map(|c| encode(c / peak) as f32),
+        intensity: (peak * unity) as f32,
+        position: Some(sun.direction.map(|v| v as f32)),
+        target: Some([0.0; 3]),
+        radius: 0.0,
+        angle: 0.0,
+        cone: 0.0,
+        width: 0.0,
+        height: 0.0,
+        range: 0.0,
+        shadows: true,
+    }
+}
 
 /// The `<splat>` children of a `<model>`: Gaussian splat `.ply` files read
 /// through the compile asset store and placed in the scene's metres.

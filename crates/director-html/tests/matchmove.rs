@@ -46,7 +46,8 @@ const K2: f64 = 0.03;
 /// of `tests/eevee.rs`, its ground a catcher and its camera solved from the
 /// plate with `track` attributes. An empty `track` leaves the plate alone,
 /// and a `track` with `track-light` lights the model from the plate in
-/// place of the sky.
+/// place of the sky. A `track` with `track-sun` takes `solve.glb` without
+/// its sun, so the sun read from the plate lights the box alone.
 fn page(plate: &str, track: &str) -> String {
     page_at(&fixture(&format!("{plate}.mp4")), track)
 }
@@ -62,7 +63,7 @@ fn page_at(plate: &str, track: &str) -> String {
     } else {
         format!(
             "<model src='{}' {sky}exposure='{}' shadow-catcher='Ground' track='{plate}' {track}></model>",
-            fixture("solve.glb"),
+            if track.contains("track-sun") { sunless() } else { fixture("solve.glb") },
             (683.0f64 / 1.2).log2(),
         )
     };
@@ -71,6 +72,41 @@ fn page_at(plate: &str, track: &str) -> String {
          <div id='main' data-composition-id='main' data-width='{W}' data-height='{H}' data-duration='2'>\
          <video muted src='{plate}'></video>{layer}</div>"
     )
+}
+
+/// `solve.glb` with its glTF lights stripped, written once to the temp
+/// folder.
+fn sunless() -> String {
+    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let glb = std::fs::read(fixture("solve.glb")).unwrap();
+        let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let mut json: serde_json::Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
+        let strip = |v: &mut serde_json::Value| {
+            if let Some(extensions) = v.get_mut("extensions").and_then(|e| e.as_object_mut()) {
+                extensions.remove("KHR_lights_punctual");
+            }
+        };
+        strip(&mut json);
+        json["nodes"].as_array_mut().unwrap().iter_mut().for_each(strip);
+        if let Some(used) = json.get_mut("extensionsUsed").and_then(|u| u.as_array_mut()) {
+            used.retain(|e| e != "KHR_lights_punctual");
+        }
+        let mut text = serde_json::to_vec(&json).unwrap();
+        text.resize(text.len().div_ceil(4) * 4, b' ');
+        let bin = &glb[20 + json_len..];
+        let mut out = Vec::with_capacity(20 + text.len() + bin.len());
+        out.extend_from_slice(&glb[..8]);
+        out.extend_from_slice(&((20 + text.len() + bin.len()) as u32).to_le_bytes());
+        out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"JSON");
+        out.extend_from_slice(&text);
+        out.extend_from_slice(bin);
+        let path = std::env::temp_dir().join(format!("director-sunless-{}.glb", std::process::id()));
+        std::fs::write(&path, out).unwrap();
+        path.to_string_lossy().replace('\\', "/")
+    })
+    .clone()
 }
 
 fn build(source: &str) -> CompiledHtml {
@@ -128,8 +164,14 @@ fn iou(a: &[bool], b: &[bool]) -> f64 {
 
 /// Compares the composite through the camera solved from `plate` with
 /// Eevee's render at Blender frames 10 and 50, the box overlapping Eevee's
-/// at an IoU above `fit`.
+/// at an IoU above `fit` and its shadow above 0.8.
 fn matches_eevee(name: &str, track: &str, fit: f64) {
+    matches_eevee_shadow(name, track, fit, 0.8);
+}
+
+/// `matches_eevee` with the shadow overlapping Eevee's at an IoU above
+/// `shadow_fit`.
+fn matches_eevee_shadow(name: &str, track: &str, fit: f64, shadow_fit: f64) {
     let mut plate = build(&page(name, ""));
     let mut composite = build(&page(name, track));
     for frame in [10, 50] {
@@ -159,7 +201,7 @@ fn matches_eevee(name: &str, track: &str, fit: f64) {
         assert!(count(&box_ref) > 500, "Eevee shows the box");
         // The box spans about 45 px, so each pixel of offset costs about 0.04.
         assert!(iou(&box_ref, &box_dir) > fit, "the solved camera puts the box where Eevee does");
-        assert!(iou(&shadow_ref, &shadow_dir) > 0.8, "the shadow falls where Eevee's does");
+        assert!(iou(&shadow_ref, &shadow_dir) > shadow_fit, "the shadow falls where Eevee's does");
         assert!(error(&composite) < error(&plate) * 0.3, "the composite comes closer to Eevee's shot than the plate");
         assert!(drift < 1.2, "the plate shows unchanged away from the box and its shadow: {drift:.2}");
     }
@@ -273,6 +315,33 @@ fn a_model_bends_with_the_lens_of_its_plate() {
     }
 }
 
+#[test]
+fn the_plate_casts_the_sun_it_shows() {
+    if gpu() {
+        // The sun read from the plate points about 2.5 degrees off, which
+        // costs the box's shadow about 0.05 of its overlap.
+        matches_eevee_shadow("solve", "track-fov='42' track-height='1.6' track-light track-sun", 0.9, 0.75);
+    }
+}
+
+#[test]
+fn the_document_keeps_the_sun_read_from_the_plate() {
+    let compiled = build(&page("solve", "track-fov='42' track-height='1.6' track-sun"));
+    let lights = model(&compiled).lights;
+    let suns: Vec<_> = lights.iter().filter(|l| l.kind == director_scene::ModelLightKind::Sun).collect();
+    assert_eq!(suns.len(), 1, "the stripped model brings no sun of its own: {lights:?}");
+    let (from, to) = (suns[0].position.unwrap(), suns[0].target.unwrap());
+    let d: Vec<f64> = (0..3).map(|k| (from[k] - to[k]) as f64).collect();
+    let truth = [-0.52726882, 0.64278761, -0.55570827];
+    let cos = d.iter().zip(truth).map(|(a, b)| a * b).sum::<f64>() / d.iter().map(|v| v * v).sum::<f64>().sqrt();
+    let error = cos.clamp(-1.0, 1.0).acos().to_degrees();
+    // Blender's 3 W/m2 sun at 683 lm/W.
+    let lux = suns[0].intensity;
+    assert!(error < 4.0, "the sun points {error:.2} degrees off");
+    assert!((lux / 2049.0 - 1.0).abs() < 0.25, "the sun reads {lux:.0} lux against 2049");
+    assert!(suns[0].shadows, "the sun casts shadows");
+}
+
 /// The model body of a compiled page.
 fn model(compiled: &CompiledHtml) -> director_scene::ModelBody {
     let document = export_scene(&compiled.director).unwrap();
@@ -377,6 +446,19 @@ fn a_lens_out_of_range_fails_to_compile() {
     .expect("a compile error")
     .to_string();
     assert!(error.contains("track-light needs a track to light the model from"), "{error}");
+    let error = compile(
+        &page("solve", "").replace("</div>", &format!("<model src='{}' track-sun></model></div>", fixture("solve.glb"))),
+        CompileOptions { width: W, height: H, duration: 2.0, ..Default::default() },
+    )
+    .err()
+    .expect("a compile error")
+    .to_string();
+    assert!(error.contains("track-sun needs a track to read the sun from"), "{error}");
+    let error = compile(&page("pan", "track-pitch='8.12' track-sun"), CompileOptions { width: W, height: H, duration: 2.0, ..Default::default() })
+        .err()
+        .expect("a compile error")
+        .to_string();
+    assert!(error.contains("a tripod shot has none"), "{error}");
     let error = fails("track-mask='no-such-matte.mp4'");
     assert!(error.contains("no-such-matte.mp4"), "{error}");
 }

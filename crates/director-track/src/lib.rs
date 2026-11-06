@@ -13,7 +13,8 @@
 //! y = 0, the origin where frame 0's optical axis meets it, frame 0's view
 //! along -Z, and the scale from frame 0's camera height. `light_probe`
 //! stitches the footage's frames through the solved cameras into an
-//! equirectangular light probe.
+//! equirectangular light probe, and `estimate_sun` reads the sun from the
+//! shadows the solved points cast on the ground.
 
 mod bundle;
 mod features;
@@ -24,6 +25,7 @@ mod klt;
 mod probe;
 mod rotation;
 mod solve;
+mod sun;
 mod tracks;
 
 pub use footage::{read_footage, Footage};
@@ -31,4 +33,5 @@ pub use image::Gray;
 pub use klt::track_point;
 pub use probe::{direction, light_probe, linear, Probe};
 pub use solve::{solve, CameraSolve, Pose, SolveOptions};
+pub use sun::{estimate_sun, Sun};
 pub use tracks::{track, Track};

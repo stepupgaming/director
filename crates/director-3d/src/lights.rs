@@ -85,9 +85,13 @@ pub(crate) fn spawn(world: &mut World, root: Entity, lights: &[ModelLight], cent
                             shadow_maps_enabled: light.shadows,
                             ..default()
                         },
+                        // The first cascade covers what lies within 4 bounding radii of the
+                        // camera, at most Bevy's default 5 m, so a wide ground under a small
+                        // subject keeps its contact shadows sharp; the last reaches past the
+                        // scene and at least the default 1000 m a glTF sun's shadows reach.
                         CascadeShadowConfigBuilder {
-                            first_cascade_far_bound: radius * 4.0,
-                            maximum_distance: radius * 16.0,
+                            first_cascade_far_bound: (radius * 4.0).min(5.0),
+                            maximum_distance: (radius * 16.0).max(1000.0),
                             ..default()
                         }
                         .build(),

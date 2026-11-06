@@ -3,6 +3,7 @@
 mod klt;
 mod probe;
 mod solve;
+mod sun;
 
 #[test]
 fn every_test_file_is_a_module() {

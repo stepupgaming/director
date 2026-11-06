@@ -62,9 +62,75 @@ pub fn light_probe(path: &Path, solve: &CameraSolve, width: usize) -> Result<Pro
         return Err(format!("a light probe needs an even width of at least 8 texels, got {width}"));
     }
     let height = width / 2;
+    let directions: Vec<Vector3<f64>> = (0..width * height).map(|i| direction(width, height, i % width, i / width)).collect();
+    let mut sum = vec![[0.0f64; 4]; width * height];
+    stream(path, solve, |view, image| {
+        sum.par_iter_mut().zip(directions.par_iter()).for_each(|(s, d)| {
+            let Some((px, py, weight)) = view.at(&(view.rotation * d), 0.0) else {
+                return;
+            };
+            let color = bilinear(image, view.width, view.height, px, py);
+            for ch in 0..3 {
+                s[ch] += weight * color[ch] as f64;
+            }
+            s[3] += weight;
+        });
+    })?;
+    let coverage: Vec<f32> = sum.iter().map(|s| s[3] as f32).collect();
+    if coverage.iter().all(|&c| c <= 0.0) {
+        return Err("the footage covers no direction of the light probe".into());
+    }
+    let texels = fill(&sum, width, height);
+    Ok(Probe { width, height, texels, coverage })
+}
+
+/// One sampled frame's camera at the width the footage decodes at.
+pub(crate) struct View {
+    /// World to camera.
+    pub rotation: UnitQuaternion<f64>,
+    pub position: Vector3<f64>,
+    pub width: usize,
+    pub height: usize,
+    /// The focal length in pixels.
+    pub f: f64,
+    cx: f64,
+    cy: f64,
+    k: [f64; 2],
+    feather: f64,
+}
+
+impl View {
+    /// Where the camera-space point `c` lands in the frame, at least
+    /// `margin` pixels in from its edge, with its weight fading to 0 at
+    /// the edge.
+    pub fn at(&self, c: &Vector3<f64>, margin: f64) -> Option<(f64, f64, f64)> {
+        if c.z >= -1e-6 {
+            return None;
+        }
+        let (a, b) = (c.x / -c.z, -c.y / -c.z);
+        let r2 = a * a + b * b;
+        if r2 > 9.0 {
+            return None;
+        }
+        let scale = self.f * (1.0 + self.k[0] * r2 + self.k[1] * r2 * r2);
+        let (px, py) = (self.cx + scale * a, self.cy + scale * b);
+        let (right, bottom) = ((self.width - 1) as f64, (self.height - 1) as f64);
+        let edge = px.min(py).min(right - px).min(bottom - py);
+        if edge < margin {
+            return None;
+        }
+        let weight = (edge / self.feather).min(1.0).powi(2);
+        (weight > 0.0).then_some((px, py, weight))
+    }
+}
+
+/// Decodes the footage at `path` at most `DECODE_WIDTH` wide and hands
+/// every n-th frame, at most `MAX_FRAMES` of them, to `each` with its
+/// solved camera as RGB8.
+pub(crate) fn stream(path: &Path, solve: &CameraSolve, mut each: impl FnMut(&View, &[u8])) -> Result<usize, String> {
     let n = solve.frames.len();
     if n == 0 {
-        return Err("a light probe needs a solved camera".into());
+        return Err("the footage has no solved camera".into());
     }
     let (w, h) = if solve.width > DECODE_WIDTH {
         (DECODE_WIDTH, ((solve.height as f64 * DECODE_WIDTH as f64 / solve.width as f64).round() as u32).max(1))
@@ -72,8 +138,6 @@ pub fn light_probe(path: &Path, solve: &CameraSolve, width: usize) -> Result<Pro
         (solve.width, solve.height)
     };
     let stride = n.div_ceil(MAX_FRAMES);
-    let directions: Vec<Vector3<f64>> = (0..width * height).map(|i| direction(width, height, i % width, i / width)).collect();
-    let mut sum = vec![[0.0f64; 4]; width * height];
     let mut child = Command::new("ffmpeg")
         .args(["-v", "error", "-i"])
         .arg(path)
@@ -85,45 +149,25 @@ pub fn light_probe(path: &Path, solve: &CameraSolve, width: usize) -> Result<Pro
     let mut stdout = child.stdout.take().ok_or("ffmpeg gave no output")?;
     let (fw, fh) = (w as usize, h as usize);
     let mut frame = vec![0u8; fw * fh * 3];
-    let mut k = 0;
-    let mut stitched = 0;
+    let (mut k, mut stitched) = (0, 0);
     while k < n && stdout.read_exact(&mut frame).is_ok() {
         if k.is_multiple_of(stride) {
             let pose = &solve.frames[k];
             let r = pose.rotation.map(|v| v as f64);
-            let q = UnitQuaternion::from_quaternion(Quaternion::new(r[3], r[0], r[1], r[2])).inverse();
+            let p = pose.position.map(|v| v as f64);
             let yfov = pose.yfov.unwrap_or(solve.yfov);
-            let f = (fh as f64 / 2.0) / (yfov / 2.0).tan();
-            let (cx, cy) = ((fw as f64 - 1.0) / 2.0, (fh as f64 - 1.0) / 2.0);
-            let [k1, k2] = solve.distortion;
-            let feather = FEATHER * fh as f64;
-            let image = &frame;
-            sum.par_iter_mut().zip(directions.par_iter()).for_each(|(s, d)| {
-                let c = q * d;
-                if c.z >= -1e-6 {
-                    return;
-                }
-                let (a, b) = (c.x / -c.z, -c.y / -c.z);
-                let r2 = a * a + b * b;
-                if r2 > 9.0 {
-                    return;
-                }
-                let scale = f * (1.0 + k1 * r2 + k2 * r2 * r2);
-                let (px, py) = (cx + scale * a, cy + scale * b);
-                if !(0.0..=(fw - 1) as f64).contains(&px) || !(0.0..=(fh - 1) as f64).contains(&py) {
-                    return;
-                }
-                let edge = px.min(py).min((fw - 1) as f64 - px).min((fh - 1) as f64 - py);
-                let weight = (edge / feather).min(1.0).powi(2);
-                if weight <= 0.0 {
-                    return;
-                }
-                let color = bilinear(image, fw, fh, px, py);
-                for ch in 0..3 {
-                    s[ch] += weight * color[ch] as f64;
-                }
-                s[3] += weight;
-            });
+            let view = View {
+                rotation: UnitQuaternion::from_quaternion(Quaternion::new(r[3], r[0], r[1], r[2])).inverse(),
+                position: Vector3::new(p[0], p[1], p[2]),
+                width: fw,
+                height: fh,
+                f: (fh as f64 / 2.0) / (yfov / 2.0).tan(),
+                cx: (fw as f64 - 1.0) / 2.0,
+                cy: (fh as f64 - 1.0) / 2.0,
+                k: solve.distortion,
+                feather: FEATHER * fh as f64,
+            };
+            each(&view, &frame);
             stitched += 1;
         }
         k += 1;
@@ -137,16 +181,11 @@ pub fn light_probe(path: &Path, solve: &CameraSolve, width: usize) -> Result<Pro
             format!("ffmpeg could not decode {}", path.display())
         });
     }
-    let coverage: Vec<f32> = sum.iter().map(|s| s[3] as f32).collect();
-    if coverage.iter().all(|&c| c <= 0.0) {
-        return Err("the footage covers no direction of the light probe".into());
-    }
-    let texels = fill(&sum, width, height);
-    Ok(Probe { width, height, texels, coverage })
+    Ok(stitched)
 }
 
 /// The linear colour at a sub-pixel position of an RGB8 frame.
-fn bilinear(image: &[u8], w: usize, h: usize, x: f64, y: f64) -> [f32; 3] {
+pub(crate) fn bilinear(image: &[u8], w: usize, h: usize, x: f64, y: f64) -> [f32; 3] {
     let (x0, y0) = (x.floor() as usize, y.floor() as usize);
     let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
     let (ax, ay) = ((x - x0 as f64) as f32, (y - y0 as f64) as f32);
@@ -213,6 +252,29 @@ fn blend(s: &[f64; 4], under: [f64; 3]) -> [f64; 3] {
 }
 
 impl Probe {
+    /// The linear irradiance the probe delivers to a surface facing
+    /// `normal`, the cosine-weighted integral of its radiance over the
+    /// hemisphere about it.
+    pub fn irradiance(&self, normal: Vector3<f64>) -> [f64; 3] {
+        let n = normal.normalize();
+        let (w, h) = (self.width, self.height);
+        let mut e = [0.0; 3];
+        for y in 0..h {
+            let theta = (y as f64 + 0.5) / h as f64 * std::f64::consts::PI;
+            let solid = (std::f64::consts::TAU / w as f64) * (std::f64::consts::PI / h as f64) * theta.sin();
+            for x in 0..w {
+                let cos = direction(w, h, x, y).dot(&n);
+                if cos > 0.0 {
+                    let t = self.texels[y * w + x];
+                    for c in 0..3 {
+                        e[c] += t[c] as f64 * cos * solid;
+                    }
+                }
+            }
+        }
+        e
+    }
+
     /// The probe as a Radiance `.hdr` file with run-length scanlines.
     pub fn hdr(&self) -> Vec<u8> {
         let mut out = format!("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {} +X {}\n", self.height, self.width).into_bytes();
