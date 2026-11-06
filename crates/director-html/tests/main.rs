@@ -48,6 +48,7 @@ mod reflection;
 mod rewind;
 mod rich_text;
 mod scene_document;
+mod screen_reflections;
 mod shader;
 mod shrink_wrap;
 mod sky;

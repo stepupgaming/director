@@ -70,6 +70,12 @@ pub struct ModelBody {
     /// the Hero level traces occlusion itself.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub occlusion: f32,
+    /// Screen-space reflections: the perceptual roughness up to which
+    /// surfaces reflect what the frame shows, from 0 to 1. 0 adds none. The
+    /// rasterized levels render them; the Hero level traces reflections
+    /// itself.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub screen_reflections: f32,
 }
 
 /// Lens effects over a model's frame, applied in linear light before the

@@ -1808,6 +1808,19 @@ impl Builder {
                 if model.occlusion > 0.0 && model.paths > 0 {
                     return Err(input("paths trace occlusion themselves, so they cannot take ambient-occlusion".into()));
                 }
+                // A bare `screen-reflections` reflects every surface up to a
+                // perceptual roughness of 0.6.
+                model.screen_reflections = match attr("screen-reflections").map(str::trim) {
+                    None | Some("false") => 0.0,
+                    Some("" | "true") => 0.6,
+                    Some(v) => match v.parse::<f32>() {
+                        Ok(r) if r > 0.0 && r <= 1.0 => r,
+                        _ => return Err(input(format!("screen-reflections '{v}' must be a roughness above 0 and up to 1"))),
+                    },
+                };
+                if model.screen_reflections > 0.0 && model.paths > 0 {
+                    return Err(input("paths trace reflections themselves, so they cannot take screen-reflections".into()));
+                }
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {

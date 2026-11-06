@@ -30,8 +30,14 @@ use bevy::{
     image::Image,
     light::{EnvironmentMapLight, FogVolume, GeneratedEnvironmentMapLight, Skybox, VolumetricFog, VolumetricLight},
     log::LogPlugin,
+    material::OpaqueRendererMethod,
     mesh::morph::MeshMorphWeights,
-    pbr::{DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel},
+    core_pipeline::prepass::{DeferredPrepass, DepthPrepass, NormalPrepass},
+    diagnostic::FrameCount,
+    pbr::{
+        DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel,
+        ScreenSpaceReflections,
+    },
     post_process::{
         bloom::Bloom,
         effect_stack::{ChromaticAberration, LensDistortion, Vignette},
@@ -110,6 +116,9 @@ pub struct Shot {
     pub optics: Option<ModelOptics>,
     /// Screen-space ambient occlusion radius in metres, 0 for none.
     pub occlusion: f32,
+    /// The roughness up to which surfaces take screen-space reflections, 0
+    /// for none.
+    pub screen_reflections: f32,
 }
 
 /// The bits of a shot's lens effects for frame cache keys, all zero
@@ -488,7 +497,7 @@ struct Target {
 
 /// (model hash, environment hash, splat set hash, shadow catcher hash).
 type StageKey = (u64, Option<u64>, u64, u64, u64);
-type ShotKey = (StageKey, usize, u64, u64, [u32; 21], [u32; 8], [[u32; 8]; 2]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 22], [u32; 8], [[u32; 8]; 2]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     let fog = fog_bits(shot.fog);
@@ -520,6 +529,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             optics[1],
             optics[2],
             shot.occlusion.to_bits(),
+            shot.screen_reflections.to_bits(),
         ],
         camera_bits(shot.camera),
         shot.shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
@@ -646,6 +656,7 @@ impl Studio {
             (stage.camera, stage.source, stage.center, stage.radius, stage.probe.clone(), stage.ambient);
         let players = stage.players.clone();
         let nodes = stage.nodes.clone();
+        let mirror_camera = stage.mirror.as_ref().map(|m| m.camera);
         let warm = stage.warm.contains(&size);
         let morphs = stage.morphs;
         let others: Vec<(Entity, Entity, Option<Entity>)> = self
@@ -664,6 +675,8 @@ impl Studio {
             }
         }
         world.entity_mut(stage_root(&self.stages, key)).insert(Visibility::Inherited);
+        let reflects = shot.screen_reflections > 0.0 && !hero;
+        let switched = render_deferred(world, stage_root(&self.stages, key), mirror_camera, reflects);
         {
             let mut e = world.entity_mut(camera);
             e.insert((
@@ -760,6 +773,28 @@ impl Studio {
                 });
             } else {
                 e.remove::<ScreenSpaceAmbientOcclusion>();
+            }
+            // Screen-space reflections march the deferred G-buffer, so the
+            // stage's materials render deferred while a shot takes them and
+            // forward otherwise. Every surface from a mirror up to the
+            // roughness reflects, fading out over the last 0.05.
+            if reflects {
+                let top = shot.screen_reflections;
+                e.insert(ScreenSpaceReflections {
+                    min_perceptual_roughness: 0.0..0.0,
+                    max_perceptual_roughness: (top - 0.05).max(0.0)..top,
+                    // A frame renders once, so the march takes 64 linear
+                    // and 8 bisection steps where upstream takes 10 and 5;
+                    // the thickness stays upstream's 0.25 m.
+                    linear_steps: 64,
+                    bisection_steps: 8,
+                    ..default()
+                });
+            } else {
+                e.remove::<(ScreenSpaceReflections, DeferredPrepass)>();
+            }
+            if !reflects && !(shot.occlusion > 0.0 && !hero) {
+                e.remove::<(DepthPrepass, NormalPrepass)>();
             }
             let old: Vec<Entity> = world.query_filtered::<Entity, With<FogVolume>>().iter(world).collect();
             for entity in old {
@@ -887,7 +922,9 @@ impl Studio {
         // A stage that just came back into view gets its morph descriptors
         // (see `touch_morph_meshes`) and its lights' shadow casters late, and
         // so does a new light set, so either takes two extra frames.
-        if warm && (self.shown != Some(key) || respawned) {
+        // Materials that switch renderer bind a frame late, like a new
+        // light set.
+        if warm && (self.shown != Some(key) || respawned || switched) {
             self.step();
             self.step();
         }
@@ -943,6 +980,11 @@ impl Studio {
                     let world = self.apps.main.world_mut();
                     lights::place(world, &stage.lights, Some((square, disk(square * 2.0 - 1.0))));
                 }
+            }
+            // Screen-space reflections seed their noise from the frame
+            // count, so each sample sets it and preview and export match.
+            if reflects {
+                self.apps.main.world_mut().resource_mut::<FrameCount>().0 = sample;
             }
             // Queue order keeps each sample's render ahead of its share, so
             // only the last sample waits for the GPU.
@@ -1784,6 +1826,34 @@ fn solari_lit(world: &World, root: Entity) -> bool {
                 .and_then(|m| materials.get(&m.0))
                 .is_some_and(|m| m.emissive.red > 0.0 || m.emissive.green > 0.0 || m.emissive.blue > 0.0)
     })
+}
+
+/// Renders the standard materials under `root` deferred when `deferred`
+/// and forward otherwise, and gives the mirror camera the prepasses that
+/// draw deferred materials. Returns whether any material switched.
+fn render_deferred(world: &mut World, root: Entity, mirror: Option<Entity>, deferred: bool) -> bool {
+    let method = if deferred { OpaqueRendererMethod::Deferred } else { OpaqueRendererMethod::Forward };
+    let handles: Vec<Handle<StandardMaterial>> = descendants(world, root)
+        .into_iter()
+        .filter_map(|e| world.get::<MeshMaterial3d<StandardMaterial>>(e).map(|m| m.0.clone()))
+        .collect();
+    let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+    let mut switched = false;
+    for handle in handles {
+        if materials.get(&handle).is_some_and(|m| m.opaque_render_method != method) {
+            materials.get_mut(&handle).expect("material").opaque_render_method = method;
+            switched = true;
+        }
+    }
+    if let Some(mirror) = mirror {
+        let mut e = world.entity_mut(mirror);
+        if deferred {
+            e.insert((DepthPrepass, DeferredPrepass));
+        } else {
+            e.remove::<(DepthPrepass, DeferredPrepass)>();
+        }
+    }
+    switched
 }
 
 fn descendants(world: &World, root: Entity) -> Vec<Entity> {

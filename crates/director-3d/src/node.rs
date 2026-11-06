@@ -113,7 +113,7 @@ impl std::fmt::Debug for Asset {
 /// The most path traced paths per pixel a sample takes.
 pub const MAX_PATHS: u32 = 4096;
 
-type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 22], [u32; 8], [[u32; 8]; 2]);
+type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 23], [u32; 8], [[u32; 8]; 2]);
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -224,6 +224,9 @@ pub struct ModelNode {
     pub optics: Option<ModelOptics>,
     /// Screen-space ambient occlusion radius in metres, 0 for none.
     pub occlusion: f32,
+    /// The roughness up to which surfaces take screen-space reflections, 0
+    /// for none.
+    pub screen_reflections: f32,
     pub info: GlbInfo,
     time: f64,
     frame: Mutex<Option<(FrameKey, Arc<Vec<u8>>)>>,
@@ -254,6 +257,7 @@ impl ModelNode {
             fog: None,
             optics: None,
             occlusion: 0.0,
+            screen_reflections: 0.0,
             info,
             time: 0.0,
             frame: Mutex::new(None),
@@ -338,6 +342,7 @@ impl ModelNode {
             fog: self.fog,
             optics: self.optics,
             occlusion: self.occlusion,
+            screen_reflections: self.screen_reflections,
         }
     }
 }
@@ -366,6 +371,7 @@ impl Clone for ModelNode {
             fog: self.fog,
             optics: self.optics,
             occlusion: self.occlusion,
+            screen_reflections: self.screen_reflections,
             info: self.info,
             time: self.time,
             frame: Mutex::new(None),
@@ -386,6 +392,7 @@ impl std::fmt::Debug for ModelNode {
             .field("fog", &self.fog)
             .field("optics", &self.optics)
             .field("occlusion", &self.occlusion)
+            .field("screen_reflections", &self.screen_reflections)
             .field("view", &self.view)
             .field("info", &self.info)
             .field("time", &self.time)
@@ -491,6 +498,7 @@ impl Element for ModelNode {
                 optics_bits[1],
                 optics_bits[2],
                 self.occlusion.to_bits(),
+                self.screen_reflections.to_bits(),
             ],
             camera_bits(camera),
             shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
@@ -526,6 +534,7 @@ impl Element for ModelNode {
             fog: self.fog,
             optics: self.optics,
             occlusion: self.occlusion,
+            screen_reflections: self.screen_reflections,
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -699,6 +708,11 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
         return Err(ImportError::Invalid("model occlusion needs a radius from 0 metres on a rasterized model".into()));
     }
     node.occlusion = body.occlusion;
+    let ssr = body.screen_reflections;
+    if !(0.0..=1.0).contains(&ssr) || (ssr > 0.0 && body.paths > 0) {
+        return Err(ImportError::Invalid("model screen reflections need a roughness from 0 to 1 on a rasterized model".into()));
+    }
+    node.screen_reflections = ssr;
     if let Some(track) = &body.track {
         let fov = |f: f32| f > 0.0 && f < 180.0;
         let lens = fov(track.fov) && track.frames.iter().all(|f| f.fov.is_none_or(fov)) && track.distortion.iter().all(|k| k.is_finite());
