@@ -80,6 +80,8 @@ pub struct Shot {
     pub samples: u32,
     /// Path traced paths per pixel in each sample. 0 rasterizes the frame.
     pub paths: u32,
+    /// Filter each traced sample's noise, guided by its first surfaces.
+    pub denoise: bool,
     /// Lights added to the file's own.
     pub lights: Arc<Vec<ModelLight>>,
     /// Gaussian splat clouds beside the file's meshes.
@@ -447,7 +449,7 @@ struct Target {
 
 /// (model hash, environment hash, splat set hash, shadow catcher hash).
 type StageKey = (u64, Option<u64>, u64, u64, u64);
-type ShotKey = (StageKey, usize, u64, u64, [u32; 11], [u32; 8]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 12], [u32; 8]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     (
@@ -466,6 +468,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             shot.background as u32,
             shot.samples,
             shot.paths,
+            shot.denoise as u32,
             shot.reflection.to_bits(),
         ],
         camera_bits(shot.camera),
@@ -649,6 +652,7 @@ impl Studio {
                 e.insert(HeroPass {
                     sample: 0,
                     paths: 1,
+                    denoise: false,
                     background: shot.background,
                     lamps: Default::default(),
                 });
@@ -778,6 +782,7 @@ impl Studio {
                 let mut pass = world.get_mut::<HeroPass>(camera).expect("hero pass");
                 pass.sample = sample;
                 pass.paths = shot.paths;
+                pass.denoise = shot.denoise;
             }
             if samples > 1 {
                 let mut orbit = self.apps.main.world_mut().resource_mut::<Orbit>();

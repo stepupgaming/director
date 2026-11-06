@@ -1766,6 +1766,10 @@ impl Builder {
                     )));
                 }
                 model.paths = paths as u32;
+                model.denoise = attr("denoise").is_some_and(|v| v != "false");
+                if model.denoise && model.paths == 0 {
+                    return Err(CompileError::Input(format!("{context}: denoise needs paths")));
+                }
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {

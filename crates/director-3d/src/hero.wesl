@@ -5,6 +5,9 @@
 // background. Paths are seeded by pixel, sample and path index, so a shot's
 // frame depends only on its inputs. Solari has no point or spot lights, so
 // each hit also samples every `lights` entry with a shadow ray.
+// `hero_guided` traces the same paths and instead writes the guides of the
+// edge-aware filter in `denoise.wesl`: radiance over albedo with its
+// variance, and the mean first-hit position, normal and albedo.
 
 import bevy_core_pipeline::tonemapping::tonemapping_luminance as luminance;
 import bevy_pbr::render::utils::{rand_f, rand_vec2f};
@@ -46,6 +49,23 @@ struct HeroLight {
 @group(1) @binding(1) var<uniform> view: View;
 @group(1) @binding(2) var<uniform> hero: Hero;
 @group(1) @binding(3) var<storage, read> lights: array<HeroLight>;
+
+@group(2) @binding(0) var guide_radiance: texture_storage_2d<rgba32float, write>;
+@group(2) @binding(1) var guide_position: texture_storage_2d<rgba32float, write>;
+@group(2) @binding(2) var guide_normal: texture_storage_2d<rgba16float, write>;
+@group(2) @binding(3) var guide_albedo: texture_storage_2d<rgba16float, write>;
+
+// A path's first surface. `hit` is 0 when the camera ray misses.
+struct First {
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    albedo: vec3<f32>,
+    hit: f32,
+}
+
+// The albedo the filter divides out: the base colour, kept off black so
+// dividing by it stays finite.
+const MIN_ALBEDO: f32 = 0.02;
 
 fn hash(x: u32) -> u32 {
     let state = x * 747796405u + 2891336453u;
@@ -96,8 +116,8 @@ fn sample_lights(hit: ResolvedRayHitFull, wo: vec3<f32>, F_ab: vec2<f32>, rng: p
 }
 
 // One path from the camera through `pixel`: its radiance in rgb, and 1 in
-// alpha when it covers the pixel.
-fn trace_path(pixel: vec2<f32>, rng: ptr<function, u32>) -> vec4<f32> {
+// alpha when it covers the pixel. `first` receives its first surface.
+fn trace_path(pixel: vec2<f32>, rng: ptr<function, u32>, first: ptr<function, First>) -> vec4<f32> {
     let pixel_uv = (pixel + rand_vec2f(rng)) / view.viewport.zw;
     let pixel_ndc = (pixel_uv * 2.0) - 1.0;
     let primary_ray_target = view.world_from_clip * vec4(pixel_ndc.x, -pixel_ndc.y, 1.0, 1.0);
@@ -123,6 +143,9 @@ fn trace_path(pixel: vec2<f32>, rng: ptr<function, u32>) -> vec4<f32> {
         }
         let ray_hit = resolve_ray_hit_full(ray);
         let wo = -ray_direction;
+        if bounce == 0u {
+            *first = First(ray_hit.world_position, ray_hit.world_normal, max(ray_hit.material.base_color, vec3(MIN_ALBEDO)), 1.0);
+        }
         let NdotV = max(dot(ray_hit.world_normal, wo), 0.0001);
         let F_ab = F_AB(ray_hit.material.perceptual_roughness, NdotV);
 
@@ -177,10 +200,54 @@ fn hero_trace(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var sum = vec4(0.0);
     for (var path = 0u; path < hero.paths; path++) {
         var rng = hash(pixel_index ^ hash(hero.sample * hero.paths + path));
-        sum += trace_path(vec2<f32>(global_id.xy), &rng);
+        var first = First(vec3(0.0), vec3(0.0), vec3(1.0), 0.0);
+        sum += trace_path(vec2<f32>(global_id.xy), &rng, &first);
     }
     let mean = sum / f32(hero.paths);
     // Rgba16Float tops out near 65504.
     let rgb = min(mean.rgb * view.exposure, vec3(65000.0));
     textureStore(view_output, global_id.xy, vec4(rgb, mean.a));
+}
+
+// The same paths as `hero_trace`, written as the filter's guides. Radiance
+// is exposed and divided by the mean first-hit albedo, so the filter blurs
+// lighting and keeps texture. Its alpha is the variance of the mean's
+// luminance across the paths. Position and normal average the paths that
+// hit, and the position's alpha is the fraction that hit. The albedo's
+// alpha is the pixel's coverage.
+@compute @workgroup_size(8, 8, 1)
+fn hero_guided(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if any(global_id.xy >= vec2u(view.viewport.zw)) {
+        return;
+    }
+    let pixel_index = global_id.x + global_id.y * u32(view.viewport.z);
+    var sum = vec4(0.0);
+    var moments = vec2(0.0);
+    var position = vec3(0.0);
+    var normal = vec3(0.0);
+    var albedo = vec3(0.0);
+    var hits = 0.0;
+    for (var path = 0u; path < hero.paths; path++) {
+        var rng = hash(pixel_index ^ hash(hero.sample * hero.paths + path));
+        var first = First(vec3(0.0), vec3(0.0), vec3(1.0), 0.0);
+        let radiance = trace_path(vec2<f32>(global_id.xy), &rng, &first);
+        sum += radiance;
+        let l = luminance(min(radiance.rgb * view.exposure, vec3(65000.0)));
+        moments += vec2(l, l * l);
+        position += first.position * first.hit;
+        normal += first.normal * first.hit;
+        albedo += first.albedo * first.hit;
+        hits += first.hit;
+    }
+    let n = f32(hero.paths);
+    let mean = sum / n;
+    let rgb = min(mean.rgb * view.exposure, vec3(65000.0));
+    let a = select(vec3(1.0), albedo / max(hits, 1.0), hits > 0.0);
+    let m = moments / n;
+    let variance = max(m.y - m.x * m.x, 0.0) / n / pow(max(luminance(a), MIN_ALBEDO), 2.0);
+    let length_n = length(normal);
+    textureStore(guide_radiance, global_id.xy, vec4(rgb / a, variance));
+    textureStore(guide_position, global_id.xy, vec4(position / max(hits, 1.0), hits / n));
+    textureStore(guide_normal, global_id.xy, vec4(select(vec3(0.0), normal / length_n, length_n > 1e-6), 0.0));
+    textureStore(guide_albedo, global_id.xy, vec4(a, mean.a));
 }

@@ -133,6 +133,25 @@ fn more_paths_converge_on_the_reference() {
 }
 
 #[test]
+fn the_denoiser_lands_closer_to_the_reference() {
+    if !gpu() {
+        return;
+    }
+    let reference = shot(&page("paths='1024'", ""));
+    let raw = error(&shot(&page("paths='16'", "")), &reference);
+    let many = error(&shot(&page("paths='64'", "")), &reference);
+    let denoised = shot(&page("paths='16' denoise", ""));
+    let filtered = error(&denoised, &reference);
+    assert!(filtered < many * 0.75, "16 denoised paths miss by {filtered:.2}, 64 raw paths by {many:.2}");
+    let few = error(&shot(&page("paths='4' denoise", "")), &reference);
+    assert!(few < raw * 0.75, "4 denoised paths miss by {few:.2}, 16 raw paths by {raw:.2}");
+    assert!(page_red(&denoised[..4]), "the sky stays transparent: {:?}", &denoised[..4]);
+    let sky = |p: &[u8]| p.chunks(4).filter(|p| page_red(p)).count() as i64;
+    let (a, b) = (sky(&reference), sky(&denoised));
+    assert!((a - b).abs() < (W * H) as i64 / 100, "the reference shows {a} page pixels, the denoised frame {b}");
+}
+
+#[test]
 fn the_background_fills_the_sky_with_the_environment() {
     if !gpu() {
         return;
@@ -281,7 +300,7 @@ fn the_scene_document_keeps_the_paths() {
     if !gpu() {
         return;
     }
-    let mut compiled = build(&page("paths='16' samples='2'", ""));
+    let mut compiled = build(&page("paths='16' samples='2' denoise", ""));
     let document = export_scene(&compiled.director).unwrap();
     let parsed = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
     assert_eq!(parsed, document);
@@ -296,7 +315,7 @@ fn the_scene_document_keeps_the_paths() {
             _ => None,
         })
         .expect("a model body");
-    assert_eq!((model.paths, model.samples), (16, 2));
+    assert_eq!((model.paths, model.samples, model.denoise), (16, 2, true));
     let mut registry = director_core::scene_import::ImportRegistry::core();
     director_html::register_import(&mut registry);
     let renderer = director_render::Renderer::new(Arc::new(parsed), Arc::new(director_core::DefaultAssetLoader))
@@ -312,4 +331,6 @@ fn unsupported_hero_inputs_fail_to_compile() {
     assert!(e.contains("paths must be a whole number from 0 to 4096"), "{e}");
     let e = error(&page("paths='1.5'", ""));
     assert!(e.contains("paths must be a whole number"), "{e}");
+    let e = error(&page("denoise", ""));
+    assert!(e.contains("denoise needs paths"), "{e}");
 }

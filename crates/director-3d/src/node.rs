@@ -113,7 +113,7 @@ impl std::fmt::Debug for Asset {
 /// The most path traced paths per pixel a sample takes.
 pub const MAX_PATHS: u32 = 4096;
 
-type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 12], [u32; 8]);
+type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 13], [u32; 8]);
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -198,6 +198,8 @@ pub struct ModelNode {
     pub samples: u32,
     /// Path traced paths per pixel in each sample, 0 to 4096. 0 rasterizes.
     pub paths: u32,
+    /// Filter the Hero level's noise, guided by each pixel's first surface.
+    pub denoise: bool,
     /// The orbit before any animation, which an export records.
     pub base: ModelView,
     /// The orbit this frame. The HTML element writes its animated camera here.
@@ -234,6 +236,7 @@ impl ModelNode {
             looped: false,
             samples: 1,
             paths: 0,
+            denoise: false,
             base: ModelView::default(),
             view: ModelView::default(),
             lights: Arc::new(Vec::new()),
@@ -284,6 +287,7 @@ impl ModelNode {
             view: self.base,
             samples: self.samples,
             paths: self.paths,
+            denoise: self.denoise,
             lights: self.lights.to_vec(),
             splats: self
                 .splats
@@ -334,6 +338,7 @@ impl Clone for ModelNode {
             looped: self.looped,
             samples: self.samples,
             paths: self.paths,
+            denoise: self.denoise,
             base: self.base,
             view: self.view,
             lights: self.lights.clone(),
@@ -445,6 +450,7 @@ impl Element for ModelNode {
                 self.background as u32,
                 self.samples,
                 self.paths,
+                self.denoise as u32,
                 self.reflection.to_bits(),
             ],
             camera_bits(camera),
@@ -469,6 +475,7 @@ impl Element for ModelNode {
             height,
             samples: self.samples,
             paths: self.paths,
+            denoise: self.denoise,
             lights: self.lights.clone(),
             splats: self.splats.clone(),
             catchers: self.shadow_catchers.clone(),
@@ -604,6 +611,7 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     node.looped = body.looped;
     node.samples = body.samples.clamp(1, 256);
     node.paths = body.paths.min(MAX_PATHS);
+    node.denoise = body.denoise;
     node.base = body.view;
     node.view = body.view;
     node.lights = Arc::new(body.lights.clone());

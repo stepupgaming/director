@@ -9,12 +9,16 @@
 //! usual tonemapping, bloom and SMAA run.
 //! Solari has no point or spot lights, so the pass samples them itself from
 //! the `Lamp`s its camera carries.
+//! A pass with `denoise` traces through `hero_guided` instead and filters
+//! the sample with the five à-trous passes of `denoise.wesl` before the
+//! view target sees it.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bevy::{
     asset::{embedded_asset, load_embedded_asset, RenderAssetUsages},
+    image::ToExtents,
     core_pipeline::{
         core_3d::{main_opaque_pass_3d, main_transparent_pass_3d},
         schedule::{Core3d, Core3dSystems},
@@ -29,15 +33,17 @@ use bevy::{
         camera::ExtractedCamera,
         init_gpu_resource,
         render_resource::{
-            binding_types::{storage_buffer_read_only_sized, texture_storage_2d, uniform_buffer, uniform_buffer_sized},
+            binding_types::{storage_buffer_read_only_sized, texture_2d, texture_storage_2d, uniform_buffer, uniform_buffer_sized},
             BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BufferInitDescriptor, BufferSize,
             BufferUsages, CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache,
-            ShaderStages, StorageTextureAccess, TextureFormat,
+            ShaderStages, StorageTextureAccess, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+            TextureUsages,
         },
         renderer::{RenderContext, RenderDevice, ViewQuery},
         sync_world::RenderEntity,
+        texture::{CachedTexture, TextureCache},
         view::{ViewTarget, ViewUniform, ViewUniformOffset, ViewUniforms},
-        Extract, ExtractSchedule, RenderApp, RenderStartup,
+        Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems,
     },
     pbr::main_transmissive_pass_3d,
     solari::{scene::RaytracingSceneBindings, SolariPlugins},
@@ -46,12 +52,18 @@ use bevy::{
 /// The deepest bounce a path reaches before Russian roulette ends it.
 const BOUNCES: u32 = 32;
 
+/// The à-trous passes of the denoiser, whose taps sit 1, 2, 4, 8 and 16
+/// pixels apart.
+const FILTER_PASSES: u32 = 5;
+
 /// Path traces the camera it sits on: `paths` paths per pixel for sample
-/// `sample` of the shot, lit by `lamps` beside Solari's own lights.
+/// `sample` of the shot, lit by `lamps` beside Solari's own lights, and
+/// filters each sample with `denoise`.
 #[derive(Component, Clone, Debug)]
 pub(crate) struct HeroPass {
     pub sample: u32,
     pub paths: u32,
+    pub denoise: bool,
     pub background: bool,
     pub lamps: Arc<Vec<Lamp>>,
 }
@@ -144,6 +156,7 @@ pub(crate) struct HeroPlugin;
 impl Plugin for HeroPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "hero.wesl");
+        embedded_asset!(app, "denoise.wesl");
         app.init_resource::<Traced>().init_resource::<Traceable>().add_systems(
             PostUpdate,
             gather
@@ -163,6 +176,7 @@ impl Plugin for HeroPlugin {
             .insert_resource(traced)
             .add_systems(RenderStartup, init.after(init_gpu_resource::<RaytracingSceneBindings>))
             .add_systems(ExtractSchedule, extract)
+            .add_systems(Render, guides.in_set(RenderSystems::PrepareResources))
             .add_systems(
                 Core3d,
                 trace
@@ -209,7 +223,24 @@ fn gather(
 struct HeroPipeline {
     layout: BindGroupLayoutDescriptor,
     pipeline: CachedComputePipelineId,
+    guides: BindGroupLayoutDescriptor,
+    guided: CachedComputePipelineId,
+    filter_layout: BindGroupLayoutDescriptor,
+    filter: CachedComputePipelineId,
 }
+
+/// The denoiser's textures for one view: two radiance images the à-trous
+/// passes ping-pong between, and the first-hit position, normal and albedo.
+#[derive(Component)]
+struct HeroGuides {
+    radiance: [CachedTexture; 2],
+    position: CachedTexture,
+    normal: CachedTexture,
+    albedo: CachedTexture,
+}
+
+/// The size of the filter's step uniform.
+const STEP: u64 = 16;
 
 /// The settings uniform: sample, paths, background, bounces, lamp count and
 /// padding.
@@ -238,7 +269,104 @@ fn init(mut commands: Commands, cache: Res<PipelineCache>, scene: Res<Raytracing
         entry_point: Some("hero_trace".into()),
         ..default()
     });
-    commands.insert_resource(HeroPipeline { layout, pipeline });
+    let guides = BindGroupLayoutDescriptor::new(
+        "director_hero_guides",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                texture_storage_2d(TextureFormat::Rgba32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+            ),
+        ),
+    );
+    let guided = cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        label: Some("director_hero_guided".into()),
+        layout: vec![scene.bind_group_layout.clone(), layout.clone(), guides.clone()],
+        shader: load_embedded_asset!(server.as_ref(), "hero.wesl"),
+        entry_point: Some("hero_guided".into()),
+        ..default()
+    });
+    let unfiltered = || texture_2d(TextureSampleType::Float { filterable: false });
+    let filter_layout = BindGroupLayoutDescriptor::new(
+        "director_hero_filter",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                uniform_buffer::<ViewUniform>(true),
+                uniform_buffer_sized(false, BufferSize::new(STEP)),
+                unfiltered(),
+                unfiltered(),
+                unfiltered(),
+                unfiltered(),
+                texture_storage_2d(TextureFormat::Rgba32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+            ),
+        ),
+    );
+    let filter = cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        label: Some("director_hero_filter".into()),
+        layout: vec![filter_layout.clone()],
+        shader: load_embedded_asset!(server.as_ref(), "denoise.wesl"),
+        entry_point: Some("atrous".into()),
+        ..default()
+    });
+    commands.insert_resource(HeroPipeline {
+        layout,
+        pipeline,
+        guides,
+        guided,
+        filter_layout,
+        filter,
+    });
+}
+
+/// Gives each view that denoises its guide textures at the viewport size,
+/// and takes them from views that stopped.
+fn guides(
+    views: Query<(Entity, &ExtractedCamera, &HeroPass, Has<HeroGuides>)>,
+    stale: Query<Entity, (With<HeroGuides>, Without<HeroPass>)>,
+    mut textures: ResMut<TextureCache>,
+    device: Res<RenderDevice>,
+    mut commands: Commands,
+) {
+    for entity in &stale {
+        commands.entity(entity).remove::<HeroGuides>();
+    }
+    for (entity, camera, pass, has) in &views {
+        let Some(size) = camera.physical_viewport_size.filter(|_| pass.denoise) else {
+            if has {
+                commands.entity(entity).remove::<HeroGuides>();
+            }
+            continue;
+        };
+        let mut texture = |label: &'static str, format: TextureFormat| {
+            textures.get(
+                &device,
+                TextureDescriptor {
+                    label: Some(label),
+                    size: size.to_extents(),
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: TextureDimension::D2,
+                    format,
+                    usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+            )
+        };
+        let guides = HeroGuides {
+            radiance: [
+                texture("director_hero_radiance_a", TextureFormat::Rgba32Float),
+                texture("director_hero_radiance_b", TextureFormat::Rgba32Float),
+            ],
+            position: texture("director_hero_position", TextureFormat::Rgba32Float),
+            normal: texture("director_hero_normal", TextureFormat::Rgba16Float),
+            albedo: texture("director_hero_albedo", TextureFormat::Rgba16Float),
+        };
+        commands.entity(entity).insert(guides);
+    }
 }
 
 fn extract(cameras: Extract<Query<(RenderEntity, &Camera, Option<&HeroPass>)>>, mut commands: Commands) {
@@ -253,7 +381,7 @@ fn extract(cameras: Extract<Query<(RenderEntity, &Camera, Option<&HeroPass>)>>, 
 
 #[allow(clippy::too_many_arguments)]
 fn trace(
-    view: ViewQuery<(&HeroPass, &ExtractedCamera, &ViewTarget, &ViewUniformOffset)>,
+    view: ViewQuery<(&HeroPass, &ExtractedCamera, &ViewTarget, &ViewUniformOffset, Option<&HeroGuides>)>,
     pipeline: Option<Res<HeroPipeline>>,
     cache: Res<PipelineCache>,
     scene: Res<RaytracingSceneBindings>,
@@ -262,10 +390,12 @@ fn trace(
     traced: Res<Traced>,
     mut ctx: RenderContext,
 ) {
-    let (pass, camera, target, offset) = view.into_inner();
+    let (pass, camera, target, offset, guides) = view.into_inner();
     let Some(pipeline) = pipeline else { return };
+    let guides = guides.filter(|_| pass.denoise);
+    let entry = if guides.is_some() { pipeline.guided } else { pipeline.pipeline };
     let (Some(compute), Some(scene_group), Some(size), Some(view_binding)) = (
-        cache.get_compute_pipeline(pipeline.pipeline),
+        cache.get_compute_pipeline(entry),
         &scene.bind_group,
         camera.physical_viewport_size,
         uniforms.uniforms.binding(),
@@ -302,14 +432,73 @@ fn trace(
             lights.as_entire_binding(),
         )),
     );
+    let workgroups = (size.x.div_ceil(8), size.y.div_ceil(8));
+    let Some(guides) = guides else {
+        let mut compute_pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor {
+            label: Some("director_hero"),
+            timestamp_writes: None,
+        });
+        compute_pass.set_pipeline(compute);
+        compute_pass.set_bind_group(0, scene_group, &[]);
+        compute_pass.set_bind_group(1, &group, &[offset.offset]);
+        compute_pass.dispatch_workgroups(workgroups.0, workgroups.1, 1);
+        drop(compute_pass);
+        traced.0.fetch_add(1, Ordering::AcqRel);
+        return;
+    };
+    let Some(filter) = cache.get_compute_pipeline(pipeline.filter) else { return };
+    let guide_group = device.create_bind_group(
+        "director_hero_guides",
+        &cache.get_bind_group_layout(&pipeline.guides),
+        &BindGroupEntries::sequential((
+            &guides.radiance[0].default_view,
+            &guides.position.default_view,
+            &guides.normal.default_view,
+            &guides.albedo.default_view,
+        )),
+    );
+    let filter_layout = cache.get_bind_group_layout(&pipeline.filter_layout);
+    // Each pass reads one radiance image and writes the other; the last
+    // writes the view target.
+    let filter_groups: Vec<_> = (0..FILTER_PASSES as usize)
+        .map(|i| {
+            let last = i + 1 == FILTER_PASSES as usize;
+            let step: Vec<u8> = [1u32 << i, last as u32, 0, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
+            let step = device.create_buffer_with_data(&BufferInitDescriptor {
+                label: Some("director_hero_step"),
+                contents: &step,
+                usage: BufferUsages::UNIFORM,
+            });
+            device.create_bind_group(
+                "director_hero_filter",
+                &filter_layout,
+                &BindGroupEntries::sequential((
+                    uniforms.uniforms.binding().expect("view uniforms"),
+                    step.as_entire_binding(),
+                    &guides.radiance[i % 2].default_view,
+                    &guides.position.default_view,
+                    &guides.normal.default_view,
+                    &guides.albedo.default_view,
+                    &guides.radiance[(i + 1) % 2].default_view,
+                    target.get_unsampled_color_attachment().view,
+                )),
+            )
+        })
+        .collect();
     let mut compute_pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor {
-        label: Some("director_hero"),
+        label: Some("director_hero_guided"),
         timestamp_writes: None,
     });
     compute_pass.set_pipeline(compute);
     compute_pass.set_bind_group(0, scene_group, &[]);
     compute_pass.set_bind_group(1, &group, &[offset.offset]);
-    compute_pass.dispatch_workgroups(size.x.div_ceil(8), size.y.div_ceil(8), 1);
+    compute_pass.set_bind_group(2, &guide_group, &[]);
+    compute_pass.dispatch_workgroups(workgroups.0, workgroups.1, 1);
+    compute_pass.set_pipeline(filter);
+    for group in &filter_groups {
+        compute_pass.set_bind_group(0, group, &[offset.offset]);
+        compute_pass.dispatch_workgroups(workgroups.0, workgroups.1, 1);
+    }
     drop(compute_pass);
     traced.0.fetch_add(1, Ordering::AcqRel);
 }

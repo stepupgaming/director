@@ -33,6 +33,10 @@ pub struct ModelBody {
     /// rasterizes the frame.
     #[serde(default, skip_serializing_if = "is_rasterized")]
     pub paths: u32,
+    /// Smooth the Hero level's noise with an edge-aware filter guided by
+    /// each pixel's first surface.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub denoise: bool,
     /// Lights Director adds to the file's own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lights: Vec<ModelLight>,
