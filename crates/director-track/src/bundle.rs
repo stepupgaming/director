@@ -5,6 +5,7 @@
 use nalgebra::{DMatrix, DVector, Matrix2, Matrix2x3, Matrix3, Matrix6, Rotation3, SMatrix, Vector2, Vector3, Vector6};
 
 use crate::geometry::{Cam, Intrinsics};
+use rayon::prelude::*;
 
 /// Residuals beyond this many pixels count linearly.
 const HUBER: f64 = 2.0;
@@ -150,10 +151,11 @@ pub fn adjust(
         let mut bc = DVector::<f64>::zeros(np);
         let mut v = vec![Matrix3::<f64>::zeros(); points.len()];
         let mut bp = vec![Vector3::<f64>::zeros(); points.len()];
-        let mut w: Vec<Vec<(usize, Vector3<f64>)>> = vec![Vec::new(); points.len()];
+        // Per point: the camera-point blocks of its moving cameras at their
+        // offsets, and its lens rows.
+        let mut w: Vec<Vec<(usize, SMatrix<f64, 6, 3>)>> = vec![Vec::new(); points.len()];
+        let mut wl = vec![[Vector3::<f64>::zeros(); 3]; points.len()];
         for p in 0..points.len() {
-            let mut rows = Vec::new();
-            let mut lens_rows = vec![Vector3::zeros(); nl];
             for &i in &by_point[p] {
                 let o = &obs[i];
                 let Some(l) = linearize(&cams[o.cam], intr, &points[p], &o.uv) else { continue };
@@ -169,8 +171,8 @@ pub fn adjust(
                         for b in 0..6 {
                             u[(off + a, off + b)] += jtj[(a, b)];
                         }
-                        rows.push((off + a, wcp.row(a).transpose()));
                     }
+                    w[p].push((off, wcp));
                     for (i, &col) in lens.iter().enumerate() {
                         let cross: Vector6<f64> = wt * l.jc.transpose() * l.jl.column(col);
                         for a in 0..6 {
@@ -185,35 +187,30 @@ pub fn adjust(
                     for (j, &cj) in lens.iter().enumerate() {
                         u[(i, j)] += wt * column.dot(&l.jl.column(cj));
                     }
-                    lens_rows[i] += wt * l.jp.transpose() * column;
+                    wl[p][i] += wt * l.jp.transpose() * column;
                 }
             }
-            rows.extend(lens_rows.into_iter().enumerate());
-            w[p] = rows;
+        }
+        // The blocks each moving camera's row of the reduced system gathers.
+        let mut by_cam = vec![Vec::new(); (np - nl) / 6];
+        for (p, blocks) in w.iter().enumerate() {
+            for (j, &(off, _)) in blocks.iter().enumerate() {
+                by_cam[(off - nl) / 6].push((p, j));
+            }
         }
         let improved = loop {
-            let mut s = u.clone();
-            for i in 0..np {
-                s[(i, i)] += lambda * u[(i, i)] + 1e-12;
-            }
-            let mut rhs = bc.clone();
-            let mut vinv = Vec::with_capacity(points.len());
-            for p in 0..points.len() {
-                let mut vp = v[p];
-                for k in 0..3 {
-                    vp[(k, k)] += lambda * v[p][(k, k)] + 1e-12;
-                }
-                let inv = vp.try_inverse().unwrap_or_else(Matrix3::zeros);
-                for &(a, wa) in &w[p] {
-                    let ya = inv * wa;
-                    rhs[a] -= ya.dot(&bp[p]);
-                    for &(b, wb) in &w[p] {
-                        s[(a, b)] -= ya.dot(&wb);
+            let vinv: Vec<Matrix3<f64>> = v
+                .par_iter()
+                .map(|vp| {
+                    let mut damped = *vp;
+                    for k in 0..3 {
+                        damped[(k, k)] += lambda * vp[(k, k)] + 1e-12;
                     }
-                }
-                vinv.push(inv);
-            }
-            let step = if np == 0 { Some(DVector::zeros(0)) } else { s.cholesky().map(|ch| ch.solve(&rhs)) };
+                    damped.try_inverse().unwrap_or_else(Matrix3::zeros)
+                })
+                .collect();
+            let (s, rhs) = reduce(&u, &bc, lambda, nl, (&w, &wl, &by_cam), (&vinv, &bp));
+            let step = if np == 0 { Some(DVector::zeros(0)) } else { solve_spd(s, np, rhs.as_slice()).map(DVector::from_vec) };
             let Some(dc) = step else {
                 lambda *= 10.0;
                 if lambda > 1e10 {
@@ -236,8 +233,11 @@ pub fn adjust(
             }
             for p in 0..points.len() {
                 let mut g = bp[p];
-                for &(a, wa) in &w[p] {
-                    g -= wa * dc[a];
+                for &(off, wb) in &w[p] {
+                    g -= wb.transpose() * dc.fixed_rows::<6>(off);
+                }
+                for (i, row) in wl[p].iter().enumerate().take(nl) {
+                    g -= row * dc[i];
                 }
                 points[p] += vinv[p] * g;
             }
@@ -260,6 +260,144 @@ pub fn adjust(
             break;
         }
     }
+}
+
+/// The camera system with the points eliminated: `u` and `bc` damped by
+/// `lambda` less each point's blocks through its damped inverse `vinv`. Each
+/// moving camera's 6-row strip gathers on its own thread; `u` is symmetric,
+/// so its column-major storage reads as row-major.
+#[allow(clippy::type_complexity)]
+fn reduce(
+    u: &DMatrix<f64>,
+    bc: &DVector<f64>,
+    lambda: f64,
+    nl: usize,
+    (w, wl, by_cam): (&[Vec<(usize, SMatrix<f64, 6, 3>)>], &[[Vector3<f64>; 3]], &[Vec<(usize, usize)>]),
+    (vinv, bp): (&[Matrix3<f64>], &[Vector3<f64>]),
+) -> (Vec<f64>, DVector<f64>) {
+    let np = u.nrows();
+    let mut buf = u.as_slice().to_vec();
+    for i in 0..np {
+        buf[i * np + i] += lambda * u[(i, i)] + 1e-12;
+    }
+    let mut rhs = bc.clone();
+    let (lens_rows, cam_rows) = buf.split_at_mut(nl * np);
+    let (lens_rhs, cam_rhs) = rhs.as_mut_slice().split_at_mut(nl);
+    cam_rows.par_chunks_mut(6 * np).zip(cam_rhs.par_chunks_mut(6)).zip(by_cam.par_iter()).for_each(|((strip, r), seen)| {
+        for &(p, j) in seen {
+            let y: SMatrix<f64, 6, 3> = w[p][j].1 * vinv[p];
+            let g = y * bp[p];
+            for a in 0..6 {
+                r[a] -= g[a];
+            }
+            for &(off, wb) in &w[p] {
+                let block: Matrix6<f64> = y * wb.transpose();
+                for a in 0..6 {
+                    let row = &mut strip[a * np + off..a * np + off + 6];
+                    for (b, v) in row.iter_mut().enumerate() {
+                        *v -= block[(a, b)];
+                    }
+                }
+            }
+            for (i, l) in wl[p].iter().enumerate().take(nl) {
+                let cross = y * l;
+                for a in 0..6 {
+                    strip[a * np + i] -= cross[a];
+                }
+            }
+        }
+    });
+    for p in 0..w.len() {
+        for i in 0..nl {
+            let y = vinv[p] * wl[p][i];
+            lens_rhs[i] -= y.dot(&bp[p]);
+            let row = &mut lens_rows[i * np..(i + 1) * np];
+            for &(off, wb) in &w[p] {
+                let cross = wb * y;
+                for a in 0..6 {
+                    row[off + a] -= cross[a];
+                }
+            }
+            for j in 0..nl {
+                row[j] -= y.dot(&wl[p][j]);
+            }
+        }
+    }
+    (buf, rhs)
+}
+
+/// The rows a block of the factorization covers.
+const BLOCK: usize = 64;
+
+/// Solves `a x = b` for the symmetric positive definite `a`, stored
+/// row-major `n` by `n`, by a right-looking blocked Cholesky factorization
+/// whose panel solves and trailing updates run in parallel, or `None` when
+/// `a` is not positive definite. It reads the lower triangle alone.
+fn solve_spd(mut a: Vec<f64>, n: usize, b: &[f64]) -> Option<Vec<f64>> {
+    let mut k0 = 0;
+    while k0 < n {
+        let k1 = (k0 + BLOCK).min(n);
+        let w = k1 - k0;
+        for j in k0..k1 {
+            let d = a[j * n + j] - dot(&a[j * n + k0..j * n + j], &a[j * n + k0..j * n + j]);
+            if d.is_nan() || d <= 0.0 {
+                return None;
+            }
+            let d = d.sqrt();
+            a[j * n + j] = d;
+            for i in j + 1..k1 {
+                let s = a[i * n + j] - dot(&a[i * n + k0..i * n + j], &a[j * n + k0..j * n + j]);
+                a[i * n + j] = s / d;
+            }
+        }
+        let mut diag = vec![0.0; w * w];
+        for j in 0..w {
+            diag[j * w..j * w + j + 1].copy_from_slice(&a[(k0 + j) * n + k0..(k0 + j) * n + k0 + j + 1]);
+        }
+        let below = &mut a[k1 * n..];
+        below.par_chunks_mut(n).for_each(|row| {
+            for j in 0..w {
+                let s = row[k0 + j] - dot(&row[k0..k0 + j], &diag[j * w..j * w + j]);
+                row[k0 + j] = s / diag[j * w + j];
+            }
+        });
+        let mut panel = vec![0.0; (n - k1) * w];
+        for (r, chunk) in panel.chunks_mut(w).enumerate() {
+            chunk.copy_from_slice(&below[r * n + k0..r * n + k1]);
+        }
+        below.par_chunks_mut(n).enumerate().for_each(|(r, row)| {
+            let lr = &panel[r * w..(r + 1) * w];
+            for (c, lc) in panel.chunks(w).take(r + 1).enumerate() {
+                row[k1 + c] -= dot(lr, lc);
+            }
+        });
+        k0 = k1;
+    }
+    let mut y = b.to_vec();
+    for i in 0..n {
+        y[i] = (y[i] - dot(&a[i * n..i * n + i], &y[..i])) / a[i * n + i];
+    }
+    for i in (0..n).rev() {
+        y[i] /= a[i * n + i];
+        let xi = y[i];
+        for (yp, l) in y[..i].iter_mut().zip(&a[i * n..i * n + i]) {
+            *yp -= l * xi;
+        }
+    }
+    Some(y)
+}
+
+/// The dot product with eight running sums, so it vectorizes.
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    let mut acc = [0.0f64; 8];
+    let ((ca, ra), (cb, rb)) = (a.as_chunks::<8>(), b[..a.len()].as_chunks::<8>());
+    let tail: f64 = ra.iter().zip(rb).map(|(x, y)| x * y).sum();
+    for (x, y) in ca.iter().zip(cb) {
+        for (s, (x, y)) in acc.iter_mut().zip(x.iter().zip(y)) {
+            *s += x * y;
+        }
+    }
+    acc.iter().sum::<f64>() + tail
 }
 
 /// Refines one camera against fixed points seen at `uvs` with Gauss-Newton

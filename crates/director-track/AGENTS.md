@@ -10,7 +10,7 @@
 - `src/klt.rs` - pyramidal Lucas-Kanade (`track_point`) and the affine Gauss-Newton match of a track against its first appearance (`template`, `align`).
 - `src/tracks.rs` - `track`: frame-to-frame tracks over a whole shot, kept clear of a matte.
 - `src/geometry.rs` - `Intrinsics` (focal length, principal point and radial distortion), normalized eight-point essential matrices and four-point homographies with RANSAC, their factoring into candidate poses, cheirality and Sampson support, triangulation and PnP resection.
-- `src/bundle.rs` - Levenberg-Marquardt bundle adjustment with a Schur complement over cameras, points and the lens parameters a `Refine` names (the focal length, the radial distortion k1 and k2).
+- `src/bundle.rs` - Levenberg-Marquardt bundle adjustment with a Schur complement over cameras, points and the lens parameters a `Refine` names (the focal length, the radial distortion k1 and k2). The reduced camera system fills in parallel strips per camera and solves by a blocked parallel Cholesky.
 - `src/solve.rs` - `solve`, `SolveOptions`, `CameraSolve` and `Pose`: the incremental reconstruction and the ground-plane world.
 - `src/rotation.rs` - the solve of a camera that only turns: frame-to-frame rotations by two-track RANSAC and Kabsch, refined by alternating the tracks' world directions, every frame's rotation and, for a zoom, every later frame's focal length by least squares, with a golden-section search over frame 0's focal length.
 - `src/probe.rs` - `light_probe`, `Probe` and `direction`: an equirectangular light probe stitched from the footage through its solved cameras, its Radiance `.hdr` encoding and `Probe::irradiance`; `stream` and `View` hand each sampled RGB frame and its solved camera to the probe and the sun.
