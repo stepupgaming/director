@@ -594,6 +594,9 @@ impl Element for HtmlElement {
                     text.shadows = shadows.clone();
                 }
             }
+            if let Some(model) = content.as_any_mut().downcast_mut::<director_3d::ModelNode>() {
+                model.view = self.paint.camera;
+            }
             content.update(self.media_start + (time - self.start).max(0.0) * self.playback_rate);
         }
         // An animated atomic box publishes its live margin box for its text line.

@@ -4,6 +4,7 @@ use crate::caption::{ActiveSpeakerCameraBody, CaptionBody, SmartCaptionBody};
 use crate::channel::{Channel, Rgba};
 use crate::effect::Effect;
 use crate::html::{HtmlBody, HtmlCaptureBody, HtmlVideoBody, SvgSmilBody};
+use crate::model::ModelBody;
 use crate::{AssetId, SceneDocument};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,7 @@ pub enum NodeBody {
     HtmlVideo(HtmlVideoBody),
     HtmlCapture(HtmlCaptureBody),
     SvgSmil(SvgSmilBody),
+    Model(ModelBody),
 }
 
 impl NodeBody {
@@ -52,6 +54,7 @@ impl NodeBody {
             NodeBody::HtmlVideo(_) => "html_video",
             NodeBody::HtmlCapture(_) => "html_capture",
             NodeBody::SvgSmil(_) => "svg_smil",
+            NodeBody::Model(_) => "model",
         }
     }
 }

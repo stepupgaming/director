@@ -200,6 +200,7 @@ fn value(name: &str, s: &str, m: Metrics, current: Color) -> Result<Value, Strin
         "-webkit-text-stroke-color" => Value::Color(color(s, current)?),
         "-webkit-text-stroke-width" => Value::Scalar(px(s, m)?),
         name if is_grade(name) => Value::Scalar(crate::style::grade_amount(s)?),
+        name if is_camera(name) => Value::Scalar(camera_amount(name, s)?),
         "text" => Value::Text(s.to_string()),
         _ => return Err(format!("unsupported animated property '{name}'")),
     })
@@ -252,6 +253,47 @@ pub(crate) fn is_filter(name: &str) -> bool {
 pub(crate) const GRADES: [&str; 2] = ["--grade-mix", "--grade-intensity"];
 pub(crate) fn is_grade(name: &str) -> bool {
     GRADES.contains(&name)
+}
+/// The `<model>` orbit: yaw and pitch angles in degrees and the camera
+/// distance as a multiple of its framed distance.
+pub(crate) const CAMERA: [&str; 3] = ["--camera-yaw", "--camera-pitch", "--camera-distance"];
+pub(crate) fn is_camera(name: &str) -> bool {
+    CAMERA.contains(&name)
+}
+/// A camera channel's value: an angle in `deg`, `rad`, `grad` or `turn` (a
+/// bare number is degrees) for yaw and pitch, a positive factor for distance.
+pub(crate) fn camera_amount(name: &str, s: &str) -> Result<f32, String> {
+    let s = s.trim();
+    if name == "--camera-distance" {
+        let v = number(s).map_err(|e| format!("{name}: {e}"))?;
+        return if v > 0.0 && v.is_finite() { Ok(v) } else { Err(format!("{name}: '{s}' must be a positive number")) };
+    }
+    let (n, unit) = if let Some(n) = s.strip_suffix("deg") {
+        (n, 1.0)
+    } else if let Some(n) = s.strip_suffix("grad") {
+        (n, 0.9)
+    } else if let Some(n) = s.strip_suffix("rad") {
+        (n, 180.0 / std::f32::consts::PI)
+    } else if let Some(n) = s.strip_suffix("turn") {
+        (n, 360.0)
+    } else {
+        (s, 1.0)
+    };
+    Ok(number(n.trim()).map_err(|e| format!("{name}: {e}"))? * unit)
+}
+pub(crate) fn set_camera(view: &mut director_scene::ModelView, name: &str, v: f32) {
+    match name {
+        "--camera-yaw" => view.yaw = v,
+        "--camera-pitch" => view.pitch = v,
+        _ => view.distance = v.max(1e-3),
+    }
+}
+pub(crate) fn camera_value(view: &director_scene::ModelView, name: &str) -> f32 {
+    match name {
+        "--camera-yaw" => view.yaw,
+        "--camera-pitch" => view.pitch,
+        _ => view.distance,
+    }
 }
 /// True for a channel that moves paint inside the element's box: shadow
 /// offsets and spread, background offsets, clip paths, padding, borders and
@@ -541,6 +583,7 @@ fn base_value(name: &str, base: &Values, paint: &PaintStyle, m: Metrics) -> Resu
         "border-top-left-radius" => Value::Scalar(0.0),
         "--grade-mix" => Value::Scalar(0.0),
         "--grade-intensity" => Value::Scalar(1.0),
+        name if is_camera(name) => Value::Scalar(camera_value(&paint.camera, name)),
         _ => return Err(format!("animation '{name}' needs an explicit base value")),
     })
 }
@@ -750,7 +793,7 @@ pub(crate) fn from_track(
                     return Err(format!("timeline '{property}' takes CSS text"))
                 }
                 name if is_filter(name) || indexed(name).is_some() => n.to_string(),
-                name if is_grade(name) => n.to_string(),
+                name if is_grade(name) || is_camera(name) => n.to_string(),
                 "text" => n.to_string(),
                 "color" | "background-color" | "transform" | "-webkit-text-stroke-color" => {
                     return Err(format!("timeline '{property}' takes CSS text"))
@@ -1174,6 +1217,7 @@ impl Animation {
                 }
                 ("filter-drop-shadow-color", Value::Color(c)) => set_filter_color(&mut paint.filters, c),
                 (name, Value::Scalar(v)) if is_filter(name) => set_filter(&mut paint.filters, name, v),
+                (name, Value::Scalar(v)) if is_camera(name) => set_camera(&mut paint.camera, name, v),
                 (name, Value::Scalar(v)) if is_grade(name) => {
                     if let Some(grade) = &mut paint.grade {
                         let v = v.clamp(0.0, 1.0);

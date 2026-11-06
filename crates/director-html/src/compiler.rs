@@ -1390,7 +1390,7 @@ impl Builder {
                 values.insert("color", color);
             }
         }
-        if matches!(tag, "img" | "svg" | "video") {
+        if matches!(tag, "img" | "svg" | "video" | "model") {
             for dimension in ["width", "height"] {
                 if !values.contains_key(dimension) {
                     if let Some(value) = el.value().attr_text(dimension) {
@@ -1692,6 +1692,32 @@ impl Builder {
                 };
                 Some(video)
             }
+            "model" => {
+                let attr = |name: &str| el.value().attr_text(name);
+                let src = attr("src").ok_or_else(|| CompileError::Input(format!("{context}: model without src")))?;
+                let path = (!src.starts_with("data:")).then(|| src.to_string());
+                let input = |e: String| CompileError::Input(format!("{context}: {e}"));
+                let asset = director_3d::Asset::new(self.assets.read(src)?, "glb", path);
+                let mut model = director_3d::ModelNode::new(asset).map_err(input)?;
+                if let Some(environment) = attr("environment") {
+                    let path = (!environment.starts_with("data:")).then(|| environment.to_string());
+                    model.environment =
+                        Some(director_3d::Asset::environment(self.assets.read(environment)?, path).map_err(input)?);
+                }
+                model.environment_intensity = numeric("environment-intensity", 1000.0)? as f32;
+                model.exposure = numeric("exposure", 9.7)? as f32;
+                model.background = attr("background").is_some_and(|v| v != "false");
+                model.looped = attr("loop").is_some_and(|v| v != "false");
+                model.base = paint.camera;
+                model.view = paint.camera;
+                if !values.contains_key("width") {
+                    layout.size.width = taffy::prelude::length(300.0_f32);
+                }
+                if !values.contains_key("height") {
+                    layout.size.height = taffy::prelude::length(150.0_f32);
+                }
+                Some(Box::new(model))
+            }
             "audio" => {
                 let src = el
                     .value()
@@ -1834,7 +1860,7 @@ impl Builder {
             && (matches!(layout.display, taffy::Display::Flex | taffy::Display::Grid)
                 || !atomics.is_empty()
                 || !positioned.is_empty())
-            && !matches!(tag, "img" | "svg" | "video");
+            && !matches!(tag, "img" | "svg" | "video" | "model");
         let mut element = HtmlElement::new(
             layout,
             paint.clone(),
@@ -2082,7 +2108,7 @@ impl Builder {
     /// it. Replaced elements inherit nothing.
     fn inherit_text(&self, el: ElementRef<'_>, specified_font: Option<&str>, font_size: f32, tag: &str) -> Vec<animation::Animation> {
         let Some((parent_font, list)) = self.inherited.last() else { return Vec::new() };
-        if list.is_empty() || matches!(tag, "img" | "svg" | "video" | "audio") {
+        if list.is_empty() || matches!(tag, "img" | "svg" | "video" | "audio" | "model") {
             return Vec::new();
         }
         let local = |names: &[&str]| names.iter().any(|n| self.css.has_local_property(el, n));

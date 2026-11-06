@@ -1,0 +1,24 @@
+[package]
+name = "director-3d"
+version.workspace = true
+edition.workspace = true
+autotests = false
+license.workspace = true
+description = "Real 3D for Director: glTF scenes rendered by Bevy on Vulkan"
+
+[dependencies]
+director-core.workspace = true
+director-scene.workspace = true
+skia-safe = { workspace = true }
+anyhow.workspace = true
+serde_json.workspace = true
+taffy = "0.9.2"
+bevy = { version = "=0.20.1", default-features = false, features = ["default_app", "std", "3d_bevy_render", "exr", "hdr", "bevy_world_serialization", "raw_vulkan_init"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["vulkan"] }
+half = "2"
+
+
+# tests/main.rs declares every tests/*.rs as a module: one test binary.
+[[test]]
+name = "integration"
+path = "tests/main.rs"

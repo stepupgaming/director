@@ -30,6 +30,7 @@ mod gsap;
 mod line_clamp;
 mod media;
 mod mixed_calc;
+mod model;
 mod motion_blur;
 mod motion_policy;
 mod object_position_css;

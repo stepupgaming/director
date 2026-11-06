@@ -173,6 +173,8 @@ pub struct PaintStyle {
     pub filter: Option<skia_safe::ImageFilter>,
     /// The colour grade from `--grade`, composed after `filters` into `filter`.
     pub grade: Option<director_core::grade::Grade>,
+    /// The `<model>` orbit from `--camera-yaw`, `--camera-pitch` and `--camera-distance`.
+    pub camera: director_scene::ModelView,
     pub blend_mode: skia_safe::BlendMode,
     pub shadows: Vec<Shadow>,
     /// CSS `text-shadow` list in source order: the first shadow paints on top. Empty is
@@ -949,6 +951,7 @@ pub fn translate(
         filters: Vec::new(),
         filter: Default::default(),
         grade: None,
+        camera: director_scene::ModelView::default(),
         blend_mode: skia_safe::BlendMode::SrcOver,
         shadows: Vec::new(),
         text_shadows: Vec::new(),
@@ -1240,6 +1243,14 @@ pub fn translate(
     match grade::grade(values, assets) {
         Ok(found) => paint.grade = found,
         Err(e) => errors.push(e),
+    }
+    for name in crate::animation::CAMERA {
+        if let Some(text) = values.get(name) {
+            match crate::animation::camera_amount(name, text) {
+                Ok(v) => crate::animation::set_camera(&mut paint.camera, name, v),
+                Err(e) => errors.push(e),
+            }
+        }
     }
     if paint.grade.is_some() {
         paint.filter = paint_filter(&paint);

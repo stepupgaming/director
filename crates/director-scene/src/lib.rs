@@ -12,6 +12,7 @@ pub mod effect;
 pub mod entity;
 pub mod html;
 pub mod layout;
+pub mod model;
 pub mod timeline;
 
 pub use audio::{AudioEffect, AudioMix, AudioParamAnimation, AudioTrack};
@@ -22,6 +23,7 @@ pub use effect::{Effect, EffectParam, Uniform};
 pub use entity::{BoundingBox, Entity, EntityId, EntityKind, EntitySample};
 pub use html::{HtmlBody, HtmlCaptureBody, HtmlVideoBody, SvgSmilBody};
 pub use layout::LayoutStyle;
+pub use model::{ModelBody, ModelView};
 pub use timeline::{Clip, Timeline, Track, Transition};
 
 use schemars::JsonSchema;

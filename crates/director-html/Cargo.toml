@@ -25,6 +25,7 @@ wuff = "0.2.9"
 sha2 = "0.10"
 tempfile = "3.23"
 director-dom = { path = "../director-dom" }
+director-3d = { path = "../director-3d" }
 ego-tree = "0.10"
 rayon = "1.10"
 

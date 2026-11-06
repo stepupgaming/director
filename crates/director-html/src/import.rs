@@ -32,6 +32,7 @@ pub fn register_import(registry: &mut ImportRegistry) {
     registry.register("html_video", crate::capture::decode_video);
     registry.register("html_capture", crate::capture::decode_capture);
     registry.register("svg_smil", crate::smil::decode);
+    director_3d::register_import(registry);
 }
 
 pub(crate) fn mismatch(record: &NodeRecord) -> ImportError {
@@ -73,6 +74,9 @@ fn decode_html(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn El
         height: body.metrics.height,
         font_size: body.metrics.font_size,
     };
+    if let Some(model) = content.as_ref().and_then(|c| c.as_any().downcast_ref::<director_3d::ModelNode>()) {
+        paint.camera = model.base;
+    }
     let mut element = HtmlElement::new(taffy::Style::default(), paint, content, metrics);
     element.animations = body.animations.iter().map(Animation::from_doc).collect::<Result<_, _>>()?;
     element.start = body.start;
@@ -242,6 +246,7 @@ fn paint(p: &doc::HtmlPaint, cx: &ImportContext) -> Result<PaintStyle, ImportErr
         filter: compiled,
         filters,
         grade,
+        camera: director_scene::ModelView::default(),
         blend_mode: blend_mode(&p.blend_mode)?,
         shadows: p
             .shadows

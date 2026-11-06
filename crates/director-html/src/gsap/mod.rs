@@ -118,6 +118,9 @@ const NATIVE: &[&str] = &[
     "margin-left",
     "--grade-mix",
     "--grade-intensity",
+    "--camera-yaw",
+    "--camera-pitch",
+    "--camera-distance",
 ];
 
 /// Whether a script `src` loads the GSAP library or one of its plugins.
@@ -998,6 +1001,7 @@ pub(crate) fn base_value(channel: &str, style: &taffy::Style, paint: &PaintStyle
             length(raw, c)
         }
         "filter-drop-shadow-color" => Ok(filter_shadow_color(&paint.filters).map_or_else(|| filter_default(channel), Val::color)),
+        c if crate::animation::is_camera(c) => Ok(Val::Num(crate::animation::camera_value(&paint.camera, c) as f64)),
         c if crate::animation::is_grade(c) => {
             let grade = paint.grade.as_ref();
             let v = if c == "--grade-mix" { grade.map_or(0.0, |g| g.mix) } else { grade.map_or(1.0, |g| g.intensity) };
@@ -1054,6 +1058,8 @@ fn tolerance(channel: &str) -> f64 {
         "filter-hue-rotate" => 0.01,
         c if c.starts_with("filter-") => 5e-4,
         "--grade-mix" | "--grade-intensity" => 5e-4,
+        "--camera-yaw" | "--camera-pitch" => 0.01,
+        "--camera-distance" => 1e-4,
         c if c.ends_with("-color") => 5e-4,
         c if c.starts_with("background-") && c.ends_with("-percent") => 0.01,
         c if c.starts_with("clip-path-") => 0.01,
@@ -1207,6 +1213,9 @@ fn sample(channel: &str, text: &str) -> Result<Val, String> {
         "opacity" => text.trim().parse().map(Val::Num).map_err(|_| format!("GSAP opacity '{text}'")),
         "letter-spacing" | "word-spacing" if text.trim() == "normal" => Ok(Val::Num(0.0)),
         "font-stretch" => crate::style::stretch_percent(text).map(|p| Val::Num(p as f64)).map_err(|e| format!("GSAP {e}")),
+        c if crate::animation::is_camera(c) => {
+            crate::animation::camera_amount(c, text).map(|v| Val::Num(v as f64)).map_err(|e| format!("GSAP {e}"))
+        }
         c if crate::animation::is_grade(c) => {
             crate::style::grade_amount(text).map(|v| Val::Num(v as f64)).map_err(|e| format!("GSAP {c}: {e}"))
         }

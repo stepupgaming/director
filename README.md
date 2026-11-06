@@ -106,6 +106,7 @@ Build with `--release`. Skia downloads as a prebuilt library. [docs/contributing
 | `crates/director-scene` | Serializable scene document |
 | `crates/director-render` | Frame rendering, motion blur and export |
 | `crates/director-host` | Session API: open, patch, inspect, render, export |
+| `crates/director-3d` | Real 3D: glTF scenes rendered by Bevy on Vulkan, authored as HTML `<model>` |
 | `crates/director-cli` | The `director-engine` CLI, MCP server and editor protocol |
 | `crates/director-schema` | Schema reflection |
 | `crates/lottie-*` | Lottie data, animation and Skia rendering |
