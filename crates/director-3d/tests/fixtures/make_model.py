@@ -4,15 +4,24 @@ Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/mak
 
 The scene holds a red plastic cube that turns a quarter over two seconds, a
 gold sphere that rises beside it, a grey ground, a sun and a camera. The two
-animated objects export as two clips.
+animated objects export as two clips, which place frame f at f / 30 seconds.
+
+With `-- --eevee crates/director-3d/tests/fixtures` the script exports
+nothing. It writes `sky.hdr`, an equirectangular sky that depends only on
+elevation, lights the same scene with it in Eevee and renders frames 1 and 46
+at 160x90 over a transparent film with the Standard view transform into
+`eevee-1.png` and `eevee-46.png`.
 """
 
 import math
+import os
 import sys
 
 import bpy
 
-out = sys.argv[sys.argv.index("--") + 1]
+args = sys.argv[sys.argv.index("--") + 1 :]
+eevee = args[1] if args[0] == "--eevee" else None
+out = args[0]
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
@@ -78,6 +87,57 @@ target.x = 0
 target.z = 0.7
 camera.rotation_euler = (target - camera.location).to_track_quat("-Z", "Y").to_euler()
 scene.camera = camera
+
+
+def sky(path, width=128, height=64):
+    """A grey ground, a brighter zenith and the same radiance at every azimuth,
+    so both renderers' equirectangular conventions read it alike."""
+    image = bpy.data.images.new("Sky", width, height, float_buffer=True, alpha=False)
+    pixels = []
+    for row in range(height):  # Blender stores the bottom row first.
+        s = math.sin((row + 0.5) / height * math.pi - math.pi / 2)
+        v = 0.6 + 0.4 * s if s >= 0 else 0.6 - 0.35 * math.sqrt(-s)
+        pixels += [v, v, v, 1.0] * width
+    image.pixels = pixels
+    image.file_format = "HDR"
+    image.filepath_raw = path
+    image.save()
+    return image
+
+
+if eevee:
+    world = bpy.data.worlds.new("Sky")
+    scene.world = world
+    if world.node_tree is None:
+        world.use_nodes = True
+    nodes = world.node_tree.nodes
+    environment = nodes.new("ShaderNodeTexEnvironment")
+    environment.image = sky(os.path.abspath(os.path.join(eevee, "sky.hdr")))
+    background = next(n for n in nodes if n.type == "BACKGROUND")
+    background.inputs["Strength"].default_value = 1.0
+    world.node_tree.links.new(environment.outputs["Color"], background.inputs["Color"])
+    try:
+        scene.render.engine = "BLENDER_EEVEE"
+    except TypeError:
+        scene.render.engine = "BLENDER_EEVEE_NEXT"
+    scene.eevee.taa_render_samples = 64
+    scene.render.resolution_x = 160
+    scene.render.resolution_y = 90
+    scene.render.resolution_percentage = 100
+    scene.render.film_transparent = True
+    scene.display_settings.display_device = "sRGB"
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
+    scene.view_settings.exposure = 0.0
+    scene.view_settings.gamma = 1.0
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.image_settings.color_mode = "RGBA"
+    for frame in (1, 46):
+        scene.frame_set(frame)
+        scene.render.filepath = os.path.abspath(os.path.join(eevee, f"eevee-{frame}.png"))
+        bpy.ops.render.render(write_still=True)
+        print("rendered", scene.render.filepath)
+    sys.exit(0)
 
 bpy.ops.export_scene.gltf(
     filepath=out,
