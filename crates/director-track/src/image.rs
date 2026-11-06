@@ -44,10 +44,6 @@ impl Gray {
         let x = x.clamp(0.0, (self.width - 1) as f32);
         let y = y.clamp(0.0, (self.height - 1) as f32);
         let (x0, y0) = (x.floor(), y.floor());
-        let weights = |t: f32| {
-            let (t2, t3) = (t * t, t * t * t);
-            [0.5 * (-t + 2.0 * t2 - t3), 0.5 * (2.0 - 5.0 * t2 + 3.0 * t3), 0.5 * (t + 4.0 * t2 - 3.0 * t3), 0.5 * (t3 - t2)]
-        };
         let (wx, wy) = (weights(x - x0), weights(y - y0));
         let (xi, yi) = (x0 as isize, y0 as isize);
         let mut sum = 0.0;
@@ -60,6 +56,46 @@ impl Gray {
             sum += wy * row;
         }
         sum
+    }
+
+    /// `cubic` at (x + dx, y + dy) for every whole offset from -`half` to
+    /// `half`, row by row into `out`. Away from the border the offsets share
+    /// one set of weights, applied across and then down.
+    pub fn cubic_window(&self, x: f32, y: f32, half: usize, out: &mut [f32]) {
+        let side = 2 * half + 1;
+        assert!(side <= WINDOW_SIDE, "a window at most {WINDOW_SIDE} wide");
+        let (x0, y0) = (x.floor(), y.floor());
+        let (left, top) = (x0 - half as f32 - 1.0, y0 - half as f32 - 1.0);
+        let reach = (side + 2) as f32;
+        if !(left >= 0.0 && top >= 0.0 && left + reach <= (self.width - 1) as f32 && top + reach <= (self.height - 1) as f32) {
+            let h = half as f32;
+            for (k, v) in out[..side * side].iter_mut().enumerate() {
+                *v = self.cubic(x + (k % side) as f32 - h, y + (k / side) as f32 - h);
+            }
+            return;
+        }
+        let (wx, wy) = (weights(x - x0), weights(y - y0));
+        let (left, top) = (left as usize, top as usize);
+        let mut across = [0.0f32; WINDOW_ROWS * WINDOW_SIDE];
+        for r in 0..side + 3 {
+            let row = &self.pixels[(top + r) * self.width + left..];
+            for c in 0..side {
+                let mut v = 0.0;
+                for (i, w) in wx.iter().enumerate() {
+                    v += w * row[c + i];
+                }
+                across[r * side + c] = v;
+            }
+        }
+        for r in 0..side {
+            for c in 0..side {
+                let mut v = 0.0;
+                for (j, w) in wy.iter().enumerate() {
+                    v += w * across[(r + j) * side + c];
+                }
+                out[r * side + c] = v;
+            }
+        }
     }
 
     /// The 1 4 6 4 1 binomial blur in both directions.
@@ -110,11 +146,47 @@ impl Gray {
     }
 }
 
+/// The widest window `cubic_window` samples, and the rows it reads.
+const WINDOW_SIDE: usize = 17;
+const WINDOW_ROWS: usize = WINDOW_SIDE + 3;
+
+/// The Catmull-Rom weights of the four taps around a fraction `t`.
+fn weights(t: f32) -> [f32; 4] {
+    let (t2, t3) = (t * t, t * t * t);
+    [0.5 * (-t + 2.0 * t2 - t3), 0.5 * (2.0 - 5.0 * t2 + 3.0 * t3), 0.5 * (t + 4.0 * t2 - 3.0 * t3), 0.5 * (t3 - t2)]
+}
+
 /// One pyramid level: the image and its gradients.
 pub struct Level {
     pub image: Gray,
     pub gx: Gray,
     pub gy: Gray,
+}
+
+impl Level {
+    /// `cubic` of the image and both gradients at (x, y), sharing one set
+    /// of weights.
+    pub fn cubic3(&self, x: f32, y: f32) -> [f32; 3] {
+        let (w, h) = (self.image.width, self.image.height);
+        let x = x.clamp(0.0, (w - 1) as f32);
+        let y = y.clamp(0.0, (h - 1) as f32);
+        let (x0, y0) = (x.floor(), y.floor());
+        let (wx, wy) = (weights(x - x0), weights(y - y0));
+        let (xi, yi) = (x0 as isize, y0 as isize);
+        let columns: [usize; 4] = std::array::from_fn(|i| (xi + i as isize - 1).clamp(0, w as isize - 1) as usize);
+        let mut sum = [0.0f32; 3];
+        for (j, wy) in wy.iter().enumerate() {
+            let yy = (yi + j as isize - 1).clamp(0, h as isize - 1) as usize * w;
+            for (s, image) in sum.iter_mut().zip([&self.image, &self.gx, &self.gy]) {
+                let mut row = 0.0;
+                for (i, wx) in wx.iter().enumerate() {
+                    row += wx * image.pixels[yy + columns[i]];
+                }
+                *s += wy * row;
+            }
+        }
+        sum
+    }
 }
 
 /// Levels from full size down, each half the one before.

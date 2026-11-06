@@ -25,6 +25,9 @@ const TEXEL: f64 = 0.03;
 const SPREAD: f32 = 0.3;
 /// The width in metres of the column each standing point stands for.
 const SPLAT: f64 = 0.3;
+/// A standing point whose luma spreads by more than this fraction of its
+/// mean across the frames is a phantom of crossing edges.
+const CONSISTENT: f64 = 0.15;
 /// A ground sample counts as hidden when a standing column lies this
 /// fraction of its depth nearer the camera.
 const OCCLUDED: f64 = 0.05;
@@ -102,8 +105,22 @@ pub fn estimate_sun(path: &Path, solve: &CameraSolve, probe: &Probe) -> Result<S
             standing.len()
         ));
     }
+    let spread = consistency(path, solve, &standing)?;
+    let hiding = columns(&standing);
+    let standing: Vec<Vector3<f64>> = standing
+        .into_iter()
+        .zip(spread)
+        .filter(|(_, (spread, seen))| *spread < CONSISTENT && *seen >= 3)
+        .map(|(p, _)| p)
+        .collect();
+    if standing.len() < MIN_POINTS {
+        return Err(format!(
+            "reading the sun needs {MIN_POINTS} solved points off the ground that keep one colour across the footage, the solve has {}",
+            standing.len()
+        ));
+    }
     let columns = columns(&standing);
-    let fine = map_ground(path, solve, &columns)?;
+    let fine = map_ground(path, solve, &hiding)?;
     let ground = fine.coarsen((SEARCH_TEXEL / fine.texel).round().max(1.0) as usize);
     if ground.texels.iter().flatten().count() < 100 {
         return Err("the footage shows too little steady ground to read the sun's shadows".into());
@@ -113,7 +130,7 @@ pub fn estimate_sun(path: &Path, solve: &CameraSolve, probe: &Probe) -> Result<S
         Vector3::new(e.cos() * a.sin(), e.sin(), -e.cos() * a.cos())
     };
     let score = |map: &Ground, s: &Vector3<f64>| {
-        shrunk(&map.shade(&columns, s, SPLAT / 2.0, 0.0), map.texel)
+        shrunk(&map.shade(&columns, &[], s, SPLAT / 2.0, 0.0), map.texel)
     };
     let search =
         |map: &Ground, azimuths: Vec<f64>, elevations: Vec<f64>| -> Option<(f64, f64, f64)> {
@@ -141,7 +158,7 @@ pub fn estimate_sun(path: &Path, solve: &CameraSolve, probe: &Probe) -> Result<S
     )
     .expect("the coarse best is among the fine candidates");
     let direction = towards(a, e);
-    let shadow = ratio(&fine.shade(&columns, &direction, CORE, GAP))
+    let shadow = ratio(&fine.shade(&columns, &hiding, &direction, CORE, GAP))
         .ok_or("the best sun's shadows fall on too little mapped ground")?;
     let sky = probe.irradiance(Vector3::y());
     let irradiance = std::array::from_fn(|c| {
@@ -152,6 +169,34 @@ pub fn estimate_sun(path: &Path, solve: &CameraSolve, probe: &Probe) -> Result<S
         irradiance,
         shadow,
     })
+}
+
+/// Each point's luma spread over its mean across the sampled frames that
+/// frame it, and how many frames did. A point on a surface keeps its colour
+/// from frame to frame; a track caught where a near edge crosses the ground
+/// behind it triangulates to a phantom in the air, which shows whatever lies
+/// along each frame's ray.
+fn consistency(path: &Path, solve: &CameraSolve, points: &[Vector3<f64>]) -> Result<Vec<(f64, u32)>, String> {
+    let mut sums = vec![[0.0f64; 3]; points.len()];
+    stream(path, solve, |view, image| {
+        sums.par_iter_mut().zip(points.par_iter()).for_each(|(s, p)| {
+            let c = view.rotation * (p - view.position);
+            let Some((px, py, _)) = view.at(&c, 2.0) else {
+                return;
+            };
+            let color = bilinear(image, view.width, view.height, px, py);
+            let luma = (0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]) as f64;
+            *s = [s[0] + luma, s[1] + luma * luma, s[2] + 1.0];
+        });
+    })?;
+    Ok(sums
+        .iter()
+        .map(|s| {
+            let n = s[2].max(1.0);
+            let mean = s[0] / n;
+            ((s[1] / n - mean * mean).max(0.0).sqrt() / mean.max(1e-6), s[2] as u32)
+        })
+        .collect())
 }
 
 /// The standing points as columns: each `SPLAT`-wide cell of the ground
@@ -213,12 +258,13 @@ impl Ground {
 
     /// The mapped ground around the columns under a sun towards `s`, each
     /// texel flagged true where the columns shade it and false in the band
-    /// `BAND` metres wide around those shadows. The columns' feet and the
-    /// contact shade around them count as neither. Empty when less than a
-    /// quarter of the shadows falls on mapped ground.
+    /// `BAND` metres wide around those shadows. The feet of the columns and
+    /// of `feet`, with the contact shade around them, count as neither.
+    /// Empty when less than a quarter of the shadows falls on mapped ground.
     fn shade(
         &self,
         columns: &[Column],
+        feet: &[Column],
         s: &Vector3<f64>,
         radius: f64,
         gap: f64,
@@ -247,6 +293,16 @@ impl Ground {
             self.capsule(
                 base,
                 base,
+                SPLAT / 2.0 + CONTACT,
+                FOOT,
+                &mut labels,
+                &mut touched,
+            );
+        }
+        for c in feet {
+            self.capsule(
+                (c.x, c.z),
+                (c.x, c.z),
                 SPLAT / 2.0 + CONTACT,
                 FOOT,
                 &mut labels,

@@ -10,6 +10,8 @@ use crate::image::{Gray, Level, Pyramid};
 const HALF: i32 = 7;
 /// Iterations per level.
 const ITERATIONS: usize = 30;
+/// The pixels of the window.
+const WINDOW: usize = ((2 * HALF + 1) * (2 * HALF + 1)) as usize;
 
 /// Where the window at `p` in `a` moved to in `b`, starting from `guess`.
 /// `None` when the window has too little texture, the step leaves the
@@ -20,25 +22,20 @@ pub fn track(a: &Pyramid, b: &Pyramid, p: [f32; 2], guess: [f32; 2]) -> Option<[
     let mut d = [(guess[0] - p[0]) / top, (guess[1] - p[1]) / top];
     let side = (2 * HALF + 1) as usize;
     let n = side * side;
-    let (mut tpl, mut ix, mut iy) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
+    let (mut tpl, mut ix, mut iy, mut seen) = ([0.0f32; WINDOW], [0.0f32; WINDOW], [0.0f32; WINDOW], [0.0f32; WINDOW]);
     let mut residual = 0.0;
     for l in (0..levels).rev() {
         let s = 1.0 / (1 << l) as f32;
         let (px, py) = (p[0] * s, p[1] * s);
         let (la, lb) = (&a.levels[l], &b.levels[l]);
         let (mut gxx, mut gxy, mut gyy) = (0.0f32, 0.0f32, 0.0f32);
-        let mut k = 0;
-        for dy in -HALF..=HALF {
-            for dx in -HALF..=HALF {
-                let (x, y) = (px + dx as f32, py + dy as f32);
-                tpl[k] = la.image.cubic(x, y);
-                ix[k] = la.gx.cubic(x, y);
-                iy[k] = la.gy.cubic(x, y);
-                gxx += ix[k] * ix[k];
-                gxy += ix[k] * iy[k];
-                gyy += iy[k] * iy[k];
-                k += 1;
-            }
+        la.image.cubic_window(px, py, HALF as usize, &mut tpl);
+        la.gx.cubic_window(px, py, HALF as usize, &mut ix);
+        la.gy.cubic_window(px, py, HALF as usize, &mut iy);
+        for (x, y) in ix.iter().zip(&iy) {
+            gxx += x * x;
+            gxy += x * y;
+            gyy += y * y;
         }
         let det = gxx * gyy - gxy * gxy;
         let min_eig = 0.5 * (gxx + gyy) - (0.25 * (gxx - gyy).powi(2) + gxy * gxy).sqrt();
@@ -47,14 +44,11 @@ pub fn track(a: &Pyramid, b: &Pyramid, p: [f32; 2], guess: [f32; 2]) -> Option<[
         }
         for _ in 0..ITERATIONS {
             let (mut bx, mut by) = (0.0f32, 0.0f32);
-            let mut k = 0;
-            for dy in -HALF..=HALF {
-                for dx in -HALF..=HALF {
-                    let diff = tpl[k] - lb.image.cubic(px + d[0] + dx as f32, py + d[1] + dy as f32);
-                    bx += diff * ix[k];
-                    by += diff * iy[k];
-                    k += 1;
-                }
+            lb.image.cubic_window(px + d[0], py + d[1], HALF as usize, &mut seen);
+            for k in 0..n {
+                let diff = tpl[k] - seen[k];
+                bx += diff * ix[k];
+                by += diff * iy[k];
             }
             let step = [(gyy * bx - gxy * by) / det, (gxx * by - gxy * bx) / det];
             d[0] += step[0];
@@ -67,7 +61,8 @@ pub fn track(a: &Pyramid, b: &Pyramid, p: [f32; 2], guess: [f32; 2]) -> Option<[
             }
         }
         if l == 0 {
-            residual = window_error(&tpl, &lb.image, px + d[0], py + d[1]);
+            lb.image.cubic_window(px + d[0], py + d[1], HALF as usize, &mut seen);
+            residual = tpl.iter().zip(&seen).map(|(a, b)| (a - b).abs()).sum::<f32>() / n as f32;
         } else {
             d[0] *= 2.0;
             d[1] *= 2.0;
@@ -80,19 +75,6 @@ pub fn track(a: &Pyramid, b: &Pyramid, p: [f32; 2], guess: [f32; 2]) -> Option<[
         && q[0] <= (image.width as i32 - 1 - HALF) as f32
         && q[1] <= (image.height as i32 - 1 - HALF) as f32;
     (inside && residual < 12.0).then_some(q)
-}
-
-/// The mean absolute difference between the template and `image` around (x, y).
-fn window_error(tpl: &[f32], image: &Gray, x: f32, y: f32) -> f32 {
-    let mut sum = 0.0;
-    let mut k = 0;
-    for dy in -HALF..=HALF {
-        for dx in -HALF..=HALF {
-            sum += (tpl[k] - image.cubic(x + dx as f32, y + dy as f32)).abs();
-            k += 1;
-        }
-    }
-    sum / k as f32
 }
 
 /// Tracks the point `p` from image `a` to image `b` through 3 pyramid
@@ -141,8 +123,9 @@ pub fn align(template: &[f32], target: &Level, warp: Warp) -> Option<(Warp, f32)
             for dx in -AFFINE_HALF..=AFFINE_HALF {
                 let (fx, fy) = (dx as f64, dy as f64);
                 let (x, y) = warped(&w, fx, fy);
-                let e = (template[k] - target.image.cubic(x, y)) as f64;
-                let (gx, gy) = (target.gx.cubic(x, y) as f64, target.gy.cubic(x, y) as f64);
+                let [v, gx, gy] = target.cubic3(x, y);
+                let e = (template[k] - v) as f64;
+                let (gx, gy) = (gx as f64, gy as f64);
                 let j = Vector6::new(gx * fx, gx * fy, gy * fx, gy * fy, gx, gy);
                 h += j * j.transpose();
                 b += j * e;
