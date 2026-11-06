@@ -59,6 +59,7 @@ use crate::catcher::ShadowCatcher;
 use crate::hero::{self, HeroPass, Traceable, Traced};
 use crate::lights;
 use crate::node::{catchers_hash, lights_hash, splats_hash, Splat};
+use crate::text::{texts_hash, Text3d};
 use crate::Asset;
 
 /// Everything one frame of a model depends on.
@@ -85,6 +86,8 @@ pub struct Shot {
     pub splats: Arc<Vec<Splat>>,
     /// glTF node names whose meshes show only the shadows cast on them.
     pub catchers: Arc<Vec<String>>,
+    /// Lines of extruded type beside the file's meshes.
+    pub texts: Arc<Vec<Text3d>>,
 }
 
 /// Premultiplied sRGB RGBA8 pixels, rows packed.
@@ -244,11 +247,14 @@ fn orbit(
         None => {
             let half_v = FRAMING_FOV / 2.0;
             let half_h = (half_v.tan() * p.aspect).atan();
+            // The near and far planes follow the orbit distance, so a closer
+            // camera keeps the whole sphere in front of its near plane.
             let distance = p.radius / half_v.min(half_h).sin() * 1.05;
+            let reach = distance * p.view.distance.max(1e-3);
             let lens = Projection::Perspective(PerspectiveProjection {
                 fov: FRAMING_FOV,
-                near: (distance - p.radius * 2.0).max(p.radius * 0.01).max(1e-4),
-                far: distance + p.radius * 8.0,
+                near: (reach - p.radius * 2.0).max(p.radius * 0.01).max(1e-4),
+                far: reach + p.radius * 8.0,
                 ..default()
             });
             (Transform::from_translation(p.center + Vec3::Z * distance), lens)
@@ -256,7 +262,7 @@ fn orbit(
     };
     let yaw = Quat::from_rotation_y(p.view.yaw.to_radians());
     let right = yaw * (base.rotation * Vec3::X);
-    let pitch = Quat::from_axis_angle(right, -p.view.pitch.clamp(-89.0, 89.0).to_radians());
+    let pitch = Quat::from_axis_angle(right, -p.view.pitch.to_radians());
     let turn = pitch * yaw;
     let offset = (base.translation - p.center) * p.view.distance.max(1e-3);
     *transform = Transform {
@@ -358,7 +364,7 @@ struct Target {
 }
 
 /// (model hash, environment hash, splat set hash, shadow catcher hash).
-type StageKey = (u64, Option<u64>, u64, u64);
+type StageKey = (u64, Option<u64>, u64, u64, u64);
 type ShotKey = (StageKey, usize, u64, u64, [u32; 10]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
@@ -617,6 +623,13 @@ impl Studio {
                 world.despawn(e);
             }
             stage.emitters = lights::emitters(world, stage.root, &shot.lights, center, radius);
+            // Solari binds no scene without a light source, and the probe
+            // and the Hero lamps are not Solari lights, so a stage lit by
+            // them alone gets a dark sun.
+            if !solari_lit(world, stage.root) {
+                let sun = DirectionalLight { illuminance: 0.0, shadow_maps_enabled: false, ..default() };
+                stage.emitters.push(world.spawn((sun, Transform::default(), ChildOf(stage.root))).id());
+            }
             stage.emitted = Some(lit);
             retraced = true;
         }
@@ -806,6 +819,7 @@ impl Studio {
             shot.environment.as_ref().map(|e| e.hash),
             splats_hash(&shot.splats),
             catchers_hash(&shot.catchers),
+            texts_hash(&shot.texts),
         );
         if self.stages.contains_key(&key) {
             return Ok(key);
@@ -930,6 +944,10 @@ impl Studio {
             let cloud = world.resource::<Assets<PlanarGaussian3d>>().get(handle).expect("cloud loaded");
             let (l, h) = cloud_bounds(cloud, &GlobalTransform::IDENTITY);
             world.entity_mut(*entity).insert(Aabb::from_min_max(l, h));
+        }
+        if let Err(e) = spawn_texts(self.apps.main.world_mut(), root, &shot.texts) {
+            self.apps.main.world_mut().despawn(root);
+            return Err(e);
         }
         // Bounds and global transforms of the spawned scene.
         self.step();
@@ -1286,6 +1304,54 @@ fn catch_shadows(world: &mut World, root: Entity, names: &[String]) -> Result<()
         Some(missing) => Err(format!("shadow-catcher '{missing}' names no node with a mesh in the model")),
         None => Ok(()),
     }
+}
+
+/// Spawns each line of extruded type under `root`: a placed parent holding
+/// the faces and the sides, each a mesh with its own material.
+fn spawn_texts(world: &mut World, root: Entity, texts: &[Text3d]) -> Result<(), String> {
+    for text in texts {
+        let solid = crate::text::solid(text)?;
+        let material = |color: [f32; 3]| StandardMaterial {
+            base_color: Color::srgb(color[0], color[1], color[2]),
+            metallic: text.metallic,
+            perceptual_roughness: text.roughness,
+            ..default()
+        };
+        let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+        let face = materials.add(material(text.color));
+        let side = match text.side_color {
+            Some(color) => materials.add(material(color)),
+            None => face.clone(),
+        };
+        let [x, y, z] = text.rotation.map(f32::to_radians);
+        let transform = Transform {
+            translation: Vec3::from(text.position),
+            rotation: Quat::from_euler(EulerRot::ZYX, z, y, x),
+            scale: Vec3::ONE,
+        };
+        let parent = world.spawn((transform, Visibility::default(), ChildOf(root))).id();
+        for (part, material) in [(&solid.faces, face), (&solid.sides, side)] {
+            if part.indices.is_empty() {
+                continue;
+            }
+            let mesh = world.resource_mut::<Assets<Mesh>>().add(part.mesh(text.size));
+            world.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::IDENTITY, Visibility::default(), ChildOf(parent)));
+        }
+    }
+    Ok(())
+}
+
+/// Whether a stage holds a Solari light source: a sun, or an emissive mesh
+/// such as a rect light's emitter.
+fn solari_lit(world: &World, root: Entity) -> bool {
+    let materials = world.resource::<Assets<StandardMaterial>>();
+    descendants(world, root).into_iter().any(|e| {
+        world.get::<DirectionalLight>(e).is_some()
+            || world
+                .get::<MeshMaterial3d<StandardMaterial>>(e)
+                .and_then(|m| materials.get(&m.0))
+                .is_some_and(|m| m.emissive.red > 0.0 || m.emissive.green > 0.0 || m.emissive.blue > 0.0)
+    })
 }
 
 fn descendants(world: &World, root: Entity) -> Vec<Entity> {

@@ -1,6 +1,7 @@
 //! One integration binary for `director-3d`.
 
 mod glb;
+mod text;
 
 #[test]
 fn every_test_file_is_a_module() {

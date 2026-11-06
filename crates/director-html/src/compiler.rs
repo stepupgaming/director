@@ -1696,18 +1696,22 @@ impl Builder {
                 let attr = |name: &str| el.value().attr_text(name);
                 let input = |e: String| CompileError::Input(format!("{context}: {e}"));
                 let splats = model_splats(el, &self.assets, &context)?;
+                let texts = model_texts(el, &self.assets, &self.director.assets.font_collection).map_err(input)?;
                 let asset = match attr("src") {
                     Some(src) => {
                         let path = (!src.starts_with("data:")).then(|| src.to_string());
                         director_3d::Asset::new(self.assets.read(src)?, "glb", path)
                     }
-                    None if !splats.is_empty() => director_3d::Asset::empty_scene(),
+                    None if !splats.is_empty() || !texts.is_empty() => director_3d::Asset::empty_scene(),
                     None => {
-                        return Err(CompileError::Input(format!("{context}: model without src or <splat> children")))
+                        return Err(CompileError::Input(format!(
+                            "{context}: model without src, <splat> or <text3d> children"
+                        )))
                     }
                 };
                 let mut model = director_3d::ModelNode::new(asset).map_err(input)?;
                 model.splats = std::sync::Arc::new(splats);
+                model.texts = std::sync::Arc::new(texts);
                 let catchers: Vec<String> =
                     attr("shadow-catcher").map(|v| v.split_whitespace().map(str::to_string).collect()).unwrap_or_default();
                 if !catchers.is_empty() {
@@ -2785,6 +2789,116 @@ fn model_splats(model: ElementRef<'_>, assets: &AssetStore, context: &str) -> Re
         });
     }
     Ok(splats)
+}
+
+/// The `<text3d>` children of a `<model>`: lines of extruded type in the
+/// scene's metres, from a font file or a family the page or Director knows.
+fn model_texts(
+    model: ElementRef<'_>,
+    assets: &AssetStore,
+    fonts: &std::sync::Mutex<skia_safe::textlayout::FontCollection>,
+) -> Result<Vec<director_3d::Text3d>, String> {
+    let mut texts = Vec::new();
+    for el in model.children().filter_map(ElementRef::wrap).filter(|el| el.value().name() == "text3d") {
+        let attr = |name: &str| el.value().attr_text(name).map(str::trim);
+        let text = el.text().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ");
+        if text.is_empty() {
+            return Err("text3d has no text".into());
+        }
+        let weight = match attr("font-weight").unwrap_or("normal") {
+            "normal" => 400.0,
+            "bold" => 700.0,
+            v => match v.parse::<f32>() {
+                Ok(n) if (1.0..=1000.0).contains(&n) => n,
+                _ => return Err(format!("text3d font-weight '{v}' must be normal, bold or a number from 1 to 1000")),
+            },
+        };
+        let stretch = match attr("font-stretch") {
+            Some(v) => crate::style::stretch_percent(v).map_err(|e| format!("text3d {e}"))?,
+            None => 100.0,
+        };
+        let italic = match attr("font-style").unwrap_or("normal") {
+            "normal" => false,
+            "italic" | "oblique" => true,
+            v => return Err(format!("text3d font-style '{v}' must be normal, italic or oblique")),
+        };
+        let font = match attr("font") {
+            Some(src) => {
+                let path = (!src.starts_with("data:")).then(|| src.to_string());
+                let bytes = assets.read(src).map_err(|e| format!("text3d font: {e}"))?;
+                director_3d::Asset::font(bytes, path)?
+            }
+            None => {
+                let families = attr("font-family").unwrap_or("Inter");
+                let style = span_font_style(weight.round() as u16, italic);
+                let mut fonts = fonts.lock().unwrap();
+                let face = families
+                    .split(',')
+                    .map(|f| f.trim().trim_matches(['\'', '"']))
+                    .filter(|f| !f.is_empty())
+                    .find_map(|family| {
+                        let face = fonts.find_typefaces(&[family], style).into_iter().next()?;
+                        face.family_name().eq_ignore_ascii_case(family).then_some(face)
+                    })
+                    .ok_or_else(|| format!("text3d font-family '{families}' names no font Director has"))?;
+                let (bytes, index) = face.to_font_bytes().ok_or("text3d font has no readable file")?;
+                if index != 0 {
+                    return Err(format!(
+                        "text3d font-family '{}' is face {index} of a font collection; give its file through font",
+                        face.family_name()
+                    ));
+                }
+                director_3d::Asset::font(bytes, None)?
+            }
+        };
+        let number = |name: &str, default: f32, min: f32, max: f32| -> Result<f32, String> {
+            let Some(v) = attr(name) else { return Ok(default) };
+            match v.parse::<f32>() {
+                Ok(n) if n >= min && n <= max && n.is_finite() => Ok(n),
+                _ if max.is_finite() => Err(format!("text3d {name} '{v}' must be a number from {min} to {max}")),
+                _ => Err(format!("text3d {name} '{v}' must be a number from {min}")),
+            }
+        };
+        let triple = |name: &str, unit: &str| -> Result<[f32; 3], String> {
+            let Some(v) = attr(name) else { return Ok([0.0; 3]) };
+            let parts: Vec<f32> = v.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+            match parts[..] {
+                [x, y, z] if parts.iter().all(|n| n.is_finite()) && v.split_whitespace().count() == 3 => Ok([x, y, z]),
+                _ => Err(format!("text3d {name} '{v}' must be three numbers in {unit}: x y z")),
+            }
+        };
+        let rgb = |name: &str| -> Result<Option<[f32; 3]>, String> {
+            let Some(c) = attr(name) else { return Ok(None) };
+            let color = crate::style::color(c, director_core::types::Color::WHITE).map_err(|e| format!("text3d {e}"))?;
+            Ok(Some([color.r, color.g, color.b]))
+        };
+        let size = number("size", 1.0, 0.0, f32::INFINITY)?;
+        if size == 0.0 {
+            return Err("text3d size must be above 0".into());
+        }
+        let depth = number("depth", 0.2 * size, 0.0, f32::INFINITY)?;
+        let most = (depth / 2.0).min(0.05 * size);
+        let bevel = number("bevel", (0.02 * size).min(depth / 2.0), 0.0, f32::INFINITY)?;
+        if bevel > most {
+            return Err(format!("text3d bevel {bevel} must be at most {most}, the smaller of half the depth and a twentieth of the size"));
+        }
+        texts.push(director_3d::Text3d {
+            font,
+            text,
+            weight,
+            stretch,
+            size,
+            depth,
+            bevel,
+            position: triple("position", "metres")?,
+            rotation: triple("rotation", "degrees")?,
+            color: rgb("color")?.unwrap_or([1.0; 3]),
+            side_color: rgb("side-color")?,
+            metallic: number("metallic", 0.0, 0.0, 1.0)?,
+            roughness: number("roughness", 0.4, 0.0, 1.0)?,
+        });
+    }
+    Ok(texts)
 }
 
 /// The `<light>` children of a `<model>`.

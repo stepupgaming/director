@@ -236,7 +236,7 @@ fn the_scene_document_keeps_the_splats() {
 fn malformed_splats_fail_to_compile() {
     let error = |source: &str| compile(source, options()).err().expect("a compile error").to_string();
     let e = error(&page("", "<model id='m'></model>"));
-    assert!(e.contains("model without src or <splat> children"), "{e}");
+    assert!(e.contains("model without src, <splat> or <text3d> children"), "{e}");
     let e = error(&page("", &format!("<model id='m'><splat src='{}'></splat></model>", fixture("model.glb"))));
     assert!(e.contains("splat src must be a Gaussian splat .ply file"), "{e}");
     let e = error(&balls("", "opacity='2'"));

@@ -15,9 +15,11 @@ mod gpu;
 mod hero;
 mod node;
 mod studio;
+mod text;
 
 pub use glb::{inspect, node_names, GlbInfo};
 pub use gpu::gpu_context;
 pub use node::{decode, register_import, texture_draws, Asset, ModelNode, Splat, MAX_PATHS};
 pub use hero::traceable;
 pub use studio::available;
+pub use text::{solid, Part, Solid, Text3d};

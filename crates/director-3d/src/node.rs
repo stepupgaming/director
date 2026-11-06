@@ -8,20 +8,22 @@ use std::sync::{Arc, Mutex};
 use director_core::scene_export::{ElementExport, ExportContext, ExportError};
 use director_core::scene_import::{ImportContext, ImportError, ImportRegistry};
 use director_core::{Element, RenderError};
-use director_scene::{Channel, ModelBody, ModelLight, ModelSplat, ModelView, NodeBody, NodeRecord};
+use director_scene::{Channel, ModelBody, ModelLight, ModelSplat, ModelText, ModelView, NodeBody, NodeRecord};
 use skia_safe::gpu::{backend_textures, vk as sk_vk, DirectContext, SurfaceOrigin};
 use skia_safe::{images, AlphaType, Canvas, Color4f, ColorSpace, ColorType, Data, Image, ImageInfo, Paint, Rect};
 use taffy::Style;
 
 use crate::glb::{inspect, GlbInfo};
 use crate::studio::{self, Shot};
+use crate::text::{texts_hash, Text3d};
 
 /// Bytes a model reads, with a content hash that keys the studio's stages.
 #[derive(Clone)]
 pub struct Asset {
     pub bytes: Arc<[u8]>,
     pub hash: u64,
-    /// File extension Bevy's loader picks by: `glb`, `hdr`, `exr` or `ply`.
+    /// File extension Bevy's loader picks by (`glb`, `hdr`, `exr` or `ply`),
+    /// or a font's: `ttf`, `otf` or `ttc`.
     pub ext: &'static str,
     /// Source path, kept so an export references the file.
     pub path: Option<String>,
@@ -60,7 +62,18 @@ impl Asset {
         Ok(Self::new(bytes, "ply", path))
     }
 
-    /// The scene of a model made only of splats: one empty node.
+    /// A TrueType or OpenType font file, typed by its magic bytes.
+    pub fn font(bytes: Vec<u8>, path: Option<String>) -> Result<Self, String> {
+        let ext = match bytes.get(..4) {
+            Some([0, 1, 0, 0] | b"true") => "ttf",
+            Some(b"OTTO") => "otf",
+            Some(b"ttcf") => "ttc",
+            _ => return Err("text3d font must be a TrueType or OpenType file".into()),
+        };
+        Ok(Self::new(bytes, ext, path))
+    }
+
+    /// The scene of a model made only of splats or type: one empty node.
     pub fn empty_scene() -> Self {
         Self::new(crate::glb::empty(), "glb", None)
     }
@@ -70,6 +83,9 @@ impl Asset {
             "glb" => "model/gltf-binary",
             "ply" => "application/x-ply",
             "hdr" => "image/vnd.radiance",
+            "ttf" => "font/ttf",
+            "otf" => "font/otf",
+            "ttc" => "font/collection",
             _ => "image/x-exr",
         }
     }
@@ -96,7 +112,7 @@ impl std::fmt::Debug for Asset {
 /// The most path traced paths per pixel a sample takes.
 pub const MAX_PATHS: u32 = 4096;
 
-type FrameKey = (u64, Option<u64>, u64, u64, u64, u32, u32, [u32; 11]);
+type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 11]);
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -191,6 +207,8 @@ pub struct ModelNode {
     pub splats: Arc<Vec<Splat>>,
     /// glTF node names whose meshes show only the shadows cast on them.
     pub shadow_catchers: Arc<Vec<String>>,
+    /// Lines of extruded type beside the file's meshes.
+    pub texts: Arc<Vec<Text3d>>,
     pub info: GlbInfo,
     time: f64,
     frame: Mutex<Option<(FrameKey, Arc<Vec<u8>>)>>,
@@ -214,6 +232,7 @@ impl ModelNode {
             lights: Arc::new(Vec::new()),
             splats: Arc::new(Vec::new()),
             shadow_catchers: Arc::new(Vec::new()),
+            texts: Arc::new(Vec::new()),
             info,
             time: 0.0,
             frame: Mutex::new(None),
@@ -256,6 +275,25 @@ impl ModelNode {
                 })
                 .collect(),
             shadow_catchers: self.shadow_catchers.to_vec(),
+            texts: self
+                .texts
+                .iter()
+                .map(|t| ModelText {
+                    text: t.text.clone(),
+                    font: t.font.export(cx, "font"),
+                    weight: t.weight,
+                    stretch: t.stretch,
+                    size: t.size,
+                    depth: t.depth,
+                    bevel: t.bevel,
+                    position: t.position,
+                    rotation: t.rotation,
+                    color: t.color,
+                    side_color: t.side_color,
+                    metallic: t.metallic,
+                    roughness: t.roughness,
+                })
+                .collect(),
         }
     }
 }
@@ -277,6 +315,7 @@ impl Clone for ModelNode {
             lights: self.lights.clone(),
             splats: self.splats.clone(),
             shadow_catchers: self.shadow_catchers.clone(),
+            texts: self.texts.clone(),
             info: self.info,
             time: self.time,
             frame: Mutex::new(None),
@@ -291,6 +330,7 @@ impl std::fmt::Debug for ModelNode {
             .field("environment", &self.environment)
             .field("splats", &self.splats)
             .field("shadow_catchers", &self.shadow_catchers)
+            .field("texts", &self.texts)
             .field("view", &self.view)
             .field("info", &self.info)
             .field("time", &self.time)
@@ -349,6 +389,7 @@ impl Element for ModelNode {
             lights_hash(&self.lights),
             splats_hash(&self.splats),
             catchers_hash(&self.shadow_catchers),
+            texts_hash(&self.texts),
             width,
             height,
             [
@@ -388,6 +429,7 @@ impl Element for ModelNode {
             lights: self.lights.clone(),
             splats: self.splats.clone(),
             catchers: self.shadow_catchers.clone(),
+            texts: self.texts.clone(),
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -528,6 +570,29 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     }
     node.splats = Arc::new(splats);
     node.shadow_catchers = Arc::new(body.shadow_catchers.clone());
+    let mut texts = Vec::with_capacity(body.texts.len());
+    for t in &body.texts {
+        let (bytes, path) = asset(cx, &t.font)?;
+        texts.push(Text3d {
+            font: Asset::font(bytes, path).map_err(|reason| ImportError::Asset {
+                id: t.font.clone(),
+                reason,
+            })?,
+            text: t.text.clone(),
+            weight: t.weight,
+            stretch: t.stretch,
+            size: t.size,
+            depth: t.depth,
+            bevel: t.bevel,
+            position: t.position,
+            rotation: t.rotation,
+            color: t.color,
+            side_color: t.side_color,
+            metallic: t.metallic,
+            roughness: t.roughness,
+        });
+    }
+    node.texts = Arc::new(texts);
     Ok(Box::new(node))
 }
 

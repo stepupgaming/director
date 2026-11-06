@@ -50,6 +50,7 @@ mod splat;
 mod svg_markers;
 mod svg_presentation;
 mod tabular_nums;
+mod text3d;
 mod text_indent;
 mod text_stroke;
 mod timeline;

@@ -43,6 +43,49 @@ pub struct ModelBody {
     /// so the model's shadows fall on footage behind a transparent model.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shadow_catchers: Vec<String>,
+    /// Lines of extruded type placed in the scene beside the file's meshes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<ModelText>,
+}
+
+/// One line of text extruded into a solid with chamfered edges, placed in
+/// the model's world space. Its own origin centres the advance width, the
+/// cap height above the baseline and the depth; it rotates about that
+/// origin, then moves.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelText {
+    pub text: String,
+    /// The TrueType or OpenType file the glyphs come from.
+    pub font: AssetId,
+    /// CSS font weight, set on the font's `wght` axis when it has one.
+    pub weight: f32,
+    /// CSS font stretch in percent, set on the font's `wdth` axis when it
+    /// has one.
+    #[serde(default = "normal_stretch")]
+    pub stretch: f32,
+    /// Em height in metres.
+    pub size: f32,
+    /// Metres from the front face to the back face.
+    pub depth: f32,
+    /// Metres each chamfer cuts into the faces and down the sides.
+    pub bevel: f32,
+    /// Metres along X, Y and Z.
+    pub position: [f32; 3],
+    /// Degrees about X, then Y, then Z.
+    pub rotation: [f32; 3],
+    /// sRGB colour of the front and back faces, each channel 0 to 1.
+    pub color: [f32; 3],
+    /// sRGB colour of the sides and chamfers. `None` takes `color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_color: Option<[f32; 3]>,
+    /// 0 is a dielectric, 1 a metal.
+    pub metallic: f32,
+    /// Perceptual roughness, 0 (mirror) to 1.
+    pub roughness: f32,
+}
+
+fn normal_stretch() -> f32 {
+    100.0
 }
 
 /// A Gaussian splat cloud from a 3DGS `.ply` file, placed in the model's
