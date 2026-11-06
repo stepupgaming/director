@@ -96,6 +96,10 @@ pub struct Shot {
     /// A camera that films the shot in place of the file's, such as one
     /// solved from footage.
     pub camera: Option<ShotCamera>,
+    /// The cameras at the open and close of a shutter centred on `camera`:
+    /// the samples sweep from one through `camera` to the other, so the
+    /// model blurs as the footage does.
+    pub shutter: Option<[ShotCamera; 2]>,
 }
 
 /// A camera pose in the model's world, looking down -Z with +Y up, and its
@@ -384,6 +388,17 @@ fn orbit(
     *projection = lens;
 }
 
+/// The camera at `s` of the way through a shutter that opens at `shutter[0]`,
+/// passes `middle` halfway and closes at `shutter[1]`.
+fn sweep(middle: ShotCamera, shutter: [ShotCamera; 2], s: f32) -> ShotCamera {
+    let (a, b, t) = if s < 0.5 { (shutter[0], middle, s * 2.0) } else { (middle, shutter[1], s * 2.0 - 1.0) };
+    ShotCamera {
+        position: a.position.lerp(b.position, t),
+        rotation: a.rotation.slerp(b.rotation, t),
+        fov: a.fov + (b.fov - a.fov) * t,
+    }
+}
+
 /// Bevy's default sensor: Super 35, 18.66 mm tall.
 const SENSOR_HEIGHT: f32 = 0.01866;
 
@@ -449,7 +464,7 @@ struct Target {
 
 /// (model hash, environment hash, splat set hash, shadow catcher hash).
 type StageKey = (u64, Option<u64>, u64, u64, u64);
-type ShotKey = (StageKey, usize, u64, u64, [u32; 12], [u32; 8]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 12], [u32; 8], [[u32; 8]; 2]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     (
@@ -472,6 +487,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             shot.reflection.to_bits(),
         ],
         camera_bits(shot.camera),
+        shot.shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
     )
 }
 
@@ -696,7 +712,7 @@ impl Studio {
         } else {
             lights::sized(&shot.lights)
         };
-        let samples = if shot.view.aperture > 0.0 || soft {
+        let samples = if shot.view.aperture > 0.0 || soft || shot.shutter.is_some() {
             shot.samples.max(SOFT_SAMPLES)
         } else {
             shot.samples.max(1)
@@ -791,6 +807,9 @@ impl Studio {
                 // the pixel grid and vary the lens and lights.
                 p.jitter = if hero { Vec2::ZERO } else { jitter(sample) };
                 p.lens = lens(sample);
+                if let (Some(middle), Some(shutter)) = (shot.camera, shot.shutter) {
+                    p.tracked = Some(sweep(middle, shutter, (sample as f32 + 0.5) / samples as f32));
+                }
                 if soft {
                     let square = Vec2::new(halton(sample + 1, 11), halton(sample + 1, 13));
                     let stage = &self.stages[&key];

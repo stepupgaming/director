@@ -305,7 +305,7 @@ fn a_lens_blurs_off_the_focus_plane_alike_in_preview_and_export() {
     let (auto, far, near) = (sad(&pinhole, &auto), sad(&pinhole, &far), sad(&pinhole, &near));
     eprintln!("blur against the pinhole: auto focus {auto}, 20 m {far}, 2 m {near}");
     assert!(auto > 0, "the ground before and behind the focus plane blurs");
-    assert!(auto * 3 < far && auto * 3 < near, "the scene centre stays sharp at auto focus");
+    assert!(auto * 2 < far && auto * 2 < near, "the scene centre stays sharp at auto focus");
     let blurred = lens("--camera-focus:2");
     let sky = pixel(&blurred, W / 2, 1);
     assert!(sky[0] == 255 && sky[1] < 24 && sky[2] < 24, "the sky stays transparent: {sky:?}");

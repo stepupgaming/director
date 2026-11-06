@@ -2,7 +2,9 @@
 //! camera whose true path `solve.json` holds in the solve's world, and on
 //! `pan.mp4`, the same yard from a camera on a tripod with its path in
 //! `pan.json`, and on `zoom.mp4`, that camera zooming in, with every frame's
-//! lens in `zoom.json`.
+//! lens in `zoom.json`, and on `shake.mp4`, the walk held in a hand that
+//! jitters, rolls and smears the frames with motion blur, its path in
+//! `shake.json`.
 
 use director_track::{read_footage, solve, CameraSolve, Footage, SolveOptions};
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
@@ -143,6 +145,30 @@ fn the_solve_recovers_the_lens_from_a_wrong_guess() {
     );
     assert!((solved.yfov / truth.yfov - 1.0).abs() < 0.01, "the field of view within 1 %");
     assert!(position < 0.1 && rotation < 0.2, "the path holds: {position:.3} m, {rotation:.3} deg");
+    assert!(pixels < 1.2, "a model near the origin lands within 1.2 px of where Blender drew it: {pixels:.2} px");
+}
+
+#[test]
+fn a_handheld_walk_solves_through_shake_and_blur() {
+    // `shake.mp4` adds a few centimetres of hand drift and about a degree of
+    // turn and roll at 1 to 8 Hz to the walk, with a half-frame shutter.
+    let truth = truth_of("shake.json");
+    let footage = read_footage(&fixture("shake.mp4"), 960).unwrap();
+    let options = SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, distortion: None, camera_height: truth.height, pitch: None, zoom: false };
+    let start = std::time::Instant::now();
+    let solved = solve(&footage, &options).unwrap();
+    let Errors { position, rotation, pixels } = compare(&solved, &truth);
+    eprintln!(
+        "handheld from 36 deg in {:.2} s: {:.3} deg against {:.3} deg, {} points, {:.3} px rms, worst position {position:.3} m, rotation {rotation:.3} deg, grid {pixels:.2} px",
+        start.elapsed().as_secs_f64(),
+        solved.yfov.to_degrees(),
+        truth.yfov.to_degrees(),
+        solved.points.len(),
+        solved.error
+    );
+    assert!((solved.yfov / truth.yfov - 1.0).abs() < 0.01, "the field of view within 1 %");
+    assert!(solved.error < 0.4, "the cameras explain the tracks: {:.3} px", solved.error);
+    assert!(position < 0.1 && rotation < 0.2, "the shaken path holds: {position:.3} m, {rotation:.3} deg");
     assert!(pixels < 1.2, "a model near the origin lands within 1.2 px of where Blender drew it: {pixels:.2} px");
 }
 

@@ -6,7 +6,8 @@
 //! plate and renders through a barrel-distorted lens, with `--moving`
 //! the shot with movers in it and their matte, with `--pan` the yard
 //! from a camera that only turns, with `--zoom` that camera zooming in, and
-//! with `--dolly` the walk zooming in. The masks take the box's
+//! with `--dolly` the walk zooming in and with `--shake` the walk held in a
+//! shaking hand with motion blur. The masks take the box's
 //! lit faces by colour and the shadow by its darkening, each only where the
 //! image moves away from the decoded plate. Each GPU test skips on a
 //! machine without a Vulkan adapter.
@@ -254,6 +255,87 @@ fn a_model_holds_still_through_a_dolly_zoom() {
         // degrees. The zoom trades against travel along the view, so the
         // path holds a little looser than the fixed lens's walk.
         matches_eevee("dolly", "track-fov='42' track-height='1.6' track-distortion='0 0' track-zoom", 0.88);
+    }
+}
+
+#[test]
+fn a_model_rides_a_handheld_camera() {
+    if gpu() {
+        // The hand turns the view up to 10 px a frame and the footage
+        // blurs it, and the solve holds as tight as the steady walk's.
+        matches_eevee("shake", "track-height='1.6' track-shutter='180'", 0.9);
+    }
+}
+
+/// The mean error against Eevee's render of `plate` at `frame` within 4 px
+/// of where Eevee shows the box or its shadow, the same pixels whatever the
+/// composite.
+fn error_near_box(plate: &str, frame: u32, bare: &[u8], composite: &[u8]) -> f64 {
+    let reference = eevee(plate, frame);
+    let shows = |i: usize| {
+        (boxed(rgb(&reference, i)) && diff(&reference, bare, i) > 30) || luma(rgb(&reference, i)) < luma(rgb(bare, i)) - 15.0
+    };
+    let near: Vec<usize> = (0..H)
+        .flat_map(|y| (0..W).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            (-4..=4).any(|dy| (-4..=4).any(|dx| {
+                let (u, v) = (x + dx, y + dy);
+                (0..W).contains(&u) && (0..H).contains(&v) && shows((v * W + u) as usize)
+            }))
+        })
+        .map(|(x, y)| (y * W + x) as usize)
+        .collect();
+    near.iter().map(|&i| diff(composite, &reference, i) as f64).sum::<f64>() / (near.len() * 3) as f64
+}
+
+#[test]
+fn the_footage_shutter_blurs_the_model_as_eevee_does() {
+    if !gpu() {
+        return;
+    }
+    // Through the true cameras the composite differs from Eevee's only in
+    // its blur. Eevee opens a half-frame shutter, so 180 degrees comes
+    // closest and a sharp model or a full-frame smear falls further off.
+    let compiled = build(&page("shake", "track-height='1.6'"));
+    let document = export_scene(&compiled.director).unwrap();
+    let truth: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(fixture("shake.json")).unwrap()).unwrap();
+    let floats = |v: &serde_json::Value| v.as_array().unwrap().iter().map(|x| x.as_f64().unwrap() as f32).collect::<Vec<f32>>();
+    let frames: Vec<director_scene::ModelTrackFrame> = truth["frames"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            let (p, r) = (floats(&f["position"]), floats(&f["rotation"]));
+            director_scene::ModelTrackFrame { position: [p[0], p[1], p[2]], rotation: [r[0], r[1], r[2], r[3]], fov: None }
+        })
+        .collect();
+    let mut bare = build(&page("shake", ""));
+    let bare = [10, 50].map(|f| self::frame(&mut bare, f as f64 / 30.0));
+    let errors = [0.0f32, 180.0, 360.0].map(|shutter| {
+        let mut document = document.clone();
+        for node in &mut document.nodes {
+            if let NodeBody::Html(html) = &mut node.body {
+                if let Some(NodeBody::Model(model)) = html.content.as_mut().map(|c| &mut c.body) {
+                    let track = model.track.as_mut().expect("a model track");
+                    track.fov = (truth["yfov"].as_f64().unwrap() as f32).to_degrees();
+                    track.shutter = shutter;
+                    track.frames = frames.clone();
+                }
+            }
+        }
+        let mut registry = director_core::scene_import::ImportRegistry::core();
+        director_html::register_import(&mut registry);
+        let renderer = director_render::Renderer::new(Arc::new(document), Arc::new(director_core::DefaultAssetLoader)).with_registry(registry);
+        [0, 1].map(|k| {
+            let frame = [10, 50][k];
+            let composite = renderer.render_frame(frame as f64 / 30.0).unwrap();
+            error_near_box("shake", frame, &bare[k], &composite.rgba)
+        })
+    });
+    eprintln!("true cameras, error near the box at frames 10 and 50: sharp {:.2?}, 180 degrees {:.2?}, 360 degrees {:.2?}", errors[0], errors[1], errors[2]);
+    let [sharp, half, full] = errors;
+    for ((sharp, half), full) in sharp.into_iter().zip(half).zip(full) {
+        assert!(half < sharp && half < full, "the footage's shutter matches Eevee's blur best");
     }
 }
 

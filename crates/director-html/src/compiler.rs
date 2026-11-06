@@ -2803,7 +2803,9 @@ pub fn compile_file(
 /// its own, and the solve tracks nothing there. `track-pitch` is frame 0's
 /// tilt below the horizon in degrees, which footage from a camera that only
 /// turns needs. `track-zoom` gives the camera a lens that zooms, solved
-/// frame by frame from `track-fov` as frame 0's. With `light` it also
+/// frame by frame from `track-fov` as frame 0's. `track-shutter` is the
+/// footage's shutter angle in degrees, along which the model blurs. With
+/// `light` it also
 /// stitches the plate through the solved cameras into a light probe and
 /// returns it as a Radiance `.hdr` file, and with `sun` it reads the sun
 /// from the shadows on the plate's ground, lit by that probe's sky.
@@ -2827,6 +2829,10 @@ fn solve_track(
         return Err(CompileError::Input(format!("{context}: track-fov must be from 1 to 179 degrees")));
     }
     let height = numeric("track-height", 1.6)?;
+    let shutter = numeric("track-shutter", 0.0)?;
+    if !(0.0..=360.0).contains(&shutter) {
+        return Err(CompileError::Input(format!("{context}: track-shutter must be from 0 to 360 degrees")));
+    }
     let pitch = match tilt {
         None => None,
         Some(_) => {
@@ -2862,6 +2868,7 @@ fn solve_track(
         fps: solved.fps,
         fov: solved.yfov.to_degrees() as f32,
         distortion: solved.distortion.map(|k| k as f32),
+        shutter: shutter as f32,
         frames: solved
             .frames
             .iter()

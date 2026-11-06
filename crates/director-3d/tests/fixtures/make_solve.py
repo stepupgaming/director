@@ -1,6 +1,6 @@
 """Write the director-3d camera solve fixture.
 
-Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures [--lens | --moving | --pan | --zoom]
+Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures [--lens | --moving | --pan | --zoom | --dolly | --shake]
 
 A yard of Voronoi cells holds five textured crates and two pillars under a sun
 and `sky.hdr`, and a handheld-height camera walks sideways past them over 60
@@ -69,6 +69,18 @@ of view, eased in and out. Frame 0 matches the walk's.
 - `dolly.mp4`: the plate, H.264 yuv420p.
 - `dolly.json`: the true camera in the format of `zoom.json`.
 - `dolly-10.png` and `dolly-50.png`: frames 10 and 50 with the box.
+
+With `--shake` the script writes only the handheld fixture: the walk of
+`solve.mp4` held in a hand. Sway at 1 to 2.4 Hz moves the camera up to
+about 4 cm and turns it up to about 5 degrees, and a tremor at 7 to 9 Hz adds
+a few tenths of a degree, so the view turns up to about 10 px a frame. The
+shake starts from rest so frame 0 matches the walk's. Each frame
+is the mean in linear light of 8 sharp renders spread across a half-frame
+shutter centred on it, which blurs the motion as a 180 degree shutter does.
+
+- `shake.mp4`: the plate, H.264 yuv420p.
+- `shake.json`: the true camera, in the format of `solve.json`.
+- `shake-10.png` and `shake-50.png`: frames 10 and 50 with the box.
 """
 
 import json
@@ -80,7 +92,7 @@ import sys
 import tempfile
 
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Euler, Matrix, Vector
 
 args = sys.argv[sys.argv.index("--") + 1 :]
 out = os.path.abspath(args[0])
@@ -88,8 +100,13 @@ LENS = "--lens" in args[1:]
 MOVING = "--moving" in args[1:]
 ZOOM = "--zoom" in args[1:]
 DOLLY = "--dolly" in args[1:]
+SHAKE = "--shake" in args[1:]
 PAN = "--pan" in args[1:] or ZOOM
 FRAMES = 60
+# The shake's shutter: sub-frame offsets across half a frame centred on each
+# frame.
+SUBFRAMES = 8
+OFFSETS = [0.5 * ((i + 0.5) / SUBFRAMES - 0.5) for i in range(SUBFRAMES)]
 K1, K2 = -0.15, 0.03
 WIDE = (600, 338)
 
@@ -212,7 +229,8 @@ camera.data.lens_unit = "FOV"
 camera.data.angle_y = math.radians(42)
 camera.data.clip_start = 0.05
 scene.camera = camera
-for frame in range(FRAMES):
+keys = sorted({f + o for f in range(FRAMES) for o in [0.0] + OFFSETS}) if SHAKE else range(FRAMES)
+for frame in keys:
     t = frame / (FRAMES - 1)
     if ZOOM:
         camera.location = Vector((-2.2, -6.5, 1.6))
@@ -230,7 +248,26 @@ for frame in range(FRAMES):
             ease = t * t * (3 - 2 * t)
             camera.data.angle_y = math.radians(42 - 14 * ease)
             camera.data.keyframe_insert("lens", frame=frame)
-    camera.rotation_euler = (target - camera.location).to_track_quat("-Z", "Y").to_euler()
+    look = (target - camera.location).to_track_quat("-Z", "Y")
+    if SHAKE:
+        # Sums of sines in metres and degrees, less their value at rest so
+        # frame 0 holds the walk's camera.
+        def hand(seconds, parts):
+            return sum(a * (math.sin(2 * math.pi * f * seconds + p) - math.sin(p)) for a, f, p in parts)
+
+        seconds = frame / 30
+        camera.location += look @ Vector((
+            hand(seconds, [(0.012, 1.3, 0.4), (0.002, 7.1, 1.9)]),
+            hand(seconds, [(0.020, 2.4, 2.2), (0.002, 8.3, 0.7)]),
+            hand(seconds, [(0.006, 1.1, 1.1)]),
+        ))
+        turn = Euler([math.radians(hand(seconds, parts)) for parts in (
+            [(1.5, 2.4, 0.9), (0.15, 8.3, 2.6)],
+            [(2.5, 1.6, 1.7), (0.15, 9.1, 0.3)],
+            [(1.2, 1.2, 2.9), (0.1, 7.3, 1.3)],
+        )])
+        look = look @ turn.to_quaternion()
+    camera.rotation_euler = look.to_euler()
     camera.keyframe_insert("location", frame=frame)
     camera.keyframe_insert("rotation_euler", frame=frame)
 
@@ -289,15 +326,47 @@ for frame in range(FRAMES):
         truth["frames"][-1]["yfov"] = camera.data.angle_y
 scene.frame_set(0)
 truth["yfov"] = camera.data.angle_y
-name = "zoom" if ZOOM else "pan" if PAN else "dolly" if DOLLY else "solve"
+name = "zoom" if ZOOM else "pan" if PAN else "dolly" if DOLLY else "shake" if SHAKE else "solve"
 if not (LENS or MOVING):
     with open(os.path.join(out, f"{name}.json"), "w") as f:
         json.dump(truth, f, indent=1)
 
 
 def render(path):
+    if SHAKE:
+        return render_shutter(path)
     scene.render.filepath = path
     bpy.ops.render.render(write_still=True)
+
+
+def render_shutter(path):
+    """Writes the mean of the sharp renders at `OFFSETS` from the current
+    frame, averaged in linear light."""
+    import numpy as np
+
+    frame = scene.frame_current
+    folder = tempfile.mkdtemp(prefix="director-shutter-")
+    scene.render.image_settings.color_depth = "16"
+    total = 0.0
+    for i, offset in enumerate(OFFSETS):
+        whole = math.floor(frame + offset)
+        scene.frame_set(whole, subframe=frame + offset - whole)
+        scene.render.filepath = os.path.join(folder, f"{i}.png")
+        bpy.ops.render.render(write_still=True)
+        raw = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-i", scene.render.filepath, "-f", "rawvideo", "-pix_fmt", "rgb48le", "-"],
+            check=True, capture_output=True,
+        ).stdout
+        srgb = np.frombuffer(raw, "<u2").astype(np.float64) / 65535
+        total = total + np.where(srgb <= 0.04045, srgb / 12.92, ((srgb + 0.055) / 1.055) ** 2.4)
+    scene.render.image_settings.color_depth = "8"
+    scene.frame_set(frame)
+    mean = total / SUBFRAMES
+    srgb = np.where(mean <= 0.0031308, mean * 12.92, 1.055 * mean ** (1 / 2.4) - 0.055)
+    rgb = np.clip(np.rint(srgb * 255), 0, 255).astype(np.uint8)
+    source = ["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{scene.render.resolution_x}x{scene.render.resolution_y}", "-i", "-"]
+    subprocess.run(encode(source, path, still=True), input=rgb.tobytes(), check=True)
+    shutil.rmtree(folder)
 
 
 def encode(pattern, path, still=False):
@@ -404,7 +473,7 @@ source = ["-framerate", "30", "-start_number", "0", "-i", os.path.join(frames, "
 subprocess.run(encode(source, os.path.join(out, f"{name}.mp4")), check=True)
 shutil.rmtree(frames)
 box.hide_render = False
-if PAN or DOLLY:
+if PAN or DOLLY or SHAKE:
     print("wrote", out)
     sys.exit(0)
 

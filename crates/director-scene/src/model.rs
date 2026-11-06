@@ -76,6 +76,12 @@ pub struct ModelTrack {
     /// r^2 = x^2 + y^2. The model renders bent the same way.
     #[serde(default, skip_serializing_if = "is_pinhole")]
     pub distortion: [f32; 2],
+    /// The footage's shutter angle in degrees, 0 to 360: each frame's
+    /// exposure spans this share of a frame interval centred on its camera,
+    /// and the model blurs along the solved path across it. 0 films each
+    /// frame sharp.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub shutter: f32,
     pub frames: Vec<ModelTrackFrame>,
 }
 

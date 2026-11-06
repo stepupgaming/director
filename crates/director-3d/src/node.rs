@@ -113,7 +113,7 @@ impl std::fmt::Debug for Asset {
 /// The most path traced paths per pixel a sample takes.
 pub const MAX_PATHS: u32 = 4096;
 
-type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 13], [u32; 8]);
+type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 13], [u32; 8], [[u32; 8]; 2]);
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -267,13 +267,17 @@ impl ModelNode {
     /// held until the next frame so the model stays locked to the plate.
     pub fn tracked_camera(&self, t: f64) -> Option<ShotCamera> {
         let track = self.track.as_ref()?;
-        let frame = track_frame(track, t)?;
-        let pose = &track.frames[frame];
-        Some(ShotCamera {
-            position: Vec3::from_array(pose.position),
-            rotation: Quat::from_array(pose.rotation).normalize(),
-            fov: pose.fov.unwrap_or(track.fov).to_radians(),
-        })
+        Some(track_pose(track, track_frame(track, t)? as f64))
+    }
+
+    /// The cameras at the open and close of the footage shutter centred on
+    /// the frame on show at element time `t`, along the solved path between
+    /// frames. `None` for a sharp track.
+    pub fn tracked_shutter(&self, t: f64) -> Option<[ShotCamera; 2]> {
+        let track = self.track.as_ref().filter(|track| track.shutter > 0.0)?;
+        let frame = track_frame(track, t)? as f64;
+        let half = track.shutter as f64 / 720.0;
+        Some([track_pose(track, frame - half), track_pose(track, frame + half)])
     }
 
     fn body(&self, cx: &mut ExportContext) -> ModelBody {
@@ -419,10 +423,16 @@ impl Element for ModelNode {
         let mut height = device.height().round().clamp(1.0, 8192.0) as u32;
         let time = self.clip_time(self.time);
         let mut camera = self.tracked_camera(self.time);
+        let mut shutter = self.tracked_shutter(self.time);
         // A distorted footage lens films through a wider pinhole camera,
-        // bent into the lens as it paints.
+        // bent into the lens as it paints. The shutter's cameras widen by
+        // the same factor.
         let lens = self.track.as_ref().zip(camera.as_mut()).and_then(|(track, camera)| {
             let lens = crate::lens::overscan(width, height, camera.fov, track.distortion)?;
+            let wider = (lens.fov / 2.0).tan() / (camera.fov / 2.0).tan();
+            for c in shutter.iter_mut().flatten() {
+                c.fov = 2.0 * ((c.fov / 2.0).tan() * wider).atan();
+            }
             camera.fov = lens.fov;
             Some(lens)
         });
@@ -454,6 +464,7 @@ impl Element for ModelNode {
                 self.reflection.to_bits(),
             ],
             camera_bits(camera),
+            shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
         );
         let cached = self
             .frame
@@ -482,6 +493,7 @@ impl Element for ModelNode {
             reflection: self.reflection,
             texts: self.texts.clone(),
             camera,
+            shutter,
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -635,9 +647,9 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     if let Some(track) = &body.track {
         let fov = |f: f32| f > 0.0 && f < 180.0;
         let lens = fov(track.fov) && track.frames.iter().all(|f| f.fov.is_none_or(fov)) && track.distortion.iter().all(|k| k.is_finite());
-        if !(track.fps > 0.0 && lens && !track.frames.is_empty()) {
+        if !(track.fps > 0.0 && lens && (0.0..=360.0).contains(&track.shutter) && !track.frames.is_empty()) {
             return Err(ImportError::Invalid(
-                "a model track needs a positive fps, a field of view between 0 and 180 degrees, finite distortion and at least one frame".into(),
+                "a model track needs a positive fps, a field of view between 0 and 180 degrees, finite distortion, a shutter from 0 to 360 degrees and at least one frame".into(),
             ));
         }
         node.track = Some(Arc::new(track.clone()));
@@ -678,4 +690,30 @@ pub fn register_import(registry: &mut ImportRegistry) {
 fn track_frame(track: &ModelTrack, t: f64) -> Option<usize> {
     let last = track.frames.len().checked_sub(1)?;
     Some(((t * track.fps + 1e-6).floor().max(0.0) as usize).min(last))
+}
+
+/// The camera at fractional footage frame `f`, held at the ends and blended
+/// between neighbours: positions and lenses linearly, rotations by slerp.
+fn track_pose(track: &ModelTrack, f: f64) -> ShotCamera {
+    let last = track.frames.len() - 1;
+    let f = f.clamp(0.0, last as f64);
+    let k = (f.floor() as usize).min(last);
+    let pose = |k: usize| {
+        let p = &track.frames[k];
+        ShotCamera {
+            position: Vec3::from_array(p.position),
+            rotation: Quat::from_array(p.rotation).normalize(),
+            fov: p.fov.unwrap_or(track.fov).to_radians(),
+        }
+    };
+    let (a, blend) = (pose(k), (f - k as f64) as f32);
+    if blend <= 0.0 || k == last {
+        return a;
+    }
+    let b = pose(k + 1);
+    ShotCamera {
+        position: a.position.lerp(b.position, blend),
+        rotation: a.rotation.slerp(b.rotation, blend),
+        fov: a.fov + (b.fov - a.fov) * blend,
+    }
 }

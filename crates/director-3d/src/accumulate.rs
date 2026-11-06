@@ -1,6 +1,9 @@
 //! The Export level's sample average: each jittered render of a target adds
 //! a 1/N share of its linear colour to an `Rgba16Float` sum, and the resolve
-//! writes the sum back through the target's sRGB view.
+//! writes the sum back through the target's sRGB view. The target holds
+//! premultiplied sRGB colour, so the resolve encodes the unpremultiplied
+//! mean and premultiplies after: a pixel the samples cover in part keeps the
+//! colour of its covered share and its edge blends into the plate.
 
 use std::collections::HashMap;
 
@@ -16,6 +19,27 @@ fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 @fragment
 fn fragment(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
     return textureLoad(source, vec2<i32>(at.xy), 0);
+}
+
+fn encode(c: vec3<f32>) -> vec3<f32> {
+    return select(1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3<f32>(0.0031308));
+}
+
+fn decode(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+}
+
+// The sum holds linear colour premultiplied by alpha; the sRGB view encodes
+// what this returns, so it returns the decoded sRGB-premultiplied colour.
+@fragment
+fn resolve(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    let sum = textureLoad(source, vec2<i32>(at.xy), 0);
+    let alpha = clamp(sum.a, 0.0, 1.0);
+    if alpha <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    let colour = clamp(sum.rgb / alpha, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(decode(encode(colour) * alpha), alpha);
 }
 ";
 
@@ -52,7 +76,7 @@ impl Accumulator {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |format, blend| {
+        let pipeline = |format, blend, entry| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("director-3d accumulate"),
                 layout: Some(&pipeline_layout),
@@ -67,7 +91,7 @@ impl Accumulator {
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
-                    entry_point: Some("fragment"),
+                    entry_point: Some(entry),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
@@ -90,8 +114,9 @@ impl Accumulator {
                 color: share,
                 alpha: share,
             }),
+            "fragment",
         );
-        let resolve = pipeline(wgpu::TextureFormat::Rgba8UnormSrgb, None);
+        let resolve = pipeline(wgpu::TextureFormat::Rgba8UnormSrgb, None, "resolve");
         Self {
             layout,
             add,
