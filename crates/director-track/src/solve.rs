@@ -70,8 +70,8 @@ pub struct Pose {
 }
 
 /// A solved shot: a camera per frame in a world with the ground at y = 0,
-/// the origin where frame 0's optical axis meets the ground and frame 0's
-/// view along -Z.
+/// the origin where frame 0's optical axis meets the ground (at most 12
+/// camera heights ahead) and frame 0's view along -Z.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CameraSolve {
     /// Frames per second of the footage; frame k shows from k / fps seconds.
@@ -558,6 +558,9 @@ fn align(cams: &[Cam], points: &[Vector3<f64>], height: f64) -> Result<(Vec<Pose
     Ok(place(cams, points, normal, offset, height))
 }
 
+/// How many camera heights ahead of frame 0's foot the origin sits at most.
+const FAR_ORIGIN: f64 = 12.0;
+
 /// Moves the cameras and points into the world whose ground is the plane
 /// `normal . x = offset` (normal up) and whose frame 0 camera stands
 /// `height` metres above it.
@@ -568,9 +571,15 @@ fn place(cams: &[Cam], points: &[Vector3<f64>], normal: Vector3<f64>, offset: f6
     let up = first.r.transpose() * -Vector3::y();
     let above = normal.dot(&centre) - offset;
     let along = normal.dot(&forward);
-    let reach = -above / along;
-    let origin = if along < -1e-6 && reach.is_finite() { centre + forward * reach } else { centre - normal * above };
     let mut flat = forward - normal * forward.dot(&normal);
+    // The axis meets the ground `above / -along` along itself, which runs
+    // away as the view levels out, so the origin stops `FAR_ORIGIN` heights
+    // ahead of the camera's foot.
+    let ahead = match along < -1e-6 {
+        true => (above / -along * flat.norm()).min(FAR_ORIGIN * above),
+        false => FAR_ORIGIN * above,
+    };
+    let origin = centre - normal * above + flat.try_normalize(1e-9).unwrap_or_else(Vector3::zeros) * ahead;
     if flat.norm() < 1e-3 {
         flat = up - normal * up.dot(&normal);
     }

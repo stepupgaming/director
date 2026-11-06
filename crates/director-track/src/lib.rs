@@ -10,8 +10,8 @@
 //! Levenberg-Marquardt bundle adjustment with a Schur complement refines
 //! every camera, every point and, on request, the focal length. The dominant
 //! ground plane under the first camera then sets the world: the ground at
-//! y = 0, the origin where frame 0's optical axis meets it, frame 0's view
-//! along -Z, and the scale from frame 0's camera height. `light_probe`
+//! y = 0, the origin where frame 0's optical axis meets it (at most 12
+//! camera heights ahead), frame 0's view along -Z, and the scale from frame 0's camera height. `light_probe`
 //! stitches the footage's frames through the solved cameras into an
 //! equirectangular light probe, and `estimate_sun` reads the sun from the
 //! shadows the solved points cast on the ground.

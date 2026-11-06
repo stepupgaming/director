@@ -3,10 +3,21 @@
 
 use crate::image::Gray;
 
+/// Columns of the regions that share the corner budget; the rows follow the
+/// frame's aspect.
+const REGIONS_ACROSS: usize = 4;
+/// The share of the strongest corner's score a corner needs to claim its
+/// region's share.
+const CLAIM: f32 = 0.05;
+
 /// Up to `max` corners of `image` at least `min_distance` pixels from each
-/// other and from `existing`, strongest first, `margin` pixels inside the
-/// border and outside `masked` (one flag per pixel, empty for none). Corners
-/// weaker than 1 % of the strongest are dropped.
+/// other and from `existing`, `margin` pixels inside the border and outside
+/// `masked` (one flag per pixel, empty for none). Corners weaker than 1 % of
+/// the strongest are dropped. The frame splits into regions that each take
+/// the strongest corners up to an equal share of `max` with `existing`
+/// counted against it, so a busy region such as foliage in the wind cannot
+/// take every track from the quieter ground and walls; the strongest corners
+/// left over then fill the rest of `max`.
 #[allow(clippy::too_many_arguments)]
 pub fn corners(
     image: &Gray,
@@ -83,9 +94,30 @@ pub fn corners(
             })
         })
     };
+    let across = REGIONS_ACROSS;
+    let down = ((across * h) as f32 / w as f32).round().max(1.0) as usize;
+    let region = |p: [f32; 2]| ((p[0] as usize * across / w).min(across - 1)) + ((p[1] as usize * down / h).min(down - 1)) * across;
+    let share = (max + existing.len()).div_ceil(across * down);
+    let mut held = vec![0usize; across * down];
+    for &p in existing {
+        held[region(p)] += 1;
+    }
     let mut out = Vec::new();
-    for (_, x, y) in candidates {
+    let mut left = Vec::new();
+    for (s, x, y) in candidates {
         let p = [x as f32, y as f32];
+        if held[region(p)] >= share || s < CLAIM * strongest {
+            left.push(p);
+        } else if free(&grid, p) {
+            grid[slot(p)].push(p);
+            held[region(p)] += 1;
+            out.push(p);
+            if out.len() == max {
+                return out;
+            }
+        }
+    }
+    for p in left {
         if free(&grid, p) {
             grid[slot(p)].push(p);
             out.push(p);

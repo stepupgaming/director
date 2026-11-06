@@ -99,7 +99,7 @@ impl Gray {
     }
 
     /// The 1 4 6 4 1 binomial blur in both directions.
-    fn blur(&self) -> Gray {
+    pub fn blur(&self) -> Gray {
         const K: [f32; 5] = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0];
         let (w, h) = (self.width, self.height);
         let mut across = vec![0.0; w * h];

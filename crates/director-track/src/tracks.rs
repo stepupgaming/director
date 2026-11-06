@@ -24,6 +24,11 @@ const MISMATCH: f32 = 10.0;
 /// A track stays this many pixels clear of the matte, the reach of its
 /// 17x17 template.
 const MATTE_REACH: usize = 8;
+/// Frame pairs at the start of a shot that measure its grain.
+const GRAIN_PAIRS: usize = 4;
+/// The median difference, in levels, that windows matched between those
+/// pairs keep above which the plate counts as grainy.
+const GRAIN: f32 = 3.5;
 
 /// What a live track carries between frames: its first appearance and the
 /// affine warp that last matched it.
@@ -71,10 +76,12 @@ pub fn track(frames: &[Gray], matte: &[Gray]) -> Vec<Track> {
     };
     let mut tracks: Vec<Track> = Vec::new();
     let mut live: Vec<Live> = Vec::new();
-    let mut prev = Pyramid::new(first, LEVELS);
+    let grainy = grain(frames) > GRAIN;
+    let pyramid = |frame: &Gray| if grainy { Pyramid::new(&frame.blur(), LEVELS) } else { Pyramid::new(frame, LEVELS) };
+    let mut prev = pyramid(first);
     seed(&prev, 0, mask(0), &mut tracks, &mut live);
     for (k, frame) in frames.iter().enumerate().skip(1) {
-        let next = Pyramid::new(frame, LEVELS);
+        let next = pyramid(frame);
         let moved: Vec<Option<klt::Warp>> = live
             .par_iter()
             .map(|l| {
@@ -105,6 +112,28 @@ pub fn track(frames: &[Gray], matte: &[Gray]) -> Vec<Track> {
     }
     tracks.retain(|t| t.points.len() >= 3);
     tracks
+}
+
+/// The median mean absolute difference that corners keep once matched from
+/// each of the first frames to the next. Grain and compression noise change
+/// every frame, so on a grainy plate even a true match leaves a large
+/// difference, while a clean one leaves almost none.
+fn grain(frames: &[Gray]) -> f32 {
+    let mut residuals: Vec<f32> = frames
+        .windows(2)
+        .take(GRAIN_PAIRS)
+        .flat_map(|pair| {
+            let (a, b) = (Pyramid::new(&pair[0], LEVELS), Pyramid::new(&pair[1], LEVELS));
+            let level = &a.levels[0];
+            let seeds = corners(&level.image, &level.gx, &level.gy, &[], &[], MAX_TRACKS, MIN_DISTANCE, MARGIN);
+            seeds.par_iter().filter_map(|&p| klt::converge(&a, &b, p, p).map(|(_, r)| r)).collect::<Vec<_>>()
+        })
+        .collect();
+    if residuals.is_empty() {
+        return 0.0;
+    }
+    let mid = residuals.len() / 2;
+    *residuals.select_nth_unstable_by(mid, f32::total_cmp).1
 }
 
 fn inside(pyramid: &Pyramid, p: [f32; 2]) -> bool {

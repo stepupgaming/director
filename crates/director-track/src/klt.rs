@@ -17,6 +17,13 @@ const WINDOW: usize = ((2 * HALF + 1) * (2 * HALF + 1)) as usize;
 /// `None` when the window has too little texture, the step leaves the
 /// image, or the window no longer matches after converging.
 pub fn track(a: &Pyramid, b: &Pyramid, p: [f32; 2], guess: [f32; 2]) -> Option<[f32; 2]> {
+    converge(a, b, p, guess).and_then(|(q, residual)| (residual < 12.0).then_some(q))
+}
+
+/// Where the window at `p` in `a` converged to in `b`, and the mean
+/// absolute difference left between the two windows there. `None` when the
+/// window has too little texture or the step leaves the image.
+pub fn converge(a: &Pyramid, b: &Pyramid, p: [f32; 2], guess: [f32; 2]) -> Option<([f32; 2], f32)> {
     let levels = a.levels.len().min(b.levels.len());
     let top = (1 << (levels - 1)) as f32;
     let mut d = [(guess[0] - p[0]) / top, (guess[1] - p[1]) / top];
@@ -74,7 +81,7 @@ pub fn track(a: &Pyramid, b: &Pyramid, p: [f32; 2], guess: [f32; 2]) -> Option<[
         && q[1] >= HALF as f32
         && q[0] <= (image.width as i32 - 1 - HALF) as f32
         && q[1] <= (image.height as i32 - 1 - HALF) as f32;
-    (inside && residual < 12.0).then_some(q)
+    inside.then_some((q, residual))
 }
 
 /// Tracks the point `p` from image `a` to image `b` through 3 pyramid
