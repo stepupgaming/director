@@ -1720,6 +1720,14 @@ impl Builder {
                         return Err(input(format!("shadow-catcher '{missing}' names no node in the model")));
                     }
                 }
+                let reflection = numeric("reflection", 0.0)?;
+                if !(0.0..=1.0).contains(&reflection) {
+                    return Err(input("reflection must be from 0 to 1".into()));
+                }
+                if reflection > 0.0 && catchers.is_empty() {
+                    return Err(input("reflection needs a shadow-catcher to mirror the model".into()));
+                }
+                model.reflection = reflection as f32;
                 model.shadow_catchers = std::sync::Arc::new(catchers);
                 if let Some(environment) = attr("environment") {
                     let path = (!environment.starts_with("data:")).then(|| environment.to_string());

@@ -7,6 +7,11 @@
 //! in the transparent pass: over the Hero image too, which leaves catchers
 //! out of the ray traced scene because Solari only traces standard
 //! materials.
+//!
+//! A catcher with a reflection also mirrors the model. The studio renders
+//! the stage, catchers aside, through a camera reflected in the catcher's
+//! plane, and the catcher adds that image at its Fresnel reflectance and
+//! hides the plate behind as much of it as the mirrored model covers.
 
 use bevy::{
     asset::embedded_asset,
@@ -19,7 +24,16 @@ use bevy::{
 const SHADER: &str = "embedded://director_3d/catcher.wesl";
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Default)]
-pub(crate) struct ShadowCatcher {}
+pub(crate) struct ShadowCatcher {
+    /// x: reflectance facing the camera, 0 to 1. 0 skips the mirror.
+    #[uniform(0)]
+    pub params: Vec4,
+    /// The stage rendered through the mirrored camera: premultiplied
+    /// linear radiance times exposure, horizontally mirrored.
+    #[texture(1)]
+    #[sampler(2)]
+    pub mirror: Option<Handle<Image>>,
+}
 
 impl Material for ShadowCatcher {
     fn fragment_shader() -> ShaderRef {

@@ -112,7 +112,7 @@ impl std::fmt::Debug for Asset {
 /// The most path traced paths per pixel a sample takes.
 pub const MAX_PATHS: u32 = 4096;
 
-type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 11]);
+type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 12]);
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -207,6 +207,9 @@ pub struct ModelNode {
     pub splats: Arc<Vec<Splat>>,
     /// glTF node names whose meshes show only the shadows cast on them.
     pub shadow_catchers: Arc<Vec<String>>,
+    /// How strongly the shadow catchers mirror the model, 0 to 1: their
+    /// reflectance facing the camera, which rises to 1 at grazing angles.
+    pub reflection: f32,
     /// Lines of extruded type beside the file's meshes.
     pub texts: Arc<Vec<Text3d>>,
     pub info: GlbInfo,
@@ -232,6 +235,7 @@ impl ModelNode {
             lights: Arc::new(Vec::new()),
             splats: Arc::new(Vec::new()),
             shadow_catchers: Arc::new(Vec::new()),
+            reflection: 0.0,
             texts: Arc::new(Vec::new()),
             info,
             time: 0.0,
@@ -275,6 +279,7 @@ impl ModelNode {
                 })
                 .collect(),
             shadow_catchers: self.shadow_catchers.to_vec(),
+            reflection: self.reflection,
             texts: self
                 .texts
                 .iter()
@@ -315,6 +320,7 @@ impl Clone for ModelNode {
             lights: self.lights.clone(),
             splats: self.splats.clone(),
             shadow_catchers: self.shadow_catchers.clone(),
+            reflection: self.reflection,
             texts: self.texts.clone(),
             info: self.info,
             time: self.time,
@@ -330,6 +336,7 @@ impl std::fmt::Debug for ModelNode {
             .field("environment", &self.environment)
             .field("splats", &self.splats)
             .field("shadow_catchers", &self.shadow_catchers)
+            .field("reflection", &self.reflection)
             .field("texts", &self.texts)
             .field("view", &self.view)
             .field("info", &self.info)
@@ -404,6 +411,7 @@ impl Element for ModelNode {
                 self.background as u32,
                 self.samples,
                 self.paths,
+                self.reflection.to_bits(),
             ],
         );
         let cached = self
@@ -429,6 +437,7 @@ impl Element for ModelNode {
             lights: self.lights.clone(),
             splats: self.splats.clone(),
             catchers: self.shadow_catchers.clone(),
+            reflection: self.reflection,
             texts: self.texts.clone(),
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
@@ -570,6 +579,7 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     }
     node.splats = Arc::new(splats);
     node.shadow_catchers = Arc::new(body.shadow_catchers.clone());
+    node.reflection = body.reflection.clamp(0.0, 1.0);
     let mut texts = Vec::with_capacity(body.texts.len());
     for t in &body.texts {
         let (bytes, path) = asset(cx, &t.font)?;

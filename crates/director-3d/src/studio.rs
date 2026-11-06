@@ -23,9 +23,9 @@ use bevy::{
         RenderAssetUsages,
     },
     camera::{
-        primitives::Aabb, CameraMainTextureUsages, Exposure, Hdr, ImageRenderTarget, RenderTarget, SubCameraView,
+        primitives::Aabb, visibility::RenderLayers, CameraMainTextureUsages, Exposure, Hdr, ImageRenderTarget, RenderTarget, SubCameraView,
     },
-    core_pipeline::tonemapping::Tonemapping,
+    core_pipeline::tonemapping::{DebandDither, Tonemapping},
     gltf::Gltf,
     image::Image,
     light::{EnvironmentMapLight, GeneratedEnvironmentMapLight, Skybox},
@@ -86,6 +86,9 @@ pub struct Shot {
     pub splats: Arc<Vec<Splat>>,
     /// glTF node names whose meshes show only the shadows cast on them.
     pub catchers: Arc<Vec<String>>,
+    /// The catchers' reflectance facing the camera, 0 to 1. 0 mirrors
+    /// nothing.
+    pub reflection: f32,
     /// Lines of extruded type beside the file's meshes.
     pub texts: Arc<Vec<Text3d>>,
 }
@@ -192,6 +195,15 @@ fn start() -> Result<mpsc::Sender<Job>, String> {
 #[derive(Component)]
 struct DirectorCamera;
 
+/// Marks the camera that films a stage reflected in its shadow catchers.
+#[derive(Component)]
+struct MirrorCamera;
+
+/// The render layer of shadow catcher meshes. The Director camera sees it
+/// beside the default layer, and the mirror camera leaves it out, so a
+/// catcher never reflects itself.
+const CATCHER_LAYER: usize = 1;
+
 /// The camera placement the orbit system writes before transforms propagate.
 #[derive(Resource, Default)]
 struct Orbit(Option<Placement>);
@@ -213,7 +225,15 @@ struct Placement {
     jitter: Vec2,
     /// This sample's point on the unit lens disk.
     lens: Vec2,
+    /// The mirror camera and the catcher plane (unit normal n and offset d
+    /// with n . x = d) it reflects the Director camera in.
+    mirror: Option<(Entity, Vec4)>,
 }
+
+/// Scene nodes and lenses, apart from the two cameras `orbit` moves.
+type NotCamera = (Without<DirectorCamera>, Without<MirrorCamera>);
+/// The pose, lens and camera `orbit` writes.
+type CameraParts = (&'static mut Transform, &'static mut Projection, &'static mut Camera);
 
 /// Framing lens for a file without a camera: 30 degrees vertical.
 const FRAMING_FOV: f32 = std::f32::consts::PI / 6.0;
@@ -223,12 +243,10 @@ const FRAMING_FOV: f32 = std::f32::consts::PI / 6.0;
 /// the file camera's pose is this frame's.
 fn orbit(
     orbit: Res<Orbit>,
-    nodes: Query<(&Transform, Option<&ChildOf>), Without<DirectorCamera>>,
-    lenses: Query<&Projection, Without<DirectorCamera>>,
-    mut cameras: Query<
-        (&mut Transform, &mut Projection, &mut Camera),
-        With<DirectorCamera>,
-    >,
+    nodes: Query<(&Transform, Option<&ChildOf>), NotCamera>,
+    lenses: Query<&Projection, NotCamera>,
+    mut cameras: Query<CameraParts, (With<DirectorCamera>, Without<MirrorCamera>)>,
+    mut mirrors: Query<CameraParts, With<MirrorCamera>>,
 ) {
     let Some(p) = orbit.0 else { return };
     let Ok((mut transform, mut projection, mut camera)) = cameras.get_mut(p.camera) else { return };
@@ -310,6 +328,31 @@ fn orbit(
     if camera.sub_camera_view != sub {
         camera.sub_camera_view = sub;
     }
+    // The mirror camera is the Director camera reflected in the catcher
+    // plane and flipped along its own X, which keeps it a rotation and its
+    // triangles' winding. Its image is the reflection mirrored left to
+    // right, so its sample offset mirrors too.
+    if let Some((mirror, plane)) = p.mirror {
+        if let Ok((mut m_transform, mut m_projection, mut m_camera)) = mirrors.get_mut(mirror) {
+            let n = plane.truncate();
+            let reflect = Mat4::from_cols(
+                (Vec3::X - 2.0 * n.x * n).extend(0.0),
+                (Vec3::Y - 2.0 * n.y * n).extend(0.0),
+                (Vec3::Z - 2.0 * n.z * n).extend(0.0),
+                (2.0 * plane.w * n).extend(1.0),
+            );
+            let world = reflect * transform.to_matrix() * Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+            *m_transform = Transform::from_matrix(world);
+            let sub = sub.map(|s| SubCameraView {
+                offset: Vec2::new(-s.offset.x, s.offset.y),
+                ..s
+            });
+            if m_camera.sub_camera_view != sub {
+                m_camera.sub_camera_view = sub;
+            }
+            *m_projection = lens.clone();
+        }
+    }
     *projection = lens;
 }
 
@@ -353,6 +396,19 @@ struct Stage {
     /// itself, so Hero shots hide them from the raster's transparent pass,
     /// which draws over the traced image.
     blended: Vec<Entity>,
+    /// The shadow catchers' material and mirror camera.
+    mirror: Option<Mirror>,
+}
+
+/// A stage's shadow catchers and the camera that films their reflection.
+struct Mirror {
+    material: Handle<ShadowCatcher>,
+    /// The catchers' common plane (unit normal n and offset d with
+    /// n . x = d), or `None` when they do not lie in one.
+    plane: Option<Vec4>,
+    camera: Entity,
+    /// The mirror image of each target size.
+    images: HashMap<(u32, u32), Handle<Image>>,
 }
 
 struct Target {
@@ -365,7 +421,7 @@ struct Target {
 
 /// (model hash, environment hash, splat set hash, shadow catcher hash).
 type StageKey = (u64, Option<u64>, u64, u64, u64);
-type ShotKey = (StageKey, usize, u64, u64, [u32; 10]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 11]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     (
@@ -384,6 +440,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             shot.background as u32,
             shot.samples,
             shot.paths,
+            shot.reflection.to_bits(),
         ],
     )
 }
@@ -509,17 +566,19 @@ impl Studio {
         let nodes = stage.nodes.clone();
         let warm = stage.warm.contains(&size);
         let morphs = stage.morphs;
-        let others: Vec<(Entity, Entity)> = self
+        let others: Vec<(Entity, Entity, Option<Entity>)> = self
             .stages
             .iter()
             .filter(|(k, _)| **k != key)
-            .map(|(_, s)| (s.root, s.camera))
+            .map(|(_, s)| (s.root, s.camera, s.mirror.as_ref().map(|m| m.camera)))
             .collect();
         let world = self.apps.main.world_mut();
-        for (root, other) in others {
+        for (root, other, mirror) in others {
             world.entity_mut(root).insert(Visibility::Hidden);
-            if let Some(mut c) = world.get_mut::<Camera>(other) {
-                c.is_active = false;
+            for camera in std::iter::once(other).chain(mirror) {
+                if let Some(mut c) = world.get_mut::<Camera>(camera) {
+                    c.is_active = false;
+                }
             }
         }
         world.entity_mut(stage_root(&self.stages, key)).insert(Visibility::Inherited);
@@ -544,7 +603,7 @@ impl Studio {
             if shot.background {
                 e.insert((
                     Skybox {
-                        image: Some(probe),
+                        image: Some(probe.clone()),
                         brightness: shot.environment_intensity,
                         ..default()
                     },
@@ -573,6 +632,7 @@ impl Studio {
             c.is_active = true;
             c.clear_color = ClearColorConfig::Custom(Color::NONE);
         }
+        let (mirror, mirror_steps) = film_mirror(self.stages.get_mut(&key).expect("stage"), world, shot, size, &probe)?;
         for player in players {
             if let Some(mut player) = world.get_mut::<AnimationPlayer>(player) {
                 for node in &nodes {
@@ -593,6 +653,7 @@ impl Studio {
             sampled: false,
             jitter: Vec2::ZERO,
             lens: Vec2::ZERO,
+            mirror,
         });
         // A lens or a sized light averages at least `SOFT_SAMPLES` renders,
         // at either level, so preview and export blur alike.
@@ -636,11 +697,17 @@ impl Studio {
         if let Some(p) = &mut world.resource_mut::<Orbit>().0 {
             p.sampled = samples > 1;
         }
-        if !warm {
+        // A changed catcher material binds a frame late, and a new mirror
+        // image needs its own warm-up like a new target.
+        if !warm || mirror_steps == 3 {
             for _ in 0..3 {
                 self.step();
             }
             self.stages.get_mut(&key).expect("stage").warm.insert(size);
+        } else {
+            for _ in 0..mirror_steps {
+                self.step();
+            }
         }
         // A stage that just came back into view gets its morph descriptors
         // (see `touch_morph_meshes`) and its lights' shadow casters late, and
@@ -884,10 +951,13 @@ impl Studio {
         if !loaded {
             return Err("glTF scene never finished loading".into());
         }
-        if let Err(e) = catch_shadows(self.apps.main.world_mut(), root, &shot.catchers) {
-            self.apps.main.world_mut().despawn(root);
-            return Err(e);
-        }
+        let caught = match catch_shadows(self.apps.main.world_mut(), root, &shot.catchers) {
+            Ok(caught) => caught,
+            Err(e) => {
+                self.apps.main.world_mut().despawn(root);
+                return Err(e);
+            }
+        };
         // Splat clouds join the root once the scene has spawned beside them.
         let mut clouds = Vec::new();
         for splat in shot.splats.iter() {
@@ -1038,7 +1108,34 @@ impl Studio {
             .id();
         // Splats skip the filmic curve and bloom in `display`, so every stage
         // takes the curve, and each shot with a background blooms.
-        world.entity_mut(camera).insert(Tonemapping::TonyMcMapface);
+        world
+            .entity_mut(camera)
+            .insert((Tonemapping::TonyMcMapface, RenderLayers::from_layers(&[0, CATCHER_LAYER])));
+        // The mirror camera renders linear radiance for the catchers to
+        // sample, before the Director camera, with no tone curve or dither.
+        let mirror = caught.map(|(material, plane)| Mirror {
+            material,
+            plane,
+            camera: world
+                .spawn((
+                    MirrorCamera,
+                    Camera3d::default(),
+                    Camera {
+                        is_active: false,
+                        order: -1,
+                        clear_color: ClearColorConfig::Custom(Color::NONE),
+                        ..default()
+                    },
+                    Hdr,
+                    Msaa::Off,
+                    Tonemapping::None,
+                    DebandDither::Disabled,
+                    Projection::default(),
+                    Transform::IDENTITY,
+                ))
+                .id(),
+            images: HashMap::new(),
+        });
         self.stages.insert(
             key,
             Stage {
@@ -1060,6 +1157,7 @@ impl Studio {
                 emitters: Vec::new(),
                 emitted: None,
                 blended: Vec::new(),
+                mirror,
             },
         );
         Ok(key)
@@ -1272,13 +1370,145 @@ fn sign(bit: usize) -> f32 {
     }
 }
 
+/// Points the mirror camera of `stage` at this shot's target size and sets
+/// the catchers' reflectance. Returns the mirror camera and plane when the
+/// shot reflects, and the extra frames the change needs first: 3 for a new
+/// mirror image, 1 for a changed catcher material, which binds a frame late.
+fn film_mirror(
+    stage: &mut Stage,
+    world: &mut World,
+    shot: &Shot,
+    size: (u32, u32),
+    probe: &Handle<Image>,
+) -> Result<(Option<(Entity, Vec4)>, u32), String> {
+    let Some(m) = stage.mirror.as_mut() else {
+        return if shot.reflection > 0.0 {
+            Err("reflection needs a shadow catcher to mirror the model".into())
+        } else {
+            Ok((None, 0))
+        };
+    };
+    let plane = match (shot.reflection > 0.0, m.plane) {
+        (false, _) => None,
+        (true, Some(plane)) => Some(plane),
+        (true, None) => return Err("reflection needs shadow catchers that lie in one plane".into()),
+    };
+    let fresh = plane.is_some() && !m.images.contains_key(&size);
+    let image = plane.map(|_| {
+        m.images
+            .entry(size)
+            .or_insert_with(|| {
+                let mut image = Image::new_target_texture(size.0, size.1, TextureFormat::Rgba16Float, None);
+                image.asset_usage = RenderAssetUsages::RENDER_WORLD;
+                world.resource_mut::<Assets<Image>>().add(image)
+            })
+            .clone()
+    });
+    let strength = if plane.is_some() { shot.reflection } else { 0.0 };
+    // A changed material rebuilds its bind group, so only a change writes it.
+    let mut materials = world.resource_mut::<Assets<ShadowCatcher>>();
+    let current = materials.get(&m.material).map(|c| (c.params.x, c.mirror.clone()));
+    let changed = current != Some((strength, image.clone()));
+    if changed {
+        if let Some(mut c) = materials.get_mut(&m.material) {
+            c.params.x = strength;
+            c.mirror = image.clone();
+        }
+    }
+    let mut e = world.entity_mut(m.camera);
+    let Some(handle) = image else {
+        e.get_mut::<Camera>().expect("mirror camera").is_active = false;
+        return Ok((None, changed as u32));
+    };
+    e.insert((
+        RenderTarget::Image(ImageRenderTarget {
+            handle,
+            scale_factor: 1.0,
+        }),
+        Exposure { ev100: shot.exposure },
+        GeneratedEnvironmentMapLight {
+            environment_map: probe.clone(),
+            intensity: shot.environment_intensity,
+            ..default()
+        },
+    ));
+    // Over a painted probe the catchers mirror the sky too.
+    if shot.background {
+        e.insert(Skybox {
+            image: Some(probe.clone()),
+            brightness: shot.environment_intensity,
+            ..default()
+        });
+    } else {
+        e.remove::<Skybox>();
+    }
+    if let Some(mut light) = e.get_mut::<EnvironmentMapLight>() {
+        light.intensity = shot.environment_intensity;
+    }
+    e.get_mut::<Camera>().expect("mirror camera").is_active = true;
+    let steps = if fresh { 3 } else { changed as u32 };
+    Ok((plane.map(|plane| (m.camera, plane)), steps))
+}
+
+/// The world transform of `entity` from the local transforms up to `root`.
+fn world_transform(world: &World, entity: Entity, root: Entity) -> Transform {
+    let mut out = Transform::IDENTITY;
+    let mut at = Some(entity);
+    while let Some(e) = at {
+        if let Some(local) = world.get::<Transform>(e) {
+            out = local.mul_transform(out);
+        }
+        at = (e != root).then(|| world.get::<ChildOf>(e).map(ChildOf::parent)).flatten();
+    }
+    out
+}
+
+/// The plane through every triangle of `meshes` as a unit normal n and
+/// offset d with n . x = d, or `None` when they do not lie in one plane.
+fn catcher_plane(world: &World, root: Entity, meshes: &[(Entity, Handle<Mesh>)]) -> Option<Vec4> {
+    let assets = world.resource::<Assets<Mesh>>();
+    let mut points = Vec::new();
+    let mut normal = Vec3::ZERO;
+    for (entity, handle) in meshes {
+        let mesh = assets.get(handle)?;
+        let to_world = world_transform(world, *entity, root).to_matrix();
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            return None;
+        };
+        let start = points.len();
+        points.extend(positions.iter().map(|p| to_world.transform_point3(Vec3::from(*p))));
+        let corners: Vec<usize> = match mesh.indices() {
+            Some(indices) => indices.iter().collect(),
+            None => (0..positions.len()).collect(),
+        };
+        for t in corners.as_chunks::<3>().0 {
+            let [a, b, c] = t.map(|i| points[start + i]);
+            normal += (b - a).cross(c - a);
+        }
+    }
+    let normal = normal.try_normalize()?;
+    let centre = points.iter().copied().sum::<Vec3>() / points.len() as f32;
+    let (lo, hi) = points.iter().fold((Vec3::MAX, Vec3::MIN), |(l, h), p| (l.min(*p), h.max(*p)));
+    let tolerance = (hi - lo).length() * 1e-4 + 1e-5;
+    points
+        .iter()
+        .all(|p| normal.dot(*p - centre).abs() <= tolerance)
+        .then(|| normal.extend(normal.dot(centre)))
+}
+
+/// A stage's catcher material and the plane its catchers lie in, if any.
+type Caught = Option<(Handle<ShadowCatcher>, Option<Vec4>)>;
+
 /// Gives every mesh at or below a node named in `names` the shadow catcher
-/// material, and fails on a name that reaches no mesh.
-fn catch_shadows(world: &mut World, root: Entity, names: &[String]) -> Result<(), String> {
+/// material on the catcher layer, and fails on a name that reaches no mesh.
+/// Returns the material and the plane the catchers lie in, if they do.
+fn catch_shadows(world: &mut World, root: Entity, names: &[String]) -> Result<Caught, String> {
     if names.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let material = world.resource_mut::<Assets<ShadowCatcher>>().add(ShadowCatcher::default());
+    let mut meshes = Vec::new();
     let mut caught = HashSet::new();
     for entity in descendants(world, root) {
         if world.get::<Mesh3d>(entity).is_none() {
@@ -1295,15 +1525,16 @@ fn catch_shadows(world: &mut World, root: Entity, names: &[String]) -> Result<()
         }
         let Some(name) = named else { continue };
         caught.insert(name);
+        meshes.push((entity, world.get::<Mesh3d>(entity).expect("mesh").0.clone()));
         world
             .entity_mut(entity)
             .remove::<MeshMaterial3d<StandardMaterial>>()
-            .insert(MeshMaterial3d(material.clone()));
+            .insert((MeshMaterial3d(material.clone()), RenderLayers::layer(CATCHER_LAYER)));
     }
-    match names.iter().find(|n| !caught.contains(*n)) {
-        Some(missing) => Err(format!("shadow-catcher '{missing}' names no node with a mesh in the model")),
-        None => Ok(()),
+    if let Some(missing) = names.iter().find(|n| !caught.contains(*n)) {
+        return Err(format!("shadow-catcher '{missing}' names no node with a mesh in the model"));
     }
+    Ok(Some((material, catcher_plane(world, root, &meshes))))
 }
 
 /// Spawns each line of extruded type under `root`: a placed parent holding

@@ -43,6 +43,10 @@ pub struct ModelBody {
     /// so the model's shadows fall on footage behind a transparent model.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shadow_catchers: Vec<String>,
+    /// How strongly the shadow catchers mirror the model, 0 to 1: their
+    /// reflectance facing the camera, rising to 1 at grazing angles.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reflection: f32,
     /// Lines of extruded type placed in the scene beside the file's meshes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub texts: Vec<ModelText>,

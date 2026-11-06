@@ -41,6 +41,7 @@ mod padded_text;
 mod paint_gaps;
 mod project;
 mod reel;
+mod reflection;
 mod rewind;
 mod rich_text;
 mod scene_document;

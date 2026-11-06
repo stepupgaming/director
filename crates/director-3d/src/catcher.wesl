@@ -7,6 +7,16 @@
 // with r the shown fraction of the light. Whatever lies behind a transparent
 // model then darkens where the model's shadows fall, as far as the light it
 // loses, and shows unchanged elsewhere.
+//
+// With a reflectance F0 the catcher also mirrors the model: the mirror
+// texture holds the stage seen by the camera reflected in the catcher's
+// plane, horizontally mirrored, so this fragment's reflection sits at
+// (1 - u, v). Schlick's Fresnel F times the mirrored coverage a is the
+// share k of the plate the reflection covers, and the shadow darkens what
+// shows of the rest. The frame's premultiplied colour is display-encoded
+// before it lands on the plate, so a linear colour c shows as about
+// c^(1/2.2): the reflection writes k^2.2 times its unpremultiplied colour,
+// which shows as k times the mirrored colour.
 
 import bevy_core_pipeline::tonemapping::tonemapping_luminance as luminance;
 import bevy_pbr::render::forward_io::VertexOutput;
@@ -18,6 +28,10 @@ import bevy_pbr::render::clustered_forward as clustering;
 import bevy_pbr::render::shadows;
 import bevy_pbr::render::pbr_ambient as ambient;
 @if(ENVIRONMENT_MAP) import bevy_pbr::light_probe::environment_map;
+
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var mirror: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var mirror_sampler: sampler;
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
@@ -100,6 +114,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front: bool) -> @location(0
     lit += luminance(indirect);
     shown += luminance(indirect);
 
-    let alpha = select(0.0, saturate(1.0 - pow(shown / lit, 1.0 / 2.2)), lit > 0.0);
-    return vec4(0.0, 0.0, 0.0, alpha);
+    let shadow = select(0.0, saturate(1.0 - pow(shown / lit, 1.0 / 2.2)), lit > 0.0);
+    if params.x <= 0.0 {
+        return vec4(0.0, 0.0, 0.0, shadow);
+    }
+    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let seen = textureSampleLevel(mirror, mirror_sampler, vec2(1.0 - uv.x, uv.y), 0.0);
+    let F = params.x + (1.0 - params.x) * pow(1.0 - saturate(abs(dot(N, V))), 5.0);
+    let a = saturate(seen.a);
+    let k = F * a;
+    let color = select(vec3(0.0), seen.rgb * (pow(k, 2.2) / a), a > 0.0);
+    return vec4(color, 1.0 - (1.0 - shadow) * (1.0 - k));
 }
