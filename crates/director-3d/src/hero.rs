@@ -5,6 +5,8 @@
 //! environment. `HeroPlugin` adds one compute pass after the main pass that
 //! overwrites the view target with path traced radiance for the camera that
 //! carries a `HeroPass`, then the usual tonemapping, bloom and SMAA run.
+//! Solari has no point or spot lights, so the pass samples them itself from
+//! the `Lamp`s its camera carries.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -22,7 +24,7 @@ use bevy::{
         camera::ExtractedCamera,
         init_gpu_resource,
         render_resource::{
-            binding_types::{texture_storage_2d, uniform_buffer, uniform_buffer_sized},
+            binding_types::{storage_buffer_read_only_sized, texture_storage_2d, uniform_buffer, uniform_buffer_sized},
             BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BufferInitDescriptor, BufferSize,
             BufferUsages, CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache,
             ShaderStages, StorageTextureAccess, TextureFormat,
@@ -39,12 +41,81 @@ use bevy::{
 const BOUNCES: u32 = 32;
 
 /// Path traces the camera it sits on: `paths` paths per pixel for sample
-/// `sample` of the shot.
-#[derive(Component, Clone, Copy, Debug)]
+/// `sample` of the shot, lit by `lamps` beside Solari's own lights.
+#[derive(Component, Clone, Debug)]
 pub(crate) struct HeroPass {
     pub sample: u32,
     pub paths: u32,
     pub background: bool,
+    pub lamps: Arc<Vec<Lamp>>,
+}
+
+/// A point or spot light as the path tracer samples it, in Bevy's raster
+/// units so both levels light a scene alike: `color` is the linear colour
+/// times the luminous intensity (lumens / 4 pi), and a spot's cone falls
+/// off as `saturate(cos * scale + offset)^2` about `direction`. A point light
+/// has scale 0 and offset 1. A light with a `radius` casts soft shadows from
+/// a disc of that radius facing each shaded point.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Lamp {
+    pub position: Vec3,
+    pub radius: f32,
+    pub direction: Vec3,
+    pub scale: f32,
+    pub color: Vec3,
+    pub offset: f32,
+    pub range: f32,
+}
+
+impl Lamp {
+    /// A light of `lumens` at `transform`, with `angles` (inner, outer) for
+    /// a spot, matching Bevy's raster lights.
+    pub fn new(transform: &GlobalTransform, color: Color, lumens: f32, range: f32, radius: f32, angles: Option<(f32, f32)>) -> Self {
+        let (scale, offset) = match angles {
+            Some((inner, outer)) => {
+                let scale = 1.0 / (inner.cos() - outer.cos()).max(1e-4);
+                (scale, -outer.cos() * scale)
+            }
+            None => (0.0, 1.0),
+        };
+        let linear = LinearRgba::from(color);
+        Lamp {
+            position: transform.translation(),
+            radius,
+            direction: transform.forward().into(),
+            scale,
+            color: Vec3::new(linear.red, linear.green, linear.blue) * lumens / (4.0 * std::f32::consts::PI),
+            offset,
+            range,
+        }
+    }
+
+    /// The 64 bytes of `HeroLight` in `hero.wesl`.
+    fn bytes(&self) -> [u8; LAMP as usize] {
+        let words = [
+            self.position.x,
+            self.position.y,
+            self.position.z,
+            self.radius,
+            self.direction.x,
+            self.direction.y,
+            self.direction.z,
+            self.scale,
+            self.color.x,
+            self.color.y,
+            self.color.z,
+            self.offset,
+            self.range,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        let mut out = [0; LAMP as usize];
+        for (chunk, w) in out.as_chunks_mut::<4>().0.iter_mut().zip(words) {
+            *chunk = w.to_le_bytes();
+        }
+        out
+    }
 }
 
 /// Counts dispatches of the Hero pass, shared by the main and render worlds,
@@ -67,7 +138,12 @@ pub(crate) struct HeroPlugin;
 impl Plugin for HeroPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "hero.wesl");
-        app.init_resource::<Traced>().init_resource::<Traceable>();
+        app.init_resource::<Traced>().init_resource::<Traceable>().add_systems(
+            PostUpdate,
+            gather
+                .after(bevy::transform::TransformSystems::Propagate)
+                .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
+        );
     }
 
     fn finish(&self, app: &mut App) {
@@ -86,14 +162,48 @@ impl Plugin for HeroPlugin {
     }
 }
 
+/// Gives each Hero camera the visible point and spot lights at their poses
+/// this frame: the file's lights and the authored ones, minus the spots
+/// that stand in for rect lights.
+fn gather(
+    mut cameras: Query<&mut HeroPass>,
+    points: Query<(&PointLight, &GlobalTransform, &InheritedVisibility, Option<&crate::lights::Authored>)>,
+    spots: Query<(&SpotLight, &GlobalTransform, &InheritedVisibility, Option<&crate::lights::Authored>)>,
+) {
+    if cameras.is_empty() {
+        return;
+    }
+    let radius = |own: f32, authored: Option<&crate::lights::Authored>| authored.map_or(own, |a| a.radius);
+    let mut lamps: Vec<Lamp> = points
+        .iter()
+        .filter(|(_, _, seen, _)| seen.get())
+        .map(|(l, t, _, a)| Lamp::new(t, l.color, l.intensity, l.range, radius(l.radius, a), None))
+        .collect();
+    lamps.extend(
+        spots
+            .iter()
+            .filter(|(_, _, seen, a)| seen.get() && !a.is_some_and(|a| a.rect))
+            .map(|(l, t, _, a)| Lamp::new(t, l.color, l.intensity, l.range, radius(l.radius, a), Some((l.inner_angle, l.outer_angle)))),
+    );
+    for mut pass in &mut cameras {
+        if *pass.lamps != lamps {
+            pass.lamps = Arc::new(lamps.clone());
+        }
+    }
+}
+
 #[derive(Resource)]
 struct HeroPipeline {
     layout: BindGroupLayoutDescriptor,
     pipeline: CachedComputePipelineId,
 }
 
-/// The settings uniform: sample, paths, background, bounces.
-const SETTINGS: u64 = 16;
+/// The settings uniform: sample, paths, background, bounces, lamp count and
+/// padding.
+const SETTINGS: u64 = 32;
+
+/// The size of one `HeroLight`.
+const LAMP: u64 = 64;
 
 fn init(mut commands: Commands, cache: Res<PipelineCache>, scene: Res<RaytracingSceneBindings>, server: Res<AssetServer>) {
     let layout = BindGroupLayoutDescriptor::new(
@@ -104,6 +214,7 @@ fn init(mut commands: Commands, cache: Res<PipelineCache>, scene: Res<Raytracing
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<ViewUniform>(true),
                 uniform_buffer_sized(false, BufferSize::new(SETTINGS)),
+                storage_buffer_read_only_sized(false, BufferSize::new(LAMP)),
             ),
         ),
     );
@@ -121,7 +232,7 @@ fn extract(cameras: Extract<Query<(RenderEntity, &Camera, Option<&HeroPass>)>>, 
     for (entity, camera, pass) in &cameras {
         let Ok(mut e) = commands.get_entity(entity) else { continue };
         match pass.filter(|_| camera.is_active) {
-            Some(pass) => e.insert(*pass),
+            Some(pass) => e.insert(pass.clone()),
             None => e.remove::<HeroPass>(),
         };
     }
@@ -148,7 +259,8 @@ fn trace(
     ) else {
         return;
     };
-    let settings: Vec<u8> = [pass.sample, pass.paths.max(1), pass.background as u32, BOUNCES]
+    let lamps = pass.lamps.len() as u32;
+    let settings: Vec<u8> = [pass.sample, pass.paths.max(1), pass.background as u32, BOUNCES, lamps, 0, 0, 0]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect();
@@ -157,6 +269,16 @@ fn trace(
         contents: &settings,
         usage: BufferUsages::UNIFORM,
     });
+    // The buffer holds at least one light, because a binding is never empty.
+    let mut lights: Vec<u8> = pass.lamps.iter().flat_map(|l| l.bytes()).collect();
+    if lights.is_empty() {
+        lights = Lamp::default().bytes().to_vec();
+    }
+    let lights = device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("director_hero_lights"),
+        contents: &lights,
+        usage: BufferUsages::STORAGE,
+    });
     let group = device.create_bind_group(
         "director_hero",
         &cache.get_bind_group_layout(&pipeline.layout),
@@ -164,6 +286,7 @@ fn trace(
             target.get_unsampled_color_attachment().view,
             view_binding,
             settings.as_entire_binding(),
+            lights.as_entire_binding(),
         )),
     );
     let mut compute_pass = ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor {

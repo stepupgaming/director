@@ -533,6 +533,7 @@ impl Studio {
                     sample: 0,
                     paths: 1,
                     background: shot.background,
+                    lamps: Default::default(),
                 });
             } else {
                 e.remove::<HeroPass>();
@@ -564,7 +565,7 @@ impl Studio {
         });
         // A lens or a sized light averages at least `SOFT_SAMPLES` renders,
         // at either level, so preview and export blur alike.
-        // A Hero shot samples the emitters of point and rect lights itself,
+        // A Hero shot samples point, spot and rect lights over their emitters,
         // so only a sized sun moves between its samples.
         let soft = if hero {
             shot.lights.iter().any(|l| l.kind == ModelLightKind::Sun && l.angle > 0.0)
@@ -693,9 +694,6 @@ impl Studio {
         }
         if !shot.splats.is_empty() {
             return Err("Hero path tracing draws meshes only; render <splat> clouds with samples".into());
-        }
-        if shot.lights.iter().any(|l| l.kind == ModelLightKind::Spot) {
-            return Err("Hero path tracing has no spot lights; render spot lights with samples".into());
         }
         Ok(())
     }

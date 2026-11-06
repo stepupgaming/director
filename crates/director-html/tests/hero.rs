@@ -157,26 +157,51 @@ fn a_lens_and_a_sized_sun_blur_the_path_traced_frame() {
     assert!(changed(&sharp, &soft) > 200, "an added sun lights the scene");
 }
 
-/// How much `light` brightens the scene at a level, as a ratio of luma.
-fn gain(attrs: &str, light: &str) -> f64 {
-    scene_luma(&shot(&page(attrs, light))) / scene_luma(&shot(&page(attrs, "")))
+/// The luma `light` adds to each pixel of the scene at a level, NaN where
+/// the page shows.
+fn added(attrs: &str, light: &str) -> Vec<f64> {
+    let luma = |p: &[u8]| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
+    let (lit, dark) = (shot(&page(attrs, light)), shot(&page(attrs, "")));
+    lit.chunks(4)
+        .zip(dark.chunks(4))
+        .map(|(p, q)| if page_red(p) || page_red(q) { f64::NAN } else { luma(p) - luma(q) })
+        .collect()
 }
 
+/// Each light lands where the raster puts it (the added light correlates
+/// pixel by pixel) and as strongly on the patch it lights directly, where
+/// bounce light adds little.
 #[test]
-fn point_and_rect_lights_glow_as_emitters_of_their_power() {
+fn point_spot_and_rect_lights_match_the_raster_lights() {
     if !gpu() {
         return;
     }
     let lights = [
         "<light type='point' intensity='2000000' radius='0.2' position='1.5 2 2'></light>",
+        "<light type='point' intensity='2000000' position='-1.5 2 2'></light>",
+        "<light type='spot' intensity='4000000' cone='60' position='0 3 2'></light>",
+        "<light type='spot' intensity='4000000' cone='50' radius='0.2' position='1 3 1.5'></light>",
         "<light type='rect' intensity='2000000' width='1.5' height='1' position='0 2.5 2.5'></light>",
     ];
     for light in lights {
-        let raster = gain("samples='16'", light);
-        let hero = gain("paths='64'", light);
-        assert!(hero > 1.1, "{light} brightens the Hero frame: {hero:.2}");
-        let ratio = (hero - 1.0) / (raster - 1.0);
-        assert!(ratio > 0.6 && ratio < 1.6, "{light}: raster gain {raster:.2}, Hero gain {hero:.2}");
+        let (raster, hero): (Vec<f64>, Vec<f64>) = added("samples='16'", light)
+            .into_iter()
+            .zip(added("paths='64'", light))
+            .filter(|(r, h)| !r.is_nan() && !h.is_nan())
+            .unzip();
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        let (mr, mh) = (mean(&raster), mean(&hero));
+        let cov: f64 = raster.iter().zip(&hero).map(|(r, h)| (r - mr) * (h - mh)).sum();
+        let vr: f64 = raster.iter().map(|r| (r - mr).powi(2)).sum();
+        let vh: f64 = hero.iter().map(|h| (h - mh).powi(2)).sum();
+        let shape = cov / (vr * vh).sqrt();
+        let peak = raster.iter().cloned().fold(0.0, f64::max);
+        let patch: Vec<usize> = (0..raster.len()).filter(|&i| raster[i] > peak / 2.0).collect();
+        let strength = patch.iter().map(|&i| hero[i]).sum::<f64>() / patch.iter().map(|&i| raster[i]).sum::<f64>();
+        eprintln!("{light}: shape {shape:.3}, strength {strength:.3} over {} pixels, peak {peak:.1}", patch.len());
+        assert!(peak > 20.0, "{light} lights the raster frame: peak {peak:.1}");
+        assert!(shape > 0.8, "{light} lands where the raster light does: correlation {shape:.3}");
+        assert!(strength > 0.75 && strength < 1.33, "{light}: Hero over raster on the lit patch {strength:.3}");
     }
 }
 
@@ -240,8 +265,6 @@ fn unsupported_hero_inputs_fail_to_compile() {
     assert!(e.contains("paths must be a whole number from 0 to 4096"), "{e}");
     let e = error(&page("paths='1.5'", ""));
     assert!(e.contains("paths must be a whole number"), "{e}");
-    let e = error(&page("paths='8'", "<light type='spot' intensity='800'></light>"));
-    assert!(e.contains("render spot lights with samples"), "{e}");
     let e = error(&page("paths='8'", &format!("<splat src='{}'></splat>", fixture("splats.ply"))));
     assert!(e.contains("render <splat> clouds with samples"), "{e}");
 }

@@ -1736,11 +1736,6 @@ impl Builder {
                         "{context}: a path traced model draws meshes only; render <splat> clouds with samples"
                     )));
                 }
-                if model.paths > 0 && model.lights.iter().any(|l| l.kind == director_scene::ModelLightKind::Spot) {
-                    return Err(CompileError::Input(format!(
-                        "{context}: a path traced model has no spot lights; render spot lights with samples"
-                    )));
-                }
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if !values.contains_key("width") {

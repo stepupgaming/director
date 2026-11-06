@@ -1,14 +1,24 @@
 //! Lights a model's HTML element or document adds to the glTF scene. A light
 //! with an emitter size moves to a new point on its emitter for each of the
 //! shot's samples and casts hard shadows from there, so the averaged frame
-//! has the penumbra of the real source. The path tracer ignores point and
-//! rect lights, so a Hero shot adds each as an emitter of the same power.
+//! has the penumbra of the real source. A Hero shot samples point and spot
+//! lights in its own pass from their emitter radius, and adds each rect
+//! light as an emitting quad of the same power.
 
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy::solari::scene::RaytracingMesh3d;
 use director_scene::{ModelLight, ModelLightKind};
 use std::f32::consts::PI;
+
+/// How the Hero pass reads a light spawned here: a point or spot light's
+/// emitter radius, or a rect light's stand-in spot, which it skips because
+/// the rect's quad emitter traces instead.
+#[derive(Component, Clone, Copy, Debug)]
+pub(crate) struct Authored {
+    pub radius: f32,
+    pub rect: bool,
+}
 
 /// A spawned light and the emitter it samples.
 pub(crate) struct Placed {
@@ -61,7 +71,11 @@ pub(crate) fn spawn(world: &mut World, root: Entity, lights: &[ModelLight], cent
                 (10.0 * ((from - center).length() + radius)).max(20.0)
             };
             let transform = Transform::from_translation(from).with_rotation(facing);
-            let mut e = world.spawn((transform, ChildOf(root)));
+            let authored = Authored {
+                radius: light.radius.max(0.0),
+                rect: light.kind == ModelLightKind::Rect,
+            };
+            let mut e = world.spawn((transform, authored, ChildOf(root)));
             match light.kind {
                 ModelLightKind::Sun => {
                     e.insert((
@@ -167,31 +181,19 @@ pub(crate) fn despawn(world: &mut World, placed: Vec<Placed>) {
     }
 }
 
-/// Spawns the ray traced emitters of the point and rect lights in `lights`
-/// under `root`. A point light is a sphere of its radius (2 % of the scene
-/// radius when it has none) and a rect light a quad facing its target, each
-/// glowing with the radiance that emits the light's lumens: flux / (4 pi^2 r^2)
-/// for the sphere and flux / (pi area) for the one-sided quad.
+/// Spawns the ray traced emitters of the rect lights in `lights` under
+/// `root`: one-sided quads facing their targets, glowing with flux / (pi
+/// area), the radiance that emits the light's lumens.
 pub(crate) fn emitters(world: &mut World, root: Entity, lights: &[ModelLight], center: Vec3, radius: f32) -> Vec<Entity> {
     let mut spawned = Vec::new();
-    for light in lights {
+    for light in lights.iter().filter(|l| l.kind == ModelLightKind::Rect) {
         let (from, facing) = aim(light, center, radius);
-        let (mesh, rotation, radiance) = match light.kind {
-            ModelLightKind::Point => {
-                let r = if light.radius > 0.0 { light.radius } else { radius * 0.02 };
-                let Ok(mesh) = Sphere::new(r).mesh().ico(3) else { continue };
-                (mesh, facing, light.intensity / (4.0 * PI * PI * r * r))
-            }
-            ModelLightKind::Rect => {
-                let w = if light.width > 0.0 { light.width } else { 1.0 };
-                let h = if light.height > 0.0 { light.height } else { 1.0 };
-                // The quad faces +Z, and the light shines down its local -Z.
-                let rotation = facing * Quat::from_rotation_y(PI);
-                (Mesh::from(Rectangle::new(w, h)), rotation, light.intensity / (PI * w * h))
-            }
-            ModelLightKind::Sun | ModelLightKind::Spot => continue,
-        };
-        let Some(mesh) = crate::hero::solari_copy(&mesh) else { continue };
+        let w = if light.width > 0.0 { light.width } else { 1.0 };
+        let h = if light.height > 0.0 { light.height } else { 1.0 };
+        // The quad faces +Z, and the light shines down its local -Z.
+        let rotation = facing * Quat::from_rotation_y(PI);
+        let radiance = light.intensity / (PI * w * h);
+        let Some(mesh) = crate::hero::solari_copy(&Mesh::from(Rectangle::new(w, h))) else { continue };
         let color = LinearRgba::from(Color::srgb(light.color[0], light.color[1], light.color[2]));
         let material = StandardMaterial {
             base_color: Color::BLACK,

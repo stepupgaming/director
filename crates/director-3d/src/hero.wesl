@@ -3,14 +3,15 @@
 // and writes their mean, premultiplied, into the view target. Camera rays
 // that miss every surface are transparent unless the shot paints the
 // background. Paths are seeded by pixel, sample and path index, so a shot's
-// frame depends only on its inputs.
+// frame depends only on its inputs. Solari has no point or spot lights, so
+// each hit also samples every `lights` entry with a shadow ray.
 
 import bevy_core_pipeline::tonemapping::tonemapping_luminance as luminance;
 import bevy_pbr::render::utils::{rand_f, rand_vec2f};
 import bevy_render::view::View;
 import bevy_solari::scene::brdf::{evaluate_brdf, evaluate_and_sample_brdf, brdf_pdf, F_AB};
 import bevy_solari::scene::sampling::{sample_random_light, random_emissive_light_pdf, power_heuristic, sample_environment_map_light};
-import bevy_solari::scene::bindings::{trace_ray, resolve_ray_hit_full, RAY_T_MIN, RAY_T_MAX, MIRROR_ROUGHNESS_THRESHOLD};
+import bevy_solari::scene::bindings::{trace_ray, resolve_ray_hit_full, ResolvedRayHitFull, RAY_T_MIN, RAY_T_MAX, MIRROR_ROUGHNESS_THRESHOLD};
 
 enable wgpu_ray_query;
 
@@ -19,16 +20,79 @@ struct Hero {
     paths: u32,
     background: u32,
     bounces: u32,
+    lights: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
+}
+
+// A point or spot light in Bevy's raster units: `color` is linear colour
+// times candela, and the cone falls off as saturate(cos * scale + offset)^2
+// about `direction` (scale 0 and offset 1 for a point light).
+struct HeroLight {
+    position: vec3<f32>,
+    radius: f32,
+    direction: vec3<f32>,
+    scale: f32,
+    color: vec3<f32>,
+    offset: f32,
+    range: f32,
+    pad0: f32,
+    pad1: f32,
+    pad2: f32,
 }
 
 @group(1) @binding(0) var view_output: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(1) var<uniform> view: View;
 @group(1) @binding(2) var<uniform> hero: Hero;
+@group(1) @binding(3) var<storage, read> lights: array<HeroLight>;
 
 fn hash(x: u32) -> u32 {
     let state = x * 747796405u + 2891336453u;
     let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     return (word >> 22u) ^ word;
+}
+
+// The light the point and spot lights send from `hit` toward `wo`, each
+// from a point on its disc facing the hit when it has a radius, with Bevy's
+// inverse square falloff, range window and cone.
+fn sample_lights(hit: ResolvedRayHitFull, wo: vec3<f32>, F_ab: vec2<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+    var sum = vec3(0.0);
+    for (var i = 0u; i < hero.lights; i++) {
+        let light = lights[i];
+        var position = light.position;
+        if light.radius > 0.0 {
+            let axis = normalize(hit.world_position - light.position);
+            let helper = select(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), abs(axis.x) > 0.9);
+            let u = normalize(cross(helper, axis));
+            let v = cross(axis, u);
+            let r = rand_vec2f(rng);
+            let rho = light.radius * sqrt(r.x);
+            let phi = 6.2831853 * r.y;
+            position += (u * cos(phi) + v * sin(phi)) * rho;
+        }
+        let to_light = position - hit.world_position;
+        let d2 = dot(to_light, to_light);
+        let distance = sqrt(d2);
+        let wi = to_light / max(distance, 1e-6);
+        if dot(hit.world_normal, wi) <= 0.0 {
+            continue;
+        }
+        let factor = d2 / max(light.range * light.range, 1e-8);
+        let window = saturate(1.0 - factor * factor);
+        let cone = saturate(dot(light.direction, -wi) * light.scale + light.offset);
+        let attenuation = window * window * cone * cone / max(d2, 0.0001);
+        if attenuation <= 0.0 {
+            continue;
+        }
+        let origin = hit.world_position + hit.geometric_world_normal * RAY_T_MIN;
+        let shadow = trace_ray(origin, wi, RAY_T_MIN, distance - RAY_T_MIN, RAY_FLAG_TERMINATE_ON_FIRST_HIT);
+        if shadow.kind != RAY_QUERY_INTERSECTION_NONE {
+            continue;
+        }
+        sum += evaluate_brdf(wo, wi, hit.world_normal, hit.material, F_ab) * light.color * attenuation;
+    }
+    return sum;
 }
 
 // One path from the camera through `pixel`: its radiance in rgb, and 1 in
@@ -83,6 +147,7 @@ fn trace_path(pixel: vec2<f32>, rng: ptr<function, u32>) -> vec4<f32> {
             }
             let direct_lighting_brdf = evaluate_brdf(wo, direct_lighting.wi, ray_hit.world_normal, ray_hit.material, F_ab);
             radiance += mis_weight * throughput * direct_lighting.radiance * direct_lighting.inverse_pdf * direct_lighting_brdf;
+            radiance += throughput * sample_lights(ray_hit, wo, F_ab, rng);
         }
 
         bounce += 1u;
