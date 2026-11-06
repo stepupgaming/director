@@ -1,0 +1,21 @@
+[package]
+name = "spike-bevy"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+bevy = { version = "=0.20.1", default-features = false, features = ["default_app", "std", "3d_bevy_render", "exr", "bevy_world_serialization", "raw_vulkan_init"] }
+skia-safe = { version = "0.153.3", features = ["textlayout", "ganesh", "vulkan"] }
+ash = "0.38"
+anyhow = "1"
+wgpu = { version = "=30.0.1", default-features = false, features = ["vulkan"] }
+half = "2"
+
+[patch.crates-io]
+skia-safe = { path = "../../../vendor/skia-safe" }
+
+[profile.release]
+debug = false

@@ -128,4 +128,5 @@ When the user requests a durable behavior change, record it here or in the relev
 - `crates/AGENTS.md` - Rust workspace crates and package-level ownership.
 - `docs/AGENTS.md` - Architecture, core contracts, active plans, contributing, archive.
 - `examples/AGENTS.md` - Rhai example scripts, rendered media references, and script validation helpers.
+- `spikes/AGENTS.md` - Throwaway engine and library measurement spikes built outside the workspace, with outputs on `F:/director-spikes`.
 - `vendor/AGENTS.md` - Vendored third-party crates with durable patches.

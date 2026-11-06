@@ -1,0 +1,17 @@
+[package]
+name = "spike-filament"
+version = "0.0.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+[workspace]
+[dependencies]
+skia-safe = { version = "0.153.3", features = ["textlayout", "ganesh", "vulkan"] }
+ash = "0.38"
+anyhow = "1"
+[build-dependencies]
+cc = "1"
+[patch.crates-io]
+skia-safe = { path = "../../../vendor/skia-safe" }
+[profile.release]
+debug = false
