@@ -121,6 +121,8 @@ const NATIVE: &[&str] = &[
     "--camera-yaw",
     "--camera-pitch",
     "--camera-distance",
+    "--camera-focus",
+    "--camera-aperture",
 ];
 
 /// Whether a script `src` loads the GSAP library or one of its plugins.
@@ -1060,6 +1062,7 @@ fn tolerance(channel: &str) -> f64 {
         "--grade-mix" | "--grade-intensity" => 5e-4,
         "--camera-yaw" | "--camera-pitch" => 0.01,
         "--camera-distance" => 1e-4,
+        "--camera-focus" | "--camera-aperture" => 1e-3,
         c if c.ends_with("-color") => 5e-4,
         c if c.starts_with("background-") && c.ends_with("-percent") => 0.01,
         c if c.starts_with("clip-path-") => 0.01,

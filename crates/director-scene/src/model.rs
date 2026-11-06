@@ -40,7 +40,7 @@ fn is_one(n: &u32) -> bool {
 }
 
 /// An orbit about the model's bounding sphere centre, applied on top of the
-/// file's first camera or the framing camera.
+/// file's first camera or the framing camera, and the lens focus.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ModelView {
     /// Degrees about the world up axis.
@@ -49,10 +49,22 @@ pub struct ModelView {
     pub pitch: f32,
     /// Multiple of the camera's distance from the centre.
     pub distance: f32,
+    /// Distance in metres from the camera to the plane in focus. 0 focuses
+    /// on the bounding sphere centre.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub focus: f32,
+    /// Lens aperture as an f-number on a Super 35 sensor. 0 is a pinhole
+    /// with everything in focus.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub aperture: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 impl Default for ModelView {
     fn default() -> Self {
-        Self { yaw: 0.0, pitch: 0.0, distance: 1.0 }
+        Self { yaw: 0.0, pitch: 0.0, distance: 1.0, focus: 0.0, aperture: 0.0 }
     }
 }

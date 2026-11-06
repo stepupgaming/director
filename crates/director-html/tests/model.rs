@@ -285,3 +285,40 @@ fn a_model_without_a_glb_is_an_error() {
     let error = compile(source, options()).err().expect("an invalid model").to_string();
     assert!(error.contains("glTF binary"), "{error}");
 }
+
+#[test]
+fn a_lens_blurs_off_the_focus_plane_alike_in_preview_and_export() {
+    if !gpu() {
+        return;
+    }
+    let sad = |a: &[u8], b: &[u8]| a.iter().zip(b).map(|(x, y)| x.abs_diff(*y) as u64).sum::<u64>();
+    let pinhole = frame(&mut build(&page("", "")), 1.0);
+    let none = frame(&mut build(&page("--camera-aperture:none;--camera-focus:2m", "")), 1.0);
+    assert_eq!(changed(&pinhole, &none), 0, "no aperture is a pinhole");
+
+    let lens = |style: &str| frame(&mut build(&page(&format!("--camera-aperture:0.1;{style}"), "")), 1.0);
+    let (auto, far, near) = (lens(""), lens("--camera-focus:20m"), lens("--camera-focus:2"));
+    let (auto, far, near) = (sad(&pinhole, &auto), sad(&pinhole, &far), sad(&pinhole, &near));
+    eprintln!("blur against the pinhole: auto focus {auto}, 20 m {far}, 2 m {near}");
+    assert!(auto > 0, "the ground before and behind the focus plane blurs");
+    assert!(auto * 3 < far && auto * 3 < near, "the scene centre stays sharp at auto focus");
+    let blurred = lens("--camera-focus:2");
+    let sky = pixel(&blurred, W / 2, 1);
+    assert!(sky[0] == 255 && sky[1] < 24 && sky[2] < 24, "the sky stays transparent: {sky:?}");
+
+    let style = "--camera-aperture:0.1;--camera-focus:20m";
+    let export = page(style, "").replace("<model id='m'", "<model id='m' samples='16'");
+    let mut c = build(&export);
+    assert_eq!(changed(&lens("--camera-focus:20m"), &frame(&mut c, 1.0)), 0, "a lens renders 16 samples at either level");
+    let body = model_body(&c);
+    assert_eq!((body.view.focus, body.view.aperture), (20.0, 0.1));
+    assert_eq!((model_body(&build(&page("", ""))).view.focus, model_body(&build(&page("", ""))).view.aperture), (0.0, 0.0));
+
+    for (style, message) in [
+        ("--camera-aperture:-1", "must be none or a number from 0"),
+        ("--camera-focus:near", "must be auto or a number from 0"),
+    ] {
+        let error = compile(&page(style, ""), options()).err().expect(style).to_string();
+        assert!(error.contains(message), "{style}: {error}");
+    }
+}

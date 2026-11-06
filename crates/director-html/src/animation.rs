@@ -254,16 +254,30 @@ pub(crate) const GRADES: [&str; 2] = ["--grade-mix", "--grade-intensity"];
 pub(crate) fn is_grade(name: &str) -> bool {
     GRADES.contains(&name)
 }
-/// The `<model>` orbit: yaw and pitch angles in degrees and the camera
-/// distance as a multiple of its framed distance.
-pub(crate) const CAMERA: [&str; 3] = ["--camera-yaw", "--camera-pitch", "--camera-distance"];
+/// The `<model>` camera: yaw and pitch angles in degrees, the distance as a
+/// multiple of its framed distance, the focus distance in metres and the
+/// aperture as an f-number.
+pub(crate) const CAMERA: [&str; 5] =
+    ["--camera-yaw", "--camera-pitch", "--camera-distance", "--camera-focus", "--camera-aperture"];
 pub(crate) fn is_camera(name: &str) -> bool {
     CAMERA.contains(&name)
 }
 /// A camera channel's value: an angle in `deg`, `rad`, `grad` or `turn` (a
-/// bare number is degrees) for yaw and pitch, a positive factor for distance.
+/// bare number is degrees) for yaw and pitch, a positive factor for distance,
+/// metres or `auto` (0) for focus, and an f-number or `none` (0) for aperture.
 pub(crate) fn camera_amount(name: &str, s: &str) -> Result<f32, String> {
     let s = s.trim();
+    if name == "--camera-focus" || name == "--camera-aperture" {
+        let off = if name == "--camera-focus" { "auto" } else { "none" };
+        if s.eq_ignore_ascii_case(off) {
+            return Ok(0.0);
+        }
+        let n = if name == "--camera-focus" { s.strip_suffix('m').unwrap_or(s).trim() } else { s };
+        return match number(n) {
+            Ok(v) if v >= 0.0 && v.is_finite() => Ok(v),
+            _ => Err(format!("{name}: '{s}' must be {off} or a number from 0")),
+        };
+    }
     if name == "--camera-distance" {
         let v = number(s).map_err(|e| format!("{name}: {e}"))?;
         return if v > 0.0 && v.is_finite() { Ok(v) } else { Err(format!("{name}: '{s}' must be a positive number")) };
@@ -285,6 +299,8 @@ pub(crate) fn set_camera(view: &mut director_scene::ModelView, name: &str, v: f3
     match name {
         "--camera-yaw" => view.yaw = v,
         "--camera-pitch" => view.pitch = v,
+        "--camera-focus" => view.focus = v.max(0.0),
+        "--camera-aperture" => view.aperture = v.max(0.0),
         _ => view.distance = v.max(1e-3),
     }
 }
@@ -292,6 +308,8 @@ pub(crate) fn camera_value(view: &director_scene::ModelView, name: &str) -> f32 
     match name {
         "--camera-yaw" => view.yaw,
         "--camera-pitch" => view.pitch,
+        "--camera-focus" => view.focus,
+        "--camera-aperture" => view.aperture,
         _ => view.distance,
     }
 }

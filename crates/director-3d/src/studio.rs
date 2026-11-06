@@ -184,6 +184,12 @@ struct Placement {
     radius: f32,
     view: ModelView,
     aspect: f32,
+    /// Target height in pixels.
+    height: f32,
+    /// This sample's sub-pixel offset in pixels.
+    jitter: Vec2,
+    /// This sample's point on the unit lens disk.
+    lens: Vec2,
 }
 
 /// Framing lens for a file without a camera: 30 degrees vertical.
@@ -196,10 +202,13 @@ fn orbit(
     orbit: Res<Orbit>,
     nodes: Query<(&Transform, Option<&ChildOf>), Without<DirectorCamera>>,
     lenses: Query<&Projection, Without<DirectorCamera>>,
-    mut cameras: Query<(&mut Transform, &mut Projection), With<DirectorCamera>>,
+    mut cameras: Query<
+        (&mut Transform, &mut Projection, Option<&mut TemporalJitter>),
+        With<DirectorCamera>,
+    >,
 ) {
     let Some(p) = orbit.0 else { return };
-    let Ok((mut transform, mut projection)) = cameras.get_mut(p.camera) else { return };
+    let Ok((mut transform, mut projection, jitter)) = cameras.get_mut(p.camera) else { return };
     let (base, mut lens) = match p.source {
         Some(source) => {
             let mut world = Transform::IDENTITY;
@@ -241,8 +250,40 @@ fn orbit(
             perspective.far *= p.view.distance;
         }
     }
+    // The lens: the focus plane sits `focus` metres ahead, or at the centre's
+    // depth. Each sample moves the eye across an aperture of focal length /
+    // f-number and shifts its image so the focus plane stays put, which is a
+    // thin lens.
+    let mut shift = Vec2::ZERO;
+    if let (Projection::Perspective(perspective), true) = (&lens, p.view.aperture > 0.0) {
+        let forward = transform.rotation * Vec3::NEG_Z;
+        let focus = if p.view.focus > 0.0 {
+            p.view.focus
+        } else {
+            (p.center - transform.translation).dot(forward).max(1e-3)
+        };
+        let half = (perspective.fov / 2.0).tan();
+        if jitter.is_some() {
+            let focal = 0.5 * SENSOR_HEIGHT / half;
+            let eye = p.lens * focal / (2.0 * p.view.aperture);
+            let step = transform.rotation * eye.extend(0.0);
+            transform.translation += step;
+            // Bevy's jitter moves the image by -2 * offset / size in NDC on
+            // x and +2 * offset / size on y.
+            shift = Vec2::new(-eye.x, eye.y) * p.height / (2.0 * half * focus);
+        }
+    }
+    if let Some(mut jitter) = jitter {
+        jitter.offset = p.jitter + shift;
+    }
     *projection = lens;
 }
+
+/// Bevy's default sensor: Super 35, 18.66 mm tall.
+const SENSOR_HEIGHT: f32 = 0.01866;
+
+/// The fewest renders a lens with an aperture averages.
+const LENS_SAMPLES: u32 = 16;
 
 struct Stage {
     root: Entity,
@@ -269,7 +310,7 @@ struct Target {
 }
 
 type StageKey = (u64, Option<u64>);
-type ShotKey = (StageKey, usize, u64, [u32; 7]);
+type ShotKey = (StageKey, usize, u64, [u32; 9]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     (
@@ -280,6 +321,8 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             shot.view.yaw.to_bits(),
             shot.view.pitch.to_bits(),
             shot.view.distance.to_bits(),
+            shot.view.focus.to_bits(),
+            shot.view.aperture.to_bits(),
             shot.exposure.to_bits(),
             shot.environment_intensity.to_bits(),
             shot.background as u32,
@@ -442,7 +485,22 @@ impl Studio {
             radius,
             view: shot.view,
             aspect: shot.width as f32 / shot.height as f32,
+            height: shot.height as f32,
+            jitter: Vec2::ZERO,
+            lens: Vec2::ZERO,
         });
+        // A lens averages at least `LENS_SAMPLES` eye positions, at either
+        // level, so preview and export blur alike.
+        let samples = if shot.view.aperture > 0.0 {
+            shot.samples.max(LENS_SAMPLES)
+        } else {
+            shot.samples.max(1)
+        };
+        if samples > 1 {
+            world.entity_mut(camera).insert(TemporalJitter::default());
+        } else {
+            world.entity_mut(camera).remove::<TemporalJitter>();
+        }
         if !warm {
             for _ in 0..3 {
                 self.step();
@@ -459,13 +517,12 @@ impl Studio {
         if morphs {
             touch_morph_meshes(self.apps.main.world_mut());
         }
-        let samples = shot.samples.max(1);
         for sample in 0..samples {
-            let mut e = self.apps.main.world_mut().entity_mut(camera);
-            if samples == 1 {
-                e.remove::<TemporalJitter>();
-            } else {
-                e.insert(TemporalJitter { offset: jitter(sample) });
+            if samples > 1 {
+                let mut orbit = self.apps.main.world_mut().resource_mut::<Orbit>();
+                let p = orbit.0.as_mut().expect("placement");
+                p.jitter = jitter(sample);
+                p.lens = lens(sample);
             }
             // Queue order keeps each sample's render ahead of its share, so
             // only the last sample waits for the GPU.
@@ -784,19 +841,32 @@ impl Studio {
     }
 }
 
+fn halton(mut i: u32, base: u32) -> f32 {
+    let (mut f, mut r) = (1.0, 0.0);
+    while i > 0 {
+        f /= base as f32;
+        r += f * (i % base) as f32;
+        i /= base;
+    }
+    r
+}
+
 /// Sub-pixel offset of sample `i`: the Halton (2, 3) sequence about the
 /// pixel centre, so any sample count covers the pixel evenly.
 fn jitter(i: u32) -> Vec2 {
-    let halton = |mut i: u32, base: u32| {
-        let (mut f, mut r) = (1.0, 0.0);
-        while i > 0 {
-            f /= base as f32;
-            r += f * (i % base) as f32;
-            i /= base;
-        }
-        r
-    };
     Vec2::new(halton(i + 1, 2), halton(i + 1, 3)) - 0.5
+}
+
+/// Lens point of sample `i` on the unit disk: Halton (5, 7) through
+/// Shirley's concentric map, which keeps the points evenly spread.
+fn lens(i: u32) -> Vec2 {
+    let (a, b) = (2.0 * halton(i + 1, 5) - 1.0, 2.0 * halton(i + 1, 7) - 1.0);
+    if a == 0.0 && b == 0.0 {
+        return Vec2::ZERO;
+    }
+    let quarter = std::f32::consts::FRAC_PI_4;
+    let (r, theta) = if a.abs() > b.abs() { (a, quarter * (b / a)) } else { (b, 2.0 * quarter - quarter * (a / b)) };
+    Vec2::new(r * theta.cos(), r * theta.sin())
 }
 
 fn stage_root(stages: &HashMap<StageKey, Stage>, key: StageKey) -> Entity {

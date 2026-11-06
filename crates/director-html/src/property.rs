@@ -205,7 +205,7 @@ pub fn info(name: &str) -> Option<&'static PropertyInfo> {
 /// Whether `name` inherits: custom properties and the inherited longhands.
 pub fn is_inherited(name: &str) -> bool {
     // The grade and camera properties apply to the box that declares them.
-    (name.starts_with("--") && !matches!(name, "--grade" | "--grade-mix" | "--grade-intensity" | "--camera-yaw" | "--camera-pitch" | "--camera-distance"))
+    (name.starts_with("--") && !matches!(name, "--grade" | "--grade-mix" | "--grade-intensity" | "--camera-yaw" | "--camera-pitch" | "--camera-distance" | "--camera-focus" | "--camera-aperture"))
         || info(name).is_some_and(|entry| entry.inherited)
 }
 

@@ -79,7 +79,7 @@ impl std::fmt::Debug for Asset {
     }
 }
 
-type FrameKey = (u64, Option<u64>, u32, u32, [u32; 8]);
+type FrameKey = (u64, Option<u64>, u32, u32, [u32; 10]);
 
 static TEXTURE_DRAWS: AtomicU64 = AtomicU64::new(0);
 
@@ -248,6 +248,8 @@ impl Element for ModelNode {
                 self.view.yaw.to_bits(),
                 self.view.pitch.to_bits(),
                 self.view.distance.to_bits(),
+                self.view.focus.to_bits(),
+                self.view.aperture.to_bits(),
                 self.exposure.to_bits(),
                 self.environment_intensity.to_bits(),
                 self.background as u32,
@@ -318,7 +320,7 @@ impl Element for ModelNode {
         _duration: f64,
         _easing: &str,
     ) -> Result<(), String> {
-        Err(format!("model has no animatable property '{property}'; animate --camera-yaw, --camera-pitch and --camera-distance on its HTML element"))
+        Err(format!("model has no animatable property '{property}'; animate the --camera-* properties on its HTML element"))
     }
 
     fn export_body(&self, cx: &mut ExportContext) -> Result<ElementExport, ExportError> {
