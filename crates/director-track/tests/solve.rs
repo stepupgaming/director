@@ -1,6 +1,8 @@
 //! The camera solve on `solve.mp4`, Eevee's plate of a yard walked past by a
 //! camera whose true path `solve.json` holds in the solve's world, and on
-//! `pan.mp4`, the same yard from a camera on a tripod with its path in `pan.json`.
+//! `pan.mp4`, the same yard from a camera on a tripod with its path in
+//! `pan.json`, and on `zoom.mp4`, that camera zooming in, with every frame's
+//! lens in `zoom.json`.
 
 use director_track::{read_footage, solve, CameraSolve, Footage, SolveOptions};
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
@@ -13,6 +15,8 @@ fn fixture(name: &str) -> PathBuf {
 
 struct Truth {
     yfov: f64,
+    /// Every frame's vertical field of view, `yfov` for a fixed lens.
+    yfovs: Vec<f64>,
     height: f64,
     positions: Vec<Vector3<f64>>,
     rotations: Vec<UnitQuaternion<f64>>,
@@ -28,6 +32,7 @@ fn truth_of(name: &str) -> Truth {
     let v = |a: &serde_json::Value, i: usize| a[i].as_f64().unwrap();
     Truth {
         yfov: json["yfov"].as_f64().unwrap(),
+        yfovs: frames.iter().map(|f| f["yfov"].as_f64().unwrap_or_else(|| json["yfov"].as_f64().unwrap())).collect(),
         height: json["camera_height"].as_f64().unwrap(),
         positions: frames.iter().map(|f| Vector3::new(v(&f["position"], 0), v(&f["position"], 1), v(&f["position"], 2))).collect(),
         rotations: frames
@@ -98,7 +103,7 @@ fn the_solve_walks_the_true_camera_path() {
     let truth = truth();
     let footage = footage();
     assert_eq!((footage.width, footage.height, footage.frames.len()), (480, 270, 60));
-    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height, pitch: None };
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height, pitch: None, zoom: false };
     let start = std::time::Instant::now();
     let solved = solve(footage, &options).unwrap();
     let Errors { position, rotation, pixels } = compare(&solved, &truth);
@@ -124,7 +129,7 @@ fn the_solve_walks_the_true_camera_path() {
 #[test]
 fn the_solve_recovers_the_lens_from_a_wrong_guess() {
     let truth = truth();
-    let options = SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, distortion: None, camera_height: truth.height, pitch: None };
+    let options = SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, distortion: None, camera_height: truth.height, pitch: None, zoom: false };
     let solved = solve(footage(), &options).unwrap();
     let Errors { position, rotation, pixels } = compare(&solved, &truth);
     eprintln!(
@@ -160,7 +165,7 @@ fn the_solve_finds_the_lens_distortion() {
     // `lens.mp4` is the same shot through a lens with k1 = -0.15, k2 = 0.03.
     let truth = truth();
     let footage = read_footage(&fixture("lens.mp4"), 960).unwrap();
-    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height, pitch: None };
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height, pitch: None, zoom: false };
     let solved = solve(&footage, &options).unwrap();
     let Errors { position, rotation, .. } = compare(&solved, &truth);
     // k1 and k2 trade against each other, so compare where each lens sends
@@ -183,7 +188,7 @@ fn a_matte_keeps_moving_things_out_of_the_solve() {
     // `moving.mp4` is the same walk past a van, a walker and a rippling
     // pool, and `moving-matte.mp4` is white over them.
     let truth = truth();
-    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height, pitch: None };
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height, pitch: None, zoom: false };
     let mut footage = read_footage(&fixture("moving.mp4"), 960).unwrap();
     let unmasked = compare(&solve(&footage, &options).unwrap(), &truth);
     footage.read_matte(&fixture("moving-matte.mp4")).unwrap();
@@ -218,7 +223,7 @@ fn pitch(truth: &Truth) -> f64 {
 fn a_camera_that_only_turns_solves_from_its_pitch() {
     let truth = truth_of("pan.json");
     let footage = read_footage(&fixture("pan.mp4"), 960).unwrap();
-    let fixed = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: Some([0.0, 0.0]), camera_height: truth.height, pitch: Some(pitch(&truth)) };
+    let fixed = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: Some([0.0, 0.0]), camera_height: truth.height, pitch: Some(pitch(&truth)), zoom: false };
     let solved = solve(&footage, &fixed).unwrap();
     let Errors { position, rotation, pixels } = compare(&solved, &truth);
     let guessed = solve(&footage, &SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, ..fixed }).unwrap();
@@ -247,4 +252,39 @@ fn a_turning_camera_needs_its_pitch() {
     assert!(error.contains("its pitch"), "{error}");
     let error = solve(&footage, &SolveOptions { pitch: Some(2.0), ..SolveOptions::default() }).unwrap_err();
     assert!(error.contains("pitch between -90 and 90"), "{error}");
+}
+
+#[test]
+fn a_zooming_lens_solves_frame_by_frame() {
+    // `zoom.mp4` turns less than `pan.mp4` while the lens zooms from 42 to
+    // 24 degrees.
+    let truth = truth_of("zoom.json");
+    let footage = read_footage(&fixture("zoom.mp4"), 960).unwrap();
+    let options = SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, distortion: Some([0.0, 0.0]), camera_height: truth.height, pitch: Some(pitch(&truth)), zoom: true };
+    let start = std::time::Instant::now();
+    let solved = solve(&footage, &options).unwrap();
+    let lens = solved
+        .frames
+        .iter()
+        .zip(&truth.yfovs)
+        .map(|(f, t)| (f.yfov.expect("a lens per frame") - t).abs().to_degrees())
+        .fold(0.0, f64::max);
+    let mut rotation = 0.0f64;
+    for (frame, q) in solved.frames.iter().zip(&truth.rotations) {
+        rotation = rotation.max(pose(frame.position, frame.rotation).1.angle_to(q).to_degrees());
+    }
+    let fixed = solve(&footage, &SolveOptions { yfov: truth.yfov, refine_focal: false, zoom: false, ..options.clone() }).unwrap();
+    eprintln!(
+        "zoom from 36 deg in {:.2} s: frame 0 {:.3} deg, worst lens {lens:.3} deg, rotation {rotation:.3} deg, {:.3} px rms; a fixed lens fits to {:.3} px",
+        start.elapsed().as_secs_f64(),
+        solved.yfov.to_degrees(),
+        solved.error,
+        fixed.error
+    );
+    assert!(lens < 0.15, "every frame's lens within 0.15 degrees: {lens:.3}");
+    assert!(rotation < 0.1, "every camera turns within 0.1 degrees of the truth: {rotation:.3}");
+    assert!(solved.error < 0.4, "the zoom explains the tracks: {:.3} px", solved.error);
+    assert!(fixed.error > 2.0 * solved.error, "a fixed lens fits the zoom worse: {:.3} px", fixed.error);
+    let error = solve(&footage, &SolveOptions { zoom: true, ..SolveOptions::default() }).unwrap_err();
+    assert!(error.contains("a zooming lens solves only on a camera that only turns"), "{error}");
 }

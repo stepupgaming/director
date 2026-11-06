@@ -269,7 +269,7 @@ impl ModelNode {
         Some(ShotCamera {
             position: Vec3::from_array(pose.position),
             rotation: Quat::from_array(pose.rotation).normalize(),
-            fov: track.fov.to_radians(),
+            fov: pose.fov.unwrap_or(track.fov).to_radians(),
         })
     }
 
@@ -625,7 +625,8 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     node.shadow_catchers = Arc::new(body.shadow_catchers.clone());
     node.reflection = body.reflection.clamp(0.0, 1.0);
     if let Some(track) = &body.track {
-        let lens = track.fov > 0.0 && track.fov < 180.0 && track.distortion.iter().all(|k| k.is_finite());
+        let fov = |f: f32| f > 0.0 && f < 180.0;
+        let lens = fov(track.fov) && track.frames.iter().all(|f| f.fov.is_none_or(fov)) && track.distortion.iter().all(|k| k.is_finite());
         if !(track.fps > 0.0 && lens && !track.frames.is_empty()) {
             return Err(ImportError::Invalid(
                 "a model track needs a positive fps, a field of view between 0 and 180 degrees, finite distortion and at least one frame".into(),

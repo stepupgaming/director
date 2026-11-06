@@ -1,6 +1,6 @@
 """Write the director-3d camera solve fixture.
 
-Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures [--lens | --moving | --pan]
+Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures [--lens | --moving | --pan | --zoom]
 
 A yard of Voronoi cells holds five textured crates and two pillars under a sun
 and `sky.hdr`, and a handheld-height camera walks sideways past them over 60
@@ -52,6 +52,15 @@ it tilts up and back. Frame 0 matches the walk's, so the solve's world and
 - `pan.mp4`: the plate, H.264 yuv420p.
 - `pan.json`: the true camera, in the format of `solve.json`.
 - `pan-10.png` and `pan-50.png`: frames 10 and 50 with the box.
+
+With `--zoom` the script writes only the zoom fixture: the tripod of `--pan`
+turning less while the lens zooms in from 42 to 24 degrees of vertical field
+of view, eased in and out.
+
+- `zoom.mp4`: the plate, H.264 yuv420p.
+- `zoom.json`: the true camera in the format of `solve.json`, with each
+  frame's vertical field of view in radians as its `yfov`.
+- `zoom-10.png` and `zoom-50.png`: frames 10 and 50 with the box.
 """
 
 import json
@@ -69,7 +78,8 @@ args = sys.argv[sys.argv.index("--") + 1 :]
 out = os.path.abspath(args[0])
 LENS = "--lens" in args[1:]
 MOVING = "--moving" in args[1:]
-PAN = "--pan" in args[1:]
+ZOOM = "--zoom" in args[1:]
+PAN = "--pan" in args[1:] or ZOOM
 FRAMES = 60
 K1, K2 = -0.15, 0.03
 WIDE = (600, 338)
@@ -195,7 +205,13 @@ camera.data.clip_start = 0.05
 scene.camera = camera
 for frame in range(FRAMES):
     t = frame / (FRAMES - 1)
-    if PAN:
+    if ZOOM:
+        camera.location = Vector((-2.2, -6.5, 1.6))
+        target = Vector((-0.4 + 2.0 * t, 1.0 - 0.3 * t, 0.5 + 0.4 * math.sin(math.pi * t)))
+        ease = t * t * (3 - 2 * t)
+        camera.data.angle_y = math.radians(42 - 18 * ease)
+        camera.data.keyframe_insert("lens", frame=frame)
+    elif PAN:
         camera.location = Vector((-2.2, -6.5, 1.6))
         target = Vector((-0.4 + 4.9 * t, 1.0 - 0.5 * t, 0.5 + 0.8 * math.sin(math.pi * t)))
     else:
@@ -236,6 +252,7 @@ scene.render.image_settings.color_mode = "RGB"
 # The solve's world in Blender coordinates: origin where frame 0's optical
 # axis meets the ground, up along +Z, frame 0's view along -Z_w.
 scene.frame_set(0)
+
 eye = camera.matrix_world.translation.copy()
 forward = -camera.matrix_world.to_3x3().col[2]
 origin = eye + forward * (-eye.z / forward.z)
@@ -255,8 +272,13 @@ for frame in range(FRAMES):
     m = camera.matrix_world
     q = (basis @ m.to_3x3()).to_quaternion()
     truth["frames"].append({"position": list(solve_point(m.translation)), "rotation": [q.x, q.y, q.z, q.w]})
+    if ZOOM:
+        truth["frames"][-1]["yfov"] = camera.data.angle_y
+scene.frame_set(0)
+truth["yfov"] = camera.data.angle_y
+name = "zoom" if ZOOM else "pan" if PAN else "solve"
 if not (LENS or MOVING):
-    with open(os.path.join(out, "pan.json" if PAN else "solve.json"), "w") as f:
+    with open(os.path.join(out, f"{name}.json"), "w") as f:
         json.dump(truth, f, indent=1)
 
 
@@ -356,7 +378,6 @@ if MOVING:
     print("wrote", out)
     sys.exit(0)
 
-name = "pan" if PAN else "solve"
 for frame in (10, 50):
     scene.frame_set(frame)
     render(os.path.join(out, f"{name}-{frame}.png"))

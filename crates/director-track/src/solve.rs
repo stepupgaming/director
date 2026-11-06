@@ -46,11 +46,15 @@ pub struct SolveOptions {
     /// alone (and the focal length with `refine_focal`) with the given
     /// distortion, none when unset. `None` solves a moving camera.
     pub pitch: Option<f64>,
+    /// The lens zooms: every frame solves its own focal length, and `yfov`
+    /// is frame 0's guess, held unless `refine_focal`. Only a camera that
+    /// only turns, given its `pitch`, zooms.
+    pub zoom: bool,
 }
 
 impl Default for SolveOptions {
     fn default() -> Self {
-        Self { yfov: 40f64.to_radians(), refine_focal: false, distortion: None, camera_height: 1.6, pitch: None }
+        Self { yfov: 40f64.to_radians(), refine_focal: false, distortion: None, camera_height: 1.6, pitch: None, zoom: false }
     }
 }
 
@@ -61,6 +65,9 @@ impl Default for SolveOptions {
 pub struct Pose {
     pub position: [f32; 3],
     pub rotation: [f32; 4],
+    /// This frame's vertical field of view in radians, when the lens zooms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yfov: Option<f64>,
 }
 
 /// A solved shot: a camera per frame in a world with the ground at y = 0,
@@ -264,16 +271,26 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
     if footage.matte.iter().any(|m| (m.width, m.height) != (w, h)) {
         return Err(format!("a camera solve needs a matte of the footage's {w}x{h} frames"));
     }
+    if options.zoom && options.pitch.is_none() {
+        return Err("a zooming lens solves only on a camera that only turns; give its pitch".into());
+    }
     let tracks = track(&footage.frames, &footage.matte);
     if let Some(pitch) = options.pitch {
         if pitch.is_nan() || pitch.abs() >= std::f64::consts::FRAC_PI_2 {
             return Err("a camera solve needs a pitch between -90 and 90 degrees".into());
         }
-        let (cams, error) = rotation::solve(&tracks, &mut intr, options.refine_focal, n)?;
+        let lens = rotation::Lens { refine: options.refine_focal, zoom: options.zoom };
+        let turn = rotation::solve(&tracks, &mut intr, lens, n)?;
         // Frame 0 sees the ground's up tilted towards its view by the pitch,
         // with the ground a unit below; height then sets the scale.
         let up = Vector3::new(0.0, -pitch.cos(), -pitch.sin());
-        let (poses, _) = place(&cams, &[], up, -1.0, options.camera_height);
+        let (mut poses, _) = place(&turn.cams, &[], up, -1.0, options.camera_height);
+        if options.zoom {
+            for (pose, f) in poses.iter_mut().zip(&turn.focals) {
+                pose.yfov = Some(2.0 * ((h as f64 / 2.0) / f).atan());
+            }
+        }
+        let error = turn.error;
         return Ok(CameraSolve {
             fps: footage.fps,
             width: footage.width,
@@ -492,7 +509,7 @@ fn place(cams: &[Cam], points: &[Vector3<f64>], normal: Vector3<f64>, offset: f6
                 q = UnitQuaternion::new_unchecked(-q.into_inner());
             }
             previous = Some(q);
-            Pose { position: [p.x as f32, p.y as f32, p.z as f32], rotation: [q.i as f32, q.j as f32, q.k as f32, q.w as f32] }
+            Pose { position: [p.x as f32, p.y as f32, p.z as f32], rotation: [q.i as f32, q.j as f32, q.k as f32, q.w as f32], yfov: None }
         })
         .collect();
     let points = points

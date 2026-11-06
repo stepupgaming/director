@@ -4,8 +4,8 @@
 //! solved from and compare the result with Eevee's renders of the same shot
 //! with the box; `make_solve.py` writes all four, with `--lens` the same
 //! plate and renders through a barrel-distorted lens, with `--moving`
-//! the shot with movers in it and their matte, and with `--pan` the yard
-//! from a camera that only turns. The masks take the box's
+//! the shot with movers in it and their matte, with `--pan` the yard
+//! from a camera that only turns, and with `--zoom` that camera zooming in. The masks take the box's
 //! lit faces by colour and the shadow by its darkening, each only where the
 //! image moves away from the decoded plate. Each GPU test skips on a
 //! machine without a Vulkan adapter.
@@ -42,7 +42,7 @@ fn gpu() -> bool {
 const K1: f64 = -0.15;
 const K2: f64 = 0.03;
 
-/// The `plate` (`solve`, `lens`, `moving` or `pan`) under `solve.glb` with the sky and units
+/// The `plate` (`solve`, `lens`, `moving`, `pan` or `zoom`) under `solve.glb` with the sky and units
 /// of `tests/eevee.rs`, its ground a catcher and its camera solved from the
 /// plate with `track` attributes. An empty `track` leaves the plate alone.
 fn page(plate: &str, track: &str) -> String {
@@ -190,6 +190,26 @@ fn a_model_holds_still_under_a_camera_that_only_turns() {
 }
 
 #[test]
+fn a_model_holds_still_through_a_zoom() {
+    if gpu() {
+        matches_eevee("zoom", "track-height='1.6' track-pitch='8.12' track-zoom", 0.9);
+    }
+}
+
+#[test]
+fn the_document_keeps_each_frame_of_a_zoom() {
+    let compiled = build(&page("zoom", "track-fov='42' track-height='1.6' track-pitch='8.12' track-zoom"));
+    let document = export_scene(&compiled.director).unwrap();
+    assert_eq!(SceneDocument::from_json(&document.to_json().unwrap()).unwrap(), document);
+    let lens: Vec<f32> = track(&compiled).frames.iter().map(|f| f.fov.expect("a lens per frame")).collect();
+    // `make_solve.py --zoom` eases the lens from 42 to 24 degrees.
+    assert_eq!(lens[0], 42.0, "track-fov holds frame 0's lens");
+    assert!((lens[59] - 24.0).abs() < 0.15, "the last frame zoomed to 24 degrees: {}", lens[59]);
+    let pan = build(&page("pan", "track-fov='42' track-height='1.6' track-pitch='8.12'"));
+    assert!(track(&pan).frames.iter().all(|f| f.fov.is_none()), "a fixed lens writes no lens per frame");
+}
+
+#[test]
 fn a_model_bends_with_the_lens_of_its_plate() {
     if gpu() {
         matches_eevee("lens", "track-fov='42' track-height='1.6'", 0.9);
@@ -283,6 +303,8 @@ fn a_lens_out_of_range_fails_to_compile() {
     assert!(error.contains("track-distortion must be two numbers, k1 and k2"), "{error}");
     let error = fails("track-pitch='90'");
     assert!(error.contains("track-pitch must be from -89 to 89 degrees"), "{error}");
+    let error = fails("track-zoom");
+    assert!(error.contains("a zooming lens solves only on a camera that only turns"), "{error}");
     let error = fails("track-mask='no-such-matte.mp4'");
     assert!(error.contains("no-such-matte.mp4"), "{error}");
 }

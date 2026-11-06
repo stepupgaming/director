@@ -1,11 +1,12 @@
 //! Solves the camera of a clip and prints how the solve went.
 //!
 //! `solve <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M]
-//! [--pitch DEG] [--matte FILE] [--json OUT]` reads the footage at most 960 px wide and
+//! [--pitch DEG] [--zoom] [--matte FILE] [--json OUT]` reads the footage at most 960 px wide and
 //! the matte of regions to leave out at its size, solves it with the
 //! lens starting from `--fov` (default 40, refined unless `--fixed`), the
 //! radial distortion fixed by `--distortion` or solved, and frame 0's camera
-//! at `--height` metres (default 1.6), and prints the timings, the lens, the
+//! at `--height` metres (default 1.6), a camera that only turns with
+//! `--pitch` and a zooming lens on it with `--zoom`, and prints the timings, the lens, the
 //! reprojection error, the point count and the camera path. `--json` writes
 //! the whole `CameraSolve`.
 
@@ -17,11 +18,13 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let mut path = None;
     let (mut fov, mut fixed, mut height, mut json, mut distortion, mut matte, mut pitch) = (40.0f64, false, 1.6f64, None, None, None, None);
+    let mut zoom = false;
     let number = |v: Option<String>| -> f64 { v.and_then(|v| v.parse().ok()).expect("--distortion K1 K2") };
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--fov" => fov = args.next().and_then(|v| v.parse().ok()).expect("--fov DEG"),
             "--fixed" => fixed = true,
+            "--zoom" => zoom = true,
             "--distortion" => distortion = Some([number(args.next()), number(args.next())]),
             "--height" => height = args.next().and_then(|v| v.parse().ok()).expect("--height M"),
             "--pitch" => pitch = Some(args.next().and_then(|v| v.parse::<f64>().ok()).expect("--pitch DEG").to_radians()),
@@ -30,7 +33,7 @@ fn main() {
             _ => path = Some(PathBuf::from(arg)),
         }
     }
-    let path = path.expect("usage: solve <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M] [--pitch DEG] [--matte FILE] [--json OUT]");
+    let path = path.expect("usage: solve <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M] [--pitch DEG] [--zoom] [--matte FILE] [--json OUT]");
 
     let start = Instant::now();
     let mut footage = read_footage(&path, 960).unwrap_or_else(|e| panic!("{e}"));
@@ -58,7 +61,7 @@ fn main() {
         live(frames.saturating_sub(1))
     );
 
-    let options = SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed, distortion, camera_height: height, pitch };
+    let options = SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed, distortion, camera_height: height, pitch, zoom };
     let start = Instant::now();
     let solved = match solve(&footage, &options) {
         Ok(solved) => solved,
@@ -85,7 +88,8 @@ fn main() {
         travelled += d;
         if (k + 1) % step == 0 {
             let p = pair[1].position;
-            println!("  frame {:4}: position ({:8.3}, {:8.3}, {:8.3}), path so far {travelled:.3} m", k + 1, p[0], p[1], p[2]);
+            let lens = pair[1].yfov.map(|f| format!(", lens {:.3} deg", f.to_degrees())).unwrap_or_default();
+            println!("  frame {:4}: position ({:8.3}, {:8.3}, {:8.3}), path so far {travelled:.3} m{lens}", k + 1, p[0], p[1], p[2]);
         }
     }
     if let Some(out) = json {

@@ -65,7 +65,7 @@ pub struct ModelTrack {
     /// Footage frames per second: frame k shows from k / fps seconds of
     /// element time.
     pub fps: f64,
-    /// Vertical field of view in degrees.
+    /// Vertical field of view in degrees, frame 0's when the lens zooms.
     pub fov: f32,
     /// The footage lens's radial distortion (k1, k2): a point (x, y) on the
     /// z = 1 plane lands at (x, y) (1 + k1 r^2 + k2 r^4) with
@@ -81,6 +81,10 @@ pub struct ModelTrack {
 pub struct ModelTrackFrame {
     pub position: [f32; 3],
     pub rotation: [f32; 4],
+    /// This frame's vertical field of view in degrees when the lens zooms;
+    /// `None` keeps the track's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fov: Option<f32>,
 }
 
 /// One line of text extruded into a solid with chamfered edges, placed in

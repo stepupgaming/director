@@ -1755,7 +1755,7 @@ impl Builder {
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {
-                    let lens = (attr("track-fov").is_some(), attr("track-distortion"));
+                    let lens = (attr("track-fov").is_some(), attr("track-distortion"), attr("track-zoom").is_some_and(|v| v != "false"));
                     let plate = (plate, attr("track-mask"), attr("track-pitch"));
                     model.track = Some(std::sync::Arc::new(solve_track(&self.assets, plate, &numeric, lens, &context)?));
                 }
@@ -2775,12 +2775,13 @@ pub fn compile_file(
 /// `track-mask` names a matte of the footage, white over whatever moves on
 /// its own, and the solve tracks nothing there. `track-pitch` is frame 0's
 /// tilt below the horizon in degrees, which footage from a camera that only
-/// turns needs.
+/// turns needs. `track-zoom` gives such a camera a lens that zooms, solved
+/// frame by frame from `track-fov` as frame 0's.
 fn solve_track(
     assets: &AssetStore,
     (plate, mask, tilt): (&str, Option<&str>, Option<&str>),
     numeric: &dyn Fn(&str, f64) -> Result<f64, CompileError>,
-    (fixed_lens, distortion): (bool, Option<&str>),
+    (fixed_lens, distortion, zoom): (bool, Option<&str>, bool),
     context: &str,
 ) -> Result<director_scene::ModelTrack, CompileError> {
     let distortion = match distortion {
@@ -2815,7 +2816,7 @@ fn solve_track(
         let path = assets.media_path(mask)?;
         footage.read_matte(&path).map_err(|e| CompileError::Input(format!("{context}: track-mask '{mask}': {e}")))?;
     }
-    let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, distortion, camera_height: height, pitch };
+    let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, distortion, camera_height: height, pitch, zoom };
     let solved = director_track::solve(&footage, &options).map_err(input)?;
     Ok(director_scene::ModelTrack {
         fps: solved.fps,
@@ -2824,7 +2825,7 @@ fn solve_track(
         frames: solved
             .frames
             .iter()
-            .map(|f| director_scene::ModelTrackFrame { position: f.position, rotation: f.rotation })
+            .map(|f| director_scene::ModelTrackFrame { position: f.position, rotation: f.rotation, fov: f.yfov.map(|v| v.to_degrees() as f32) })
             .collect(),
     })
 }
