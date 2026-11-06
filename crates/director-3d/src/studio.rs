@@ -28,6 +28,7 @@ use bevy::{
     image::Image,
     light::{GeneratedEnvironmentMapLight, Skybox},
     log::LogPlugin,
+    mesh::morph::MeshMorphWeights,
     post_process::bloom::Bloom,
     prelude::*,
     render::{
@@ -255,6 +256,8 @@ struct Stage {
     /// Target sizes this stage has rendered, so their pipelines and the
     /// filtered probe exist before a shot's frame.
     warm: HashSet<(u32, u32)>,
+    /// The scene holds morph-target meshes.
+    morphs: bool,
 }
 
 struct Target {
@@ -291,6 +294,8 @@ struct Studio {
     stages: HashMap<StageKey, Stage>,
     targets: HashMap<(u32, u32), Target>,
     accumulator: Option<Accumulator>,
+    /// The stage the last shot rendered.
+    shown: Option<StageKey>,
 }
 
 impl Studio {
@@ -337,6 +342,7 @@ impl Studio {
             stages: HashMap::new(),
             targets: HashMap::new(),
             accumulator: None,
+            shown: None,
         }
     }
 
@@ -378,6 +384,7 @@ impl Studio {
         let players = stage.players.clone();
         let nodes = stage.nodes.clone();
         let warm = stage.warm.contains(&size);
+        let morphs = stage.morphs;
         let others: Vec<(Entity, Entity)> = self
             .stages
             .iter()
@@ -441,6 +448,16 @@ impl Studio {
                 self.step();
             }
             self.stages.get_mut(&key).expect("stage").warm.insert(size);
+        }
+        // A morph mesh that just came back into view gets its morph
+        // descriptor one frame after its mesh instance (see
+        // `touch_morph_meshes`), so a stage switch takes one extra frame.
+        if warm && morphs && self.shown != Some(key) {
+            self.step();
+        }
+        self.shown = Some(key);
+        if morphs {
+            touch_morph_meshes(self.apps.main.world_mut());
         }
         let samples = shot.samples.max(1);
         for sample in 0..samples {
@@ -579,6 +596,7 @@ impl Studio {
         } else {
             (Vec3::ZERO, 1.0)
         };
+        let morphs = below.iter().any(|&e| world.get::<MeshMorphWeights>(e).is_some());
         let players = players_below(world, root);
         for &entity in &players {
             let mut e = world.entity_mut(entity);
@@ -626,6 +644,7 @@ impl Studio {
                 radius,
                 probe,
                 warm: HashSet::new(),
+                morphs,
             },
         );
         Ok(key)
@@ -804,6 +823,23 @@ fn descendants(world: &World, root: Entity) -> Vec<Entity> {
         }
     }
     out
+}
+
+/// Marks every morph-target mesh changed. Bevy drops the mesh instance of a
+/// hidden stage, and when the stage shows again it prepares morph descriptors
+/// before it collects that instance, so the instance records no descriptor.
+/// The descriptor exists from the next frame, and only a changed instance is
+/// collected again.
+fn touch_morph_meshes(world: &mut World) {
+    let meshes: Vec<Entity> = world
+        .query_filtered::<Entity, With<MeshMorphWeights>>()
+        .iter(world)
+        .collect();
+    for entity in meshes {
+        if let Some(mut mesh) = world.get_mut::<Mesh3d>(entity) {
+            mesh.set_changed();
+        }
+    }
 }
 
 fn players_below(world: &World, root: Entity) -> Vec<Entity> {

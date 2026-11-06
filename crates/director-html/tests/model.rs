@@ -243,6 +243,42 @@ fn export_samples_smooth_edges_and_keep_the_frame() {
     assert!(error.contains("samples must be a whole number from 1 to 256"), "{error}");
 }
 
+/// Pixels that differ by more than 2 in columns `x0..x1`.
+fn changed_in(a: &[u8], b: &[u8], columns: std::ops::Range<i32>) -> usize {
+    (0..H)
+        .flat_map(|y| columns.clone().map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let (p, q) = (pixel(a, x, y), pixel(b, x, y));
+            (0..3).any(|k| p[k].abs_diff(q[k]) > 2)
+        })
+        .count()
+}
+
+#[test]
+fn skins_and_morph_targets_follow_the_element_clock() {
+    if !gpu() {
+        return;
+    }
+    let rig = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../director-3d/tests/fixtures/rig.glb")
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
+    let mut c = build(&page("", "").replace(&fixture(), &rig));
+    let start = frame(&mut c, 0.0);
+    let end = frame(&mut c, 1.95);
+    let bend = changed_in(&start, &end, 0..W / 2);
+    let squash = changed_in(&start, &end, W * 11 / 20..W);
+    eprintln!("the column changes {bend} pixels and the ball {squash}");
+    assert!(bend > 150, "the skinned column bends: {bend}");
+    assert!(squash > 150, "the morph target squashes the ball: {squash}");
+    assert_eq!(changed(&start, &frame(&mut c, 0.0)), 0, "skins and morphs reset with the clock");
+    // Another model's frame hides this stage; the morph comes back with it.
+    frame(&mut build(&page("", "")), 1.0);
+    assert_eq!(changed(&end, &frame(&mut c, 1.95)), 0, "the squash survives a stage switch");
+}
+
 #[test]
 fn a_model_without_a_glb_is_an_error() {
     let source = "<model src='data:application/octet-stream;base64,AAAA'></model>";
