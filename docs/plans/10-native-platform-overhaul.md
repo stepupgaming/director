@@ -117,7 +117,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 437 | 2026-10-28 | `cargo test -p director-core --release` |
 | visual_suite (render, scene round trip, document render) | 40 | 2026-10-29 | `cargo test -p director-core --release --test integration visual_suite::` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test integration html_export::` |
-| workspace release tests | 1181, 3 ignored | 2026-11-06 | `cargo test --workspace --release` |
+| workspace release tests | 1183, 3 ignored | 2026-11-06 | `cargo test --workspace --release` |
 | director-scene | 4 | 2026-10-25 | `cargo test -p director-scene --release` |
 | director-render | 25 | 2026-10-28 | `cargo test -p director-render --release` |
 | director-host | 37 | 2026-11-05 | `cargo test -p director-host --release` |
