@@ -1755,7 +1755,8 @@ impl Builder {
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {
-                    model.track = Some(std::sync::Arc::new(solve_track(&self.assets, plate, &numeric, attr("track-fov").is_some(), &context)?));
+                    let lens = (attr("track-fov").is_some(), attr("track-distortion"));
+                    model.track = Some(std::sync::Arc::new(solve_track(&self.assets, plate, &numeric, lens, &context)?));
                 }
                 if !values.contains_key("width") {
                     layout.size.width = taffy::prelude::length(300.0_f32);
@@ -2767,15 +2768,23 @@ pub fn compile_file(
 
 /// Solves the cameras of the footage at `plate` for a `<model track>`:
 /// `track-fov` fixes the lens in degrees, and without it the solve refines
-/// its lens from 40 degrees. `track-height` is frame 0's camera height above
-/// the ground in metres, which sets the scale.
+/// its lens from 40 degrees. `track-distortion` fixes the radial distortion
+/// as "k1 k2", and without it the solve finds it. `track-height` is frame
+/// 0's camera height above the ground in metres, which sets the scale.
 fn solve_track(
     assets: &AssetStore,
     plate: &str,
     numeric: &dyn Fn(&str, f64) -> Result<f64, CompileError>,
-    fixed_lens: bool,
+    (fixed_lens, distortion): (bool, Option<&str>),
     context: &str,
 ) -> Result<director_scene::ModelTrack, CompileError> {
+    let distortion = match distortion {
+        None => None,
+        Some(v) => match v.split_whitespace().map(str::parse::<f64>).collect::<Result<Vec<_>, _>>().as_deref() {
+            Ok(&[k1, k2]) if k1.is_finite() && k2.is_finite() => Some([k1, k2]),
+            _ => return Err(CompileError::Input(format!("{context}: track-distortion must be two numbers, k1 and k2"))),
+        },
+    };
     let fov = numeric("track-fov", 40.0)?;
     if !(1.0..=179.0).contains(&fov) {
         return Err(CompileError::Input(format!("{context}: track-fov must be from 1 to 179 degrees")));
@@ -2787,11 +2796,12 @@ fn solve_track(
     let path = assets.media_path(plate)?;
     let input = |e: String| CompileError::Input(format!("{context}: track '{plate}': {e}"));
     let footage = director_track::read_footage(&path, 960).map_err(input)?;
-    let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, camera_height: height };
+    let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, distortion, camera_height: height };
     let solved = director_track::solve(&footage, &options).map_err(input)?;
     Ok(director_scene::ModelTrack {
         fps: solved.fps,
         fov: solved.yfov.to_degrees() as f32,
+        distortion: solved.distortion.map(|k| k as f32),
         frames: solved
             .frames
             .iter()

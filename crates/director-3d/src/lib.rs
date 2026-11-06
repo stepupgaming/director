@@ -13,6 +13,7 @@ mod glb;
 mod lights;
 mod gpu;
 mod hero;
+mod lens;
 mod node;
 mod studio;
 mod text;

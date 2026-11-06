@@ -21,24 +21,47 @@ impl Cam {
     }
 }
 
-/// A pinhole lens with square pixels: focal length and principal point in pixels.
+/// A lens with square pixels: focal length and principal point in pixels,
+/// and radial distortion. A point (x, y) on the z = 1 plane lands at
+/// (x, y) (1 + k1 r^2 + k2 r^4) with r^2 = x^2 + y^2 before the focal length
+/// scales it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Intrinsics {
     pub f: f64,
     pub cx: f64,
     pub cy: f64,
+    pub k1: f64,
+    pub k2: f64,
 }
 
 impl Intrinsics {
+    /// The distortion factor at squared radius `r2` on the z = 1 plane.
+    pub fn radial(&self, r2: f64) -> f64 {
+        1.0 + self.k1 * r2 + self.k2 * r2 * r2
+    }
+
     /// Where `x` lands in the image, or `None` behind the camera.
     pub fn project(&self, cam: &Cam, x: &Vector3<f64>) -> Option<Vector2<f64>> {
         let c = cam.r * x + cam.t;
-        (c.z > 1e-9).then(|| Vector2::new(self.f * c.x / c.z + self.cx, self.f * c.y / c.z + self.cy))
+        if c.z <= 1e-9 {
+            return None;
+        }
+        let (a, b) = (c.x / c.z, c.y / c.z);
+        let s = self.f * self.radial(a * a + b * b);
+        Some(Vector2::new(s * a + self.cx, s * b + self.cy))
     }
 
-    /// A pixel as a point on the z = 1 plane.
+    /// A pixel as a point on the z = 1 plane, with the distortion undone.
     pub fn normalize(&self, uv: [f32; 2]) -> Vector2<f64> {
-        Vector2::new((uv[0] as f64 - self.cx) / self.f, (uv[1] as f64 - self.cy) / self.f)
+        let d = Vector2::new((uv[0] as f64 - self.cx) / self.f, (uv[1] as f64 - self.cy) / self.f);
+        if self.k1 == 0.0 && self.k2 == 0.0 {
+            return d;
+        }
+        let mut x = d;
+        for _ in 0..20 {
+            x = d / self.radial(x.norm_squared());
+        }
+        x
     }
 }
 

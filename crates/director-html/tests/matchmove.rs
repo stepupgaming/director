@@ -2,7 +2,8 @@
 //! model and films the model through it frame by frame. The tests composite
 //! `solve.glb`, which holds no camera, over the `solve.mp4` plate it was
 //! solved from and compare the result with Eevee's renders of the same shot
-//! with the box; `make_solve.py` writes all four. The masks take the box's
+//! with the box; `make_solve.py` writes all four, and with `--lens` the same
+//! plate and renders through a barrel-distorted lens. The masks take the box's
 //! lit faces by colour and the shadow by its darkening, each only where the
 //! image moves away from the decoded plate. Each GPU test skips on a
 //! machine without a Vulkan adapter.
@@ -35,10 +36,14 @@ fn gpu() -> bool {
     ok
 }
 
-/// The plate under `solve.glb` with the sky and units of `tests/eevee.rs`,
-/// its ground a catcher and its camera solved from the plate with `track`
-/// attributes. An empty `track` leaves the plate alone.
-fn page(track: &str) -> String {
+/// The lens fixture's distortion, which `make_solve.py --lens` bends by.
+const K1: f64 = -0.15;
+const K2: f64 = 0.03;
+
+/// The `plate` (`solve` or `lens`) under `solve.glb` with the sky and units
+/// of `tests/eevee.rs`, its ground a catcher and its camera solved from the
+/// plate with `track` attributes. An empty `track` leaves the plate alone.
+fn page(plate: &str, track: &str) -> String {
     let layer = if track.is_empty() {
         String::new()
     } else {
@@ -47,14 +52,14 @@ fn page(track: &str) -> String {
             fixture("solve.glb"),
             fixture("sky.hdr"),
             (683.0f64 / 1.2).log2(),
-            fixture("solve.mp4")
+            fixture(&format!("{plate}.mp4"))
         )
     };
     format!(
         "<style>body{{margin:0}}video,model{{position:absolute;left:0;top:0;width:{W}px;height:{H}px}}</style>\
          <div id='main' data-composition-id='main' data-width='{W}' data-height='{H}' data-duration='2'>\
          <video muted src='{}'></video>{layer}</div>",
-        fixture("solve.mp4")
+        fixture(&format!("{plate}.mp4"))
     )
 }
 
@@ -72,8 +77,8 @@ fn frame(c: &mut CompiledHtml, time: f64) -> Vec<u8> {
     pixels
 }
 
-fn eevee(frame: u32) -> Vec<u8> {
-    let bytes = std::fs::read(fixture(&format!("solve-{frame}.png"))).unwrap();
+fn eevee(plate: &str, frame: u32) -> Vec<u8> {
+    let bytes = std::fs::read(fixture(&format!("{plate}-{frame}.png"))).unwrap();
     let image = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes)).expect("a PNG");
     assert_eq!((image.width(), image.height()), (W, H));
     let info = skia_safe::ImageInfo::new((W, H), skia_safe::ColorType::RGBA8888, skia_safe::AlphaType::Unpremul, None);
@@ -111,14 +116,14 @@ fn iou(a: &[bool], b: &[bool]) -> f64 {
     both as f64 / either.max(1) as f64
 }
 
-/// Compares the composite through the solved camera with Eevee's render at
-/// Blender frames 10 and 50.
-fn matches_eevee(track: &str) {
-    let mut plate = build(&page(""));
-    let mut composite = build(&page(track));
+/// Compares the composite through the camera solved from `plate` with
+/// Eevee's render at Blender frames 10 and 50.
+fn matches_eevee(name: &str, track: &str) {
+    let mut plate = build(&page(name, ""));
+    let mut composite = build(&page(name, track));
     for frame in [10, 50] {
         let time = frame as f64 / 30.0;
-        let (reference, plate, composite) = (eevee(frame), self::frame(&mut plate, time), self::frame(&mut composite, time));
+        let (reference, plate, composite) = (eevee(name, frame), self::frame(&mut plate, time), self::frame(&mut composite, time));
         let n = (W * H) as usize;
         let mask = |image: &[u8], f: &dyn Fn(usize, [u8; 3]) -> bool| (0..n).map(|i| f(i, rgb(image, i))).collect::<Vec<bool>>();
         let box_ref = mask(&reference, &|i, p| boxed(p) && diff(&reference, &plate, i) > 30);
@@ -135,7 +140,7 @@ fn matches_eevee(track: &str) {
         let error = |image: &[u8]| near.iter().map(|&i| diff(image, &reference, i) as f64).sum::<f64>() / (near.len() * 3) as f64;
         let drift = away.iter().map(|&i| diff(&composite, &plate, i) as f64).sum::<f64>() / (away.len() * 3) as f64;
         eprintln!(
-            "{track:?} frame {frame}: box {} / {} iou {:.3}; shadow {} / {} iou {:.2}; error plate {:.2} composite {:.2}; drift {drift:.2}",
+            "{name} {track:?} frame {frame}: box {} / {} iou {:.3}; shadow {} / {} iou {:.2}; error plate {:.2} composite {:.2}; drift {drift:.2}",
             count(&box_ref), count(&box_dir), iou(&box_ref, &box_dir),
             count(&shadow_ref), count(&shadow_dir), iou(&shadow_ref, &shadow_dir),
             error(&plate), error(&composite)
@@ -152,15 +157,58 @@ fn matches_eevee(track: &str) {
 #[test]
 fn a_model_rides_the_camera_solved_from_its_plate() {
     if gpu() {
-        matches_eevee("track-fov='42' track-height='1.6'");
+        matches_eevee("solve", "track-fov='42' track-height='1.6'");
     }
 }
 
 #[test]
 fn the_solve_finds_the_lens_without_one() {
     if gpu() {
-        matches_eevee("track-height='1.6'");
+        matches_eevee("solve", "track-height='1.6'");
     }
+}
+
+#[test]
+fn a_model_bends_with_the_lens_of_its_plate() {
+    if gpu() {
+        matches_eevee("lens", "track-fov='42' track-height='1.6'");
+    }
+}
+
+/// The track a compiled page's model keeps.
+fn track(compiled: &CompiledHtml) -> director_scene::ModelTrack {
+    let document = export_scene(&compiled.director).unwrap();
+    document
+        .nodes
+        .iter()
+        .find_map(|node| match &node.body {
+            NodeBody::Html(html) => html.content.as_ref().and_then(|c| match &c.body {
+                NodeBody::Model(model) => model.track.clone(),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("a model track")
+}
+
+#[test]
+fn the_document_keeps_the_solved_distortion() {
+    let compiled = build(&page("lens", "track-fov='42'"));
+    let [k1, k2] = track(&compiled).distortion.map(f64::from);
+    // k1 and k2 trade against each other, so the test compares where each
+    // lens sends the frame's corner, 0.78 focal lengths out.
+    let corner = |k1: f64, k2: f64| {
+        let r2 = (240.0f64.powi(2) + 135.0f64.powi(2)) / (135.0 / 21f64.to_radians().tan()).powi(2);
+        r2.sqrt() * (1.0 + k1 * r2 + k2 * r2 * r2) * 135.0 / 21f64.to_radians().tan()
+    };
+    eprintln!("solved k1 {k1:.4} k2 {k2:.4}; corner {:.2} px against {:.2} px", corner(k1, k2), corner(K1, K2));
+    assert!((corner(k1, k2) - corner(K1, K2)).abs() < 0.75, "the solved lens bends the corner like the true one");
+
+    let fixed = build(&page("lens", "track-fov='42' track-distortion='-0.15 0.03'"));
+    assert_eq!(track(&fixed).distortion, [-0.15, 0.03], "track-distortion fixes the lens");
+    let pinhole = build(&page("solve", "track-fov='42' track-distortion='0 0'"));
+    let json = export_scene(&pinhole.director).unwrap().to_json().unwrap();
+    assert!(!json.contains("distortion"), "a pinhole track writes no distortion");
 }
 
 #[test]
@@ -168,23 +216,13 @@ fn the_scene_document_keeps_the_solved_cameras() {
     if !gpu() {
         return;
     }
-    let mut compiled = build(&page("track-fov='42'"));
+    let mut compiled = build(&page("lens", "track-fov='42'"));
     let document = export_scene(&compiled.director).unwrap();
     let parsed = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
     assert_eq!(parsed, document);
-    let model = parsed
-        .nodes
-        .iter()
-        .find_map(|node| match &node.body {
-            NodeBody::Html(html) => html.content.as_ref().and_then(|c| match &c.body {
-                NodeBody::Model(model) => Some(model.clone()),
-                _ => None,
-            }),
-            _ => None,
-        })
-        .expect("a model body");
-    let track = model.track.expect("the solved cameras");
+    let track = track(&compiled);
     assert_eq!((track.fps, track.fov, track.frames.len()), (30.0, 42.0, 60));
+    assert!(track.distortion[0] < -0.1, "the document keeps the barrel distortion: {:?}", track.distortion);
 
     let mut registry = director_core::scene_import::ImportRegistry::core();
     director_html::register_import(&mut registry);
@@ -199,7 +237,7 @@ fn the_scene_document_keeps_the_solved_cameras() {
 
 #[test]
 fn a_missing_plate_names_itself() {
-    let source = page("").replace(
+    let source = page("solve", "").replace(
         "</div>",
         &format!("<model src='{}' track='no-such-plate.mp4'></model></div>", fixture("solve.glb")),
     );
@@ -211,11 +249,16 @@ fn a_missing_plate_names_itself() {
 }
 
 #[test]
-fn a_lens_outside_the_range_fails_to_compile() {
-    let error = compile(&page("track-fov='0'"), CompileOptions { width: W, height: H, duration: 2.0, ..Default::default() })
-        .err()
-        .expect("a compile error")
-        .to_string();
+fn a_lens_out_of_range_fails_to_compile() {
+    let fails = |track: &str| {
+        compile(&page("solve", track), CompileOptions { width: W, height: H, duration: 2.0, ..Default::default() })
+            .err()
+            .expect("a compile error")
+            .to_string()
+    };
+    let error = fails("track-fov='0'");
     assert!(error.contains("track-fov must be from 1 to 179 degrees"), "{error}");
+    let error = fails("track-distortion='-0.1'");
+    assert!(error.contains("track-distortion must be two numbers, k1 and k2"), "{error}");
 }
 

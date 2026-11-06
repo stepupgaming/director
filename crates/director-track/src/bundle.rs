@@ -2,7 +2,7 @@
 //! points, and a single camera's resection against fixed points. Residuals
 //! are in pixels under a Huber loss.
 
-use nalgebra::{DMatrix, DVector, Matrix2x3, Matrix3, Matrix6, Rotation3, SMatrix, Vector2, Vector3, Vector6};
+use nalgebra::{DMatrix, DVector, Matrix2, Matrix2x3, Matrix3, Matrix6, Rotation3, SMatrix, Vector2, Vector3, Vector6};
 
 use crate::geometry::{Cam, Intrinsics};
 
@@ -17,11 +17,35 @@ pub struct Obs {
     pub uv: Vector2<f64>,
 }
 
+/// The lens parameters a bundle adjustment refines beside the cameras and points.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Refine {
+    /// The focal length.
+    pub focal: bool,
+    /// The radial distortion k1 and k2.
+    pub distortion: bool,
+}
+
+impl Refine {
+    /// The refined columns of `Linear::jl`: 0 the focal length, 1 k1, 2 k2.
+    fn columns(self) -> Vec<usize> {
+        let mut columns = Vec::new();
+        if self.focal {
+            columns.push(0);
+        }
+        if self.distortion {
+            columns.extend([1, 2]);
+        }
+        columns
+    }
+}
+
 struct Linear {
     r: Vector2<f64>,
     /// d r / d (rotation, translation), the rotation as a left increment.
     jc: SMatrix<f64, 2, 6>,
-    jf: Vector2<f64>,
+    /// d r / d (focal length, k1, k2).
+    jl: SMatrix<f64, 2, 3>,
     jp: SMatrix<f64, 2, 3>,
 }
 
@@ -36,15 +60,22 @@ fn linearize(cam: &Cam, intr: &Intrinsics, x: &Vector3<f64>, uv: &Vector2<f64>) 
         return None;
     }
     let iz = 1.0 / c.z;
-    let (a, b) = (c.x * iz, c.y * iz);
-    let f = intr.f;
-    let r = Vector2::new(f * a + intr.cx - uv.x, f * b + intr.cy - uv.y);
-    let dproj = Matrix2x3::new(f * iz, 0.0, -f * a * iz, 0.0, f * iz, -f * b * iz);
+    let n = Vector2::new(c.x * iz, c.y * iz);
+    let (f, s) = (intr.f, n.norm_squared());
+    let radial = intr.radial(s);
+    let r = f * radial * n + Vector2::new(intr.cx - uv.x, intr.cy - uv.y);
+    // The distortion's own Jacobian on the z = 1 plane, then the projection's.
+    let warp = Matrix2::identity() * radial + 2.0 * (intr.k1 + 2.0 * intr.k2 * s) * n * n.transpose();
+    let dproj = f * warp * Matrix2x3::new(iz, 0.0, -n.x * iz, 0.0, iz, -n.y * iz);
     let jw = dproj * (-skew(&rx));
     let mut jc = SMatrix::<f64, 2, 6>::zeros();
     jc.fixed_view_mut::<2, 3>(0, 0).copy_from(&jw);
     jc.fixed_view_mut::<2, 3>(0, 3).copy_from(&dproj);
-    Some(Linear { r, jc, jf: Vector2::new(a, b), jp: dproj * cam.r })
+    let mut jl = SMatrix::<f64, 2, 3>::zeros();
+    jl.set_column(0, &(radial * n));
+    jl.set_column(1, &(f * s * n));
+    jl.set_column(2, &(f * s * s * n));
+    Some(Linear { r, jc, jl, jp: dproj * cam.r })
 }
 
 fn weight(norm: f64) -> f64 {
@@ -87,19 +118,21 @@ pub fn rms(cams: &[Cam], points: &[Vector3<f64>], obs: &[Obs], intr: &Intrinsics
     (sum / obs.len().max(1) as f64).sqrt()
 }
 
-/// Refines every camera not marked `fixed`, every point and, with
-/// `refine_focal`, the shared focal length, for up to `iterations` steps.
+/// Refines every camera not marked `fixed`, every point and the shared lens
+/// parameters `refine` names, for up to `iterations` steps.
 pub fn adjust(
     cams: &mut [Cam],
     points: &mut [Vector3<f64>],
     obs: &[Obs],
     fixed: &[bool],
     intr: &mut Intrinsics,
-    refine_focal: bool,
+    refine: Refine,
     iterations: usize,
 ) {
+    let lens = refine.columns();
+    let nl = lens.len();
     let mut offset = vec![None; cams.len()];
-    let mut np = usize::from(refine_focal);
+    let mut np = nl;
     for (c, slot) in offset.iter_mut().enumerate() {
         if !fixed[c] {
             *slot = Some(np);
@@ -120,7 +153,7 @@ pub fn adjust(
         let mut w: Vec<Vec<(usize, Vector3<f64>)>> = vec![Vec::new(); points.len()];
         for p in 0..points.len() {
             let mut rows = Vec::new();
-            let mut focal_row = Vector3::zeros();
+            let mut lens_rows = vec![Vector3::zeros(); nl];
             for &i in &by_point[p] {
                 let o = &obs[i];
                 let Some(l) = linearize(&cams[o.cam], intr, &points[p], &o.uv) else { continue };
@@ -138,23 +171,24 @@ pub fn adjust(
                         }
                         rows.push((off + a, wcp.row(a).transpose()));
                     }
-                    if refine_focal {
-                        let cross: Vector6<f64> = wt * l.jc.transpose() * l.jf;
+                    for (i, &col) in lens.iter().enumerate() {
+                        let cross: Vector6<f64> = wt * l.jc.transpose() * l.jl.column(col);
                         for a in 0..6 {
-                            u[(off + a, 0)] += cross[a];
-                            u[(0, off + a)] += cross[a];
+                            u[(off + a, i)] += cross[a];
+                            u[(i, off + a)] += cross[a];
                         }
                     }
                 }
-                if refine_focal {
-                    u[(0, 0)] += wt * l.jf.dot(&l.jf);
-                    bc[0] -= wt * l.jf.dot(&l.r);
-                    focal_row += wt * l.jp.transpose() * l.jf;
+                for (i, &ci) in lens.iter().enumerate() {
+                    let column = l.jl.column(ci);
+                    bc[i] -= wt * column.dot(&l.r);
+                    for (j, &cj) in lens.iter().enumerate() {
+                        u[(i, j)] += wt * column.dot(&l.jl.column(cj));
+                    }
+                    lens_rows[i] += wt * l.jp.transpose() * column;
                 }
             }
-            if refine_focal {
-                rows.push((0, focal_row));
-            }
+            rows.extend(lens_rows.into_iter().enumerate());
             w[p] = rows;
         }
         let improved = loop {
@@ -187,14 +221,18 @@ pub fn adjust(
                 }
                 continue;
             };
-            let saved = (cams.to_vec(), points.to_vec(), intr.f);
+            let saved = (cams.to_vec(), points.to_vec(), *intr);
             for (c, cam) in cams.iter_mut().enumerate() {
                 if let Some(off) = offset[c] {
                     nudge(cam, &dc.as_slice()[off..off + 6]);
                 }
             }
-            if refine_focal {
-                intr.f += dc[0];
+            for (i, &col) in lens.iter().enumerate() {
+                match col {
+                    0 => intr.f += dc[i],
+                    1 => intr.k1 += dc[i],
+                    _ => intr.k2 += dc[i],
+                }
             }
             for p in 0..points.len() {
                 let mut g = bp[p];
@@ -212,7 +250,7 @@ pub fn adjust(
             }
             cams.copy_from_slice(&saved.0);
             points.copy_from_slice(&saved.1);
-            intr.f = saved.2;
+            *intr = saved.2;
             lambda *= 4.0;
             if lambda > 1e10 {
                 break false;

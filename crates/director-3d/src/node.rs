@@ -410,10 +410,20 @@ impl Element for ModelNode {
         draw_children: &mut dyn FnMut(&Canvas),
     ) -> Result<(), RenderError> {
         let device = canvas.local_to_device_as_3x3().map_rect(rect).0;
-        let width = device.width().round().clamp(1.0, 8192.0) as u32;
-        let height = device.height().round().clamp(1.0, 8192.0) as u32;
+        let mut width = device.width().round().clamp(1.0, 8192.0) as u32;
+        let mut height = device.height().round().clamp(1.0, 8192.0) as u32;
         let time = self.clip_time(self.time);
-        let camera = self.tracked_camera(self.time);
+        let mut camera = self.tracked_camera(self.time);
+        // A distorted footage lens films through a wider pinhole camera,
+        // bent into the lens as it paints.
+        let lens = self.track.as_ref().zip(camera.as_mut()).and_then(|(track, camera)| {
+            let lens = crate::lens::overscan(width, height, camera.fov, track.distortion)?;
+            camera.fov = lens.fov;
+            Some(lens)
+        });
+        if let Some(lens) = &lens {
+            (width, height) = (lens.width, lens.height);
+        }
         let key: FrameKey = (
             self.model.hash,
             self.environment.as_ref().map(|e| e.hash),
@@ -468,14 +478,22 @@ impl Element for ModelNode {
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
+        let draw = |image: &Image| match &lens {
+            Some(lens) => lens.draw(canvas, image, rect, &paint),
+            None => {
+                canvas.draw_image_rect_with_sampling_options(image, None, rect, sampling, &paint);
+                Ok(())
+            }
+        };
         if let Some(mut context) = canvas.direct_context().filter(crate::gpu::shares_device) {
             let lease = studio::render_texture(shot).map_err(RenderError::SkiaError)?;
             let texture = lease.texture;
             let image = borrow(&mut context, texture)?;
-            canvas.draw_image_rect_with_sampling_options(&image, None, rect, sampling, &paint);
+            let drawn = draw(&image);
             drop(image);
             context.flush_submit_and_sync_cpu();
             drop(lease);
+            drawn?;
             TEXTURE_DRAWS.fetch_add(1, Ordering::Relaxed);
             draw_children(canvas);
             return Ok(());
@@ -497,7 +515,7 @@ impl Element for ModelNode {
         );
         let image = images::raster_from_data(&info, Data::new_copy(&rgba), width as usize * 4)
             .ok_or_else(|| RenderError::SkiaError("model frame image".into()))?;
-        canvas.draw_image_rect_with_sampling_options(&image, None, rect, sampling, &paint);
+        draw(&image)?;
         draw_children(canvas);
         Ok(())
     }
@@ -607,10 +625,10 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     node.shadow_catchers = Arc::new(body.shadow_catchers.clone());
     node.reflection = body.reflection.clamp(0.0, 1.0);
     if let Some(track) = &body.track {
-        let lens = track.fov > 0.0 && track.fov < 180.0;
+        let lens = track.fov > 0.0 && track.fov < 180.0 && track.distortion.iter().all(|k| k.is_finite());
         if !(track.fps > 0.0 && lens && !track.frames.is_empty()) {
             return Err(ImportError::Invalid(
-                "a model track needs a positive fps, a field of view between 0 and 180 degrees and at least one frame".into(),
+                "a model track needs a positive fps, a field of view between 0 and 180 degrees, finite distortion and at least one frame".into(),
             ));
         }
         node.track = Some(Arc::new(track.clone()));

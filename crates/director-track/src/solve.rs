@@ -3,7 +3,7 @@
 use nalgebra::{Matrix3, Rotation3, SymmetricEigen, UnitQuaternion, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
-use crate::bundle::{adjust, resect, rms, Obs};
+use crate::bundle::{adjust, resect, rms, Obs, Refine};
 use crate::footage::Footage;
 use crate::geometry::{
     essential_ransac, factor_essential, factor_homography, homography_ransac, ray_angle, supported, triangulate, Cam, Intrinsics, Rng,
@@ -20,6 +20,9 @@ const WINDOW: usize = 24;
 /// A start pair's best pose must hold more than this many times the tracks
 /// of any distinct pose.
 const AMBIGUITY: f64 = 0.8;
+/// A solved distortion stays only when it brings the rms reprojection error
+/// below this fraction of the pinhole lens's.
+const KEEP_DISTORTION: f64 = 0.9;
 /// After the solve, points missing any view by more pixels than this go.
 const PRUNE: f64 = 3.0;
 
@@ -31,13 +34,16 @@ pub struct SolveOptions {
     pub yfov: f64,
     /// Refine the focal length in the bundle adjustment.
     pub refine_focal: bool,
+    /// The lens's radial distortion (k1, k2) on the z = 1 plane, or `None`
+    /// to solve it from none.
+    pub distortion: Option<[f64; 2]>,
     /// Frame 0's camera height above the ground in metres, which sets the scale.
     pub camera_height: f64,
 }
 
 impl Default for SolveOptions {
     fn default() -> Self {
-        Self { yfov: 40f64.to_radians(), refine_focal: false, camera_height: 1.6 }
+        Self { yfov: 40f64.to_radians(), refine_focal: false, distortion: None, camera_height: 1.6 }
     }
 }
 
@@ -62,6 +68,9 @@ pub struct CameraSolve {
     pub height: u32,
     /// The solved vertical field of view in radians.
     pub yfov: f64,
+    /// The solved radial distortion (k1, k2): a point (x, y) on the z = 1
+    /// plane lands at (x, y) (1 + k1 r^2 + k2 r^4) with r^2 = x^2 + y^2.
+    pub distortion: [f64; 2],
     pub frames: Vec<Pose>,
     /// The solved scene points in the same world.
     pub points: Vec<[f32; 3]>,
@@ -77,6 +86,7 @@ fn distinct(a: &Cam, b: &Cam) -> bool {
     turn > 1f64.to_radians() || ta.dot(&tb).clamp(-1.0, 1.0).acos() > 10f64.to_radians()
 }
 
+#[derive(Clone)]
 struct Scene {
     cams: Vec<Option<Cam>>,
     points: Vec<Vector3<f64>>,
@@ -137,19 +147,20 @@ impl Scene {
         (frames, slot, obs)
     }
 
-    fn adjust(&mut self, tracks: &[Track], intr: &mut Intrinsics, fixed_frame: usize, refine_focal: bool, iterations: usize) {
+    fn adjust(&mut self, tracks: &[Track], intr: &mut Intrinsics, fixed_frame: usize, refine: Refine, iterations: usize) {
         let (frames, _, obs) = self.observations(tracks);
         let mut cams: Vec<Cam> = frames.iter().map(|&k| self.cams[k].expect("a placed camera")).collect();
         let fixed: Vec<bool> = frames.iter().map(|&k| k == fixed_frame).collect();
-        adjust(&mut cams, &mut self.points, &obs, &fixed, intr, refine_focal, iterations);
+        adjust(&mut cams, &mut self.points, &obs, &fixed, intr, refine, iterations);
         for (cam, &k) in cams.into_iter().zip(&frames) {
             self.cams[k] = Some(cam);
         }
     }
 
     /// Refines the cameras of the frames in `free` and every point they see,
-    /// with the other placed cameras that see those points held still.
-    fn adjust_local(&mut self, tracks: &[Track], intr: &mut Intrinsics, free: &[usize], iterations: usize) {
+    /// with the other placed cameras that see those points held still, and
+    /// the lens parameters `refine` names.
+    fn adjust_local(&mut self, tracks: &[Track], intr: &mut Intrinsics, free: &[usize], refine: Refine, iterations: usize) {
         let mut moving = vec![false; self.cams.len()];
         free.iter().for_each(|&k| moving[k] = true);
         let seen: Vec<usize> = (0..self.points.len())
@@ -178,13 +189,20 @@ impl Scene {
         let mut cams: Vec<Cam> = frames.iter().map(|&k| self.cams[k].expect("a placed camera")).collect();
         let fixed: Vec<bool> = frames.iter().map(|&k| !moving[k]).collect();
         let mut points: Vec<Vector3<f64>> = seen.iter().map(|&p| self.points[p]).collect();
-        adjust(&mut cams, &mut points, &obs, &fixed, intr, false, iterations);
+        adjust(&mut cams, &mut points, &obs, &fixed, intr, refine, iterations);
         for (cam, &k) in cams.into_iter().zip(&frames) {
             self.cams[k] = Some(cam);
         }
         for (x, &p) in points.into_iter().zip(&seen) {
             self.points[p] = x;
         }
+    }
+
+    /// The rms reprojection error of every observation in pixels.
+    fn rms(&self, tracks: &[Track], intr: &Intrinsics) -> f64 {
+        let (frames, _, obs) = self.observations(tracks);
+        let cams: Vec<Cam> = frames.iter().map(|&k| self.cams[k].expect("placed")).collect();
+        rms(&cams, &self.points, &obs, intr)
     }
 
     /// Drops every point that misses one of its views by more than `limit` pixels.
@@ -224,11 +242,18 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         return Err("a camera solve needs a camera height above 0".into());
     }
     let (w, h) = (footage.frames[0].width, footage.frames[0].height);
+    let [k1, k2] = options.distortion.unwrap_or_default();
+    if !(k1.is_finite() && k2.is_finite()) {
+        return Err("a camera solve needs finite distortion".into());
+    }
     let mut intr = Intrinsics {
         f: (h as f64 / 2.0) / (options.yfov / 2.0).tan(),
         cx: (w as f64 - 1.0) / 2.0,
         cy: (h as f64 - 1.0) / 2.0,
+        k1,
+        k2,
     };
+    let lens = Refine { focal: options.refine_focal, distortion: false };
     let tracks = track(&footage.frames);
     let mut rng = Rng::new(7);
 
@@ -302,7 +327,7 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
     scene.cams[a] = Some(Cam::identity());
     scene.cams[b] = Some(cam_b);
     scene.triangulate(&tracks, &intr);
-    scene.adjust(&tracks, &mut intr, a, false, 30);
+    scene.adjust(&tracks, &mut intr, a, Refine::default(), 30);
 
     let order: Vec<usize> = (a + 1..b).chain(b + 1..n).chain((0..a).rev()).collect();
     for (i, &k) in order.iter().enumerate() {
@@ -321,22 +346,38 @@ pub fn solve(footage: &Footage, options: &SolveOptions) -> Result<CameraSolve, S
         scene.triangulate(&tracks, &intr);
         if (i + 1) % 8 == 0 {
             let recent = &order[(i + 1).saturating_sub(WINDOW)..=i];
-            scene.adjust_local(&tracks, &mut intr, recent, 10);
+            scene.adjust_local(&tracks, &mut intr, recent, Refine::default(), 10);
         }
     }
-    scene.adjust(&tracks, &mut intr, a, options.refine_focal, 60);
+    scene.adjust(&tracks, &mut intr, a, lens, 60);
     scene.prune(&tracks, &intr, PRUNE);
-    scene.adjust(&tracks, &mut intr, a, options.refine_focal, 60);
+    scene.adjust(&tracks, &mut intr, a, lens, 60);
+    if options.distortion.is_none() {
+        // Distortion trades against depth, so even a slight one bends the
+        // path of a pinhole shot. The solve keeps it only when it explains
+        // the same tracks clearly better than the pinhole lens.
+        let pinhole = (scene.clone(), intr);
+        let before = scene.rms(&tracks, &intr);
+        scene.adjust(&tracks, &mut intr, a, Refine { distortion: true, ..lens }, 20);
+        if scene.rms(&tracks, &intr) < KEEP_DISTORTION * before {
+            scene.triangulate(&tracks, &intr);
+            scene.prune(&tracks, &intr, PRUNE);
+            scene.adjust(&tracks, &mut intr, a, Refine { distortion: true, ..lens }, 60);
+        } else {
+            (scene, intr) = pinhole;
+        }
+    }
 
-    let (frames, _, obs) = scene.observations(&tracks);
+    let error = scene.rms(&tracks, &intr) * footage.width as f64 / w as f64;
+    let (frames, _, _) = scene.observations(&tracks);
     let cams: Vec<Cam> = frames.iter().map(|&k| scene.cams[k].expect("placed")).collect();
-    let error = rms(&cams, &scene.points, &obs, &intr) * footage.width as f64 / w as f64;
     let (poses, points) = align(&cams, &scene.points, options.camera_height)?;
     Ok(CameraSolve {
         fps: footage.fps,
         width: footage.width,
         height: footage.height,
         yfov: 2.0 * ((h as f64 / 2.0) / intr.f).atan(),
+        distortion: [intr.k1, intr.k2],
         frames: poses,
         points,
         error,

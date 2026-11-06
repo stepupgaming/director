@@ -93,7 +93,7 @@ fn the_solve_walks_the_true_camera_path() {
     let truth = truth();
     let footage = footage();
     assert_eq!((footage.width, footage.height, footage.frames.len()), (480, 270, 60));
-    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, camera_height: truth.height };
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height };
     let start = std::time::Instant::now();
     let solved = solve(footage, &options).unwrap();
     let Errors { position, rotation, pixels } = compare(&solved, &truth);
@@ -119,7 +119,7 @@ fn the_solve_walks_the_true_camera_path() {
 #[test]
 fn the_solve_recovers_the_lens_from_a_wrong_guess() {
     let truth = truth();
-    let options = SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, camera_height: truth.height };
+    let options = SolveOptions { yfov: 36f64.to_radians(), refine_focal: true, distortion: None, camera_height: truth.height };
     let solved = solve(footage(), &options).unwrap();
     let Errors { position, rotation, pixels } = compare(&solved, &truth);
     eprintln!(
@@ -148,4 +148,27 @@ fn still_footage_has_nothing_to_solve() {
 fn a_missing_file_names_itself() {
     let error = read_footage(&fixture("no-such-plate.mp4"), 960).err().unwrap();
     assert!(error.contains("no-such-plate.mp4"), "{error}");
+}
+
+#[test]
+fn the_solve_finds_the_lens_distortion() {
+    // `lens.mp4` is the same shot through a lens with k1 = -0.15, k2 = 0.03.
+    let truth = truth();
+    let footage = read_footage(&fixture("lens.mp4"), 960).unwrap();
+    let options = SolveOptions { yfov: truth.yfov, refine_focal: false, distortion: None, camera_height: truth.height };
+    let solved = solve(&footage, &options).unwrap();
+    let Errors { position, rotation, .. } = compare(&solved, &truth);
+    // k1 and k2 trade against each other, so compare where each lens sends
+    // points along the diagonal, in pixels.
+    let f = 135.0 / (truth.yfov / 2.0).tan();
+    let bend = |k: [f64; 2], r: f64| r * (1.0 + k[0] * r * r + k[1] * r.powi(4)) * f;
+    let worst = (1..=8).map(|i| i as f64 / 8.0 * 275.0 / f).map(|r| (bend(solved.distortion, r) - bend([-0.15, 0.03], r)).abs()).fold(0.0, f64::max);
+    eprintln!(
+        "distortion k1 {:.4} k2 {:.4}, worst {worst:.2} px out to the corner; {:.3} px rms, worst position {position:.3} m, rotation {rotation:.3} deg",
+        solved.distortion[0], solved.distortion[1], solved.error
+    );
+    assert!(worst < 0.75, "the solved lens bends every radius within 0.75 px of the true one: {worst:.2} px");
+    assert!(solved.error < 0.4, "the cameras explain the tracks: {:.3} px", solved.error);
+    // The true lens fixed gives 0.10 m and 0.16 degrees on this resampled plate.
+    assert!(position < 0.12 && rotation < 0.25, "the path holds: {position:.3} m, {rotation:.3} deg");
 }

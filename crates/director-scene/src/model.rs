@@ -67,6 +67,11 @@ pub struct ModelTrack {
     pub fps: f64,
     /// Vertical field of view in degrees.
     pub fov: f32,
+    /// The footage lens's radial distortion (k1, k2): a point (x, y) on the
+    /// z = 1 plane lands at (x, y) (1 + k1 r^2 + k2 r^4) with
+    /// r^2 = x^2 + y^2. The model renders bent the same way.
+    #[serde(default, skip_serializing_if = "is_pinhole")]
+    pub distortion: [f32; 2],
     pub frames: Vec<ModelTrackFrame>,
 }
 
@@ -217,6 +222,10 @@ pub struct ModelView {
     /// with everything in focus.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub aperture: f32,
+}
+
+fn is_pinhole(distortion: &[f32; 2]) -> bool {
+    *distortion == [0.0, 0.0]
 }
 
 fn is_zero(v: &f32) -> bool {

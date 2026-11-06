@@ -1,6 +1,6 @@
 """Write the director-3d camera solve fixture.
 
-Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures
+Run: blender -b --factory-startup --python crates/director-3d/tests/fixtures/make_solve.py -- crates/director-3d/tests/fixtures [--lens]
 
 A yard of Voronoi cells holds five textured crates and two pillars under a sun
 and `sky.hdr`, and a handheld-height camera walks sideways past them over 60
@@ -19,6 +19,19 @@ along -Z, so this script writes everything in that frame:
   the box, the ground truth a composite over the plate aims at.
 
 Every render uses the Standard view transform. `ffmpeg` encodes the plate.
+
+With `--lens` after the output folder the script writes only the distorted
+lens fixture: the same shot seen through a lens with radial distortion
+K1 = -0.15 and K2 = 0.03, where a point at (x, y) on the z = 1 plane lands
+at (x, y) (1 + K1 r^2 + K2 r^4) with r^2 = x^2 + y^2, in units of the
+focal length about the image centre.
+
+- `lens.mp4`: the plate through that lens, H.264 yuv420p.
+- `lens-10.png` and `lens-50.png`: frames 10 and 50 with the box through it.
+
+Eevee renders each frame 600x338 at the same focal length in pixels, so its
+wider view covers every ray the distorted 480x270 frame needs, and numpy
+resamples it bilinearly into the distorted frame.
 """
 
 import json
@@ -32,8 +45,12 @@ import tempfile
 import bpy
 from mathutils import Matrix, Vector
 
-out = os.path.abspath(sys.argv[sys.argv.index("--") + 1])
+args = sys.argv[sys.argv.index("--") + 1 :]
+out = os.path.abspath(args[0])
+LENS = "--lens" in args[1:]
 FRAMES = 60
+K1, K2 = -0.15, 0.03
+WIDE = (600, 338)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
@@ -173,13 +190,68 @@ for frame in range(FRAMES):
     m = camera.matrix_world
     q = (basis @ m.to_3x3()).to_quaternion()
     truth["frames"].append({"position": list(solve_point(m.translation)), "rotation": [q.x, q.y, q.z, q.w]})
-with open(os.path.join(out, "solve.json"), "w") as f:
-    json.dump(truth, f, indent=1)
+if not LENS:
+    with open(os.path.join(out, "solve.json"), "w") as f:
+        json.dump(truth, f, indent=1)
 
 
 def render(path):
     scene.render.filepath = path
     bpy.ops.render.render(write_still=True)
+
+
+def encode(pattern, path, still=False):
+    flags = ["-frames:v", "1"] if still else ["-c:v", "libx264", "-preset", "veryslow", "-crf", "14", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+    return ["ffmpeg", "-y", "-loglevel", "error", *pattern, *flags, path]
+
+
+if LENS:
+    import numpy as np
+
+    W, H = 480, 270
+    f = (H / 2) / math.tan(camera.data.angle_y / 2)
+    scene.render.resolution_x, scene.render.resolution_y = WIDE
+    camera.data.angle_y = 2 * math.atan(math.tan(camera.data.angle_y / 2) * WIDE[1] / H)
+    # Every distorted pixel centre back to its undistorted ray, then to the
+    # wide render's pixel grid at the same focal length.
+    u, v = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
+    xd, yd = (u - W / 2) / f, (v - H / 2) / f
+    xu, yu = xd.copy(), yd.copy()
+    for _ in range(50):
+        r2 = xu * xu + yu * yu
+        scale = 1 + K1 * r2 + K2 * r2 * r2
+        xu, yu = xd / scale, yd / scale
+    sx, sy = WIDE[0] / 2 + xu * f - 0.5, WIDE[1] / 2 + yu * f - 0.5
+    x0, y0 = np.floor(sx).astype(int), np.floor(sy).astype(int)
+    fx, fy = (sx - x0)[..., None], (sy - y0)[..., None]
+    assert x0.min() >= 0 and y0.min() >= 0 and x0.max() + 1 < WIDE[0] and y0.max() + 1 < WIDE[1]
+
+    def distort(pngs, path, still=False):
+        start = [] if still else ["-start_number", "0"]
+        raw = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", *start, "-i", pngs, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            check=True, capture_output=True,
+        ).stdout
+        wide = np.frombuffer(raw, np.uint8).reshape(-1, WIDE[1], WIDE[0], 3).astype(np.float64)
+        top = wide[:, y0, x0] * (1 - fx) + wide[:, y0, x0 + 1] * fx
+        bottom = wide[:, y0 + 1, x0] * (1 - fx) + wide[:, y0 + 1, x0 + 1] * fx
+        frames = np.clip(np.rint(top * (1 - fy) + bottom * fy), 0, 255).astype(np.uint8)
+        source = ["-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-framerate", "30", "-i", "-"]
+        subprocess.run(encode(source, path, still), input=frames.tobytes(), check=True)
+
+    folder = tempfile.mkdtemp(prefix="director-lens-")
+    for frame in (10, 50):
+        scene.frame_set(frame)
+        render(os.path.join(folder, f"box-{frame}.png"))
+        distort(os.path.join(folder, f"box-{frame}.png"), os.path.join(out, f"lens-{frame}.png"), still=True)
+    box.hide_render = True
+    for frame in range(FRAMES):
+        scene.frame_set(frame)
+        render(os.path.join(folder, f"plate-{frame:04d}.png"))
+    distort(os.path.join(folder, "plate-%04d.png"), os.path.join(out, "lens.mp4"))
+    shutil.rmtree(folder)
+    print("wrote", out)
+    sys.exit(0)
 
 
 for frame in (10, 50):
@@ -191,15 +263,8 @@ frames = tempfile.mkdtemp(prefix="director-solve-")
 for frame in range(FRAMES):
     scene.frame_set(frame)
     render(os.path.join(frames, f"plate-{frame:04d}.png"))
-subprocess.run(
-    [
-        "ffmpeg", "-y", "-loglevel", "error", "-framerate", "30", "-start_number", "0",
-        "-i", os.path.join(frames, "plate-%04d.png"),
-        "-c:v", "libx264", "-preset", "veryslow", "-crf", "14", "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart", os.path.join(out, "solve.mp4"),
-    ],
-    check=True,
-)
+source = ["-framerate", "30", "-start_number", "0", "-i", os.path.join(frames, "plate-%04d.png")]
+subprocess.run(encode(source, os.path.join(out, "solve.mp4")), check=True)
 shutil.rmtree(frames)
 box.hide_render = False
 
