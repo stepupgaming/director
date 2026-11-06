@@ -50,6 +50,32 @@ pub struct ModelBody {
     /// Lines of extruded type placed in the scene beside the file's meshes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub texts: Vec<ModelText>,
+    /// Cameras solved from the footage the model is composited over. Each
+    /// frame films the model through the camera of the footage frame on
+    /// show, in place of the file's camera.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track: Option<ModelTrack>,
+}
+
+/// A camera per footage frame, in a world of metres with the ground at
+/// y = 0, the origin where frame 0's optical axis meets the ground and
+/// frame 0 looking along -Z.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelTrack {
+    /// Footage frames per second: frame k shows from k / fps seconds of
+    /// element time.
+    pub fps: f64,
+    /// Vertical field of view in degrees.
+    pub fov: f32,
+    pub frames: Vec<ModelTrackFrame>,
+}
+
+/// One footage frame's camera: a position and a glTF rotation (x, y, z, w)
+/// of a camera looking down its local -Z with +Y up.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelTrackFrame {
+    pub position: [f32; 3],
+    pub rotation: [f32; 4],
 }
 
 /// One line of text extruded into a solid with chamfered edges, placed in

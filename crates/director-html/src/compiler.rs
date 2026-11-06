@@ -1754,6 +1754,9 @@ impl Builder {
                 model.paths = paths as u32;
                 model.base = paint.camera;
                 model.view = paint.camera;
+                if let Some(plate) = attr("track") {
+                    model.track = Some(std::sync::Arc::new(solve_track(&self.assets, plate, &numeric, attr("track-fov").is_some(), &context)?));
+                }
                 if !values.contains_key("width") {
                     layout.size.width = taffy::prelude::length(300.0_f32);
                 }
@@ -2760,6 +2763,41 @@ pub fn compile_file(
     let source = std::fs::read_to_string(path)
         .map_err(|e| CompileError::Input(format!("HTML {}: {e}", path.display())))?;
     compile(&source, options)
+}
+
+/// Solves the cameras of the footage at `plate` for a `<model track>`:
+/// `track-fov` fixes the lens in degrees, and without it the solve refines
+/// its lens from 40 degrees. `track-height` is frame 0's camera height above
+/// the ground in metres, which sets the scale.
+fn solve_track(
+    assets: &AssetStore,
+    plate: &str,
+    numeric: &dyn Fn(&str, f64) -> Result<f64, CompileError>,
+    fixed_lens: bool,
+    context: &str,
+) -> Result<director_scene::ModelTrack, CompileError> {
+    let fov = numeric("track-fov", 40.0)?;
+    if !(1.0..=179.0).contains(&fov) {
+        return Err(CompileError::Input(format!("{context}: track-fov must be from 1 to 179 degrees")));
+    }
+    let height = numeric("track-height", 1.6)?;
+    if height.is_nan() || height <= 0.0 {
+        return Err(CompileError::Input(format!("{context}: track-height must be above 0 metres")));
+    }
+    let path = assets.media_path(plate)?;
+    let input = |e: String| CompileError::Input(format!("{context}: track '{plate}': {e}"));
+    let footage = director_track::read_footage(&path, 960).map_err(input)?;
+    let options = director_track::SolveOptions { yfov: fov.to_radians(), refine_focal: !fixed_lens, camera_height: height };
+    let solved = director_track::solve(&footage, &options).map_err(input)?;
+    Ok(director_scene::ModelTrack {
+        fps: solved.fps,
+        fov: solved.yfov.to_degrees() as f32,
+        frames: solved
+            .frames
+            .iter()
+            .map(|f| director_scene::ModelTrackFrame { position: f.position, rotation: f.rotation })
+            .collect(),
+    })
 }
 
 /// The `<splat>` children of a `<model>`: Gaussian splat `.ply` files read

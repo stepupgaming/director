@@ -31,6 +31,7 @@ mod grid_nested_named_lines;
 mod gsap;
 mod hero;
 mod line_clamp;
+mod matchmove;
 mod media;
 mod mixed_calc;
 mod model;

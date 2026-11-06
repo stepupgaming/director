@@ -26,6 +26,7 @@ sha2 = "0.10"
 tempfile = "3.23"
 director-dom = { path = "../director-dom" }
 director-3d = { path = "../director-3d" }
+director-track = { path = "../director-track" }
 ego-tree = "0.10"
 rayon = "1.10"
 

@@ -8,13 +8,14 @@ use std::sync::{Arc, Mutex};
 use director_core::scene_export::{ElementExport, ExportContext, ExportError};
 use director_core::scene_import::{ImportContext, ImportError, ImportRegistry};
 use director_core::{Element, RenderError};
-use director_scene::{Channel, ModelBody, ModelLight, ModelSplat, ModelText, ModelView, NodeBody, NodeRecord};
+use bevy::math::{Quat, Vec3};
+use director_scene::{Channel, ModelBody, ModelLight, ModelSplat, ModelText, ModelTrack, ModelView, NodeBody, NodeRecord};
 use skia_safe::gpu::{backend_textures, vk as sk_vk, DirectContext, SurfaceOrigin};
 use skia_safe::{images, AlphaType, Canvas, Color4f, ColorSpace, ColorType, Data, Image, ImageInfo, Paint, Rect};
 use taffy::Style;
 
 use crate::glb::{inspect, GlbInfo};
-use crate::studio::{self, Shot};
+use crate::studio::{self, camera_bits, Shot, ShotCamera};
 use crate::text::{texts_hash, Text3d};
 
 /// Bytes a model reads, with a content hash that keys the studio's stages.
@@ -112,7 +113,7 @@ impl std::fmt::Debug for Asset {
 /// The most path traced paths per pixel a sample takes.
 pub const MAX_PATHS: u32 = 4096;
 
-type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 12]);
+type FrameKey = (u64, Option<u64>, u64, u64, u64, u64, u32, u32, [u32; 12], [u32; 8]);
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -212,6 +213,9 @@ pub struct ModelNode {
     pub reflection: f32,
     /// Lines of extruded type beside the file's meshes.
     pub texts: Arc<Vec<Text3d>>,
+    /// Cameras solved from footage, one per footage frame, which film the
+    /// model in place of the file's camera.
+    pub track: Option<Arc<ModelTrack>>,
     pub info: GlbInfo,
     time: f64,
     frame: Mutex<Option<(FrameKey, Arc<Vec<u8>>)>>,
@@ -237,6 +241,7 @@ impl ModelNode {
             shadow_catchers: Arc::new(Vec::new()),
             reflection: 0.0,
             texts: Arc::new(Vec::new()),
+            track: None,
             info,
             time: 0.0,
             frame: Mutex::new(None),
@@ -253,6 +258,19 @@ impl ModelNode {
         } else {
             t.clamp(0.0, d)
         }
+    }
+
+    /// The solved camera of the footage frame on show at element time `t`,
+    /// held until the next frame so the model stays locked to the plate.
+    pub fn tracked_camera(&self, t: f64) -> Option<ShotCamera> {
+        let track = self.track.as_ref()?;
+        let frame = track_frame(track, t)?;
+        let pose = &track.frames[frame];
+        Some(ShotCamera {
+            position: Vec3::from_array(pose.position),
+            rotation: Quat::from_array(pose.rotation).normalize(),
+            fov: track.fov.to_radians(),
+        })
     }
 
     fn body(&self, cx: &mut ExportContext) -> ModelBody {
@@ -299,6 +317,7 @@ impl ModelNode {
                     roughness: t.roughness,
                 })
                 .collect(),
+            track: self.track.as_deref().cloned(),
         }
     }
 }
@@ -322,6 +341,7 @@ impl Clone for ModelNode {
             shadow_catchers: self.shadow_catchers.clone(),
             reflection: self.reflection,
             texts: self.texts.clone(),
+            track: self.track.clone(),
             info: self.info,
             time: self.time,
             frame: Mutex::new(None),
@@ -338,6 +358,7 @@ impl std::fmt::Debug for ModelNode {
             .field("shadow_catchers", &self.shadow_catchers)
             .field("reflection", &self.reflection)
             .field("texts", &self.texts)
+            .field("track", &self.track.as_ref().map(|t| t.frames.len()))
             .field("view", &self.view)
             .field("info", &self.info)
             .field("time", &self.time)
@@ -372,11 +393,13 @@ impl Element for ModelNode {
     }
 
     fn varies_with_time(&self) -> bool {
-        self.info.clips > 0
+        self.info.clips > 0 || self.track.is_some()
     }
 
     fn moves_between(&self, t0: f64, t1: f64) -> bool {
-        self.info.clips > 0 && self.clip_time(t0) != self.clip_time(t1)
+        let clips = self.info.clips > 0 && self.clip_time(t0) != self.clip_time(t1);
+        let camera = self.track.as_ref().is_some_and(|track| track_frame(track, t0) != track_frame(track, t1));
+        clips || camera
     }
 
     fn render(
@@ -390,6 +413,7 @@ impl Element for ModelNode {
         let width = device.width().round().clamp(1.0, 8192.0) as u32;
         let height = device.height().round().clamp(1.0, 8192.0) as u32;
         let time = self.clip_time(self.time);
+        let camera = self.tracked_camera(self.time);
         let key: FrameKey = (
             self.model.hash,
             self.environment.as_ref().map(|e| e.hash),
@@ -413,6 +437,7 @@ impl Element for ModelNode {
                 self.paths,
                 self.reflection.to_bits(),
             ],
+            camera_bits(camera),
         );
         let cached = self
             .frame
@@ -439,6 +464,7 @@ impl Element for ModelNode {
             catchers: self.shadow_catchers.clone(),
             reflection: self.reflection,
             texts: self.texts.clone(),
+            camera,
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -580,6 +606,15 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
     node.splats = Arc::new(splats);
     node.shadow_catchers = Arc::new(body.shadow_catchers.clone());
     node.reflection = body.reflection.clamp(0.0, 1.0);
+    if let Some(track) = &body.track {
+        let lens = track.fov > 0.0 && track.fov < 180.0;
+        if !(track.fps > 0.0 && lens && !track.frames.is_empty()) {
+            return Err(ImportError::Invalid(
+                "a model track needs a positive fps, a field of view between 0 and 180 degrees and at least one frame".into(),
+            ));
+        }
+        node.track = Some(Arc::new(track.clone()));
+    }
     let mut texts = Vec::with_capacity(body.texts.len());
     for t in &body.texts {
         let (bytes, path) = asset(cx, &t.font)?;
@@ -609,4 +644,11 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
 /// Registers the `model` decoder.
 pub fn register_import(registry: &mut ImportRegistry) {
     registry.register("model", decode);
+}
+
+/// The footage frame on show at element time `t`: frame k from k / fps
+/// seconds, the first before it and the last after the footage ends.
+fn track_frame(track: &ModelTrack, t: f64) -> Option<usize> {
+    let last = track.frames.len().checked_sub(1)?;
+    Some(((t * track.fps + 1e-6).floor().max(0.0) as usize).min(last))
 }

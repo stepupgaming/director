@@ -1,0 +1,16 @@
+[package]
+name = "director-track"
+version = "0.1.0"
+edition = "2021"
+description = "Feature tracking and camera solving from footage for Director matchmoves."
+license = "MIT"
+
+[dependencies]
+nalgebra = "0.35"
+rayon = "1.10"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"

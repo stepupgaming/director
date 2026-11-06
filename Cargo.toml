@@ -11,6 +11,7 @@ members = [
     "crates/director-render",
     "crates/director-host",
     "crates/director-3d",
+    "crates/director-track",
     "crates/lottie-core",
     "crates/lottie-data",
     "crates/lottie-skia",

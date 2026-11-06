@@ -91,6 +91,26 @@ pub struct Shot {
     pub reflection: f32,
     /// Lines of extruded type beside the file's meshes.
     pub texts: Arc<Vec<Text3d>>,
+    /// A camera that films the shot in place of the file's, such as one
+    /// solved from footage.
+    pub camera: Option<ShotCamera>,
+}
+
+/// A camera pose in the model's world, looking down -Z with +Y up, and its
+/// vertical field of view in radians.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShotCamera {
+    pub position: Vec3,
+    pub rotation: Quat,
+    pub fov: f32,
+}
+
+/// The bits of a shot camera for frame cache keys, all zero without one.
+pub(crate) fn camera_bits(camera: Option<ShotCamera>) -> [u32; 8] {
+    camera.map_or([0; 8], |c| {
+        let (p, q) = (c.position, c.rotation);
+        [p.x, p.y, p.z, q.x, q.y, q.z, q.w, c.fov].map(f32::to_bits)
+    })
 }
 
 /// Premultiplied sRGB RGBA8 pixels, rows packed.
@@ -213,6 +233,8 @@ struct Placement {
     camera: Entity,
     /// The file's camera, whose animated pose and lens the shot starts from.
     source: Option<Entity>,
+    /// The shot's own camera, which stands in for the file's.
+    tracked: Option<ShotCamera>,
     center: Vec3,
     radius: f32,
     view: ModelView,
@@ -250,8 +272,12 @@ fn orbit(
 ) {
     let Some(p) = orbit.0 else { return };
     let Ok((mut transform, mut projection, mut camera)) = cameras.get_mut(p.camera) else { return };
-    let (base, mut lens) = match p.source {
-        Some(source) => {
+    let (base, mut lens) = match (p.tracked, p.source) {
+        (Some(c), _) => {
+            let lens = Projection::Perspective(PerspectiveProjection { fov: c.fov, near: 0.05, far: 2000.0, ..default() });
+            (Transform::from_translation(c.position).with_rotation(c.rotation), lens)
+        }
+        (None, Some(source)) => {
             let mut world = Transform::IDENTITY;
             let mut at = Some(source);
             while let Some(entity) = at {
@@ -262,7 +288,7 @@ fn orbit(
             let lens = lenses.get(source).cloned().unwrap_or_default();
             (world, lens)
         }
-        None => {
+        (None, None) => {
             let half_v = FRAMING_FOV / 2.0;
             let half_h = (half_v.tan() * p.aspect).atan();
             // The near and far planes follow the orbit distance, so a closer
@@ -421,7 +447,7 @@ struct Target {
 
 /// (model hash, environment hash, splat set hash, shadow catcher hash).
 type StageKey = (u64, Option<u64>, u64, u64, u64);
-type ShotKey = (StageKey, usize, u64, u64, [u32; 11]);
+type ShotKey = (StageKey, usize, u64, u64, [u32; 11], [u32; 8]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
     (
@@ -442,6 +468,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
             shot.paths,
             shot.reflection.to_bits(),
         ],
+        camera_bits(shot.camera),
     )
 }
 
@@ -645,6 +672,7 @@ impl Studio {
         world.resource_mut::<Orbit>().0 = Some(Placement {
             camera,
             source,
+            tracked: shot.camera,
             center,
             radius,
             view: shot.view,
