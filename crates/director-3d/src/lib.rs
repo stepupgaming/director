@@ -7,6 +7,7 @@
 //! premultiplied sRGB pixels back, which Skia draws like any image.
 
 mod accumulate;
+mod catcher;
 mod display;
 mod glb;
 mod lights;
@@ -15,7 +16,7 @@ mod hero;
 mod node;
 mod studio;
 
-pub use glb::{inspect, GlbInfo};
+pub use glb::{inspect, node_names, GlbInfo};
 pub use gpu::gpu_context;
 pub use node::{decode, register_import, texture_draws, Asset, ModelNode, Splat, MAX_PATHS};
 pub use hero::traceable;

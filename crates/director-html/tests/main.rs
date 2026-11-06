@@ -9,6 +9,7 @@ mod background_layers;
 mod background_position;
 mod beats;
 mod border_styles;
+mod catcher;
 mod clip_shapes;
 mod compatibility;
 mod compose;

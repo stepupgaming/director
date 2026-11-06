@@ -55,9 +55,10 @@ use bevy_gaussian_splatting::{
 use director_scene::{ModelLight, ModelLightKind, ModelView};
 
 use crate::accumulate::Accumulator;
+use crate::catcher::ShadowCatcher;
 use crate::hero::{self, HeroPass, Traceable, Traced};
 use crate::lights;
-use crate::node::{lights_hash, splats_hash, Splat};
+use crate::node::{catchers_hash, lights_hash, splats_hash, Splat};
 use crate::Asset;
 
 /// Everything one frame of a model depends on.
@@ -82,6 +83,8 @@ pub struct Shot {
     pub lights: Arc<Vec<ModelLight>>,
     /// Gaussian splat clouds beside the file's meshes.
     pub splats: Arc<Vec<Splat>>,
+    /// glTF node names whose meshes show only the shadows cast on them.
+    pub catchers: Arc<Vec<String>>,
 }
 
 /// Premultiplied sRGB RGBA8 pixels, rows packed.
@@ -354,8 +357,8 @@ struct Target {
     holds: Option<ShotKey>,
 }
 
-/// (model hash, environment hash, splat set hash).
-type StageKey = (u64, Option<u64>, u64);
+/// (model hash, environment hash, splat set hash, shadow catcher hash).
+type StageKey = (u64, Option<u64>, u64, u64);
 type ShotKey = (StageKey, usize, u64, u64, [u32; 10]);
 
 fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
@@ -426,7 +429,7 @@ impl Studio {
                     ..default()
                 }),
         );
-        app.add_plugins((GaussianSplattingPlugin, RaytracingScenePlugin, hero::HeroPlugin, crate::display::DisplayPlugin));
+        app.add_plugins((GaussianSplattingPlugin, RaytracingScenePlugin, hero::HeroPlugin, crate::display::DisplayPlugin, crate::catcher::CatcherPlugin));
         app.init_resource::<Orbit>();
         app.add_systems(PostUpdate, orbit.after(AnimationSystems).before(TransformSystems::Propagate).before(bevy::camera::CameraUpdateSystems));
         app.finish();
@@ -528,14 +531,21 @@ impl Studio {
                     ..default()
                 },
             ));
+            // Bloom is a lens effect of the whole frame. Over a transparent
+            // sky the frame is a layer that lands on a page or footage, and
+            // its glow would haze them as added light, so only a shot that
+            // paints its own background blooms.
             if shot.background {
-                e.insert(Skybox {
-                    image: Some(probe),
-                    brightness: shot.environment_intensity,
-                    ..default()
-                });
+                e.insert((
+                    Skybox {
+                        image: Some(probe),
+                        brightness: shot.environment_intensity,
+                        ..default()
+                    },
+                    Bloom::NATURAL,
+                ));
             } else {
-                e.remove::<Skybox>();
+                e.remove::<(Skybox, Bloom)>();
             }
             // Bevy copies the probe intensity into the generated
             // `EnvironmentMapLight` once, and the view reads it from there.
@@ -791,7 +801,12 @@ impl Studio {
 
     /// Loads the model and probe of `shot` once, keyed by their bytes.
     fn stage(&mut self, shot: &Shot) -> Result<StageKey, String> {
-        let key = (shot.model.hash, shot.environment.as_ref().map(|e| e.hash), splats_hash(&shot.splats));
+        let key = (
+            shot.model.hash,
+            shot.environment.as_ref().map(|e| e.hash),
+            splats_hash(&shot.splats),
+            catchers_hash(&shot.catchers),
+        );
         if self.stages.contains_key(&key) {
             return Ok(key);
         }
@@ -854,6 +869,10 @@ impl Studio {
         }
         if !loaded {
             return Err("glTF scene never finished loading".into());
+        }
+        if let Err(e) = catch_shadows(self.apps.main.world_mut(), root, &shot.catchers) {
+            self.apps.main.world_mut().despawn(root);
+            return Err(e);
         }
         // Splat clouds join the root once the scene has spawned beside them.
         let mut clouds = Vec::new();
@@ -1000,8 +1019,8 @@ impl Studio {
             ))
             .id();
         // Splats skip the filmic curve and bloom in `display`, so every stage
-        // takes both.
-        world.entity_mut(camera).insert((Tonemapping::TonyMcMapface, Bloom::NATURAL));
+        // takes the curve, and each shot with a background blooms.
+        world.entity_mut(camera).insert(Tonemapping::TonyMcMapface);
         self.stages.insert(
             key,
             Stage {
@@ -1232,6 +1251,40 @@ fn sign(bit: usize) -> f32 {
         -1.0
     } else {
         1.0
+    }
+}
+
+/// Gives every mesh at or below a node named in `names` the shadow catcher
+/// material, and fails on a name that reaches no mesh.
+fn catch_shadows(world: &mut World, root: Entity, names: &[String]) -> Result<(), String> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let material = world.resource_mut::<Assets<ShadowCatcher>>().add(ShadowCatcher::default());
+    let mut caught = HashSet::new();
+    for entity in descendants(world, root) {
+        if world.get::<Mesh3d>(entity).is_none() {
+            continue;
+        }
+        let mut at = Some(entity);
+        let mut named = None;
+        while let Some(e) = at {
+            if let Some(name) = world.get::<Name>(e).and_then(|n| names.iter().find(|c| c.as_str() == n.as_str())) {
+                named = Some(name.clone());
+                break;
+            }
+            at = (e != root).then(|| world.get::<ChildOf>(e).map(ChildOf::parent)).flatten();
+        }
+        let Some(name) = named else { continue };
+        caught.insert(name);
+        world
+            .entity_mut(entity)
+            .remove::<MeshMaterial3d<StandardMaterial>>()
+            .insert(MeshMaterial3d(material.clone()));
+    }
+    match names.iter().find(|n| !caught.contains(*n)) {
+        Some(missing) => Err(format!("shadow-catcher '{missing}' names no node with a mesh in the model")),
+        None => Ok(()),
     }
 }
 

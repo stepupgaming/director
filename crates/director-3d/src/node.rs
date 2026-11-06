@@ -96,7 +96,7 @@ impl std::fmt::Debug for Asset {
 /// The most path traced paths per pixel a sample takes.
 pub const MAX_PATHS: u32 = 4096;
 
-type FrameKey = (u64, Option<u64>, u64, u64, u32, u32, [u32; 11]);
+type FrameKey = (u64, Option<u64>, u64, u64, u64, u32, u32, [u32; 11]);
 
 /// A Gaussian splat cloud placed in a model's world space.
 #[derive(Clone, Debug)]
@@ -122,6 +122,14 @@ pub(crate) fn splats_hash(splats: &[Splat]) -> u64 {
             n.to_bits().hash(&mut hasher);
         }
     }
+    hasher.finish()
+}
+
+/// A hash of the shadow catcher names, which keys the studio's stages and
+/// frames.
+pub(crate) fn catchers_hash(names: &[String]) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    names.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -181,6 +189,8 @@ pub struct ModelNode {
     pub lights: Arc<Vec<ModelLight>>,
     /// Gaussian splat clouds beside the file's meshes.
     pub splats: Arc<Vec<Splat>>,
+    /// glTF node names whose meshes show only the shadows cast on them.
+    pub shadow_catchers: Arc<Vec<String>>,
     pub info: GlbInfo,
     time: f64,
     frame: Mutex<Option<(FrameKey, Arc<Vec<u8>>)>>,
@@ -203,6 +213,7 @@ impl ModelNode {
             view: ModelView::default(),
             lights: Arc::new(Vec::new()),
             splats: Arc::new(Vec::new()),
+            shadow_catchers: Arc::new(Vec::new()),
             info,
             time: 0.0,
             frame: Mutex::new(None),
@@ -244,6 +255,7 @@ impl ModelNode {
                     opacity: s.opacity,
                 })
                 .collect(),
+            shadow_catchers: self.shadow_catchers.to_vec(),
         }
     }
 }
@@ -264,6 +276,7 @@ impl Clone for ModelNode {
             view: self.view,
             lights: self.lights.clone(),
             splats: self.splats.clone(),
+            shadow_catchers: self.shadow_catchers.clone(),
             info: self.info,
             time: self.time,
             frame: Mutex::new(None),
@@ -277,6 +290,7 @@ impl std::fmt::Debug for ModelNode {
             .field("model", &self.model)
             .field("environment", &self.environment)
             .field("splats", &self.splats)
+            .field("shadow_catchers", &self.shadow_catchers)
             .field("view", &self.view)
             .field("info", &self.info)
             .field("time", &self.time)
@@ -334,6 +348,7 @@ impl Element for ModelNode {
             self.environment.as_ref().map(|e| e.hash),
             lights_hash(&self.lights),
             splats_hash(&self.splats),
+            catchers_hash(&self.shadow_catchers),
             width,
             height,
             [
@@ -372,6 +387,7 @@ impl Element for ModelNode {
             paths: self.paths,
             lights: self.lights.clone(),
             splats: self.splats.clone(),
+            catchers: self.shadow_catchers.clone(),
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -511,6 +527,7 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
         });
     }
     node.splats = Arc::new(splats);
+    node.shadow_catchers = Arc::new(body.shadow_catchers.clone());
     Ok(Box::new(node))
 }
 

@@ -39,6 +39,10 @@ pub struct ModelBody {
     /// Gaussian splat clouds placed in the scene beside the file's meshes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub splats: Vec<ModelSplat>,
+    /// Names of glTF nodes whose meshes show only the shadows cast on them,
+    /// so the model's shadows fall on footage behind a transparent model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadow_catchers: Vec<String>,
 }
 
 /// A Gaussian splat cloud from a 3DGS `.ply` file, placed in the model's

@@ -13,6 +13,10 @@ pub struct GlbInfo {
 
 /// Reads the glTF 2.0 binary header and JSON chunk.
 pub fn inspect(bytes: &[u8]) -> Result<GlbInfo, String> {
+    info(&json(bytes)?)
+}
+
+fn json(bytes: &[u8]) -> Result<serde_json::Value, String> {
     let word = |at: usize| -> Result<u32, String> {
         bytes
             .get(at..at + 4)
@@ -30,7 +34,17 @@ pub fn inspect(bytes: &[u8]) -> Result<GlbInfo, String> {
         return Err("glTF binary without a JSON chunk".into());
     }
     let json = bytes.get(20..20 + length).ok_or("truncated glTF JSON chunk")?;
-    let json: serde_json::Value = serde_json::from_slice(json).map_err(|e| format!("glTF JSON: {e}"))?;
+    serde_json::from_slice(json).map_err(|e| format!("glTF JSON: {e}"))
+}
+
+/// The names of a glTF binary's nodes, in file order.
+pub fn node_names(bytes: &[u8]) -> Result<Vec<String>, String> {
+    let json = json(bytes)?;
+    let nodes = json.get("nodes").and_then(|v| v.as_array()).map_or(&[][..], |v| v.as_slice());
+    Ok(nodes.iter().filter_map(|n| n.get("name").and_then(|v| v.as_str()).map(str::to_string)).collect())
+}
+
+fn info(json: &serde_json::Value) -> Result<GlbInfo, String> {
     let list = |key: &str| json.get(key).and_then(|v| v.as_array()).map_or(&[][..], |v| v.as_slice());
     let accessors = list("accessors");
     let mut duration = 0.0f64;

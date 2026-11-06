@@ -1708,6 +1708,15 @@ impl Builder {
                 };
                 let mut model = director_3d::ModelNode::new(asset).map_err(input)?;
                 model.splats = std::sync::Arc::new(splats);
+                let catchers: Vec<String> =
+                    attr("shadow-catcher").map(|v| v.split_whitespace().map(str::to_string).collect()).unwrap_or_default();
+                if !catchers.is_empty() {
+                    let names = director_3d::node_names(&model.model.bytes).map_err(input)?;
+                    if let Some(missing) = catchers.iter().find(|c| !names.contains(c)) {
+                        return Err(input(format!("shadow-catcher '{missing}' names no node in the model")));
+                    }
+                }
+                model.shadow_catchers = std::sync::Arc::new(catchers);
                 if let Some(environment) = attr("environment") {
                     let path = (!environment.starts_with("data:")).then(|| environment.to_string());
                     model.environment =
