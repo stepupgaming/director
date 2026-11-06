@@ -16,6 +16,7 @@
 - `src/probe.rs` - `light_probe`, `Probe` and `direction`: an equirectangular light probe stitched from the footage through its solved cameras, its Radiance `.hdr` encoding and `Probe::irradiance`; `stream` and `View` hand each sampled RGB frame and its solved camera to the probe and the sun.
 - `src/sun.rs` - `estimate_sun` and `Sun`: the sun's direction, irradiance and shadow ratio read from the shadows the solved points cast on the plate's ground.
 - `examples/solve.rs` - `cargo run --release -p director-track --example solve -- <footage> [--fov DEG] [--fixed] [--distortion K1 K2] [--height M] [--pitch DEG] [--zoom] [--matte FILE] [--json OUT]` prints the tracking and solve timings, track lengths, the lens and its distortion, the reprojection error and the camera path, and writes the `CameraSolve` as JSON.
+- `examples/sun.rs` - `cargo run --release -p director-track --example sun -- <footage> <solve.json>` stitches a 256-wide probe through a `CameraSolve` the `solve` example wrote and prints the sun `estimate_sun` reads: its direction, elevation, azimuth, shadow ratio, irradiance and the time.
 
 ## Local Contracts
 
