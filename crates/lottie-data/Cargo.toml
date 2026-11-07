@@ -1,11 +1,14 @@
 [package]
-name = "lottie-data"
+name = "director-lottie-data"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Data structures for Lottie animations"
+
+[lib]
+name = "lottie_data"
 
 [dependencies]
 serde.workspace = true

@@ -46,9 +46,9 @@ ron = "0.8"
 # Internal. Every crate publishes at the workspace version. The core crate
 # publishes as `director-video-core` because crates.io already holds
 # `director_core`; its library name stays `director_core`.
-lottie-core = { path = "crates/lottie-core", version = "0.1.0" }
-lottie-data = { path = "crates/lottie-data", version = "0.1.0" }
-lottie-skia = { path = "crates/lottie-skia", version = "0.1.0" }
+lottie-core = { package = "director-lottie-core", path = "crates/lottie-core", version = "0.1.0" }
+lottie-data = { package = "director-lottie-data", path = "crates/lottie-data", version = "0.1.0" }
+lottie-skia = { package = "director-lottie-skia", path = "crates/lottie-skia", version = "0.1.0" }
 director-core = { package = "director-video-core", path = "crates/director-core", version = "0.1.0" }
 director-scene = { path = "crates/director-scene", version = "0.1.0" }
 director-dom = { path = "crates/director-dom", version = "0.1.0" }

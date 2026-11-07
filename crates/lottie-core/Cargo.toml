@@ -1,11 +1,14 @@
 [package]
-name = "lottie-core"
+name = "director-lottie-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Core logic for Lottie animations"
+
+[lib]
+name = "lottie_core"
 
 [dependencies]
 lottie-data.workspace = true

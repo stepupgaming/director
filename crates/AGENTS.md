@@ -16,7 +16,7 @@
 - `director-3d/` owns real 3D: glTF scenes rendered by a headless Bevy app on Vulkan and painted as the `model` element.
 - `director-track/` owns feature tracking, the camera solve from footage that matchmoves a `model`, the light probe stitched from that footage and the sun read from its shadows.
 - `director-breakdown/` owns the shot breakdown of a reference video: cuts, fades, dissolves, flashes, motion-graphics beats and container provenance as `breakdown.json`. It links no Skia.
-- `lottie-core/`, `lottie-data/`, and `lottie-skia/` own Lottie parsing, data models, animation logic, and Skia rendering.
+- `lottie-core/`, `lottie-data/`, and `lottie-skia/` own Lottie parsing, data models, animation logic, and Skia rendering. They publish as `director-lottie-core`, `director-lottie-data` and `director-lottie-skia` with library names `lottie_core`, `lottie_data` and `lottie_skia`.
 
 ## Local Contracts
 

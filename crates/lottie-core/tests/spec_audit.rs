@@ -3,7 +3,7 @@
 //! This module provides comprehensive testing against the official Lottie specification.
 //! It includes both behavior tests and schema-derived coverage checks from `lottie-schema.json`,
 //! including explicit not-applicable classification for generic schema placeholders.
-//! Run with: cargo test -p lottie-core --test spec_audit
+//! Run with: cargo test -p director-lottie-core --release --test spec_audit
 
 use lottie_core::{
     asset_kind_support, effect_type_support, layer_type_support, LottiePlayer, SchemaSupport,

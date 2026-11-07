@@ -22,9 +22,9 @@
 
 ## Verification
 
-- `cargo test -p lottie-core`
-- `cargo test -p lottie-core --features expressions` when expression code changes.
-- `cargo bench -p lottie-core` for benchmark-relevant changes.
+- `cargo test -p director-lottie-core --release`
+- `cargo test -p director-lottie-core --release --features expressions` when expression code changes.
+- `cargo bench -p director-lottie-core` for benchmark-relevant changes.
 
 ## Child DOX Index
 

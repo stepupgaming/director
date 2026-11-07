@@ -3173,15 +3173,15 @@ dependencies = [
  "director-breakdown",
  "director-host",
  "director-html",
+ "director-lottie-core",
+ "director-lottie-data",
+ "director-lottie-skia",
  "director-recorder",
  "director-render",
  "director-schema",
  "director-skia-safe",
  "director-video-core",
  "image",
- "lottie-core",
- "lottie-data",
- "lottie-skia",
  "mimalloc",
  "rhai",
  "schemars",
@@ -3251,6 +3251,43 @@ dependencies = [
  "thiserror 2.0.21",
  "usvg",
  "wuff",
+]
+
+[[package]]
+name = "director-lottie-core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "boa_engine",
+ "boa_gc",
+ "criterion",
+ "director-lottie-data",
+ "glam 0.24.2",
+ "kurbo 0.9.5",
+ "noise",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "director-lottie-data"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "director-lottie-skia"
+version = "0.1.0"
+dependencies = [
+ "director-lottie-core",
+ "director-lottie-data",
+ "director-skia-safe",
+ "glam 0.24.2",
+ "kurbo 0.9.5",
+ "serde_json",
 ]
 
 [[package]]
@@ -3327,6 +3364,9 @@ dependencies = [
  "base64 0.22.1",
  "criterion",
  "crossbeam-channel",
+ "director-lottie-core",
+ "director-lottie-data",
+ "director-lottie-skia",
  "director-render",
  "director-scene",
  "director-skia-safe",
@@ -3334,9 +3374,6 @@ dependencies = [
  "hound",
  "image",
  "keyframe",
- "lottie-core",
- "lottie-data",
- "lottie-skia",
  "rand 0.8.8",
  "rayon",
  "realfft",
@@ -5152,43 +5189,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
-]
-
-[[package]]
-name = "lottie-core"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "boa_engine",
- "boa_gc",
- "criterion",
- "glam 0.24.2",
- "kurbo 0.9.5",
- "lottie-data",
- "noise",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "lottie-data"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "lottie-skia"
-version = "0.1.0"
-dependencies = [
- "director-skia-safe",
- "glam 0.24.2",
- "kurbo 0.9.5",
- "lottie-core",
- "lottie-data",
- "serde_json",
 ]
 
 [[package]]

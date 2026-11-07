@@ -1,7 +1,7 @@
 //! Every integration test of this crate, built as one test binary so they
 //! link Skia once. Each `tests/<name>.rs` is a module below, and
 //! `every_test_file_is_a_module` fails when a file is left out. One file's
-//! tests: `cargo test -p lottie-skia --release --test integration <name>::`.
+//! tests: `cargo test -p director-lottie-skia --release --test integration <name>::`.
 
 mod animation_test;
 mod compositing;

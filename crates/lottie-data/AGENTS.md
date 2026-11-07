@@ -19,7 +19,7 @@
 
 ## Verification
 
-- `cargo test -p lottie-data`
+- `cargo test -p director-lottie-data --release`
 
 ## Child DOX Index
 

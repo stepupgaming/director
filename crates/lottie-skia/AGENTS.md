@@ -20,7 +20,7 @@
 
 ## Verification
 
-- `cargo test -p lottie-skia`
+- `cargo test -p director-lottie-skia --release`
 
 ## Child DOX Index
 
