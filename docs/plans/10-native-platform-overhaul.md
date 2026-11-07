@@ -221,7 +221,7 @@ The 2026-10-19 workspace release run passed every target after two fixture updat
 
 The 2026-10-22 skia-safe 0.153.3 upgrade (Skia m153) left every golden in place. Under the release engine, the four HTML examples, a 3 s `native-motion` export and 8-frame contact sheets of all 59 example scripts match 0.90.0 pixel for pixel.
 
-FreeType on Linux anti-aliases glyphs differently from DirectWrite, so the 12 text frames carry Linux overrides in `tests/visual/golden/linux/`, copied from the `.actual.png` frames of CI run 42348986911. The director-html GSAP font-size test accepts the 2.9x lit-pixel growth FreeType gives the 10 px glyph.
+FreeType on Linux anti-aliases glyphs differently from DirectWrite, so the 12 text frames carry Linux overrides in `tests/visual/golden/linux/`, copied from the `.actual.png` frames of CI run 42348986911. The director-html GSAP font-size test measures glyph height, which doubles under either rasterizer.
 
 ## Next action
 

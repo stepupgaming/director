@@ -1116,6 +1116,10 @@ fn inherited_text_line_height_and_box_tweens_become_channels() {
     let lit = |p: &[u8], x0: usize, x1: usize| {
         p.chunks(4).enumerate().filter(|(i, p)| (x0..x1).contains(&(i % 96)) && (p[0] > 150 || p[1] > 150)).count()
     };
+    let rows = |p: &[u8], x0: usize, x1: usize| {
+        let lit: Vec<usize> = p.chunks(4).enumerate().filter(|(i, p)| (x0..x1).contains(&(i % 96)) && (p[0] > 150 || p[1] > 150)).map(|(i, _)| i / 96).collect();
+        lit.iter().max().map_or(0, |max| max + 1 - lit.iter().min().unwrap())
+    };
     let red = |p: &[u8], x0: usize, x1: usize| {
         p.chunks(4).enumerate().filter(|(i, p)| (x0..x1).contains(&(i % 96)) && p[0] > 150 && p[1] < 100).count()
     };
@@ -1127,9 +1131,9 @@ fn inherited_text_line_height_and_box_tweens_become_channels() {
                 <p style='left:64px;font-size:10px;color:rgb(0,255,0)'>I</p></div>";
     let mut c = compile(&doc(body, "fontSize: 40, color: 'rgb(255,0,0)'"), opts()).unwrap();
     let (before, after) = (frame(&mut c, 0.0), frame(&mut c, 1.0));
-    assert!(lit(&after, 0, 32) > lit(&before, 0, 32) * 3, "{} {}", lit(&before, 0, 32), lit(&after, 0, 32));
-    // The 10 px glyph grows about 2.9x in lit pixels under FreeType.
-    assert!(lit(&after, 32, 64) > lit(&before, 32, 64) * 2, "{} {}", lit(&before, 32, 64), lit(&after, 32, 64));
+    // Glyph height doubles with the font size; lit-pixel counts depend on the rasterizer's anti-aliasing.
+    assert!(rows(&after, 0, 32) * 10 >= rows(&before, 0, 32) * 17, "{} {}", rows(&before, 0, 32), rows(&after, 0, 32));
+    assert!(rows(&after, 32, 64) * 10 >= rows(&before, 32, 64) * 17, "{} {}", rows(&before, 32, 64), rows(&after, 32, 64));
     assert!(red(&after, 0, 64) > 0 && red(&after, 64, 96) == 0);
     assert!(lit(&after, 64, 96).abs_diff(lit(&before, 64, 96)) * 5 < lit(&before, 64, 96), "{} {}", lit(&before, 64, 96), lit(&after, 64, 96));
 
