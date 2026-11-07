@@ -12,7 +12,7 @@
 - `src/renderer.rs` owns `use_gpu` (a required Vulkan context handed to a session), `paint` under the frame pixel limit, PNG encoding, and `export_video` (with `director_host::import_registry`) for `html render` and `html benchmark --export`.
 - `src/html.rs` owns `html check|still|render|capture|benchmark|timeline|beats`. `html timeline` prints the `director-timeline/1` tracks a compile attached, from timeline JSON and GSAP. `html beats` prints a beat grid as JSON (bpm, beats per bar, beats, downbeats, drop beat and time): an audio file's detected grid (`--bpm`, `--beats-per-bar`), or a page's fixed or music grid. `--clicks` writes an audio file with a click on every beat, higher on downbeats and highest on the drop, to check a grid by ear. HTML and capture JSON compile through `director-html`; browser extraction is explicit and is never invoked by native render/still.
 - `src/breakdown.rs` owns the `breakdown` command over `director_breakdown::analyze`.
-- `src/asr.rs` owns `asr models|fetch|transcribe` over `director_asr`.
+- `src/asr.rs` owns `asr models|fetch|transcribe` over `director_asr`, compiled only with the opt-in `asr` feature (`dep:director-asr`). Without it, `main.rs` keeps a hidden `asr` stub that exits 1 and names `--features asr`.
 - `src/run.rs` owns default output naming (`default_video_output`). Script evaluation and movie resolution live in `director_host::script`.
 - `src/gpu.rs` owns Vulkan context creation (`director_render::GpuContext`): `director_3d::gpu_context()` first, so model frames stay on the GPU, then a context on its own device once the 3D device's spare queues run out. It also owns explicit HTML GPU requests, native render-surface creation and synchronous RGBA readback.
 - `src/bin/director_manifest.rs` owns agent-facing JSON manifest export (`api`, `schema`, `from-json`, `from-script`).
@@ -70,7 +70,7 @@
 - `src/skills.rs` tests fail when `.agent/skills/director-mcp/` is stale and check that every tool argument and error code is documented.
 - `tests/editor.rs` verifies seek, a rejected line and a patch repaint over the `editor` stdio protocol, reading frames from the ring file.
 - `tests/mcp.rs` verifies that an agent opens, patches, inspects, scores, paints and exports a project over stdio MCP alone.
-- `tests/asr.rs` verifies `asr models` on an empty cache, the fetch hint for a missing model, Pro's refusal and a rejected import.
+- `tests/asr.rs` verifies, with the feature, `asr models` on an empty cache, the fetch hint for a missing model, Pro's refusal and a rejected import, and without it the rebuild hint. Run the feature side as `cargo test --workspace --release --features director-cli/asr --test integration asr::`, which keeps every other crate's features as the plain workspace run has them.
 - `tests/repair_batch.rs` verifies a rejected repair does not write, and the batch report for one failure plus one success.
 - `cargo run -p director-cli --bin director-engine -- --help`
 - `cargo run -p director-cli --bin director-engine -- compositions examples/features/compositions.rhai --json`

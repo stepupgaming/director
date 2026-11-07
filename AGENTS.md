@@ -123,6 +123,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Rust tests: `cargo test --workspace --release` (CI runs this on push to `main` and on pull requests)
 - Rust lint: `cargo clippy --workspace --all-targets --release -- -D warnings`
 - Visual regression: `cargo test -p director-video-core --release --test integration visual_suite::`
+- Speech to text CLI (opt-in `asr` feature): `cargo test --workspace --release --features director-cli/asr --test integration asr::`
 
 ## Child DOX Index
 

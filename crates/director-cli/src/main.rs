@@ -1,3 +1,4 @@
+#[cfg(feature = "asr")]
 mod asr;
 mod audio_report;
 mod batch;
@@ -127,7 +128,14 @@ enum Commands {
     /// Measure a reference video's shots, transitions and container provenance as breakdown.json
     Breakdown(breakdown::BreakdownArgs),
     /// Speech to text with the Bark 3.0 models: list, fetch and transcribe to JSON, SRT, VTT or text
+    #[cfg(feature = "asr")]
     Asr(asr::AsrArgs),
+    /// Speech to text (this build leaves it out; build with `--features asr`)
+    #[cfg(not(feature = "asr"))]
+    Asr {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -564,11 +572,19 @@ fn main() {
                 std::process::exit(code);
             }
         }
+        #[cfg(feature = "asr")]
         Some(Commands::Asr(args)) => {
             let code = asr::run(args);
             if code != 0 {
                 std::process::exit(code);
             }
+        }
+        #[cfg(not(feature = "asr"))]
+        Some(Commands::Asr { .. }) => {
+            eprintln!(
+                "error: this director-engine was built without speech to text; rebuild with `--features asr`, e.g. `cargo install director-cli --features asr`"
+            );
+            std::process::exit(1);
         }
         Some(Commands::Compositions(args)) => cmd_compositions(args),
         Some(Commands::Html(args)) => html::run(args),

@@ -56,7 +56,7 @@ impl Engine {
 
 - **Contracts:** `transcribe` blocks, reports seconds done and total after each piece and checks the cancel flag before each one; async callers wrap it in `spawn_blocking`. Times are `f64` seconds of the source media, matching `CaptionWord::start_sec`. Models a build cannot run return `AsrError::Unsupported`.
 - **Store:** each model's weight file pinned by Hugging Face revision, size and SHA-256, and each graph set's five files pinned by `bark-rs` commit and hash and fetched from GitHub raw. `import` installs a file already on disk after the same checks, as a hard link on one volume.
-- **Features:** `director-cli` links `director-asr` in every build (open decision 1). Core and render stay ASR-free. CUDA and DirectML execution providers wait on `bark-asr`.
+- **Features:** `director-cli` links `director-asr` only with its opt-in `asr` feature (decided 2026-11-07); a default build leaves out ONNX Runtime (138.9 MB against 162.6 MB on Windows) and keeps a stub that names the feature. Core and render stay ASR-free. License texts and notices for the models, graphs and ONNX Runtime live in `crates/director-asr/licenses/`; a license review comes later. CUDA and DirectML execution providers wait on `bark-asr`.
 - **Long media:** `bark-asr`'s `segments` cuts audio longer than the piece limit (30 s) at the quietest smoothed 10 ms frame between a third of the limit and the limit, so no word is split and no stitching is needed. Shorter pieces read with less context: at 6 s the 20 s fixture keeps every word and loses casing and punctuation in its later pieces.
 - **Boundary refinement:** move each word start and end to the nearest low-energy point within half an encoder frame, using 10 ms RMS on the 16 kHz signal. Report timing error against forced alignment before and after.
 - **Disfluencies:** transcription runs verbatim, since a word missing from the output cannot be cut from the video. The disfluency pass aligns the verbatim words with a Clean transcript of the same audio and flags each word Clean omitted.
@@ -148,8 +148,7 @@ Gate: each check has a fixture that fails it and a fixed variant that passes, th
 
 ## Open decisions
 
-1. ASR default: ASR in every `director-engine` build (current; ONNX Runtime links statically and adds a `DirectML.dll` import on Windows, which System32 provides from Windows 10 1903), or an opt-in `asr` CLI feature.
-2. Model delivery: explicit `asr fetch` from Hugging Face into a user cache (recommended, and the weights stay under their own CC BY-NC terms), or weights bundled in release archives.
+1. Model delivery: explicit `asr fetch` from Hugging Face into a user cache (recommended, and the weights stay under their own CC BY-NC terms), or weights bundled in release archives.
 
 ## Verification
 

@@ -18,7 +18,7 @@ director-recorder = { workspace = true }
 director-render = { workspace = true }
 director-host = { workspace = true }
 director-breakdown = { workspace = true }
-director-asr = { workspace = true }
+director-asr = { workspace = true, optional = true }
 director-schema = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 rhai = "1.23.6"
@@ -45,6 +45,7 @@ tempfile = "3.23"
 default = ["video", "vulkan"]
 video = []
 vulkan = ["director-render/vulkan", "director-host/vulkan", "dep:ash"]
+asr = ["dep:director-asr"]
 [[bin]]
 name = "director-engine"
 path = "src/main.rs"

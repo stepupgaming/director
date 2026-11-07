@@ -5,6 +5,7 @@ fn asr(cache: &std::path::Path, args: &[&str]) -> Output {
 }
 
 #[test]
+#[cfg(feature = "asr")]
 fn models_lists_every_model_and_graph_set() {
     let cache = tempfile::tempdir().unwrap();
     let out = asr(cache.path(), &["models"]);
@@ -19,6 +20,7 @@ fn models_lists_every_model_and_graph_set() {
 }
 
 #[test]
+#[cfg(feature = "asr")]
 fn transcribe_without_a_model_names_the_fetch_command() {
     let cache = tempfile::tempdir().unwrap();
     let wav = cache.path().join("tone.wav");
@@ -39,6 +41,7 @@ fn transcribe_without_a_model_names_the_fetch_command() {
 }
 
 #[test]
+#[cfg(feature = "asr")]
 fn fetch_from_a_wrong_file_installs_nothing() {
     let cache = tempfile::tempdir().unwrap();
     let fake = cache.path().join("model.bark");
@@ -47,4 +50,13 @@ fn fetch_from_a_wrong_file_installs_nothing() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("holds 11 bytes"));
     assert!(!cache.path().join("bark-3.0").join("model.bark").exists());
+}
+
+#[test]
+#[cfg(not(feature = "asr"))]
+fn a_build_without_the_feature_says_how_to_get_it() {
+    let cache = tempfile::tempdir().unwrap();
+    let out = asr(cache.path(), &["models"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--features asr"));
 }

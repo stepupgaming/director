@@ -51,6 +51,11 @@ jobs:
       - name: Test
         run: cargo test --workspace --release --no-fail-fast
 
+      - name: Clippy and test the asr CLI feature
+        run: |
+          cargo clippy --workspace --all-targets --release --features director-cli/asr -- -D warnings
+          cargo test --workspace --release --features director-cli/asr --test integration asr::
+
       - name: Upload visual failures
         if: failure()
         uses: actions/upload-artifact@v4

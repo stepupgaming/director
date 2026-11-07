@@ -118,4 +118,4 @@ Start with [docs/plans/10-native-platform-overhaul.md](docs/plans/10-native-plat
 
 ## License
 
-MIT OR Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). `director-breakdown` ports Apache-2.0 code and stays Apache-2.0; see its NOTICE.
+MIT OR Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). `director-breakdown` ports Apache-2.0 code and stays Apache-2.0; see its NOTICE. Speech to text (`director-cli --features asr`) downloads the Underdog Bark 3.0 models, which are CC BY-NC 4.0, and links ONNX Runtime; their license texts and notices are in [crates/director-asr/licenses](crates/director-asr/licenses/README.md).
