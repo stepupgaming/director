@@ -27,7 +27,7 @@ fn model_ids_round_trip_and_unknown_names_fail() {
         assert_eq!(m.id().parse::<Model>().unwrap(), m);
         assert_eq!(m.to_string(), m.id());
         assert_eq!(serde_json::to_string(&m).unwrap(), format!("\"{}\"", m.id()));
-        assert_eq!(m.license(), "CC-BY-NC-4.0");
+        assert_eq!(m.license(), "CC-BY-4.0");
         assert_eq!(m.file().sha256.len(), 64);
     }
     let err = "bark-9".parse::<Model>().unwrap_err();
@@ -39,7 +39,7 @@ fn model_ids_round_trip_and_unknown_names_fail() {
 fn urls_pin_the_revision() {
     assert_eq!(
         Model::Bark.url(),
-        "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0/resolve/e7a641c0fdd4cdf1818dde62a98c26e11d65c061/model.bark"
+        "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0/resolve/85db2ad18ab41e534a222ee253c29191d77ed919/model.bark"
     );
     assert!(Model::BarkPro.url().ends_with("/model.safetensors"));
 }

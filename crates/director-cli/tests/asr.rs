@@ -13,7 +13,7 @@ fn models_lists_every_model_and_graph_set() {
     let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let ids: Vec<_> = doc["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["bark-3.0", "bark-3.0-plus", "bark-3.0-clean", "bark-3.0-pro"]);
-    assert!(doc["models"].as_array().unwrap().iter().all(|m| m["status"] == "missing" && m["license"] == "CC-BY-NC-4.0"));
+    assert!(doc["models"].as_array().unwrap().iter().all(|m| m["status"] == "missing" && m["license"] == "CC-BY-4.0"));
     assert_eq!(doc["models"][3]["supported"], false);
     let graphs: Vec<_> = doc["graphs"].as_array().unwrap().iter().map(|g| g["id"].as_str().unwrap()).collect();
     assert_eq!(graphs, ["exact", "int8"]);

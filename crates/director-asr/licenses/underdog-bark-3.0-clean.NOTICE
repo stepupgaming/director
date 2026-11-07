@@ -7,10 +7,7 @@ This model derives from:
   moondream/parakeet-ultra, (c) Moondream, CC-BY-4.0
     https://huggingface.co/moondream/parakeet-ultra
 
-Upstream license: https://creativecommons.org/licenses/by/4.0/
+License: https://creativecommons.org/licenses/by/4.0/
 
 Changes: post-trained and compressed by Conway Research. The FastConformer encoder architecture, TDT decoder,
 tokenizer and feature-extractor configuration derive from the models above and remain under CC-BY-4.0.
-
-The model weights in this repository are licensed under CC BY-NC 4.0 (see LICENSE). For commercial use, write to
-license@conway.tech.

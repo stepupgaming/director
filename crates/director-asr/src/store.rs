@@ -58,13 +58,14 @@ impl Model {
         }
     }
 
-    /// The repository commit the file and hash were read from on 2026-11-07.
+    /// The last CC BY 4.0 commit of the repository (2026-10-15). The 2026-11-05 commits that
+    /// switch the card to CC BY-NC 4.0 leave the weight file byte-identical; see `licenses/`.
     pub fn revision(self) -> &'static str {
         match self {
-            Model::Bark => "e7a641c0fdd4cdf1818dde62a98c26e11d65c061",
-            Model::BarkPlus => "28a7d4234146b0f01c11e0c6b72dfa29028a4758",
-            Model::BarkClean => "73775471a9410b75ceb2401e837861dac12bd76d",
-            Model::BarkPro => "d87f288a9a0b0cdb92228057e168ce575b300a6b",
+            Model::Bark => "85db2ad18ab41e534a222ee253c29191d77ed919",
+            Model::BarkPlus => "d4fab2f8b95681e5ad3cfb4e8c5f4e0c009b3deb",
+            Model::BarkClean => "6d34ed8639b2b9a33e764acf06748519bbb950cf",
+            Model::BarkPro => "4b5c51e04aa8d16dda9ecdff71bc29f7360149e4",
         }
     }
 
@@ -93,10 +94,10 @@ impl Model {
         }
     }
 
-    /// The weights' license at the pinned revision. Director ships no weights; commercial use
-    /// needs a license from Conway (license@conway.tech).
+    /// The weights' license at the pinned revision. Director ships no weights; redistribution
+    /// carries the attribution in each model's NOTICE.
     pub fn license(self) -> &'static str {
-        "CC-BY-NC-4.0"
+        "CC-BY-4.0"
     }
 
     pub fn description(self) -> &'static str {

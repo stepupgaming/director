@@ -25,7 +25,7 @@ Decided 2026-11-07: Director transcribes with all four Underdog Bark 3.0 models 
 | Bark 3.0 Pro | `ConwayResearch/Underdog-Bark-3.0-Pro` | BF16 `model.safetensors`, about 1.25 GB | Most accurate | 4.29 |
 
 - All four are 0.6 B English post-trainings of `nvidia/parakeet-tdt-0.6b-v3` with the same encoder, decoder and joint, so one graph set serves every model.
-- All four are CC BY-NC 4.0. Director's code stays MIT OR Apache-2.0 and ships no weights. `asr fetch` prints the license, and commercial use of the weights needs a license from Conway (`license@conway.tech`, per each card).
+- Director pins the last CC BY 4.0 revision of each repository (2026-10-15). Conway switched the cards to CC BY-NC 4.0 on 2026-11-05 in commits that leave the weights byte-identical, and CC BY 4.0 grants its license as irrevocable. Director's code stays MIT OR Apache-2.0 and ships no weights; `asr fetch` prints the license, and `crates/director-asr/licenses/` keeps the pinned notices, cards and revision table.
 - WER figures are the vendor's own, scored with the Open ASR Leaderboard code (cards read 2026-11-07).
 
 ### Work in `bark-rs`
@@ -148,7 +148,7 @@ Gate: each check has a fixture that fails it and a fixed variant that passes, th
 
 ## Open decisions
 
-1. Model delivery: explicit `asr fetch` from Hugging Face into a user cache (recommended, and the weights stay under their own CC BY-NC terms), or weights bundled in release archives.
+1. Model delivery: explicit `asr fetch` from Hugging Face into a user cache (recommended, and the weights keep their own CC BY 4.0 notices), or weights bundled in release archives.
 
 ## Verification
 
