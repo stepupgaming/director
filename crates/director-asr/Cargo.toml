@@ -1,0 +1,23 @@
+[package]
+name = "director-asr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+autotests = false
+description = "Speech to text for Director: word-timed transcripts from the Underdog Bark 3.0 models, subtitles and the model store."
+
+[dependencies]
+rubato = "0.14"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"

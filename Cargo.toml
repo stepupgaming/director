@@ -13,6 +13,7 @@ members = [
     "crates/director-3d",
     "crates/director-track",
     "crates/director-breakdown",
+    "crates/director-asr",
     "crates/lottie-core",
     "crates/lottie-data",
     "crates/lottie-skia",
@@ -60,6 +61,7 @@ director-3d = { path = "crates/director-3d", version = "0.1.0" }
 director-html = { path = "crates/director-html", version = "0.1.0" }
 director-host = { path = "crates/director-host", version = "0.1.0" }
 director-breakdown = { path = "crates/director-breakdown", version = "0.1.0" }
+director-asr = { path = "crates/director-asr", version = "0.1.0" }
 
 # Repo builds only: the fog composite's alpha blend in `vendor/bevy_pbr`.
 # Published builds take upstream bevy_pbr; see vendor/AGENTS.md.

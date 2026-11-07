@@ -56,10 +56,10 @@ impl Engine {
 }
 ```
 
-- **Contracts:** `transcribe` blocks and takes a progress callback and a cancel flag; async callers wrap it in `spawn_blocking`. Times are `f64` seconds of the source media, matching `CaptionWord::start_sec`. Input is any rate and channel count; the crate downmixes and resamples to 16 kHz mono, and decodes media through `director_core::audio::load_audio_bytes`. Options a model lacks return `AsrError::Unsupported`.
+- **Contracts:** `transcribe` blocks and takes a progress callback and a cancel flag; async callers wrap it in `spawn_blocking`. Times are `f64` seconds of the source media, matching `CaptionWord::start_sec`. Input is any rate and channel count; the crate downmixes and resamples to 16 kHz mono, and decodes media through the `ffmpeg` CLI. Options a model lacks return `AsrError::Unsupported`.
 - **Crate layout:** `src/lib.rs` (types, errors, `open`), `src/audio.rs` (decode, downmix, resample), `src/chunk.rs` (voice-activity windows with overlap and word stitching), `src/refine.rs` (boundary refinement), `src/disfluency.rs` (verbatim and Clean alignment), `src/store.rs` (model cache, pinned URLs, SHA-256, licenses).
 - **Features:** `director-cli` gains an opt-in `asr` feature, like `vulkan`. Core and render stay ASR-free. `director-asr` exposes `cuda` and `directml` execution providers.
-- **Long media:** windows of a few minutes cut at voice-activity gaps with overlap; stitching keeps each word from the window where it sits farther from the edge.
+- **Long media:** windows of at most 60 s overlapping by 4 s, each cut at the quietest point in the last 10 s before its limit; stitching keeps each word whose midpoint falls in its window's keep range.
 - **Boundary refinement:** move each word start and end to the nearest low-energy point within half an encoder frame, using 10 ms RMS on the 16 kHz signal. Report timing error against forced alignment before and after.
 - **Disfluencies:** transcription runs verbatim, since a word missing from the output cannot be cut from the video. The disfluency pass aligns the verbatim words with a Clean transcript of the same audio and flags each word Clean omitted.
 - **Scene document:** `director-scene` gains a transcript asset (words in source-media seconds, model id) attached to an audio or video asset. Caption nodes and edit operations reference it, so a project re-renders and re-edits without running ASR again.

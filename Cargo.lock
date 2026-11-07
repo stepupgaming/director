@@ -3150,6 +3150,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "director-asr"
+version = "0.1.0"
+dependencies = [
+ "rubato",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "director-breakdown"
 version = "0.1.0"
 dependencies = [

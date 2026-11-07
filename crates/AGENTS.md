@@ -16,6 +16,7 @@
 - `director-3d/` owns real 3D: glTF scenes rendered by a headless Bevy app on Vulkan and painted as the `model` element.
 - `director-track/` owns feature tracking, the camera solve from footage that matchmoves a `model`, the light probe stitched from that footage and the sun read from its shadows.
 - `director-breakdown/` owns the shot breakdown of a reference video: cuts, fades, dissolves, flashes, motion-graphics beats and container provenance as `breakdown.json`. It links no Skia.
+- `director-asr/` owns speech to text: audio decode and resampling, long-media windows, the Bark 3.0 model store and SRT, VTT and JSON transcripts. It links no Skia.
 - `lottie-core/`, `lottie-data/`, and `lottie-skia/` own Lottie parsing, data models, animation logic, and Skia rendering. They publish as `director-lottie-core`, `director-lottie-data` and `director-lottie-skia` with library names `lottie_core`, `lottie_data` and `lottie_skia`.
 
 ## Local Contracts
@@ -51,6 +52,7 @@
 - `director-3d/AGENTS.md` - Bevy 3D studio, the `model` element, its document body and the test GLB.
 - `director-track/AGENTS.md` - Corner tracks, the incremental camera solve, its ground-plane world, plate light probes and the plate's sun.
 - `director-breakdown/AGENTS.md` - Shot and transition detection ported from rea-video, the container provenance probe and the `breakdown.json` document.
+- `director-asr/AGENTS.md` - Speech to text: audio input, windows and stitching, the Bark 3.0 model store and subtitle writers.
 - `lottie-core/AGENTS.md` - Lottie animation logic and expression support.
 - `lottie-data/AGENTS.md` - Lottie data models and JSON fixtures.
 - `lottie-skia/AGENTS.md` - Lottie Skia renderer and render fixtures.
