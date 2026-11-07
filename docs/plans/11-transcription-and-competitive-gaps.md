@@ -104,13 +104,13 @@ Gate: a clean machine installs a release binary and renders the four HTML exampl
 
 **B3. Head-to-head protocol.** Define the comparison clip for plan 10 phase 6 against FFrames and raea: the same 1080p30 content authored in each (text, shapes, an image, a video layer and audio, about 120 s), each tool's fastest documented path on the same machine, wall time from source to finished MP4, plus output size and a VMAF or SSIM check against a shared reference. The run itself needs the user's explicit yes.
 Gate: the protocol, both sources and the scripts are committed before any number is published.
-Status: the HTML source is `examples/html/benchmark/` and the HyperFrames side ran 2026-11-06 through `crates/director-html/tools/hyperframes-benchmark.mjs` (numbers in the plan 10 measurement table). The FFrames and raea sources are not written and neither tool is installed.
+Status: the HTML source is `examples/html/benchmark/` and the HyperFrames side ran 2026-11-06 through `crates/director-html/tools/hyperframes-benchmark.mjs` (numbers in the plan 10 measurement table). The raea source is the TSX port `examples/html/benchmark/raea/edit.tsx`, staged by `raea/stage.py`, and the raea side ran 2026-11-06 on raea 0.1.0-canary.2 for Windows (numbers in the plan 10 measurement table). That build needed four workarounds: its HTML path reads SDK files from a CI path and a missing `runtime/js/js/build.ts`, so the port is TSX; it misreads Windows font paths, so the fonts load as data URLs; usvg rejects a `deg` transform on `<svg>`, so the star turns inside a div; and it refuses footage with B-frames, so staging re-encodes `clip20.mp4` with `-bf 0`. The FFrames source is not written and FFrames is not installed.
 
 **B4. Shader authoring candidate.** A user-authored SkSL layer for HTML (`<canvas data-sksl>` or a CSS custom property) with a GLSL-to-SkSL path for common Shadertoy uniforms. Decide after plan 10 phase 5, since plan 10 freezes the Paper translator.
 
 ## Part C: raea comparison
 
-Sources: `github.com/shinyobjectz/raea` at `925bc03` (created 2026-10-18, 198 stars, canary, FSL-1.1-ALv2) and `raea.io` (`/`, `/why/`, `/learn/`), read on 2026-11-05.
+Sources: `github.com/shinyobjectz/raea` at `925bc03` (created 2026-10-18, 198 stars, canary, FSL-1.1-ALv2) and `raea.io` (`/`, `/why/`, `/learn/`), read on 2026-11-05; the repository at `5e1c192` (520 stars, Windows builds since 2026-11-05) and the 0.1.0-canary.2 Windows zip, run on 2026-11-06.
 
 raea is a Rust engine on Bevy 0.20. Compositions are React/TSX on a Remotion-shaped API (`AbsoluteFill`, `useCurrentFrame`, `interpolate`, `Sequence`, `registerRoot`) run by JavaScriptCore on macOS and QuickJS elsewhere, with HTML laid out by patched Stylo, Blitz and Parley. One file renders to video, plays live as a game, or exports as a game. Its agent layer is an installable skill, craft guides printed by `raea guide`, and `raea check` on a finished export.
 
@@ -126,7 +126,7 @@ raea is a Rust engine on Bevy 0.20. Compositions are React/TSX on a Remotion-sha
 | Agent craft guides | A floor (verify, refuse, never), a P0 to P3 rubric with model-judged questions, named edit moves, brief and storyboard gate | Generated skills, MCP, QA score | C3 |
 | Music timing | Song map with beats, downbeats, builds and drops | Beat grid as beat times, `director.beat` | Plan 10 issue 8 |
 | Media CLI | `raea ffmpeg` and `raea ffprobe` read ffmpeg command lines in process | One FFmpeg process per export | C4 candidate |
-| Speed claim | Pong 1080p at 5.3 ms a frame and a platformer at 4.4 ms, M5 Pro with VideoToolbox H.264; no named competitor | B3 clip at 5.9 ms a frame end to end on Vulkan and NVENC (21.1 s for 3600 frames), 4.7 times HyperFrames; raea side not run | B3 raea side |
+| Speed claim | Pong 1080p at 5.3 ms a frame and a platformer at 4.4 ms, M5 Pro with VideoToolbox H.264; no named competitor | B3 clip end to end on one RTX 5060 Ti: Director 19.1 s on Vulkan and NVENC and 22.9 s on Vulkan and x264, raea 23.6 s on Vulkan and OpenH264, with matching SSIM against HyperFrames | Keep the lead as raea matures |
 
 ### Workstreams
 

@@ -867,7 +867,16 @@ impl Element for HtmlElement {
         }
         let mut content_error = Ok(());
         if let Some(content) = &self.content {
-            content_error = content.render(canvas, self.content_rect(rect), 1.0, &mut |_| {});
+            let content_rect = self.content_rect(rect);
+            let curve = replaced_kind(content.kind()).then(|| content_curve(rect, &radii, content_rect)).flatten();
+            if let Some(curve) = curve {
+                canvas.save();
+                canvas.clip_rrect(curve, skia_safe::ClipOp::Intersect, true);
+            }
+            content_error = content.render(canvas, content_rect, 1.0, &mut |_| {});
+            if curve.is_some() {
+                canvas.restore();
+            }
         }
         if content_error.is_ok() {
             text::paint_text_lines(canvas, self, rect);
@@ -924,6 +933,29 @@ fn origin_view_matrix(origin_x: f32, origin_y: f32, origin_z: f32, matrix: &M44)
     let to_origin = M44::translate(origin_x, origin_y, origin_z);
     let from_origin = M44::translate(-origin_x, -origin_y, -origin_z);
     M44::concat(&M44::concat(&to_origin, matrix), &from_origin)
+}
+
+/// Content kinds CSS treats as replaced elements: `img`, `video`, `svg` and `model`.
+fn replaced_kind(kind: &str) -> bool {
+    matches!(kind, "image" | "video" | "html_video" | "vector" | "svg_smil" | "model")
+}
+
+/// The content edge curve CSS trims replaced content to: each corner radius
+/// less the border and padding on its two sides. `None` when every corner is square.
+fn content_curve(rect: Rect, radii: &[skia_safe::Point; 4], content: Rect) -> Option<skia_safe::RRect> {
+    let (left, top) = (content.left - rect.left, content.top - rect.top);
+    let (right, bottom) = (rect.right - content.right, rect.bottom - content.bottom);
+    let inner = |corner: skia_safe::Point, x: f32, y: f32| skia_safe::Point::new((corner.x - x).max(0.0), (corner.y - y).max(0.0));
+    let inner = [
+        inner(radii[0], left, top),
+        inner(radii[1], right, top),
+        inner(radii[2], right, bottom),
+        inner(radii[3], left, bottom),
+    ];
+    inner
+        .iter()
+        .any(|r| r.x > 0.0 && r.y > 0.0)
+        .then(|| skia_safe::RRect::new_rect_radii(content, &inner))
 }
 
 fn m44_from_affine(matrix: &Matrix) -> skia_safe::M44 {

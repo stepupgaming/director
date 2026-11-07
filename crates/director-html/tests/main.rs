@@ -46,6 +46,7 @@ mod paint_gaps;
 mod project;
 mod reel;
 mod reflection;
+mod replaced_corners;
 mod rewind;
 mod rich_text;
 mod scene_document;
