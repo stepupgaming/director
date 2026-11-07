@@ -3148,6 +3148,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "director-breakdown"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "director-cli"
 version = "0.1.0"
 dependencies = [
@@ -3156,6 +3168,7 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "director-3d",
+ "director-breakdown",
  "director-core",
  "director-host",
  "director-html",

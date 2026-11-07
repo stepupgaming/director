@@ -1,0 +1,21 @@
+[package]
+name = "director-breakdown"
+version = "0.1.0"
+edition = "2021"
+autotests = false
+description = "Shot breakdown of a reference video for Director: cuts, transitions and container provenance."
+license = "Apache-2.0"
+
+[dependencies]
+regex = "1.11"
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"

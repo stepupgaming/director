@@ -12,6 +12,8 @@
 - `10-native-platform-overhaul.md` - scene document, parallel renderer, host session, HTML-first authoring and proof. **In progress.** It is the current-state and handoff document: phases and gates, the latest measurement table, and the next action.
 - `11-transcription-and-competitive-gaps.md` - optional `director-asr` crate with transcript-driven captions and edits, the corrected FFrames and raea scorecards, distribution, the head-to-head benchmark protocol and export QA checks. **Spec.** Its checks record measurements in the plan 10 table while plan 10 is active.
 
+- `12-shot-breakdown.md` - the `director-breakdown` crate: shots, transitions and provenance of a reference video ported from rea-video, then per-shot picture, sound and descriptions up to replication, with the parity record. **In progress.**
+
 ## Local Contracts
 
 - Plans are the implementation contract until marked done or superseded.

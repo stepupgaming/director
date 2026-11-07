@@ -2,7 +2,7 @@
 
 > **Status:** Plans 01–06 implemented (2026-07-19) — core hardening program complete
 > **Priority:** Engine solidity over product surface
-> **Post-core product:** compositions, motion/recipes and CLI landed. Native projects and runtime are [plan 08](08-native-projects-and-runtime.md) (**Done**). Native paint and media fidelity is [plan 09](09-native-fidelity.md) (**Superseded**). The native platform overhaul is [plan 10](10-native-platform-overhaul.md) (**In progress**), which holds current status and the next action. Transcription and the FFrames and raea scorecards are [plan 11](11-transcription-and-competitive-gaps.md) (**Spec**).
+> **Post-core product:** compositions, motion/recipes and CLI landed. Native projects and runtime are [plan 08](08-native-projects-and-runtime.md) (**Done**). Native paint and media fidelity is [plan 09](09-native-fidelity.md) (**Superseded**). The native platform overhaul is [plan 10](10-native-platform-overhaul.md) (**In progress**), which holds current status and the next action. Transcription and the FFrames and raea scorecards are [plan 11](11-transcription-and-competitive-gaps.md) (**Spec**). The shot breakdown of reference videos is [plan 12](12-shot-breakdown.md) (**In progress**).
 
 ## Goal
 
@@ -72,6 +72,7 @@ Do not schedule under this program:
 | 9 | [09-native-fidelity.md](09-native-fidelity.md) | Native CSS, SVG, 3D, shader, and captured-media fidelity for the Hyper CN corpus and authored HTML | **Superseded** |
 | 10 | [10-native-platform-overhaul.md](10-native-platform-overhaul.md) | Scene document, parallel renderer, host session, HTML-first authoring, proof of speed and quality | **In progress** |
 | 11 | [11-transcription-and-competitive-gaps.md](11-transcription-and-competitive-gaps.md) | Optional `director-asr` crate (Whisper, Parakeet v3 and Bark 3.0 TDT packs), transcript-driven captions and edits, FFrames and raea scorecards, distribution and head-to-head protocol | **Spec** |
+| 12 | [12-shot-breakdown.md](12-shot-breakdown.md) | `director-breakdown`: shots, transitions and provenance of a reference video, at parity with rea-video, then picture, sound and descriptions up to replication | **In progress** |
 
 **Dependency order:** `01` first (everything samples time). `02` before trusting incremental edit. `03` can start once dirty APIs are understood; finish after `01`–`02`. `04` parallel after `01` time helpers exist. `05` after identity stabilizes. `06` continuous background; fonts/CI can land anytime.
 

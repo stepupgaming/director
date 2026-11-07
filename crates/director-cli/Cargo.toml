@@ -15,6 +15,7 @@ director-3d = { path = "../director-3d" }
 director-recorder = { path = "../director-recorder" }
 director-render = { path = "../director-render" }
 director-host = { path = "../director-host" }
+director-breakdown = { path = "../director-breakdown" }
 director-schema = { path = "../director-schema" }
 serde = { version = "1.0", features = ["derive"] }
 rhai = "1.23.6"

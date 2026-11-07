@@ -1,0 +1,22 @@
+director-breakdown
+Part of Director.
+
+This crate ports the shot detection and container provenance stages of
+rea-video (https://github.com/JuneYaooo/rea-video, commit c9359c4):
+
+  rea-video
+  Copyright 2026 JuneYaooo
+  Licensed under the Apache License, Version 2.0.
+
+The full license text is in LICENSE-APACHE.
+
+Changes from rea-video:
+- src/track.rs and src/shots.rs are a Rust port of rea_video/shots.py. The
+  optical-flow check that rejects motion posing as a dissolve uses block
+  matching on the thumbnails in place of OpenCV Farneback flow.
+- src/media.rs is a Rust port of the ffprobe and frame-pipe parts of
+  rea_video/media.py.
+- src/probe.rs is a Rust port of rea_video/probe.py with English output,
+  global platform signatures (YouTube, TikTok, Instagram and others), more
+  desktop editors, renderers, screen recorders and generators, an encoder
+  tool category, and TikTok AIGC labels.

@@ -69,6 +69,17 @@ Install the optional Node dependencies in `../director-html/tools` for capture. 
 
 CPU exports paint frames in parallel on a worker pool and encode them in one FFmpeg pass. `--gpu` selects serial Vulkan painting. `--encoder nvenc` selects NVIDIA H.264 encoding and also works with CPU painting. Defaults are CPU rendering and software H.264. Explicit requests fail when unavailable. Benchmarks report backend, codec, setup time and synchronized RGBA readback; frame FPS excludes PNG encoding. The upstream Skia resolver patch is selected from `vendor/skia-safe` by Cargo.
 
+## Shot breakdown
+
+```bash
+# Shots, transitions, beats and container provenance of a reference video
+director-engine breakdown reference.mp4 -o target/ref
+director-engine breakdown reference.mp4 --min-shot 0.5 --no-dissolve
+director-engine breakdown --schema
+```
+
+`breakdown` decodes the video through `ffmpeg` and writes `breakdown.json` (`director-breakdown/1`): the source's size, rotation, fps and frame count, each shot's start, end, frames, incoming transition (`cut`, `fade`, `dissolve`, `flash`) and motion-graphics beats, and the provenance scan (encoder, camera tags, AIGC labels and hints such as `platform` or `generator`). Without `-o` the document prints on stdout. It runs locally and needs no model.
+
 ## Exit codes
 
 | Code | Meaning |

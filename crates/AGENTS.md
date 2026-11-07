@@ -15,6 +15,7 @@
 - `director-host/` owns input loading and the host session: a revisioned scene document with atomic patches, outline, diff, inspect, the QA report, frame render and cancellable export, the editor protocol with its shared-memory frame ring, plus the JSON error envelope.
 - `director-3d/` owns real 3D: glTF scenes rendered by a headless Bevy app on Vulkan and painted as the `model` element.
 - `director-track/` owns feature tracking, the camera solve from footage that matchmoves a `model`, the light probe stitched from that footage and the sun read from its shadows.
+- `director-breakdown/` owns the shot breakdown of a reference video: cuts, fades, dissolves, flashes, motion-graphics beats and container provenance as `breakdown.json`. It links no Skia.
 - `lottie-core/`, `lottie-data/`, and `lottie-skia/` own Lottie parsing, data models, animation logic, and Skia rendering.
 
 ## Local Contracts
@@ -49,6 +50,7 @@
 - `director-host/AGENTS.md` - Host session, patch ops, input loading and the error envelope.
 - `director-3d/AGENTS.md` - Bevy 3D studio, the `model` element, its document body and the test GLB.
 - `director-track/AGENTS.md` - Corner tracks, the incremental camera solve, its ground-plane world, plate light probes and the plate's sun.
+- `director-breakdown/AGENTS.md` - Shot and transition detection ported from rea-video, the container provenance probe and the `breakdown.json` document.
 - `lottie-core/AGENTS.md` - Lottie animation logic and expression support.
 - `lottie-data/AGENTS.md` - Lottie data models and JSON fixtures.
 - `lottie-skia/AGENTS.md` - Lottie Skia renderer and render fixtures.

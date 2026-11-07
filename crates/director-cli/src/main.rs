@@ -1,5 +1,6 @@
 mod audio_report;
 mod batch;
+mod breakdown;
 mod check;
 mod editor;
 mod gpu;
@@ -122,6 +123,8 @@ enum Commands {
     Mcp(mcp::McpArgs),
     /// Write agent skills generated from the MCP tool schemas
     Skills(skills::SkillsArgs),
+    /// Measure a reference video's shots, transitions and container provenance as breakdown.json
+    Breakdown(breakdown::BreakdownArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -548,6 +551,12 @@ fn main() {
         }
         Some(Commands::Onion(args)) => {
             let code = onion::run(args);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Some(Commands::Breakdown(args)) => {
+            let code = breakdown::run(args);
             if code != 0 {
                 std::process::exit(code);
             }
