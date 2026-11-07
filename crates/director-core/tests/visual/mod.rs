@@ -1,6 +1,9 @@
 //! Golden frames live in `tests/visual/golden/<module>/<name>.png`,
-//! resolved from `CARGO_MANIFEST_DIR`.
-//! Set `DIRECTOR_UPDATE_GOLDENS=1` to write or replace them.
+//! resolved from `CARGO_MANIFEST_DIR`. On Linux, where FreeType rasterizes
+//! glyphs that Windows rasterizes with DirectWrite,
+//! `tests/visual/golden/linux/<module>/<name>.png` replaces the shared golden.
+//! Set `DIRECTOR_UPDATE_GOLDENS=1` to write or replace them; on Linux that
+//! writes an override only for frames that miss the shared golden.
 //! A missing golden fails.
 use director_core::video_wrapper::RenderMode;
 use director_core::{AssetLoader, Director};
@@ -49,13 +52,62 @@ fn updating_goldens() -> bool {
         .unwrap_or(false)
 }
 
+fn golden_root() -> PathBuf {
+    manifest_dir().join("tests").join("visual").join("golden")
+}
+
+fn shared_golden_path(module: &str, name: &str) -> PathBuf {
+    golden_root().join(module).join(format!("{name}.png"))
+}
+
+/// The platform whose glyph rasterizer needs its own text goldens.
+fn platform_golden_path(module: &str, name: &str) -> Option<PathBuf> {
+    cfg!(target_os = "linux")
+        .then(|| golden_root().join("linux").join(module).join(format!("{name}.png")))
+}
+
+/// The golden this platform compares against: its override when one exists,
+/// else the shared golden.
 pub fn golden_path(module: &str, name: &str) -> PathBuf {
-    manifest_dir()
-        .join("tests")
-        .join("visual")
-        .join("golden")
-        .join(module)
-        .join(format!("{name}.png"))
+    platform_golden_path(module, name)
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| shared_golden_path(module, name))
+}
+
+/// Where update mode writes a frame. Off Linux that is the shared golden. On
+/// Linux it is the override, unless the frame matches the shared golden.
+fn golden_update_path(
+    module: &str,
+    name: &str,
+    rendered_bytes: &[u8],
+    config: &VisualConfig,
+) -> Result<Option<PathBuf>, String> {
+    let shared = shared_golden_path(module, name);
+    let Some(platform) = platform_golden_path(module, name) else {
+        return Ok(Some(shared));
+    };
+    if shared.is_file() && !platform.is_file() {
+        let reference = image::open(&shared)
+            .map_err(|err| format!("failed to open golden {}: {err}", shared.display()))?
+            .to_rgba8();
+        let rendered = image::load_from_memory(rendered_bytes)
+            .map_err(|err| format!("failed to decode rendered frame: {err}"))?
+            .to_rgba8();
+        if reference.dimensions() == rendered.dimensions() {
+            let (width, height) = rendered.dimensions();
+            let diff = compare_rgba(
+                rendered.as_raw(),
+                reference.as_raw(),
+                width,
+                height,
+                config.channel_delta,
+            )?;
+            if !exceeds_tolerance(&diff, config.max_fraction) {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(platform))
 }
 
 /// Cargo sets `CARGO_TARGET_TMPDIR` only while compiling integration tests,
@@ -336,11 +388,15 @@ pub fn assert_visual_match_with(
     require_bundled_fonts(director)?;
     let document = assert_scene_round_trips(director)?;
     let rendered_bytes = render_png(director, time)?;
-    let golden = golden_path(module, name);
 
     if updating_goldens() {
-        write_bytes(&golden, &rendered_bytes)?;
-        println!("updated golden {}", golden.display());
+        match golden_update_path(module, name, &rendered_bytes, config)? {
+            Some(golden) => {
+                write_bytes(&golden, &rendered_bytes)?;
+                println!("updated golden {}", golden.display());
+            }
+            None => println!("{module}/{name} matches the shared golden"),
+        }
         return Ok(());
     }
 

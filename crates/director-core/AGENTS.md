@@ -252,6 +252,11 @@ rather than relying on host system fonts.
 * Goldens live in `tests/visual/golden/<module>/<name>.png`. A missing
   golden fails. `DIRECTOR_UPDATE_GOLDENS=1` rewrites goldens; review the PNG
   diff before committing.
+* Linux rasterizes glyphs with FreeType and Windows with DirectWrite, so text
+  frames differ. On Linux `tests/visual/golden/linux/<module>/<name>.png`
+  replaces the shared golden, and update mode writes an override only for a
+  frame that misses the shared one. Linux overrides come from the CI runner:
+  copy each failing frame's `<name>.actual.png` from the CI artifact.
 * A pixel differs when any channel delta exceeds 16; a frame fails above a
   0.001 differing fraction. `assert_visual_match_with` overrides per test.
 * Fonts and assets resolve from `CARGO_MANIFEST_DIR`, so the suite runs from

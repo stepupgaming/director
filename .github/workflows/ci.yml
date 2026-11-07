@@ -49,7 +49,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --release -- -D warnings
 
       - name: Test
-        run: cargo test --workspace --release
+        run: cargo test --workspace --release --no-fail-fast
 
       - name: Upload visual failures
         if: failure()

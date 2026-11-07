@@ -4,7 +4,7 @@
 
 ## Ownership
 
-- `workflows/ci.yml` owns the single Linux CI job: release clippy and release workspace tests, including the visual suite.
+- `workflows/ci.yml` owns the single Linux CI job: release clippy and release workspace tests with `--no-fail-fast`, including the visual suite, so one run reports every failing crate. A failure uploads `target/tmp/**/*.png`, which holds each visual mismatch's `.actual.png` and `.diff.png`.
 - `ISSUE_TEMPLATE/` owns GitHub issue forms and template routing.
 
 ## Local Contracts
