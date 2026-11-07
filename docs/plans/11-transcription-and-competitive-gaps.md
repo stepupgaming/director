@@ -11,21 +11,31 @@
 
 ## Part A: `director-asr`
 
-### Corrections to the proposed spec
+### Engine: the Bark 3.0 family through `bark-rs`
 
-| Proposed | Finding | Plan 11 design |
-| --- | --- | --- |
-| The trait lives in `director-core`, built into a `director` crate with `asr-whisper` on by default | The workspace has no `director` crate, and core ownership excludes analysis inputs. whisper.cpp and ONNX Runtime add native builds and large downloads to every workspace build and CI run. | A new `crates/director-asr` crate. `director-cli` gains an opt-in `asr` feature, like `vulkan`. Core and render stay ASR-free. |
-| `async fn transcribe` through `async_trait` | Inference is CPU or GPU bound and blocking. The host session needs progress and cancellation, which async alone does not give. | A blocking `transcribe` that takes a progress callback and a cancel flag. Callers that need async wrap it in `spawn_blocking`. |
-| `start_ms: u64`, `end_ms: u64` | The timeline runs on `f64` seconds (plan 01). Integer milliseconds round twice on the way to frames. | `start` and `end` in `f64` seconds of the source media, matching `CaptionWord::start_sec`. |
-| `pcm_data: &[f32]` with no rate or channel contract | Every backend expects 16 kHz mono. | `Audio { samples, sample_rate }` mono input; the crate resamples and downmixes, and decodes media through `director_core::audio::load_audio_bytes`. |
-| Parakeet TDT is English-focused, "sub-frame" timing | `parakeet-tdt-0.6b-v3` covers 25 European languages with automatic language detection. TDT timestamps come from 80 ms encoder frames, about 2.4 frames at 30 fps. | Parakeet v3 is a multilingual pack. Word boundaries get an optional sample-level refinement pass (below) measured against forced alignment before any frame-accuracy claim. |
-| Bark is a separate engine on the `onnxruntime` 0.0.14 crate | Underdog Bark 3.0 is an English post-training of `parakeet-tdt-0.6b-v3` with the same blank id, window and decoder and joint contract. The `onnxruntime` crate is unmaintained. | One TDT transducer backend on `ort` runs both Parakeet v3 and Bark 3.0 as model packs. Bark's `<unk>` token (emitted for quotation marks) is dropped from text and timings and still fed to the decoder. |
-| Bark "verbatim vs clean pipeline options" | Bark 3.0 Clean is a separate checkpoint that drops fillers, false starts and repeats from its output. A word missing from the output cannot be cut from the video. | Transcription always runs verbatim. A disfluency pass aligns the verbatim words with a Clean transcript of the same audio and flags each word Clean omitted. Edits then remove flagged words by time. |
-| Whisper `large-v3` at 1.5 GB | `large-v3` has 1.5 B parameters; its f16 ggml file is about 3.1 GB. Quantized and `turbo` variants are smaller. Word timing comes from experimental DTW token timestamps. | Whisper is the broad-language pack (99 languages) through `whisper-rs`, with DTW timestamps on and the same refinement pass. |
-| `keyword_biasing` on every backend | Whisper takes an initial prompt. Greedy TDT decoding has no biasing hook. | Each backend reports `Capabilities`. An option a backend lacks returns `AsrError::Unsupported`, in line with plan 10's fail-loud rule. |
-| A factory `match` with a `_ =>` fallback arm | With every feature on, the fallback arm is unreachable and clippy `-D warnings` fails. | An always-compiled `Backend` enum, `available_backends()`, and an error that names the missing Cargo feature. |
-| Model files left implicit | Downloads are hundreds of MB to GB, and licenses differ by pack. | A model store with pinned URLs, SHA-256 and license per pack. Downloads run only through an explicit `fetch`. Bark 3.0 base (CC-BY 4.0), Parakeet v3 (CC-BY 4.0) and Whisper (MIT) are first; Clean, Plus and Pro ship once their licenses are confirmed. |
+Decided 2026-11-07: Director transcribes with all four Underdog Bark 3.0 models through `bark-rs` (`C:\Projects\bark-rs`, the user's crate). Whisper and Parakeet v3 move to the backlog.
+
+`bark-rs` runs Bark 3.0 on ONNX Runtime (pyke `ort` 2.0.0-rc.15) with no Python at run time. It reads `model.bark` (format `bark-levels-v3`) and builds the weights of three committed, weightless graphs (encoder, one LSTM decoder step, joint; 2.3 MB) at load. The default graphs pack each encoder weight into 2-bit ternary `MatMulNBits` matrices and stay bit-exact with fp32. Greedy TDT decoding follows `model.generate` after a 0.25 s silent lead-in. On the 67.2 s fixture the desktop CPU transcribes in 3.53 s at 1.43 GB peak, and the transcript matches the official model on 13 clips.
+
+| Model | Hugging Face repo | Weights | Role | Vendor WER (7-set Open ASR average) |
+| --- | --- | --- | --- | --- |
+| Bark 3.0 | `ConwayResearch/Underdog-Bark-3.0` | `model.bark`, 163 MB | Verbatim default | 4.94 |
+| Bark 3.0 Plus | `ConwayResearch/Underdog-Bark-3.0-Plus` | `model.bark`, 180 MB | Verbatim, more accurate | 4.76 |
+| Bark 3.0 Clean | `ConwayResearch/Underdog-Bark-3.0-Clean` | `model.bark`, 180 MB | Drops fillers, false starts and repeats; built on Plus | 5.83 against verbatim references |
+| Bark 3.0 Pro | `ConwayResearch/Underdog-Bark-3.0-Pro` | BF16 `model.safetensors`, about 1.25 GB | Most accurate | 4.29 |
+
+- All four are 0.6 B English post-trainings of `nvidia/parakeet-tdt-0.6b-v3` with the same encoder, decoder and joint, so one graph set serves every model.
+- All four are CC BY-NC 4.0. Director's code stays MIT OR Apache-2.0 and ships no weights. `asr fetch` prints the license, and commercial use of the weights needs a license from Conway (`license@conway.tech`, per each card).
+- WER figures are the vendor's own, scored with the Open ASR Leaderboard code (cards read 2026-11-07).
+
+### Work in `bark-rs`
+
+These belong in `bark-rs` itself, and Director depends on them:
+
+- **Token timings.** Record the encoder frame and duration of every emitted token (80 ms frames, the 0.25 s lead-in subtracted) and the joint's probability for it, then group SentencePiece pieces into words at `▁`. `<unk>` (quotation marks) stays out of text and timings and is still fed to the decoder.
+- **Plus and Clean.** Load their `model.bark` files and match the official transcript on the fixture.
+- **Pro.** Build initializers from BF16 safetensors. Pack the encoder into the exact 2-bit form when its weights hold few levels per row, and use the q8 graphs otherwise, so Pro stays under about 2 GB peak.
+- **Publishing.** A crates.io release under a free name with `[lib] name = "bark"` and the graphs inside the package, as the lottie crates do. Until then `director-asr` takes a path dependency and stays out of `cargo publish`.
 
 ### Design
 
@@ -33,46 +43,44 @@
 pub struct Audio<'a> { pub samples: &'a [f32], pub sample_rate: u32 }
 
 pub struct Word { pub text: String, pub start: f64, pub end: f64, pub confidence: f32, pub disfluent: bool }
-pub struct Transcript { pub language: Option<String>, pub words: Vec<Word>, pub model: ModelId }
+pub struct Transcript { pub words: Vec<Word>, pub model: Model }
 
-pub struct Options { pub language: Option<String>, pub prompt: Option<String>, pub refine_boundaries: bool, pub tag_disfluencies: bool }
-pub struct Capabilities { pub languages: Languages, pub prompt: bool, pub word_timing: Timing }
+pub struct Options { pub refine_boundaries: bool, pub tag_disfluencies: bool, pub graphs: Graphs }
+pub enum Model { Bark, BarkPlus, BarkClean, BarkPro }
+pub enum Graphs { Exact, Q8 { int8_activations: bool } }
 
-pub trait Engine: Send {
-    fn capabilities(&self) -> &Capabilities;
-    fn transcribe(&mut self, audio: Audio, options: &Options, progress: &mut dyn FnMut(f32), cancel: &AtomicBool)
+pub fn open(model: Model, store: &Store, threads: usize) -> Result<Engine, AsrError>;
+impl Engine {
+    pub fn transcribe(&mut self, audio: Audio, options: &Options, progress: &mut dyn FnMut(f32), cancel: &AtomicBool)
         -> Result<Transcript, AsrError>;
 }
-
-pub enum Backend { Whisper, Tdt }
-pub fn available_backends() -> Vec<Backend>;
-pub fn open(model: &ModelPack, device: Device) -> Result<Box<dyn Engine>, AsrError>;
 ```
 
-- **Crate layout:** `src/lib.rs` (types, errors, `open`), `src/audio.rs` (decode, downmix, resample to 16 kHz), `src/chunk.rs` (voice-activity windows with overlap and word-level stitching for long media), `src/refine.rs` (boundary refinement), `src/disfluency.rs` (verbatim and Clean alignment), `src/store.rs` (model packs, cache directory, hashes, licenses), `src/whisper.rs` behind `whisper`, `src/tdt.rs` behind `tdt`.
-- **Features:** `whisper` (`whisper-rs`), `tdt` (`ort` with prebuilt ONNX Runtime), `cuda` and `directml` execution providers for `tdt`, `vulkan` and `cuda` for whisper.cpp. Pin versions at implementation time; `whisper-rs-sys` needs libclang and CMake on Windows.
-- **TDT backend:** encoder plus decoder and joint ONNX graphs, greedy TDT decoding with duration outputs, SentencePiece vocabulary from the pack. Bark 3.0 publishes transformers, MLX and Core ML weights, so the pack build exports ONNX with a `uv`-run script under `crates/director-asr/tools/`, and the exported graphs are compared against the transformers reference on a fixture before a pack is pinned.
-- **Long media:** windows of up to 30 s for Whisper and a few minutes for TDT, cut at voice-activity gaps with overlap; stitching keeps the word from the window where it sits farther from the edge.
-- **Boundary refinement:** move each word start and end to the nearest low-energy point within half an encoder frame, using 10 ms RMS on the 16 kHz signal. Report timing error against forced-alignment ground truth before and after.
-- **Scene document:** `director-scene` gains a transcript asset (words in source-media seconds, model id, language) attached to an audio or video asset. Caption nodes and edit operations reference it, so a project re-renders and re-edits without running ASR again.
-- **Edit operations** (through `director-host` once plan 10 phase 4 lands): `captions_from_transcript`, `cut_words`, `remove_disfluencies`, `remove_silences(min_gap)` and `tighten_pauses(max_gap)`. Cuts split `TrackClip`s with source in and out points, snap to frame times through the timeline helpers, and map caption words from source time to timeline time through clip speed and trims.
-- **CLI:** `director-engine asr models`, `asr fetch <pack>` and `asr transcribe <media> --pack <pack> [--json] [--srt|--vtt]`, plus `asr captions <project> --asset <id>` writing the transcript asset and caption nodes. Exit codes follow the CLI contract.
+- **Contracts:** `transcribe` blocks and takes a progress callback and a cancel flag; async callers wrap it in `spawn_blocking`. Times are `f64` seconds of the source media, matching `CaptionWord::start_sec`. Input is any rate and channel count; the crate downmixes and resamples to 16 kHz mono, and decodes media through `director_core::audio::load_audio_bytes`. Options a model lacks return `AsrError::Unsupported`.
+- **Crate layout:** `src/lib.rs` (types, errors, `open`), `src/audio.rs` (decode, downmix, resample), `src/chunk.rs` (voice-activity windows with overlap and word stitching), `src/refine.rs` (boundary refinement), `src/disfluency.rs` (verbatim and Clean alignment), `src/store.rs` (model cache, pinned URLs, SHA-256, licenses).
+- **Features:** `director-cli` gains an opt-in `asr` feature, like `vulkan`. Core and render stay ASR-free. `director-asr` exposes `cuda` and `directml` execution providers.
+- **Long media:** windows of a few minutes cut at voice-activity gaps with overlap; stitching keeps each word from the window where it sits farther from the edge.
+- **Boundary refinement:** move each word start and end to the nearest low-energy point within half an encoder frame, using 10 ms RMS on the 16 kHz signal. Report timing error against forced alignment before and after.
+- **Disfluencies:** transcription runs verbatim, since a word missing from the output cannot be cut from the video. The disfluency pass aligns the verbatim words with a Clean transcript of the same audio and flags each word Clean omitted.
+- **Scene document:** `director-scene` gains a transcript asset (words in source-media seconds, model id) attached to an audio or video asset. Caption nodes and edit operations reference it, so a project re-renders and re-edits without running ASR again.
+- **Edit operations** through `director-host`: `captions_from_transcript`, `cut_words`, `remove_disfluencies`, `remove_silences(min_gap)` and `tighten_pauses(max_gap)`. Cuts split `TrackClip`s with source in and out points, snap to frame times through the timeline helpers, and map caption words from source time to timeline time through clip speed and trims.
+- **CLI:** `director-engine asr models`, `asr fetch <model>`, `asr transcribe <media> --model <model> [--json] [--srt|--vtt]`, and `asr captions <project> --asset <id>` writing the transcript asset and caption nodes. Exit codes follow the CLI contract.
 
 ### Phases
 
-**A1. Crate, audio and Whisper.** `director-asr` with the types, audio input, chunking and the Whisper backend; `asr transcribe` with JSON, SRT and VTT output.
-Gate: a CC-BY LibriSpeech fixture transcribes within a recorded WER, and model-dependent tests are `#[ignore]` with an explicit run command, like the live Vulkan tests.
+**A1. Crate, audio and Bark 3.0.** `director-asr` with the types, audio input, windows for long media, the model store and Bark 3.0 through `bark-rs` with word timings; `asr models`, `asr fetch` and `asr transcribe` with JSON, SRT and VTT output.
+Gate: model-free tests cover audio, windows, stitching and the store; an `#[ignore]` test with an explicit run command transcribes the 67.2 s fixture to the official transcript, and a long fixture across several windows keeps every word once and in order.
 
-**A2. TDT backend with Parakeet v3 and Bark 3.0.** The ONNX export script, both packs, `<unk>` handling and execution providers.
-Gate: the exported graphs match the transformers reference transcript on the fixture, and the bench records WER, real-time factor and peak memory for every pack on CPU and GPU.
+**A2. Plus, Clean and Pro.** All four models load and transcribe; exact and q8 graphs with optional int8 activations; CUDA and DirectML providers.
+Gate: each model matches its official transcript on the fixture, and the bench records WER, real-time factor and peak memory for every model and graph set on CPU and GPU.
 
 **A3. Timing quality and disfluencies.** Boundary refinement, the verbatim and Clean alignment, and a timing benchmark against forced alignment.
-Gate: median word-boundary error is recorded per pack with and without refinement, and a fixture with planted fillers flags every filler and no content word.
+Gate: median word-boundary error is recorded per model with and without refinement, and a fixture with planted fillers flags every filler and no content word.
 
 **A4. Document and edit integration.** The transcript asset in `director-scene`, `captions_from_transcript`, and the cut and tighten operations through the host session.
 Gate: removing fillers and long pauses from a talking-head fixture exports with audio and video in sync (framemd5 and sample checks at every cut), and captions follow the retimed words.
 
-Later candidates: speaker diarization feeding the `Speaker` entities, streaming transcription for the preview session, and keyword boosting in a TDT beam search.
+Backlog: Whisper through `whisper-rs` for 99 languages (libclang and CMake on Windows, DTW word timing), Parakeet v3 for 25 European languages on the same graphs, speaker diarization feeding the `Speaker` entities, streaming transcription for the preview session, and keyword boosting in a TDT beam search.
 
 ## Part B: FFrames comparison
 
@@ -142,11 +150,11 @@ Gate: each check has a fixture that fails it and a fixed variant that passes, th
 ## Open decisions
 
 1. ASR default: the opt-in `asr` CLI feature (recommended, keeps default builds lean), or ASR on by default in release binaries.
-2. First backend: Whisper first for language reach (recommended), or TDT first for English quality per MB with Bark 3.0.
-3. Model delivery: explicit `asr fetch` into a user cache (recommended), or packs bundled in release archives.
+2. Model delivery: explicit `asr fetch` from Hugging Face into a user cache (recommended, and the weights stay under their own CC BY-NC terms), or weights bundled in release archives.
+3. `bark-rs` on crates.io: publish it under its own name (recommended, it also serves the Android app), or move it into the workspace as a Director crate.
 
 ## Verification
 
 - `cargo test -p director-asr --release` for model-free tests (audio, chunking, stitching, refinement, alignment, store).
-- `cargo test -p director-asr --release --features whisper,tdt -- --ignored` with fetched packs for transcription, WER and timing tests.
+- `cargo test -p director-asr --release -- --ignored` with fetched models for transcription, WER and timing tests.
 - While plan 10 is active, plan 11 checks record their counts and measurements in the plan 10 measurement table.
