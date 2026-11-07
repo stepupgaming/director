@@ -9,7 +9,7 @@ autotests = false
 description = "Speech to text for Director: word-timed transcripts from the Underdog Bark 3.0 models, subtitles and the model store."
 
 [dependencies]
-rubato = "0.14"
+bark-asr = "0.1.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"

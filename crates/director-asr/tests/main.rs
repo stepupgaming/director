@@ -1,7 +1,7 @@
 //! One integration binary for `director-asr`.
 
 mod audio;
-mod chunk;
+mod engine;
 mod store;
 mod subtitle;
 
@@ -17,7 +17,7 @@ pub fn ffmpeg(args: &[&str], out: &Path) {
 }
 
 pub fn word(text: &str, start: f64, end: f64) -> Word {
-    Word { text: text.to_string(), start, end, confidence: 1.0, disfluent: false }
+    Word { text: text.to_string(), start, end }
 }
 
 pub fn rms(samples: &[f32]) -> f32 {

@@ -13,7 +13,7 @@
 
 ### Engine: the Bark 3.0 family through `bark-rs`
 
-Decided 2026-11-07: Director transcribes with all four Underdog Bark 3.0 models through `bark-rs` (`C:\Projects\bark-rs`, the user's crate). Whisper and Parakeet v3 move to the backlog.
+Decided 2026-11-07: Director transcribes with all four Underdog Bark 3.0 models through `bark-rs` (`C:\Projects\bark-rs`, the user's crate, published as `bark-asr` 0.1.0 with library `bark_asr`). Whisper and Parakeet v3 move to the backlog.
 
 `bark-rs` runs Bark 3.0 on ONNX Runtime (pyke `ort` 2.0.0-rc.15) with no Python at run time. It reads `model.bark` (format `bark-levels-v3`) and builds the weights of three committed, weightless graphs (encoder, one LSTM decoder step, joint; 2.3 MB) at load. The default graphs pack each encoder weight into 2-bit ternary `MatMulNBits` matrices and stay bit-exact with fp32. Greedy TDT decoding follows `model.generate` after a 0.25 s silent lead-in. On the 67.2 s fixture the desktop CPU transcribes in 3.53 s at 1.43 GB peak, and the transcript matches the official model on 13 clips.
 
@@ -30,48 +30,47 @@ Decided 2026-11-07: Director transcribes with all four Underdog Bark 3.0 models 
 
 ### Work in `bark-rs`
 
-These belong in `bark-rs` itself, and Director depends on them:
+These belong in `bark-rs` itself. `bark-asr` 0.1.0 (commit `12da335`) ships token and word times (80 ms frames, the lead-in subtracted, punctuation joined to the word before it), any input rate, long audio cut at pauses into pieces of at most 30 s, Plus and Clean loading, and an int8 graph set. Still open there:
 
-- **Token timings.** Record the encoder frame and duration of every emitted token (80 ms frames, the 0.25 s lead-in subtracted) and the joint's probability for it, then group SentencePiece pieces into words at `▁`. `<unk>` (quotation marks) stays out of text and timings and is still fed to the decoder.
-- **Plus and Clean.** Load their `model.bark` files and match the official transcript on the fixture.
-- **Pro.** Build initializers from BF16 safetensors. Pack the encoder into the exact 2-bit form when its weights hold few levels per row, and use the q8 graphs otherwise, so Pro stays under about 2 GB peak.
-- **Publishing.** A crates.io release under a free name with `[lib] name = "bark"` and the graphs inside the package, as the lottie crates do. Until then `director-asr` takes a path dependency and stays out of `cargo publish`.
+- **Pro.** Build initializers from BF16 safetensors. Pack the encoder into the exact 2-bit form when its weights hold few levels per row, and use the int8 graphs otherwise, so Pro stays under about 2 GB peak.
+- **One environment per process.** `Bark::load` calls `ort::init().build()`, and ort records the first environment in a process-wide `OnceLock`, so a second load in one process fails with "only one environment is allowed per process", even after the first model drops. A long-lived host (MCP server, editor) can load one model per process until `bark-asr` builds its environment once and shares it across loads.
+- **Token probabilities.** The joint's probability per token, for word confidence.
 
 ### Design
 
 ```rust
-pub struct Audio<'a> { pub samples: &'a [f32], pub sample_rate: u32 }
+pub fn decode(path: &Path) -> Result<Vec<f32>, AsrError>;          // ffmpeg CLI, 16 kHz mono
+pub fn to_mono_16k(audio: Audio) -> Result<Vec<f32>, AsrError>;    // bark-asr downmix and resampler
 
-pub struct Word { pub text: String, pub start: f64, pub end: f64, pub confidence: f32, pub disfluent: bool }
-pub struct Transcript { pub words: Vec<Word>, pub model: Model }
-
-pub struct Options { pub refine_boundaries: bool, pub tag_disfluencies: bool, pub graphs: Graphs }
+pub struct Word { pub text: String, pub start: f64, pub end: f64 }
+pub struct Transcript { pub model: Model, pub words: Vec<Word> }
 pub enum Model { Bark, BarkPlus, BarkClean, BarkPro }
-pub enum Graphs { Exact, Q8 { int8_activations: bool } }
+pub enum Graphs { Exact, Int8 }
 
-pub fn open(model: Model, store: &Store, threads: usize) -> Result<Engine, AsrError>;
 impl Engine {
-    pub fn transcribe(&mut self, audio: Audio, options: &Options, progress: &mut dyn FnMut(f32), cancel: &AtomicBool)
+    pub fn open(store: &Store, model: Model, graphs: Graphs, threads: usize) -> Result<Engine, AsrError>;
+    pub fn transcribe(&mut self, samples: &[f32], progress: &mut dyn FnMut(f64, f64), cancel: &AtomicBool)
         -> Result<Transcript, AsrError>;
 }
 ```
 
-- **Contracts:** `transcribe` blocks and takes a progress callback and a cancel flag; async callers wrap it in `spawn_blocking`. Times are `f64` seconds of the source media, matching `CaptionWord::start_sec`. Input is any rate and channel count; the crate downmixes and resamples to 16 kHz mono, and decodes media through the `ffmpeg` CLI. Options a model lacks return `AsrError::Unsupported`.
-- **Crate layout:** `src/lib.rs` (types, errors, `open`), `src/audio.rs` (decode, downmix, resample), `src/chunk.rs` (voice-activity windows with overlap and word stitching), `src/refine.rs` (boundary refinement), `src/disfluency.rs` (verbatim and Clean alignment), `src/store.rs` (model cache, pinned URLs, SHA-256, licenses).
-- **Features:** `director-cli` gains an opt-in `asr` feature, like `vulkan`. Core and render stay ASR-free. `director-asr` exposes `cuda` and `directml` execution providers.
-- **Long media:** windows of at most 60 s overlapping by 4 s, each cut at the quietest point in the last 10 s before its limit; stitching keeps each word whose midpoint falls in its window's keep range.
+- **Contracts:** `transcribe` blocks, reports seconds done and total after each piece and checks the cancel flag before each one; async callers wrap it in `spawn_blocking`. Times are `f64` seconds of the source media, matching `CaptionWord::start_sec`. Models a build cannot run return `AsrError::Unsupported`.
+- **Store:** each model's weight file pinned by Hugging Face revision, size and SHA-256, and each graph set's five files pinned by `bark-rs` commit and hash and fetched from GitHub raw. `import` installs a file already on disk after the same checks, as a hard link on one volume.
+- **Features:** `director-cli` links `director-asr` in every build (open decision 1). Core and render stay ASR-free. CUDA and DirectML execution providers wait on `bark-asr`.
+- **Long media:** `bark-asr`'s `segments` cuts audio longer than the piece limit (30 s) at the quietest smoothed 10 ms frame between a third of the limit and the limit, so no word is split and no stitching is needed. Shorter pieces read with less context: at 6 s the 20 s fixture keeps every word and loses casing and punctuation in its later pieces.
 - **Boundary refinement:** move each word start and end to the nearest low-energy point within half an encoder frame, using 10 ms RMS on the 16 kHz signal. Report timing error against forced alignment before and after.
 - **Disfluencies:** transcription runs verbatim, since a word missing from the output cannot be cut from the video. The disfluency pass aligns the verbatim words with a Clean transcript of the same audio and flags each word Clean omitted.
 - **Scene document:** `director-scene` gains a transcript asset (words in source-media seconds, model id) attached to an audio or video asset. Caption nodes and edit operations reference it, so a project re-renders and re-edits without running ASR again.
 - **Edit operations** through `director-host`: `captions_from_transcript`, `cut_words`, `remove_disfluencies`, `remove_silences(min_gap)` and `tighten_pauses(max_gap)`. Cuts split `TrackClip`s with source in and out points, snap to frame times through the timeline helpers, and map caption words from source time to timeline time through clip speed and trims.
-- **CLI:** `director-engine asr models`, `asr fetch <model>`, `asr transcribe <media> --model <model> [--json] [--srt|--vtt]`, and `asr captions <project> --asset <id>` writing the transcript asset and caption nodes. Exit codes follow the CLI contract.
+- **CLI:** `director-engine asr models`, `asr fetch <model> [--graphs] [--from] [--graphs-from]`, `asr transcribe <media> [--model] [--graphs] [--format json|srt|vtt|txt] [-o]`, and later `asr captions <project> --asset <id>` writing the transcript asset and caption nodes. Exit codes follow the CLI contract.
 
 ### Phases
 
-**A1. Crate, audio and Bark 3.0.** `director-asr` with the types, audio input, windows for long media, the model store and Bark 3.0 through `bark-rs` with word timings; `asr models`, `asr fetch` and `asr transcribe` with JSON, SRT and VTT output.
-Gate: model-free tests cover audio, windows, stitching and the store; an `#[ignore]` test with an explicit run command transcribes the 67.2 s fixture to the official transcript, and a long fixture across several windows keeps every word once and in order.
+**A1. Crate, audio and Bark 3.0.** `director-asr` with the types, audio input, the model store and Bark 3.0 through `bark-asr` with word timings; `asr models`, `asr fetch` and `asr transcribe` with JSON, SRT and VTT output.
+Gate: model-free tests cover audio and the store; an `#[ignore]` test with an explicit run command transcribes a fixture, and the same audio cut into several pieces keeps every word once and in order.
+Status 2026-11-07: landed. Bark, Plus and Clean transcribe on the exact and int8 graphs; Pro returns `Unsupported`. Matching the official transcript stays with `bark-rs`, which checks it on 13 clips.
 
-**A2. Plus, Clean and Pro.** All four models load and transcribe; exact and q8 graphs with optional int8 activations; CUDA and DirectML providers.
+**A2. Pro and providers.** Pro loads and transcribes once `bark-asr` reads safetensors; CUDA and DirectML providers.
 Gate: each model matches its official transcript on the fixture, and the bench records WER, real-time factor and peak memory for every model and graph set on CPU and GPU.
 
 **A3. Timing quality and disfluencies.** Boundary refinement, the verbatim and Clean alignment, and a timing benchmark against forced alignment.
@@ -149,12 +148,11 @@ Gate: each check has a fixture that fails it and a fixed variant that passes, th
 
 ## Open decisions
 
-1. ASR default: the opt-in `asr` CLI feature (recommended, keeps default builds lean), or ASR on by default in release binaries.
+1. ASR default: ASR in every `director-engine` build (current; ONNX Runtime links statically and adds a `DirectML.dll` import on Windows, which System32 provides from Windows 10 1903), or an opt-in `asr` CLI feature.
 2. Model delivery: explicit `asr fetch` from Hugging Face into a user cache (recommended, and the weights stay under their own CC BY-NC terms), or weights bundled in release archives.
-3. `bark-rs` on crates.io: publish it under its own name (recommended, it also serves the Android app), or move it into the workspace as a Director crate.
 
 ## Verification
 
-- `cargo test -p director-asr --release` for model-free tests (audio, chunking, stitching, refinement, alignment, store).
-- `cargo test -p director-asr --release -- --ignored` with fetched models for transcription, WER and timing tests.
+- `cargo test -p director-asr --release` for model-free tests (audio, store, engine errors, subtitles).
+- `DIRECTOR_ASR_SPEECH=<speech file> DIRECTOR_ASR_MODEL=<model> DIRECTOR_ASR_GRAPHS=<exact|int8> cargo test -p director-asr --release --test integration engine:: -- --include-ignored`, once per model, with the model in the store.
 - While plan 10 is active, plan 11 checks record their counts and measurements in the plan 10 measurement table.

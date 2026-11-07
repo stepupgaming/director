@@ -18,6 +18,7 @@ director-recorder = { workspace = true }
 director-render = { workspace = true }
 director-host = { workspace = true }
 director-breakdown = { workspace = true }
+director-asr = { workspace = true }
 director-schema = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 rhai = "1.23.6"

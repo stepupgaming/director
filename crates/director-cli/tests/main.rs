@@ -8,6 +8,7 @@ mod batch;
 #[path = "../src/sample_times.rs"]
 mod sample_times;
 
+mod asr;
 mod editor;
 mod html_export;
 mod inspect_deps;

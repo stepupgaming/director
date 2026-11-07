@@ -1,4 +1,4 @@
-use director_asr::audio::{decode, resample, to_mono_16k};
+use director_asr::audio::{decode, to_mono_16k};
 use director_asr::{AsrError, Audio};
 
 use crate::{ffmpeg, rms};
@@ -17,8 +17,8 @@ fn resampling_keeps_length_and_timing() {
         for s in &mut mono[at..at + rate as usize / 1000] {
             *s = 1.0;
         }
-        let out = resample(&mono, rate).unwrap();
-        assert_eq!(out.len(), 40_000, "{rate} Hz");
+        let out = to_mono_16k(Audio { samples: &mono, sample_rate: rate, channels: 1 }).unwrap();
+        assert!((out.len() as i64 - 40_000).abs() <= 2, "{rate} Hz gives {} samples", out.len());
         // The 1 ms click covers output samples 16 000 to 16 016.
         let p = peak(&out);
         assert!((15_996..=16_020).contains(&p), "{rate} Hz click lands at sample {p}");
@@ -29,7 +29,7 @@ fn resampling_keeps_length_and_timing() {
 fn resampling_keeps_a_tone_level() {
     let rate = 48_000;
     let mono: Vec<f32> = (0..rate * 2).map(|i| 0.5 * (i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin()).collect();
-    let out = resample(&mono, rate as u32).unwrap();
+    let out = to_mono_16k(Audio { samples: &mono, sample_rate: rate as u32, channels: 1 }).unwrap();
     let level = rms(&out[4_000..28_000]);
     assert!((level - 0.5 / 2f32.sqrt()).abs() < 0.005, "rms {level}");
 }

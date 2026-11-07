@@ -80,6 +80,24 @@ director-engine breakdown --schema
 
 `breakdown` decodes the video through `ffmpeg` and writes `breakdown.json` (`director-breakdown/1`): the source's size, rotation, fps and frame count, each shot's start, end, frames, incoming transition (`cut`, `fade`, `dissolve`, `flash`) and motion-graphics beats, and the provenance scan (encoder, camera tags, AIGC labels and hints such as `platform` or `generator`). Without `-o` the document prints on stdout. It runs locally and needs no model.
 
+## Speech to text
+
+```bash
+# Models and graph sets, with what the cache holds
+director-engine asr models
+
+# Download a model and a graph set, or import copies already on disk
+director-engine asr fetch bark-3.0
+director-engine asr fetch bark-3.0-plus --graphs int8
+director-engine asr fetch bark-3.0 --from F:/Models/bark-3.0/base/model.bark --graphs-from path/to/graphs
+
+# Word-timed transcript as JSON, SRT, VTT or plain text
+director-engine asr transcribe talk.mp4 -o target/talk.json
+director-engine asr transcribe talk.mp4 --model bark-3.0-clean --graphs int8 --format srt -o target/talk.srt
+```
+
+`asr` runs the Underdog Bark 3.0 models on ONNX Runtime through `director-asr` and `bark-asr`. The cache is `--cache`, else `DIRECTOR_ASR_CACHE`, else `director/asr` under the platform cache directory. `fetch` downloads the weights from Hugging Face and the graphs from the `bark-rs` repository through `curl`, each pinned by size and SHA-256; `--from` and `--graphs-from` install local files after the same checks. `exact` graphs reproduce the official transcript; `int8` graphs run about 3x faster. `bark-3.0-pro` waits on safetensors loading in `bark-asr`. The weights are CC BY-NC 4.0, so commercial use needs a license from Conway. `transcribe` decodes the first audio stream through `ffmpeg`, prints progress on stderr, and with `-o` prints a summary (words, audio seconds, stage seconds, real-time factor).
+
 ## Exit codes
 
 | Code | Meaning |

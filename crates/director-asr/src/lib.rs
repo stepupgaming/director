@@ -1,13 +1,12 @@
 //! Speech to text for Director.
 //!
-//! Media decodes to 16 kHz mono ([`audio`]), long recordings split into overlapping
-//! windows cut at quiet points ([`chunk`]), the Underdog Bark 3.0 models live in a
-//! hash-checked cache ([`store`]), and word-timed transcripts become SRT, VTT or JSON
-//! ([`subtitle`]). Times are `f64` seconds of the source media, the unit of
-//! `CaptionWord::start_sec`.
+//! Media decodes to 16 kHz mono ([`audio`]), the Underdog Bark 3.0 models and the `bark-asr`
+//! graphs live in a hash-checked cache ([`store`]), the [`Engine`] runs them on ONNX Runtime
+//! through `bark-asr`, and word-timed transcripts become SRT, VTT or JSON ([`subtitle`]).
+//! Times are `f64` seconds of the source media, the unit of `CaptionWord::start_sec`.
 
 pub mod audio;
-pub mod chunk;
+pub mod engine;
 pub mod store;
 pub mod subtitle;
 
@@ -16,8 +15,8 @@ use std::io;
 use serde::{Deserialize, Serialize};
 
 pub use audio::{Audio, SAMPLE_RATE};
-pub use chunk::{Window, WindowOptions};
-pub use store::{Model, Status, Store};
+pub use engine::Engine;
+pub use store::{Asset, Graphs, Model, Status, Store};
 pub use subtitle::{Cue, CueOptions};
 
 /// One recognized word.
@@ -25,22 +24,10 @@ pub use subtitle::{Cue, CueOptions};
 pub struct Word {
     /// The word as the model wrote it, punctuation attached.
     pub text: String,
-    /// Seconds of the source media where the word starts.
+    /// Seconds of the source media where the word's first token was emitted.
     pub start: f64,
-    /// Seconds of the source media where the word ends.
+    /// Seconds of the source media where the word's last token ends.
     pub end: f64,
-    /// The model's probability for the word, from 0 to 1.
-    pub confidence: f32,
-    /// A filler, false start or repeat that the Clean model left out.
-    #[serde(default)]
-    pub disfluent: bool,
-}
-
-impl Word {
-    /// The time halfway through the word.
-    pub fn midpoint(&self) -> f64 {
-        (self.start + self.end) / 2.0
-    }
 }
 
 /// The words of one recording and the model that heard them.
@@ -72,10 +59,16 @@ pub enum AsrError {
     Resample(String),
     #[error("unknown model {0}; known models: bark-3.0, bark-3.0-plus, bark-3.0-clean, bark-3.0-pro")]
     UnknownModel(String),
-    #[error("{model} is not installed; run `director-engine asr fetch {model}`")]
-    NotInstalled { model: Model },
+    #[error("{what} is not installed; run `{fetch}`")]
+    NotInstalled { what: String, fetch: String },
     #[error("{path} has SHA-256 {actual}, expected {expected}")]
     Hash { path: String, actual: String, expected: String },
+    #[error("bark-asr: {0}")]
+    Engine(String),
+    #[error("{0}")]
+    Unsupported(String),
+    #[error("transcription cancelled")]
+    Cancelled,
 }
 
 impl AsrError {

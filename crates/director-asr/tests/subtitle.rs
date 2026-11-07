@@ -48,6 +48,4 @@ fn transcript_json_round_trips() {
     assert!(json.contains("\"model\":\"bark-3.0-plus\""), "{json}");
     assert_eq!(serde_json::from_str::<Transcript>(&json).unwrap(), t);
     assert_eq!(t.text(), "Hi all.");
-    let legacy = r#"{"model":"bark-3.0","words":[{"text":"a","start":0.0,"end":0.1,"confidence":0.9}]}"#;
-    assert!(!serde_json::from_str::<Transcript>(legacy).unwrap().words[0].disfluent);
 }
