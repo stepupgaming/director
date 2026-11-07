@@ -24,7 +24,7 @@ async function main() {
     for (const engine of ['native', 'hyperframes']) {
       const video = path.join(output, `${engine}-${kind}.mp4`);
       const exe = engine === 'native' ? path.resolve(o.director) : process.execPath;
-      const args = engine === 'native' ? ['html', 'render', input, '-o', video] : [path.resolve(o['hyperframes-cli']), 'render', project, '--workers', String(o.workers || '1'), '--output', video, '--quality', 'looks'];
+      const args = engine === 'native' ? ['html', 'render', input, '-o', video] : [path.resolve(o['hyperframes-cli']), 'render', project, '--workers', String(o.workers || '1'), '--output', video, '--quality', 'standard'];
       const start = performance.now(), result = await command(exe, args, {env}), wallMs = performance.now() - start;
       await fs.writeFile(path.join(output, `${engine}-${kind}.log`), result.stdout + '\n' + result.stderr);
       const probe = JSON.parse((await command('ffprobe', ['-v','error','-count_frames','-show_streams','-show_format','-of','json',video])).stdout);

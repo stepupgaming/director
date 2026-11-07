@@ -93,7 +93,7 @@ Sources: the FFrames README at `github.com/dmtrKovalenko/fframes` (3.0k stars, M
 | Audio QA | LUFS, true peak, clipping, silence per scene, waveform image | `audio`: integrated LUFS, true peak, loudness range, clipped samples, silence per track; no normalization | Plan 10 phase 6 (LUFS normalization, ducking) |
 | 3D and shaders | `fframes-three-d` crate; SkSL and pasted Shadertoy GLSL layers | CSS `preserve-3d` with depth sorting; built-in SkSL effects and transitions; Paper shader translator (frozen) | Plan 11 B4 candidate |
 | Distribution | `cargo install cargo-fframes`, crates.io, prebuilt Skia and FFmpeg on macOS and Linux; Windows needs an FFmpeg shared build and LLVM | No release or binaries; Windows-first builds; Linux CI fails 12 text goldens | Plan 11 B2 |
-| Speed claim | One clip: 128 s rendered in 36 s | No head-to-head run | Plan 11 B3 protocol, plan 10 phase 6 run |
+| Speed claim | One clip: 128 s rendered in 36 s | HyperFrames head-to-head on the B3 clip: 30.4 s against 118.2 s on software x264, 21.1 s against 100.0 s on GPU paths; FFrames side not run | Plan 11 B3, FFrames side |
 
 ### Workstreams
 
@@ -104,6 +104,7 @@ Gate: a clean machine installs a release binary and renders the four HTML exampl
 
 **B3. Head-to-head protocol.** Define the comparison clip for plan 10 phase 6 against FFrames and raea: the same 1080p30 content authored in each (text, shapes, an image, a video layer and audio, about 120 s), each tool's fastest documented path on the same machine, wall time from source to finished MP4, plus output size and a VMAF or SSIM check against a shared reference. The run itself needs the user's explicit yes.
 Gate: the protocol, both sources and the scripts are committed before any number is published.
+Status: the HTML source is `examples/html/benchmark/` and the HyperFrames side ran 2026-11-06 through `crates/director-html/tools/hyperframes-benchmark.mjs` (numbers in the plan 10 measurement table). The FFrames and raea sources are not written and neither tool is installed.
 
 **B4. Shader authoring candidate.** A user-authored SkSL layer for HTML (`<canvas data-sksl>` or a CSS custom property) with a GLSL-to-SkSL path for common Shadertoy uniforms. Decide after plan 10 phase 5, since plan 10 freezes the Paper translator.
 
@@ -120,12 +121,12 @@ raea is a Rust engine on Bevy 0.20. Compositions are React/TSX on a Remotion-sha
 | Area | raea | Director today | Owner |
 | --- | --- | --- | --- |
 | Authoring | React/TSX on a Remotion-shaped API, Tailwind, npm packages through its own installer | HTML/CSS (primary), GSAP translated to native tracks, Rhai | Holds; Remotion compatibility is out of scope |
-| 3D | Bevy PBR, glTF, Gaussian splats, matchmove through COLMAP | CSS `preserve-3d`; real meshes planned | Plan 10 issue 9 |
+| 3D | Bevy PBR, glTF, Gaussian splats, matchmove through COLMAP | `<model>`: Bevy PBR glTF with IBL, shadows, fog, sky, SSR and lens effects, Gaussian splats, the Hero path tracer, and matchmove solved in process by `director-track` | Plan 10 issue 9 |
 | Export QA | `raea check`: loudness and true peak, dead stops, static stretches, dark blotching, voice against bed, clipped text, platform zones, reading time, caption contrast, cues on words, text over faces, taste rules | `Session::qa`: clipped text, safe zones, captions over faces, reframed subjects, static stretches, loudness, peak and clipping, caption contrast, reading time, cues on words, voice against bed, voiceless swells, dead stops and blotching in a finished export; `qa_video` runs the static and mix checks on a file without its project | C2, plan 10 phase 6 |
 | Agent craft guides | A floor (verify, refuse, never), a P0 to P3 rubric with model-judged questions, named edit moves, brief and storyboard gate | Generated skills, MCP, QA score | C3 |
 | Music timing | Song map with beats, downbeats, builds and drops | Beat grid as beat times, `director.beat` | Plan 10 issue 8 |
 | Media CLI | `raea ffmpeg` and `raea ffprobe` read ffmpeg command lines in process | One FFmpeg process per export | C4 candidate |
-| Speed claim | Pong 1080p at 5.3 ms a frame and a platformer at 4.4 ms, M5 Pro with VideoToolbox H.264; no named competitor | Measured in the plan 10 table | B3 protocol, plan 10 phase 6 run |
+| Speed claim | Pong 1080p at 5.3 ms a frame and a platformer at 4.4 ms, M5 Pro with VideoToolbox H.264; no named competitor | B3 clip at 5.9 ms a frame end to end on Vulkan and NVENC (21.1 s for 3600 frames), 4.7 times HyperFrames; raea side not run | B3 raea side |
 
 ### Workstreams
 

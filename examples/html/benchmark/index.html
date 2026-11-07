@@ -1,0 +1,163 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  @font-face { font-family:Roboto; src:url("assets/Roboto-Regular.ttf"); font-weight:400; }
+  @font-face { font-family:Roboto; src:url("assets/Roboto-Bold.ttf"); font-weight:700; }
+  html, body { margin:0; background:#0b1020; }
+  * { box-sizing:border-box; }
+  #bench { position:relative; width:100%; height:100%; overflow:hidden; background:linear-gradient(150deg,#0b1020 0%,#1b2440 100%); font-family:Roboto; color:#fff; }
+  .scene { position:absolute; inset:0; }
+  .title { position:absolute; left:120px; top:150px; width:1000px; margin:0; font-size:84px; font-weight:700; line-height:1.1; }
+  .sub { position:absolute; left:124px; top:360px; width:900px; margin:0; font-size:34px; color:#c7d2fe; }
+  .bar { position:absolute; left:124px; top:450px; width:560px; height:10px; border-radius:5px; transform-origin:0 50%; }
+  .shape { position:absolute; top:560px; width:180px; height:180px; border-radius:28px; }
+  .s1 { left:124px; } .s2 { left:344px; border-radius:90px; } .s3 { left:564px; }
+  .star { position:absolute; left:820px; top:560px; width:180px; height:180px; }
+  .frame { position:absolute; left:124px; top:800px; width:420px; height:200px; overflow:hidden; border-radius:20px; }
+  .frame img { display:block; width:420px; height:200px; object-fit:cover; }
+  .footage { position:absolute; left:1160px; top:150px; width:640px; height:360px; border-radius:24px; }
+  .count { position:absolute; left:1160px; top:560px; width:640px; margin:0; font-size:160px; font-weight:700; text-align:right; }
+  #progress { position:absolute; left:0; top:1068px; width:1920px; height:12px; background:#f472b6; transform-origin:0 50%; }
+</style></head><body>
+<div id="bench" data-composition-id="bench" data-start="0" data-width="1920" data-height="1080" data-fps="30" data-duration="120">
+  <div id="scene0" class="scene clip" data-start="0" data-duration="20" data-track-index="1">
+    <h1 id="title0" class="title">Native video, from HTML.</h1>
+    <p id="sub0" class="sub">Text, shapes, a photo, footage and sound in one pass.</p>
+    <div id="bar0" class="bar" style="background:#f472b6"></div>
+    <div class="shape s1 sh0" style="background:#f472b6"></div>
+    <div class="shape s2 sh0" style="background:#e5e7eb"></div>
+    <div class="shape s3 sh0" style="background:#f472b6;opacity:0.6"></div>
+    <svg id="star0" class="star" viewBox="0 0 100 100"><polygon points="50,4 61,38 97,38 68,59 79,94 50,73 21,94 32,59 3,38 39,38" fill="#f472b6"/></svg>
+    <div class="frame"><img id="img0" src="assets/photo_a.jpg" alt=""></div>
+    <p id="count0" class="count">01</p>
+  </div>
+  <video id="video0" class="footage clip" muted playsinline src="assets/clip20.mp4" data-start="0" data-duration="20" data-track-index="2"></video>
+  <audio id="bed0" src="assets/bed20.wav" data-start="0" data-duration="20" data-track-index="3" data-volume="0.5"></audio>
+  <div id="scene1" class="scene clip" data-start="20" data-duration="20" data-track-index="1">
+    <h1 id="title1" class="title">Layout is Taffy.</h1>
+    <p id="sub1" class="sub">Flexbox and grid lay out every scene before Skia paints it.</p>
+    <div id="bar1" class="bar" style="background:#60a5fa"></div>
+    <div class="shape s1 sh1" style="background:#60a5fa"></div>
+    <div class="shape s2 sh1" style="background:#e5e7eb"></div>
+    <div class="shape s3 sh1" style="background:#60a5fa;opacity:0.6"></div>
+    <svg id="star1" class="star" viewBox="0 0 100 100"><polygon points="50,4 61,38 97,38 68,59 79,94 50,73 21,94 32,59 3,38 39,38" fill="#60a5fa"/></svg>
+    <div class="frame"><img id="img1" src="assets/photo_b.jpg" alt=""></div>
+    <p id="count1" class="count">02</p>
+  </div>
+  <video id="video1" class="footage clip" muted playsinline src="assets/clip20.mp4" data-start="20" data-duration="20" data-track-index="2"></video>
+  <audio id="bed1" src="assets/bed20.wav" data-start="20" data-duration="20" data-track-index="3" data-volume="0.5"></audio>
+  <div id="scene2" class="scene clip" data-start="40" data-duration="20" data-track-index="1">
+    <h1 id="title2" class="title">GSAP compiles to tracks.</h1>
+    <p id="sub2" class="sub">Timelines become keyframe tracks at compile time.</p>
+    <div id="bar2" class="bar" style="background:#34d399"></div>
+    <div class="shape s1 sh2" style="background:#34d399"></div>
+    <div class="shape s2 sh2" style="background:#e5e7eb"></div>
+    <div class="shape s3 sh2" style="background:#34d399;opacity:0.6"></div>
+    <svg id="star2" class="star" viewBox="0 0 100 100"><polygon points="50,4 61,38 97,38 68,59 79,94 50,73 21,94 32,59 3,38 39,38" fill="#34d399"/></svg>
+    <div class="frame"><img id="img2" src="assets/photo_a.jpg" alt=""></div>
+    <p id="count2" class="count">03</p>
+  </div>
+  <video id="video2" class="footage clip" muted playsinline src="assets/clip20.mp4" data-start="40" data-duration="20" data-track-index="2"></video>
+  <audio id="bed2" src="assets/bed20.wav" data-start="40" data-duration="20" data-track-index="3" data-volume="0.5"></audio>
+  <div id="scene3" class="scene clip" data-start="60" data-duration="20" data-track-index="1">
+    <h1 id="title3" class="title">Footage decodes in process.</h1>
+    <p id="sub3" class="sub">Video layers stream frames through FFmpeg.</p>
+    <div id="bar3" class="bar" style="background:#fbbf24"></div>
+    <div class="shape s1 sh3" style="background:#fbbf24"></div>
+    <div class="shape s2 sh3" style="background:#e5e7eb"></div>
+    <div class="shape s3 sh3" style="background:#fbbf24;opacity:0.6"></div>
+    <svg id="star3" class="star" viewBox="0 0 100 100"><polygon points="50,4 61,38 97,38 68,59 79,94 50,73 21,94 32,59 3,38 39,38" fill="#fbbf24"/></svg>
+    <div class="frame"><img id="img3" src="assets/photo_b.jpg" alt=""></div>
+    <p id="count3" class="count">04</p>
+  </div>
+  <video id="video3" class="footage clip" muted playsinline src="assets/clip20.mp4" data-start="60" data-duration="20" data-track-index="2"></video>
+  <audio id="bed3" src="assets/bed20.wav" data-start="60" data-duration="20" data-track-index="3" data-volume="0.5"></audio>
+  <div id="scene4" class="scene clip" data-start="80" data-duration="20" data-track-index="1">
+    <h1 id="title4" class="title">Audio mixes in the same pass.</h1>
+    <p id="sub4" class="sub">A bed under every scene, encoded with the picture.</p>
+    <div id="bar4" class="bar" style="background:#a78bfa"></div>
+    <div class="shape s1 sh4" style="background:#a78bfa"></div>
+    <div class="shape s2 sh4" style="background:#e5e7eb"></div>
+    <div class="shape s3 sh4" style="background:#a78bfa;opacity:0.6"></div>
+    <svg id="star4" class="star" viewBox="0 0 100 100"><polygon points="50,4 61,38 97,38 68,59 79,94 50,73 21,94 32,59 3,38 39,38" fill="#a78bfa"/></svg>
+    <div class="frame"><img id="img4" src="assets/photo_a.jpg" alt=""></div>
+    <p id="count4" class="count">05</p>
+  </div>
+  <video id="video4" class="footage clip" muted playsinline src="assets/clip20.mp4" data-start="80" data-duration="20" data-track-index="2"></video>
+  <audio id="bed4" src="assets/bed20.wav" data-start="80" data-duration="20" data-track-index="3" data-volume="0.5"></audio>
+  <div id="scene5" class="scene clip" data-start="100" data-duration="20" data-track-index="1">
+    <h1 id="title5" class="title">Same source, two engines.</h1>
+    <p id="sub5" class="sub">This page renders in HyperFrames and in Director.</p>
+    <div id="bar5" class="bar" style="background:#f87171"></div>
+    <div class="shape s1 sh5" style="background:#f87171"></div>
+    <div class="shape s2 sh5" style="background:#e5e7eb"></div>
+    <div class="shape s3 sh5" style="background:#f87171;opacity:0.6"></div>
+    <svg id="star5" class="star" viewBox="0 0 100 100"><polygon points="50,4 61,38 97,38 68,59 79,94 50,73 21,94 32,59 3,38 39,38" fill="#f87171"/></svg>
+    <div class="frame"><img id="img5" src="assets/photo_b.jpg" alt=""></div>
+    <p id="count5" class="count">06</p>
+  </div>
+  <video id="video5" class="footage clip" muted playsinline src="assets/clip20.mp4" data-start="100" data-duration="20" data-track-index="2"></video>
+  <audio id="bed5" src="assets/bed20.wav" data-start="100" data-duration="20" data-track-index="3" data-volume="0.5"></audio>
+  <div id="progress"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+  const tl = gsap.timeline({ paused: true, defaults: { duration: 0.8, ease: "power3.out" } });
+  tl.fromTo("#title0", { x: -120, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9 }, 0+0.2)
+    .fromTo("#sub0", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8 }, 0+0.6)
+    .fromTo("#bar0", { scaleX: 0 }, { scaleX: 1, duration: 1.2, ease: "expo.inOut" }, 0+0.9)
+    .fromTo(".sh0", { y: 120, rotation: -8, opacity: 0 }, { y: 0, rotation: 0, opacity: 1, stagger: 0.15, ease: "back.out(1.7)" }, 0+1.2)
+    .to(".sh0", { rotation: 360, duration: 6, ease: "none", stagger: 0.5 }, 0+4)
+    .fromTo("#star0", { rotation: 0, scale: 0.7 }, { rotation: 720, scale: 1, duration: 20, ease: "none" }, 0)
+    .fromTo("#img0", { scale: 1 }, { scale: 1.2, duration: 20, ease: "none" }, 0)
+    .fromTo("#count0", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7 }, 0+1.5)
+    .to("#title0", { opacity: 0, y: -40, duration: 0.6, ease: "power2.in" }, 0+20-0.8);
+  tl.fromTo("#title1", { x: -120, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9 }, 20+0.2)
+    .fromTo("#sub1", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8 }, 20+0.6)
+    .fromTo("#bar1", { scaleX: 0 }, { scaleX: 1, duration: 1.2, ease: "expo.inOut" }, 20+0.9)
+    .fromTo(".sh1", { y: 120, rotation: -8, opacity: 0 }, { y: 0, rotation: 0, opacity: 1, stagger: 0.15, ease: "back.out(1.7)" }, 20+1.2)
+    .to(".sh1", { rotation: 360, duration: 6, ease: "none", stagger: 0.5 }, 20+4)
+    .fromTo("#star1", { rotation: 0, scale: 0.7 }, { rotation: 720, scale: 1, duration: 20, ease: "none" }, 20)
+    .fromTo("#img1", { scale: 1 }, { scale: 1.2, duration: 20, ease: "none" }, 20)
+    .fromTo("#count1", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7 }, 20+1.5)
+    .to("#title1", { opacity: 0, y: -40, duration: 0.6, ease: "power2.in" }, 20+20-0.8);
+  tl.fromTo("#title2", { x: -120, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9 }, 40+0.2)
+    .fromTo("#sub2", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8 }, 40+0.6)
+    .fromTo("#bar2", { scaleX: 0 }, { scaleX: 1, duration: 1.2, ease: "expo.inOut" }, 40+0.9)
+    .fromTo(".sh2", { y: 120, rotation: -8, opacity: 0 }, { y: 0, rotation: 0, opacity: 1, stagger: 0.15, ease: "back.out(1.7)" }, 40+1.2)
+    .to(".sh2", { rotation: 360, duration: 6, ease: "none", stagger: 0.5 }, 40+4)
+    .fromTo("#star2", { rotation: 0, scale: 0.7 }, { rotation: 720, scale: 1, duration: 20, ease: "none" }, 40)
+    .fromTo("#img2", { scale: 1 }, { scale: 1.2, duration: 20, ease: "none" }, 40)
+    .fromTo("#count2", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7 }, 40+1.5)
+    .to("#title2", { opacity: 0, y: -40, duration: 0.6, ease: "power2.in" }, 40+20-0.8);
+  tl.fromTo("#title3", { x: -120, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9 }, 60+0.2)
+    .fromTo("#sub3", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8 }, 60+0.6)
+    .fromTo("#bar3", { scaleX: 0 }, { scaleX: 1, duration: 1.2, ease: "expo.inOut" }, 60+0.9)
+    .fromTo(".sh3", { y: 120, rotation: -8, opacity: 0 }, { y: 0, rotation: 0, opacity: 1, stagger: 0.15, ease: "back.out(1.7)" }, 60+1.2)
+    .to(".sh3", { rotation: 360, duration: 6, ease: "none", stagger: 0.5 }, 60+4)
+    .fromTo("#star3", { rotation: 0, scale: 0.7 }, { rotation: 720, scale: 1, duration: 20, ease: "none" }, 60)
+    .fromTo("#img3", { scale: 1 }, { scale: 1.2, duration: 20, ease: "none" }, 60)
+    .fromTo("#count3", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7 }, 60+1.5)
+    .to("#title3", { opacity: 0, y: -40, duration: 0.6, ease: "power2.in" }, 60+20-0.8);
+  tl.fromTo("#title4", { x: -120, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9 }, 80+0.2)
+    .fromTo("#sub4", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8 }, 80+0.6)
+    .fromTo("#bar4", { scaleX: 0 }, { scaleX: 1, duration: 1.2, ease: "expo.inOut" }, 80+0.9)
+    .fromTo(".sh4", { y: 120, rotation: -8, opacity: 0 }, { y: 0, rotation: 0, opacity: 1, stagger: 0.15, ease: "back.out(1.7)" }, 80+1.2)
+    .to(".sh4", { rotation: 360, duration: 6, ease: "none", stagger: 0.5 }, 80+4)
+    .fromTo("#star4", { rotation: 0, scale: 0.7 }, { rotation: 720, scale: 1, duration: 20, ease: "none" }, 80)
+    .fromTo("#img4", { scale: 1 }, { scale: 1.2, duration: 20, ease: "none" }, 80)
+    .fromTo("#count4", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7 }, 80+1.5)
+    .to("#title4", { opacity: 0, y: -40, duration: 0.6, ease: "power2.in" }, 80+20-0.8);
+  tl.fromTo("#title5", { x: -120, opacity: 0 }, { x: 0, opacity: 1, duration: 0.9 }, 100+0.2)
+    .fromTo("#sub5", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.8 }, 100+0.6)
+    .fromTo("#bar5", { scaleX: 0 }, { scaleX: 1, duration: 1.2, ease: "expo.inOut" }, 100+0.9)
+    .fromTo(".sh5", { y: 120, rotation: -8, opacity: 0 }, { y: 0, rotation: 0, opacity: 1, stagger: 0.15, ease: "back.out(1.7)" }, 100+1.2)
+    .to(".sh5", { rotation: 360, duration: 6, ease: "none", stagger: 0.5 }, 100+4)
+    .fromTo("#star5", { rotation: 0, scale: 0.7 }, { rotation: 720, scale: 1, duration: 20, ease: "none" }, 100)
+    .fromTo("#img5", { scale: 1 }, { scale: 1.2, duration: 20, ease: "none" }, 100)
+    .fromTo("#count5", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7 }, 100+1.5)
+    .to("#title5", { opacity: 0, y: -40, duration: 0.6, ease: "power2.in" }, 100+20-0.8);
+  tl.fromTo("#progress", { scaleX: 0 }, { scaleX: 1, duration: 120, ease: "none" }, 0);
+  window.__timelines = window.__timelines || {};
+  window.__timelines["bench"] = tl;
+</script>
+</body></html>

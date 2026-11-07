@@ -837,6 +837,8 @@ const MAX_SKIP_AHEAD: u64 = 60;
 struct DecodeSession {
     child: std::process::Child,
     reader: BufReader<std::process::ChildStdout>,
+    /// Source frame index the session's first frame carries.
+    start_index: u64,
     /// Source frame index the next `read_frame` call will return.
     next_index: u64,
     frame_len: usize,
@@ -866,21 +868,23 @@ impl DecodeSession {
         Ok(Self {
             child,
             reader: BufReader::new(stdout),
+            start_index,
             next_index: start_index,
             frame_len,
         })
     }
 
-    fn read_frame(&mut self) -> Result<Vec<u8>> {
+    /// The next frame, or `None` once the stream has ended.
+    fn read_frame(&mut self) -> Result<Option<Vec<u8>>> {
         let mut buffer = vec![0u8; self.frame_len];
-        self.reader.read_exact(&mut buffer).with_context(|| {
-            format!(
-                "ffmpeg decode pipe ended at source frame {}",
-                self.next_index
-            )
-        })?;
-        self.next_index += 1;
-        Ok(buffer)
+        match self.reader.read_exact(&mut buffer) {
+            Ok(()) => {
+                self.next_index += 1;
+                Ok(Some(buffer))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("ffmpeg decode pipe failed at source frame {}", self.next_index)),
+        }
     }
 }
 
@@ -909,6 +913,133 @@ fn cache_insert(
     }
 }
 
+/// Frames before the container's duration where `FrameSource::find_end`
+/// starts decoding the tail.
+const TAIL_FRAMES: u64 = 8;
+
+/// The frames of one source by index: a persistent decode pipe, an
+/// eight-frame cache and the stream's end once a read runs past it.
+#[derive(Debug)]
+struct FrameSource {
+    path: PathBuf,
+    fps: f64,
+    frame_len: usize,
+    session: Option<DecodeSession>,
+    cache: HashMap<u64, Vec<u8>>,
+    order: VecDeque<u64>,
+    /// One past the last frame FFmpeg decodes, learned when a read first
+    /// runs off the end. Requests at or past it get the last frame, as an
+    /// ended video holds its last frame, without another decode.
+    end: Option<u64>,
+}
+
+impl FrameSource {
+    fn new(path: PathBuf, probed: &VideoProbe) -> Result<Self> {
+        let frame_len = probed.width as usize * probed.height as usize * 4;
+        if frame_len == 0 {
+            return Err(anyhow::anyhow!("Probed zero-size video stream for {}", path.display()));
+        }
+        Ok(Self {
+            path,
+            fps: probed.fps,
+            frame_len,
+            session: None,
+            cache: HashMap::new(),
+            order: VecDeque::new(),
+            end: None,
+        })
+    }
+
+    /// The frame at `index`, or the last frame when `index` is past the end.
+    fn frame(&mut self, index: u64) -> Result<Vec<u8>> {
+        let held = |end: Option<u64>| end.map_or(index, |end| index.min(end.saturating_sub(1)));
+        if let Some(bytes) = self.decode(held(self.end))? {
+            return Ok(bytes);
+        }
+        if self.end.is_none() {
+            self.end = self.find_end()?;
+        }
+        match self.end {
+            Some(end) if end > 0 && index >= end => self.decode(end - 1)?.ok_or_else(|| {
+                anyhow::anyhow!("ffmpeg decode pipe ended at source frame {}", end - 1)
+            }),
+            _ => Err(anyhow::anyhow!("ffmpeg decode pipe ended at source frame {index}")),
+        }
+    }
+
+    /// The frame at `index`, or `None` when the stream ends before it. A
+    /// session that decoded frames before ending marks the exact end.
+    fn decode(&mut self, index: u64) -> Result<Option<Vec<u8>>> {
+        if let Some(hit) = self.cache.get(&index) {
+            return Ok(Some(hit.clone()));
+        }
+        let restart = match &self.session {
+            None => true,
+            Some(s) => index < s.next_index || index - s.next_index > MAX_SKIP_AHEAD,
+        };
+        if restart {
+            // Seek to the exact frame-grid time, not the raw request time.
+            self.session = None;
+            let seek = crate::timeline::frame_to_time(index, self.fps);
+            self.session = Some(DecodeSession::start(&self.path, seek, index, self.frame_len)?);
+        }
+        let session = self.session.as_mut().expect("decode session");
+        loop {
+            match session.read_frame() {
+                Ok(Some(bytes)) if session.next_index > index => {
+                    cache_insert(&mut self.cache, &mut self.order, index, bytes.clone());
+                    return Ok(Some(bytes));
+                }
+                // Discard intermediate frames on small forward jumps.
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    if session.next_index > session.start_index {
+                        self.end = Some(session.next_index);
+                    }
+                    self.session = None;
+                    return Ok(None);
+                }
+                Err(e) => {
+                    self.session = None;
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    /// One past the last frame, found by decoding the tail from a little
+    /// before the container's duration, or from the start when that seek
+    /// lands past the end. Keeps the last frame in the cache.
+    fn find_end(&mut self) -> Result<Option<u64>> {
+        let guess = probe_duration(&self.path).map(|d| ((d * self.fps).floor() as u64).saturating_sub(TAIL_FRAMES));
+        let mut starts = vec![guess.unwrap_or(0), 0];
+        starts.dedup();
+        for start in starts {
+            let seek = crate::timeline::frame_to_time(start, self.fps);
+            let mut session = DecodeSession::start(&self.path, seek, start, self.frame_len)?;
+            let mut last = None;
+            while let Some(bytes) = session.read_frame()? {
+                last = Some(bytes);
+            }
+            if let Some(bytes) = last {
+                cache_insert(&mut self.cache, &mut self.order, session.next_index - 1, bytes);
+                return Ok(Some(session.next_index));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// The container duration in seconds from ffprobe.
+fn probe_duration(path: &Path) -> Option<f64> {
+    let output = Command::new("ffprobe")
+        .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok().filter(|d: &f64| d.is_finite() && *d > 0.0)
+}
+
 #[derive(Debug)]
 pub struct ThreadedDecoder {
     cmd_tx: Option<Sender<VideoCommand>>,
@@ -930,93 +1061,20 @@ impl ThreadedDecoder {
         };
         let probed = probe_video(&video_path)?;
         let (width, height, fps) = (probed.width, probed.height, probed.fps);
-        let frame_len = width as usize * height as usize * 4;
+        let mut source = FrameSource::new(video_path, &probed)?;
 
         let worker = thread::spawn(move || {
-            let mut session: Option<DecodeSession> = None;
-            let mut cache: HashMap<u64, Vec<u8>> = HashMap::new();
-            let mut order: VecDeque<u64> = VecDeque::new();
-
-            let restart =
-                |session: &mut Option<DecodeSession>, time: f64, index: u64| -> Result<()> {
-                    *session = None;
-                    *session = Some(DecodeSession::start(&video_path, time, index, frame_len)?);
-                    Ok(())
-                };
-
             // Coalesce queued seeks: only the latest scrub position matters.
             while let Ok(VideoCommand::GetFrame(mut target_time)) = cmd_rx.recv() {
                 while let Ok(VideoCommand::GetFrame(t)) = cmd_rx.try_recv() {
                     target_time = t;
                 }
-
                 let index = crate::timeline::video_source_frame_index(target_time.max(0.0), fps);
-                if let Some(hit) = cache.get(&index) {
-                    let _ = resp_tx.send(VideoResponse::Frame(
-                        target_time,
-                        hit.clone(),
-                        width,
-                        height,
-                    ));
-                    continue;
-                }
-
-                let need_restart = match &session {
-                    None => true,
-                    Some(s) => index < s.next_index || index - s.next_index > MAX_SKIP_AHEAD,
+                let response = match source.frame(index) {
+                    Ok(bytes) => VideoResponse::Frame(target_time, bytes, width, height),
+                    Err(e) => VideoResponse::Error(e.to_string()),
                 };
-                if need_restart {
-                    // Seek to the exact frame-grid time, not the raw request time.
-                    let seek = crate::timeline::video_seek_time(target_time, fps);
-                    if let Err(e) = restart(&mut session, seek, index) {
-                        let _ = resp_tx.send(VideoResponse::Error(e.to_string()));
-                        continue;
-                    }
-                }
-
-                let mut failed: Option<String> = None;
-                if let Some(s) = session.as_mut() {
-                    while s.next_index < index {
-                        if s.read_frame().is_err() {
-                            failed = Some(format!(
-                                "ffmpeg decode pipe ended while skipping to {:.3}s",
-                                target_time
-                            ));
-                            break;
-                        }
-                    }
-                }
-                if let Some(err) = failed {
-                    session = None;
-                    let _ = resp_tx.send(VideoResponse::Error(err));
-                    continue;
-                }
-                match session.as_mut().unwrap().read_frame() {
-                    Ok(bytes) => {
-                        if bytes.len() != frame_len {
-                            session = None;
-                            let _ = resp_tx.send(VideoResponse::Error(format!(
-                                "Decoded frame had {} bytes, expected {} for {}x{} RGBA",
-                                bytes.len(),
-                                frame_len,
-                                width,
-                                height
-                            )));
-                        } else {
-                            cache_insert(&mut cache, &mut order, index, bytes.clone());
-                            let _ = resp_tx.send(VideoResponse::Frame(
-                                target_time,
-                                bytes,
-                                width,
-                                height,
-                            ));
-                        }
-                    }
-                    Err(e) => {
-                        session = None;
-                        let _ = resp_tx.send(VideoResponse::Error(e.to_string()));
-                    }
-                }
+                let _ = resp_tx.send(response);
             }
         });
 
@@ -1170,14 +1228,9 @@ pub fn probe(path: &Path) -> Result<(u32, u32)> {
 
 #[derive(Debug)]
 pub struct SyncDecoder {
-    path: PathBuf,
     width: u32,
     height: u32,
-    fps: f64,
-    frame_len: usize,
-    session: Option<DecodeSession>,
-    cache: HashMap<u64, Vec<u8>>,
-    order: VecDeque<u64>,
+    source: Box<FrameSource>,
 }
 
 // `DecodeSession` holds a live child process + pipe reader; `SyncDecoder` is
@@ -1194,94 +1247,23 @@ impl std::fmt::Debug for DecodeSession {
 impl SyncDecoder {
     pub fn new(path: PathBuf) -> Result<Self> {
         let probed = probe_video(&path)?;
-        let frame_len = probed.width as usize * probed.height as usize * 4;
-        if frame_len == 0 {
-            return Err(anyhow::anyhow!(
-                "Probed zero-size video stream for {}",
-                path.display()
-            ));
-        }
         Ok(Self {
-            path,
             width: probed.width,
             height: probed.height,
-            fps: probed.fps,
-            frame_len,
-            session: None,
-            cache: HashMap::new(),
-            order: VecDeque::new(),
+            source: Box::new(FrameSource::new(path, &probed)?),
         })
     }
 
     /// Probed source frame rate driving seek quantization.
     pub fn source_fps(&self) -> f64 {
-        self.fps
+        self.source.fps
     }
 
-    fn restart(&mut self, seek_time: f64, index: u64) -> Result<()> {
-        self.session = None;
-        self.session = Some(DecodeSession::start(
-            &self.path,
-            seek_time,
-            index,
-            self.frame_len,
-        )?);
-        Ok(())
-    }
-
+    /// The frame at `time`, or the last frame once `time` is past the end.
     pub fn get_frame_at(&mut self, time: f64) -> Result<(f64, Vec<u8>, u32, u32)> {
-        let index = crate::timeline::video_source_frame_index(time.max(0.0), self.fps);
-        if let Some(hit) = self.cache.get(&index) {
-            return Ok((time, hit.clone(), self.width, self.height));
-        }
-
-        let need_restart = match &self.session {
-            None => true,
-            Some(s) => index < s.next_index || index - s.next_index > MAX_SKIP_AHEAD,
-        };
-        if need_restart {
-            // Seek to the exact frame-grid time, not the raw request time.
-            let seek = crate::timeline::video_seek_time(time, self.fps);
-            self.restart(seek, index)?;
-        }
-
-        // Discard intermediate frames on small forward jumps.
-        loop {
-            let next = self.session.as_ref().map(|s| s.next_index).unwrap_or(index);
-            if next >= index {
-                break;
-            }
-            let discard = self.session.as_mut().expect("decode session").read_frame();
-            if let Err(e) = discard {
-                self.session = None;
-                return Err(e);
-            }
-        }
-
-        let bytes = match self.session.as_mut() {
-            Some(s) => s.read_frame(),
-            None => return Err(anyhow::anyhow!("decode session unavailable")),
-        };
-        match bytes {
-            Ok(bytes) => {
-                if bytes.len() != self.frame_len {
-                    self.session = None;
-                    return Err(anyhow::anyhow!(
-                        "Decoded frame had {} bytes, expected {} for {}x{} RGBA",
-                        bytes.len(),
-                        self.frame_len,
-                        self.width,
-                        self.height
-                    ));
-                }
-                cache_insert(&mut self.cache, &mut self.order, index, bytes.clone());
-                Ok((time, bytes, self.width, self.height))
-            }
-            Err(e) => {
-                self.session = None;
-                Err(e)
-            }
-        }
+        let index = crate::timeline::video_source_frame_index(time.max(0.0), self.source.fps);
+        let bytes = self.source.frame(index)?;
+        Ok((time, bytes, self.width, self.height))
     }
 }
 
@@ -1515,29 +1497,29 @@ mod tests {
         let mut decoder = SyncDecoder::new(src).expect("decoder");
         assert!((decoder.source_fps() - fps).abs() < 1e-6);
         assert_decoded_frame(&mut decoder, 0);
-        let first_pid = decoder.session.as_ref().unwrap().child.id();
+        let first_pid = decoder.source.session.as_ref().unwrap().child.id();
         for index in 1..=MAX_CACHED_FRAMES as u64 {
             assert_decoded_frame(&mut decoder, index);
             assert_eq!(
-                decoder.session.as_ref().unwrap().child.id(),
+                decoder.source.session.as_ref().unwrap().child.id(),
                 first_pid,
                 "sequential decode must reuse the child process"
             );
         }
-        assert_eq!(decoder.cache.len(), MAX_CACHED_FRAMES);
+        assert_eq!(decoder.source.cache.len(), MAX_CACHED_FRAMES);
         assert!(
-            !decoder.cache.contains_key(&0),
+            !decoder.source.cache.contains_key(&0),
             "backward seek must miss the cache"
         );
-        let next_index = decoder.session.as_ref().unwrap().next_index;
+        let next_index = decoder.source.session.as_ref().unwrap().next_index;
         assert_decoded_frame(&mut decoder, MAX_CACHED_FRAMES as u64);
         assert_eq!(
-            decoder.session.as_ref().unwrap().next_index,
+            decoder.source.session.as_ref().unwrap().next_index,
             next_index,
             "cache hit must not consume the pipe"
         );
         assert_decoded_frame(&mut decoder, 0);
-        let backward_pid = decoder.session.as_ref().unwrap().child.id();
+        let backward_pid = decoder.source.session.as_ref().unwrap().child.id();
         assert_ne!(
             backward_pid, first_pid,
             "uncached backward seek must restart"
@@ -1546,17 +1528,17 @@ mod tests {
 
         assert_decoded_frame(&mut decoder, 3);
         assert_eq!(
-            decoder.session.as_ref().unwrap().child.id(),
+            decoder.source.session.as_ref().unwrap().child.id(),
             backward_pid,
             "small forward skip must reuse the pipe"
         );
         let far_index = MAX_SKIP_AHEAD + 10;
         assert_decoded_frame(&mut decoder, far_index);
-        let far_pid = decoder.session.as_ref().unwrap().child.id();
+        let far_pid = decoder.source.session.as_ref().unwrap().child.id();
         assert_ne!(far_pid, backward_pid, "large forward seek must restart");
         assert_process_exited(backward_pid);
         assert_decoded_frame(&mut decoder, far_index + 1);
-        assert_eq!(decoder.session.as_ref().unwrap().child.id(), far_pid);
+        assert_eq!(decoder.source.session.as_ref().unwrap().child.id(), far_pid);
         drop(decoder);
         assert_process_exited(far_pid);
     }
@@ -1598,29 +1580,36 @@ mod tests {
     }
 
     #[test]
-    fn sync_decoder_cleans_up_read_errors_and_recovers() {
+    fn sync_decoder_holds_the_last_frame_past_the_end_and_recovers() {
         let (_dir, src) = video_fixture("30");
-        let mut decoder = SyncDecoder::new(src).expect("decoder");
-        assert_decoded_frame(&mut decoder, TEST_FRAME_COUNT - 1);
-        let pid = decoder.session.as_ref().unwrap().child.id();
-        assert!(decoder
-            .get_frame_at(TEST_FRAME_COUNT as f64 / 30.0)
-            .is_err());
-        assert!(
-            decoder.session.is_none(),
-            "EOF must discard the failed session"
-        );
+        let last = TEST_FRAME_COUNT - 1;
+        let frame = |decoder: &mut SyncDecoder, index: u64| {
+            decoder
+                .get_frame_at(index as f64 / 30.0)
+                .unwrap_or_else(|err| panic!("decode frame {index}: {err:#}"))
+                .1
+        };
+        // A sequential read runs off the end: the end is exact and the
+        // session that found it is gone.
+        let mut decoder = SyncDecoder::new(src.clone()).expect("decoder");
+        assert_decoded_frame(&mut decoder, last);
+        let pid = decoder.source.session.as_ref().unwrap().child.id();
+        assert_eq!(frame(&mut decoder, TEST_FRAME_COUNT), expected_frame(last));
+        assert_eq!(decoder.source.end, Some(TEST_FRAME_COUNT));
+        assert!(decoder.source.session.is_none(), "EOF must discard the finished session");
         assert_process_exited(pid);
+        // Later requests past the end hold the cached last frame without a decode.
+        for index in [TEST_FRAME_COUNT + 1, TEST_FRAME_COUNT * 4] {
+            assert_eq!(frame(&mut decoder, index), expected_frame(last));
+            assert!(decoder.source.session.is_none(), "frame {index} spawned a decoder");
+        }
         assert_decoded_frame(&mut decoder, 0);
         assert_decoded_frame(&mut decoder, MAX_SKIP_AHEAD);
-        let pid = decoder.session.as_ref().unwrap().child.id();
-        // The same EOF cleanup must apply while discarding skipped frames.
-        assert!(decoder
-            .get_frame_at((TEST_FRAME_COUNT + 1) as f64 / 30.0)
-            .is_err());
-        assert!(decoder.session.is_none());
-        assert_process_exited(pid);
-        assert_decoded_frame(&mut decoder, 1);
+        // A cold seek past the end decodes nothing, so the end comes from the tail.
+        let mut cold = SyncDecoder::new(src).expect("decoder");
+        assert_eq!(frame(&mut cold, TEST_FRAME_COUNT * 3), expected_frame(last));
+        assert_eq!(cold.source.end, Some(TEST_FRAME_COUNT));
+        assert_decoded_frame(&mut cold, 1);
     }
 
     #[test]
