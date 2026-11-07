@@ -1,13 +1,18 @@
 [package]
-name = "director-core"
-version = "1.1.1"
-edition = "2021"
+name = "director-video-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 autotests = false
 description = "A high-performance 2D rendering engine using Skia and Taffy"
-license = "MIT"
-repository = "https://github.com/babybirdprd/rust-skia-engine"
+exclude = ["tests/", "benches/"]
 keywords = ["graphics", "skia", "rendering", "video"]
 categories = ["rendering", "multimedia::video"]
+
+[lib]
+name = "director_core"
 
 [dependencies]
 skia-safe = { workspace = true }
@@ -27,9 +32,9 @@ realfft = "3.4"
 ebur128 = "0.1"
 
 # Lottie Dependencies
-lottie-core = { path = "../lottie-core", version = "0.1.0" }
-lottie-data = { path = "../lottie-data", version = "0.1.0" }
-lottie-skia = { path = "../lottie-skia", version = "0.1.0" }
+lottie-core = { workspace = true }
+lottie-data = { workspace = true }
+lottie-skia = { workspace = true }
 
 rayon = "1.10"
 tempfile = "3.23.0"
@@ -40,7 +45,7 @@ resvg = "0.44"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 usvg = "0.44"
 tiny-skia = "0.11"
-director-scene = { path = "../director-scene" }
+director-scene = { workspace = true }
 tracing = "0.1.43"
 
 [dev-dependencies]

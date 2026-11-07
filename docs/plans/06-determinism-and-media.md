@@ -68,7 +68,7 @@ decode(frame_policy(video_source_time))
 
 - `ci.yml`: on pull_request + push to main.
 - Install/setup fonts via `setup_assets.sh` (or committed fonts under force-kept path).
-- `cargo test -p director-core` + clippy + fmt.
+- `cargo test -p director-video-core` + clippy + fmt.
 - Visual suite with `mock_video` on all OS; real ffmpeg job on one Linux runner if available.
 
 ## Implementation steps

@@ -40,7 +40,7 @@
 
 ## Verification
 
-- `cargo test -p director-core examples`
+- `cargo test -p director-video-core examples`
 - Render touched scripts with `cargo run --release -- examples/<path>.rhai output.mp4` when visual behavior matters.
 - Run relevant Python helper scripts through the repository's available Python tooling; install packages only with `uv` when needed.
 

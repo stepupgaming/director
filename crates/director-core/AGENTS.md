@@ -214,15 +214,19 @@ rather than relying on host system fonts.
 
 * Fonts live in crates/director-core/assets/fonts/ (force-committed via
   .gitignore) and are registered at Director construction
-  (director.rs, BUNDLED_FONTS).
+  (director.rs, BUNDLED_FONTS). `bundled_asset` compiles the eight files
+  into the library, so a crates.io build needs no checkout. A loader that
+  cannot read `fonts/<file>` falls back to them, and `DefaultAssetLoader`
+  tries `path`, then `assets/{path}`, then the compiled fonts.
 * Each Director registers its own font collection and provider. Typefaces
   parse once per process: `parsed_typeface` shares the typeface parsed from
   equal font bytes, so probe and nested compiles skip the parse.
 * Multiple weights of a family (Regular/Bold/Italic) are registered under
   the same family alias so font_weight / font_style resolve deterministically.
 * Roboto Regular/Bold/Italic, Inter Regular/Bold, and Poppins Bold are
-  required; export fails via `ensure_required_fonts` when one is missing.
-  The six files are committed; CI downloads nothing.
+  required; export fails via `ensure_required_fonts` when one is missing,
+  which the compiled fonts rule out for every loader. The six files are
+  committed; CI downloads nothing.
 * Archivo (variable `wdth` 62 to 125, `wght` 100 to 900) and JetBrains Mono
   (variable, also the `monospace` alias) are optional display and code faces
   with their OFL licenses beside them. Weight and width reach them through
@@ -230,7 +234,8 @@ rather than relying on host system fonts.
 * Emoji fallback is loaded via DefaultAssetLoader::load_font_fallback
   (assets/fonts/emoji.ttf or DIRECTOR_EMOJI_FONT env var).
 * Do NOT add host-system-font-dependent text paths; new caption/template
-  fonts must be added to BUNDLED_FONTS and force-kept in .gitignore.
+  fonts must be added to BUNDLED_FONTS, `bundled_asset` and the
+  .gitignore keep list.
 * A Director's text nodes share one `FontCollection` behind a mutex, and
   Skia's collection caches typefaces without a lock. Every paragraph build
   and layout holds that mutex, taken before the paragraph's own lock, because
@@ -371,7 +376,7 @@ five 640x360 premultiplied RGBA frames per workload via
 - Decoder unit tests require FFmpeg and ffprobe in PATH. Generate lossless, frame-numbered fixtures in temporary directories; fail on missing tools or fixture-generation errors instead of silently passing.
 - `SyncDecoder` and the `ThreadedDecoder` worker share `FrameSource`: the decode session, the eight-frame cache and the stream's end. A session that decodes frames and then runs out marks the exact end. A seek that lands past the end decodes nothing, so `find_end` decodes the tail from 8 frames before the container duration (from the start when that also lands past it). Requests at or past the end return the cached last frame without spawning FFmpeg, as an ended video holds its last frame.
 - Verify exact RGBA content, child PID reuse, eight-frame cache eviction, uncached backward and large forward seeks, the held last frame past the end (sequential and cold), and worker shutdown. Cover 24, 25, 30000/1001, 30, and 60 FPS.
-- Run `cargo test -p director-core --lib video_wrapper::tests` for decoder verification. Exact VFR presentation-timestamp sampling remains unsupported.
+- Run `cargo test -p director-video-core --lib video_wrapper::tests` for decoder verification. Exact VFR presentation-timestamp sampling remains unsupported.
 - `parse_video_size` reads the first two `x`-separated fields and `parse_frame_rate` the first comma field. A stream with side data, such as the ICC profile a screen recorder writes, makes ffprobe's CSV writer add an empty trailing field (`1920x1080x`, `30/1,`). Unit test: `reads_probe_output_with_a_side_data_field`.
 
 ## Beat grids
@@ -512,7 +517,7 @@ five 640x360 premultiplied RGBA frames per workload via
 - `nodes::video_node` decodes a path asset in place through `AssetLoader::media_path` (default: the path when it names a file) and an embedded asset through a temporary file.
 - Downstream decoders build on the public helpers: `animated`, `color_animated`, `animated_with`, `easing`, `color`, `gradient`, `blend_mode`, `length`, `effect_type`, `caption_node`, `smart_caption_node`, `resolve` and `nodes::{box_node, text_node, image, image_node, video_node, vector_node, shape_node, text_shadow, text_align, object_fit, object_position}`.
 - The visual suite exports every golden scene, checks the JSON round trip and catalog names, renders the scene, then paints the document through `director_render::Renderer` (a dev-dependency) and compares that frame with the same golden. Failing document renders write `<name>.document.actual.png` and `.diff.png`; an unsupported kind skips the document render with a message.
-- Tests: `tests/scene_document.rs` and `cargo test -p director-core --release --test integration visual_suite::`.
+- Tests: `tests/scene_document.rs` and `cargo test -p director-video-core --release --test integration visual_suite::`.
 
 ## Named compositions (Rhai)
 

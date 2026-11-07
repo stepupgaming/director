@@ -202,8 +202,9 @@ unsafe impl Send for Director {}
 /// `font_weight`/`font_style` resolve deterministically instead of falling back
 /// to host system fonts (which breaks cross-machine reproducibility).
 ///
-/// Files live in `crates/director-core/assets/fonts/` (force-committed via
-/// `.gitignore`) so they are present regardless of the working directory.
+/// Files live in `crates/director-core/assets/fonts/` and are compiled into
+/// the library ([`crate::bundled_asset`]), which backs any loader that lacks
+/// them, so they are present regardless of the working directory.
 /// All entries are **required** for export/CI determinism (Plan 06).
     /// Preview mode logs errors but continues so local iteration is not blocked;
     /// [`Director::ensure_required_fonts`] fails closed for export.
@@ -307,7 +308,11 @@ impl Director {
             // weights of the same family (Regular/Bold/Italic) let Skia pick the
             // correct variant for `font_weight`/`font_style` deterministically.
             for (filename, aliases, required) in BUNDLED_FONTS {
-                match asset_loader.load_bytes(&format!("fonts/{}", filename)) {
+                let path = format!("fonts/{}", filename);
+                let loaded = asset_loader
+                    .load_bytes(&path)
+                    .or_else(|error| crate::bundled_asset(&path).map(<[u8]>::to_vec).ok_or(error));
+                match loaded {
                     Ok(bytes) => {
                         if let Some(typeface) = parsed_typeface(bytes) {
                             for alias in *aliases {

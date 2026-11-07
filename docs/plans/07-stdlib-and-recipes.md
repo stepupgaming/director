@@ -80,12 +80,12 @@ What v1 does **not** claim:
 ## Verification
 
 ```bash
-cargo test -p director-core --lib stdlib
-cargo test -p director-core --release --test integration examples::stdlib_motion
-cargo test -p director-core --release --test integration examples::smart_lower_third
-cargo test -p director-core --release --test integration examples::faceless_short
-cargo test -p director-core --release --test integration examples::kinetic_lower_third
-cargo test -p director-core --release --test integration examples::image_beats
+cargo test -p director-video-core --lib stdlib
+cargo test -p director-video-core --release --test integration examples::stdlib_motion
+cargo test -p director-video-core --release --test integration examples::smart_lower_third
+cargo test -p director-video-core --release --test integration examples::faceless_short
+cargo test -p director-video-core --release --test integration examples::kinetic_lower_third
+cargo test -p director-video-core --release --test integration examples::image_beats
 ```
 
 CLI smoke (optional local):

@@ -61,7 +61,7 @@ Verification completed on the final source:
 - 2 composition tests, 2 masking tests, and 5 typography tests passed.
 - `cargo check --workspace --all-targets` passed with existing warnings.
 - Both optimized benchmark runs completed successfully.
-- `cargo clippy -p director-core --all-targets -- -D warnings` failed on existing lint debt, including `LayoutEngine::new` without `Default`, unused imports/results and Skia `Arc` thread-safety warnings. No suppressions were added.
+- `cargo clippy -p director-video-core --all-targets -- -D warnings` failed on existing lint debt, including `LayoutEngine::new` without `Default`, unused imports/results and Skia `Arc` thread-safety warnings. No suppressions were added.
 
 The raw frame comparison covers these box scenes, not every possible node. Full workspace tests and GPU performance were not measured. Existing caption snapshot/font-loading failures are a separate limitation; their baselines and tolerances were not changed.
 
@@ -131,7 +131,7 @@ From the workspace root, before changing the engine:
 
 ```bash
 DIRECTOR_PROFILE_PIXELS="$PWD/target/profile-before" \
-  cargo bench -p director-core --bench layout_snapshot_bench -- \
+  cargo bench -p director-video-core --bench layout_snapshot_bench -- \
   frame_pipeline --save-baseline before
 ```
 
@@ -139,10 +139,10 @@ After the change:
 
 ```bash
 DIRECTOR_PROFILE_PIXELS="$PWD/target/profile-after" \
-  cargo bench -p director-core --bench layout_snapshot_bench -- \
+  cargo bench -p director-video-core --bench layout_snapshot_bench -- \
   frame_pipeline --baseline before
 
-cargo bench -p director-core --bench layout_snapshot_bench -- \
+cargo bench -p director-video-core --bench layout_snapshot_bench -- \
   frame_pipeline --baseline before
 ```
 
@@ -170,7 +170,7 @@ PY
 Correctness and build checks:
 
 ```bash
-cargo test -p director-core --release --lib --test integration -- layout:: pipeline_equivalence::
+cargo test -p director-video-core --release --lib --test integration -- layout:: pipeline_equivalence::
 cargo check --workspace --all-targets
 ```
 

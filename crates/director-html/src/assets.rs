@@ -191,14 +191,9 @@ impl director_core::AssetLoader for AssetStore {
             if self.base.is_none() {
                 anyhow::bail!("bundled font '{path}' is missing from project");
             }
-            let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../director-core/assets")
-                .join(path);
-            let bytes = std::fs::read(&bundled)?;
-            self.dependencies
-                .lock()
-                .map_err(lock_error)?
-                .insert(bundled);
+            let bytes = director_core::bundled_asset(path)
+                .ok_or_else(|| anyhow::anyhow!("no bundled font '{path}'"))?
+                .to_vec();
             if self.record {
                 self.bytes
                     .lock()

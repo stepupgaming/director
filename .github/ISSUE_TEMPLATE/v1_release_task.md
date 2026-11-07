@@ -53,7 +53,7 @@ assignees: ''
 ### Automated Tests
 ```bash
 # Commands to run
-cargo test --release -p director-core
+cargo test --release -p director-video-core
 ```
 
 ### Manual Verification

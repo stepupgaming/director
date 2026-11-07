@@ -65,9 +65,9 @@ director-engine html still examples/html/native-motion.html --gpu -t 1 -o target
 director-engine html benchmark examples/html/native-motion.html --gpu --encoder software --export target/gpu-bench.mp4
 ```
 
-Install the optional Node dependencies in `../director-html/tools` for capture. `--modules` selects another dependency directory. Native commands need neither Node nor Chrome. See [compiler compatibility and parity](../director-html/README.md).
+Capture runs the Node scripts compiled into `director-html` from a scratch directory. Install playwright and gsap with npm and pass that `node_modules` directory as `--modules`; a repository build defaults to `../director-html/tools/node_modules`. Native commands need neither Node nor Chrome. See [compiler compatibility and parity](../director-html/README.md).
 
-CPU exports paint frames in parallel on a worker pool and encode them in one FFmpeg pass. `--gpu` selects serial Vulkan painting. `--encoder nvenc` selects NVIDIA H.264 encoding and also works with CPU painting. Defaults are CPU rendering and software H.264. Explicit requests fail when unavailable. Benchmarks report backend, codec, setup time and synchronized RGBA readback; frame FPS excludes PNG encoding. The upstream Skia resolver patch is selected from `vendor/skia-safe` by Cargo.
+CPU exports paint frames in parallel on a worker pool and encode them in one FFmpeg pass. `--gpu` selects serial Vulkan painting. `--encoder nvenc` selects NVIDIA H.264 encoding and also works with CPU painting. Defaults are CPU rendering and software H.264. Explicit requests fail when unavailable. Benchmarks report backend, codec, setup time and synchronized RGBA readback; frame FPS excludes PNG encoding. Skia comes from `director-skia-safe`, the fork in `vendor/skia-safe` that keeps the Vulkan resolver alive.
 
 ## Shot breakdown
 
@@ -155,6 +155,10 @@ Top-level `render`, `batch`, `still`, `sheet`, `audio`, `check`, `qa`, `snapshot
 ## Installation
 
 ```bash
+cargo install director-cli
+# or from a checkout
 cargo build --release -p director-cli
 # binary: target/release/director-engine
 ```
+
+Both install `director-recorder` beside `director-engine`; the HTML compiler runs page scripts in it.

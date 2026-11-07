@@ -1,10 +1,12 @@
 [package]
 name = "director-render"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 autotests = false
 description = "Paints and exports frames of a live Director or a scene document."
-license = "MIT"
 
 [dependencies]
 director-core = { workspace = true }

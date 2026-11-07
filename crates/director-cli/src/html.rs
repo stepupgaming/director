@@ -128,8 +128,19 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
         composition,
     } = command
     {
-        let tool =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../director-html/tools/capture.mjs");
+        // The Node scripts ship inside director-html; Node runs them from a
+        // scratch directory and resolves playwright and gsap from `modules`.
+        let tools = std::env::temp_dir().join(format!("director-capture-{}", std::process::id()));
+        std::fs::create_dir_all(&tools).map_err(|e| (1, format!("capture tools: {e}")))?;
+        for (name, source) in director_html::CAPTURE_TOOLS {
+            std::fs::write(tools.join(name), source).map_err(|e| (1, format!("capture tools: {e}")))?;
+        }
+        let tool = tools.join("capture.mjs");
+        // A repo build defaults to the dependencies installed beside the scripts.
+        let modules = modules.or_else(|| {
+            let installed = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../director-html/tools/node_modules");
+            installed.is_dir().then_some(installed)
+        });
         let mut node = std::process::Command::new("node");
         node.arg(tool)
             .arg("--input")
@@ -152,8 +163,9 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
         }
         let status = node
             .status()
-            .map_err(|e| (1, format!("compile-time extraction could not start: {e}")))?;
-        if !status.success() {
+            .map_err(|e| (1, format!("compile-time extraction could not start: {e}")));
+        let _ = std::fs::remove_dir_all(&tools);
+        if !status?.success() {
             return Err((1, "compile-time extraction failed".into()));
         }
         director_html::compile_capture_file(&output).map_err(|e| (1, e.to_string()))?;

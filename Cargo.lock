@@ -1521,6 +1521,8 @@ dependencies = [
 [[package]]
 name = "bevy_post_process"
 version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16a897d6318ed562de228d026b4c4f384c7430fff027c2b4d35367bdad0151ec"
 dependencies = [
  "bevy_app",
  "bevy_asset",
@@ -3136,13 +3138,13 @@ dependencies = [
  "ash",
  "bevy",
  "bevy_gaussian_splatting",
- "director-core",
  "director-scene",
+ "director-skia-safe",
+ "director-video-core",
  "half",
  "lyon_tessellation",
  "rayon",
  "serde_json",
- "skia-safe",
  "taffy 0.9.2",
  "wgpu",
 ]
@@ -3169,12 +3171,13 @@ dependencies = [
  "clap",
  "director-3d",
  "director-breakdown",
- "director-core",
  "director-host",
  "director-html",
  "director-recorder",
  "director-render",
  "director-schema",
+ "director-skia-safe",
+ "director-video-core",
  "image",
  "lottie-core",
  "lottie-data",
@@ -3184,50 +3187,10 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "skia-safe",
  "tempfile",
  "tracing",
  "tracing-subscriber",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "director-core"
-version = "1.1.1"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "criterion",
- "crossbeam-channel",
- "director-render",
- "director-scene",
- "ebur128",
- "hound",
- "image",
- "keyframe",
- "lottie-core",
- "lottie-data",
- "lottie-skia",
- "rand 0.8.8",
- "rayon",
- "realfft",
- "resvg",
- "rhai",
- "rubato",
- "schemars",
- "serde",
- "serde_json",
- "skia-safe",
- "symphonia",
- "taffy 0.9.2",
- "tempfile",
- "thiserror 2.0.21",
- "tiny-skia",
- "tracing",
- "tracing-subscriber",
- "unicode-segmentation",
- "usvg",
- "uuid",
 ]
 
 [[package]]
@@ -3246,10 +3209,10 @@ name = "director-host"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "director-core",
  "director-html",
  "director-render",
  "director-scene",
+ "director-video-core",
  "memmap2",
  "rhai",
  "schemars",
@@ -3269,11 +3232,12 @@ dependencies = [
  "criterion",
  "cssparser 0.37.0",
  "director-3d",
- "director-core",
  "director-dom",
  "director-render",
  "director-scene",
+ "director-skia-safe",
  "director-track",
+ "director-video-core",
  "ego-tree",
  "html5ever",
  "lightningcss",
@@ -3282,7 +3246,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "skia-safe",
  "taffy 0.9.2",
  "tempfile",
  "thiserror 2.0.21",
@@ -3305,14 +3268,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "director-core",
  "director-html",
  "director-scene",
+ "director-skia-safe",
+ "director-video-core",
  "keyframe",
  "rayon",
  "rhai",
  "serde_json",
- "skia-safe",
  "taffy 0.9.2",
  "tempfile",
  "thiserror 2.0.21",
@@ -3332,10 +3295,18 @@ dependencies = [
 name = "director-schema"
 version = "0.1.0"
 dependencies = [
- "director-core",
+ "director-video-core",
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "director-skia-safe"
+version = "0.153.3"
+dependencies = [
+ "bitflags 2.13.2",
+ "skia-bindings",
 ]
 
 [[package]]
@@ -3346,6 +3317,45 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "director-video-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "criterion",
+ "crossbeam-channel",
+ "director-render",
+ "director-scene",
+ "director-skia-safe",
+ "ebur128",
+ "hound",
+ "image",
+ "keyframe",
+ "lottie-core",
+ "lottie-data",
+ "lottie-skia",
+ "rand 0.8.8",
+ "rayon",
+ "realfft",
+ "resvg",
+ "rhai",
+ "rubato",
+ "schemars",
+ "serde",
+ "serde_json",
+ "symphonia",
+ "taffy 0.9.2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tiny-skia",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-segmentation",
+ "usvg",
+ "uuid",
 ]
 
 [[package]]
@@ -5173,12 +5183,12 @@ dependencies = [
 name = "lottie-skia"
 version = "0.1.0"
 dependencies = [
+ "director-skia-safe",
  "glam 0.24.2",
  "kurbo 0.9.5",
  "lottie-core",
  "lottie-data",
  "serde_json",
- "skia-safe",
 ]
 
 [[package]]
@@ -7466,14 +7476,6 @@ dependencies = [
  "serde_json",
  "tar",
  "toml",
-]
-
-[[package]]
-name = "skia-safe"
-version = "0.153.3"
-dependencies = [
- "bitflags 2.13.2",
- "skia-bindings",
 ]
 
 [[package]]

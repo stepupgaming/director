@@ -54,9 +54,6 @@ import bevy_render::{
 
 @group(2) @binding(4) var stbn_texture: texture_2d_array<f32>;
 
-/// Director: rays each pixel averages.
-const SSR_RAYS: u32 = 16u;
-
 struct BrdfSample {
     wi: vec3<f32>,
     value_over_pdf: vec3<f32>,
@@ -113,9 +110,7 @@ fn evaluate_ssr(R_world: vec3<f32>, P_world: vec3<f32>, jitter: f32) -> vec4<f32
     raymarch.use_secant = ssr_settings.use_secant != 0u;
     raymarch.depth_thickness_linear_z = ssr_settings.thickness;
     raymarch.jitter = jitter;
-    // Director: march past surfaces the ray passes behind by more than the
-    // thickness instead of ending the ray on them.
-    raymarch.march_behind_surfaces = true;
+    raymarch.march_behind_surfaces = false;
 
     let raymarch_result = depth_ray_march_march(&raymarch);
     if (raymarch_result.hit) {
@@ -193,45 +188,46 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let roughness = lighting::perceptualRoughnessToRoughness(perceptual_roughness);
     let F0 = pbr_functions::calculate_F0(pbr_input.material.base_color.rgb, pbr_input.material.metallic, pbr_input.material.reflectance);
 
-    // Director: one stochastic ray per pixel leaves GGX's long tail as
-    // salt-and-pepper misses that upstream resolves with TAA across frames.
-    // A rendered frame stands alone, so each pixel averages `SSR_RAYS` rays,
-    // each with its own blue noise layer (or PCG draw), and the frame count
-    // still picks the set so samples of one frame differ.
+    // Get some random numbers. If the spatio-temporal blue noise (STBN) texture
+    // is available (i.e. not the 1x1 placeholder), we use it. Otherwise, we
+    // fall back to procedural noise.
+    let stbn_dims = textureDimensions(stbn_texture);
+    var urand: vec2<f32>;
+    var raymarch_jitter: f32;
+    if (all(stbn_dims > vec2(1u))) {
+        let stbn_layers = textureNumLayers(stbn_texture);
+        let stbn_noise = textureLoad(
+            stbn_texture,
+            vec2<u32>(in.position.xy) % stbn_dims,
+            i32(globals.frame_count % u32(stbn_layers)),
+            0
+        );
+        urand = stbn_noise.xy;
+        // Use the third channel for jitter to avoid correlation with BRDF sampling.
+        raymarch_jitter = stbn_noise.z;
+    } else {
+        // Fallback to PCG-based procedural noise.
+        // We use a XOR-sum of products with large primes to decorrelate the
+        // seed from the screen-space coordinates and frame count, avoiding
+        // visible "crawling" artifacts.
+        var state = (u32(in.position.x) * 2131358057u) ^
+                    (u32(in.position.y) * 3416869721u) ^
+                    (globals.frame_count * 1199786941u);
+        urand = utils::rand_vec2f(&state);
+        raymarch_jitter = utils::rand_f(&state);
+    }
+
+    // Sample the BRDF.
     let N_tangent = vec3(0.0, 0.0, 1.0);
     let V_tangent = V * tangent_to_world;
-    let stbn_dims = textureDimensions(stbn_texture);
-    var state = (u32(in.position.x) * 2131358057u) ^
-                (u32(in.position.y) * 3416869721u) ^
-                (globals.frame_count * 1199786941u);
-    // RGB holds the BRDF-weighted reflected light and A the share of rays
-    // that missed, both averaged over the rays.
-    var ssr_specular = vec4(0.0);
-    for (var ray = 0u; ray < SSR_RAYS; ray += 1u) {
-        var urand: vec2<f32>;
-        var raymarch_jitter: f32;
-        if (all(stbn_dims > vec2(1u))) {
-            let stbn_layers = textureNumLayers(stbn_texture);
-            let stbn_noise = textureLoad(
-                stbn_texture,
-                vec2<u32>(in.position.xy) % stbn_dims,
-                i32((globals.frame_count * SSR_RAYS + ray) % u32(stbn_layers)),
-                0
-            );
-            urand = stbn_noise.xy;
-            // Use the third channel for jitter to avoid correlation with BRDF sampling.
-            raymarch_jitter = stbn_noise.z;
-        } else {
-            urand = utils::rand_vec2f(&state);
-            raymarch_jitter = utils::rand_f(&state);
-        }
-        let brdf_sample = sample_specular_brdf(V_tangent, roughness, F0, urand, N_tangent);
-        let R_stochastic = tangent_to_world * brdf_sample.wi;
-        let hit = evaluate_ssr(R_stochastic, world_position, raymarch_jitter);
-        ssr_specular += vec4(hit.rgb * brdf_sample.value_over_pdf, hit.a);
-    }
-    ssr_specular /= f32(SSR_RAYS);
-    var indirect_light = ssr_specular.rgb * fade;
+
+    let brdf_sample = sample_specular_brdf(V_tangent, roughness, F0, urand, N_tangent);
+    let R_stochastic = tangent_to_world * brdf_sample.wi;
+    let brdf_sample_value_over_pdf = brdf_sample.value_over_pdf;
+
+    // Do the raymarching.
+    let ssr_specular = evaluate_ssr(R_stochastic, world_position, raymarch_jitter);
+    var indirect_light = (ssr_specular.rgb * brdf_sample_value_over_pdf) * fade;
 
     // Sample the environment map if necessary.
     //
@@ -318,14 +314,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // Accumulate the environment map light.
     // Note that we multiply by (1.0 - ssr_specular.a * fade) to occlude the
     // environment map if SSR hits.
-    // Director: the deferred lighting pass already added the environment's
-    // specular light to surfaces outside the SSR roughness range (see
-    // `use_ssr` in `apply_pbr_lighting`), so only those inside take it here.
-    let use_ssr = perceptual_roughness <= ssr_settings.max_perceptual_roughness
-        && perceptual_roughness >= ssr_settings.min_perceptual_roughness;
-    if (use_ssr) {
-        indirect_light += (view.exposure * environment_light.specular * specular_occlusion) * (1.0 - (1.0 - ssr_specular.a) * fade);
-    }
+    indirect_light += (view.exposure * environment_light.specular * specular_occlusion) * (1.0 - (1.0 - ssr_specular.a) * fade);
 }
 
     // Write the results.

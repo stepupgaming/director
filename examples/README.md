@@ -182,5 +182,5 @@ cargo run --release -- examples/basics/hello_world.rhai --preview
 All examples are validated by CI:
 
 ```bash
-cargo test -p director-core examples
+cargo test -p director-video-core examples
 ```

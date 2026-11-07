@@ -15,6 +15,7 @@ mod gpu;
 mod hero;
 mod lens;
 mod node;
+mod patch;
 mod sky;
 mod studio;
 mod text;

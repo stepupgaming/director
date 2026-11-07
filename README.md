@@ -102,7 +102,7 @@ Build with `--release`. Skia downloads as a prebuilt library. [docs/contributing
 | Path | Contents |
 |------|----------|
 | `crates/director-html` | HTML, CSS, HyperFrames and GSAP compiler |
-| `crates/director-core` | Scene graph, layout, animation, text, media and the Rhai API |
+| `crates/director-core` | Scene graph, layout, animation, text, media and the Rhai API (published as `director-video-core`) |
 | `crates/director-scene` | Serializable scene document |
 | `crates/director-render` | Frame rendering, motion blur and export |
 | `crates/director-host` | Session API: open, patch, inspect, render, export |
@@ -118,4 +118,4 @@ Start with [docs/plans/10-native-platform-overhaul.md](docs/plans/10-native-plat
 
 ## License
 
-MIT
+MIT OR Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). `director-breakdown` ports Apache-2.0 code and stays Apache-2.0; see its NOTICE.

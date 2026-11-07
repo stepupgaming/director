@@ -3,6 +3,8 @@ name = "director-dom"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "The scripted page document and recorder protocol Director's GSAP recording shares across processes"
 
 # Skia-free and engine-free: the recorder helper links it beside a JavaScript

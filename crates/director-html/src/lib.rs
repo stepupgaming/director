@@ -44,6 +44,13 @@ pub use timeline::{
     Timeline, TimelineKeyframe, TimelineTrack, TimelineValue, TIMELINE_FORMAT, TIMELINE_SCRIPT,
 };
 
+/// The Node capture scripts by file name, so an installed CLI runs them
+/// without a repository checkout.
+pub const CAPTURE_TOOLS: [(&str, &str); 2] = [
+    ("capture.mjs", include_str!("../tools/capture.mjs")),
+    ("browser.mjs", include_str!("../tools/browser.mjs")),
+];
+
 pub struct CompiledHtml {
     pub director: director_core::Director,
     pub element_ids: std::collections::BTreeMap<String, director_core::types::NodeId>,

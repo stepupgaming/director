@@ -2,13 +2,16 @@
 name = "director-html"
 version.workspace = true
 edition.workspace = true
-autotests = false
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+autotests = false
 description = "HTML, CSS and HyperFrames compiler for Director's native renderer"
+exclude = ["tests/", "benches/", "tools/", "!tools/capture.mjs", "!tools/browser.mjs"]
 
 [dependencies]
 director-core.workspace = true
-director-scene = { path = "../director-scene" }
+director-scene = { workspace = true }
 anyhow.workspace = true
 serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
@@ -24,9 +27,9 @@ usvg = "0.44"
 wuff = "0.2.9"
 sha2 = "0.10"
 tempfile = "3.23"
-director-dom = { path = "../director-dom" }
-director-3d = { path = "../director-3d" }
-director-track = { path = "../director-track" }
+director-dom = { workspace = true }
+director-3d = { workspace = true }
+director-track = { workspace = true }
 ego-tree = "0.10"
 rayon = "1.10"
 

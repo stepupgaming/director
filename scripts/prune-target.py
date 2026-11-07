@@ -15,7 +15,7 @@ built from stays too. Everything else goes: its hashed files in `deps` and
 
 Commands that resolve features differently build their own copies.
 `cargo build -p director-cli`, `cargo test --workspace` and
-`cargo test -p director-core` each have a set. A set stays while one of its
+`cargo test -p director-video-core` each have a set. A set stays while one of its
 roots is the newest build of its target, or for `--days` after it compiled.
 
 A workspace crate's root never stays when its target is gone from the package

@@ -80,11 +80,11 @@ Do not schedule under this program:
 
 ```bash
 cargo check --workspace --all-targets
-cargo test -p director-core
+cargo test -p director-video-core
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 # when touching pixels/fonts:
-cargo test -p director-core --release --test integration visual_suite::
+cargo test -p director-video-core --release --test integration visual_suite::
 ```
 
 ## Doc ownership

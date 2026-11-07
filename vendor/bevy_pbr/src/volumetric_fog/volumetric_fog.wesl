@@ -202,9 +202,9 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     //
     // [2]: https://en.wikipedia.org/wiki/Beer%E2%80%93Lambert_law
 
-    // Director: ambient light scatters in at every step below, in proportion
-    // to the density, as the lights do.
-    var accumulated_color = vec3(0.0);
+    // Use Beer's law again to accumulate the ambient light all along the path.
+    var accumulated_color = exp(-ray_length_view * (absorption + scattering)) * ambient_color *
+        ambient_intensity;
 
     // This is the amount of the background that shows through. We're actually
     // going to recompute this over and over again for each directional light,
@@ -359,11 +359,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
                 density = 0.0;
             }
 
-        // Director: isotropic ambient radiance scattered toward the camera,
-        // dimmed like the lights' by the fog it crosses to get here.
-        var sample_color = fog_color * ambient_color * ambient_intensity *
-            exp(-density * bounding_radius * (absorption + scattering)) *
-            scattering * density * step_size_world * exposure;
+        var sample_color = vec3(0.0);
 
         let cluster_index = clustering::view_fragment_cluster_index(frag_coord.xy, P_view.z, is_orthographic);
         var clusterable_object_index_ranges = clustering::unpack_clusterable_object_index_ranges(cluster_index);

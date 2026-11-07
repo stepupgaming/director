@@ -1,16 +1,18 @@
 [package]
 name = "director-host"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 autotests = false
 description = "Host session over a Director scene document: open, patch, inspect, render and export."
-license = "MIT"
 
 [dependencies]
 director-core = { workspace = true }
 director-scene = { workspace = true }
-director-render = { path = "../director-render" }
-director-html = { path = "../director-html" }
+director-render = { workspace = true }
+director-html = { workspace = true }
 base64 = "0.22"
 memmap2 = "0.9"
 rhai = "1.23.6"

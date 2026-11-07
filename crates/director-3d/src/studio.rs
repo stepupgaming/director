@@ -634,13 +634,20 @@ impl Studio {
                     ..default()
                 }),
         );
-        app.add_plugins((GaussianSplattingPlugin, RaytracingScenePlugin, hero::HeroPlugin, crate::display::DisplayPlugin, crate::catcher::CatcherPlugin));
+        app.add_plugins((
+            crate::patch::PatchPlugin,
+            GaussianSplattingPlugin,
+            RaytracingScenePlugin,
+            hero::HeroPlugin,
+            crate::display::DisplayPlugin,
+            crate::catcher::CatcherPlugin,
+        ));
         app.init_resource::<Orbit>();
         app.add_systems(PostUpdate, orbit.after(AnimationSystems).before(TransformSystems::Propagate).before(bevy::camera::CameraUpdateSystems));
         app.finish();
         app.cleanup();
         let apps = std::mem::take(app.sub_apps_mut());
-        Self {
+        let mut studio = Self {
             apps,
             dir,
             stages: HashMap::new(),
@@ -648,7 +655,16 @@ impl Studio {
             accumulator: None,
             shown: None,
             traced_once: false,
+        };
+        // Director's edits to Bevy's shaders replace the upstream sources
+        // before any pipeline compiles them.
+        let start = std::time::Instant::now();
+        while !crate::patch::ready(studio.apps.main.world()) {
+            assert!(start.elapsed().as_secs() < 30, "Director's Bevy shader edits did not load");
+            studio.step();
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        studio
     }
 
     fn step(&mut self) {

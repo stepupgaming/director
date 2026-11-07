@@ -2,9 +2,12 @@
 name = "director-3d"
 version.workspace = true
 edition.workspace = true
-autotests = false
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+autotests = false
 description = "Real 3D for Director: glTF scenes rendered by Bevy on Vulkan"
+exclude = ["tests/"]
 
 [dependencies]
 director-core.workspace = true

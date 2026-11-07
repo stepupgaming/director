@@ -112,17 +112,17 @@ When the user requests a durable behavior change, record it here or in the relev
 - Generated or downloaded assets should not become durable source unless the relevant AGENTS.md explicitly says they are owned there.
 - For Python scripts, keep dependencies executable through existing tooling and install packages only with `uv` when installation is necessary.
 - Product direction: high-quality native video production for agents and developers, covering short-form and long-form (Shorts, Reels, TikTok, YouTube). Keep preview, editing, inspection and export consistent across supported authoring inputs. Web research as an input belongs at orchestration layers outside the render core.
-- `vendor/` contains third-party source selected by local Cargo patches. Do not modify vendor sources without updating its `AGENTS.md`; exclude vendored packages from workspace membership.
-- `vendor/skia-safe/` is skia-safe 0.153.3 with three edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.
-- `vendor/bevy_pbr/` is bevy_pbr 0.20.1 with two volumetric fog edits (alpha coverage and per-step ambient in-scatter) and three screen-space reflection edits (16 averaged rays, marching behind surfaces, and the probe's specular light counted once) documented in `vendor/AGENTS.md`; reapply them on a Bevy upgrade.
-- `vendor/bevy_post_process/` is bevy_post_process 0.20.1 with one effect stack edit that keeps the source alpha, documented in `vendor/AGENTS.md`; reapply it on a Bevy upgrade.
+- `vendor/` contains third-party source Director builds against. Do not modify vendor sources without updating its `AGENTS.md`; exclude vendored packages from workspace membership.
+- `vendor/skia-safe/` is skia-safe 0.153.3 with three edits keeping the Vulkan `get_proc` thread-local resolver alive for lazy readback/flush resolution, published as `director-skia-safe`. On a dependency bump, reapply or verify removal of the edits documented in `vendor/AGENTS.md`.
+- `vendor/bevy_pbr/` is bevy_pbr 0.20.1 with one volumetric fog alpha blend edit, selected by `[patch.crates-io]` for repository builds only. Director's Bevy shader edits (16 averaged SSR rays, marching behind surfaces, the probe's specular light counted once, per-step fog in-scatter, lens effect alpha) live in `crates/director-3d/src/patch/` and ship in published builds. Reapply both on a Bevy upgrade.
+- Every workspace crate publishes to crates.io under `MIT OR Apache-2.0` (`director-breakdown` stays Apache-2.0 with its NOTICE), inheriting version, edition, license and repository from `[workspace.package]`. `crates/director-core` publishes as `director-video-core` with library name `director_core`. Internal dependencies are workspace dependencies with a version; dev-dependencies stay path-only so test cycles (director-core and director-render, director-html and director-render) never reach the registry. Publish in dependency order: `director-skia-safe`, then `cargo publish --workspace`. Publishing cannot be undone, so the user confirms each release and runs `cargo login` themselves.
 
 ## Verification
 
 - Rust workspace: `cargo check --workspace --all-targets --release`
 - Rust tests: `cargo test --workspace --release` (CI runs this on push to `main` and on pull requests)
 - Rust lint: `cargo clippy --workspace --all-targets --release -- -D warnings`
-- Visual regression: `cargo test -p director-core --release --test integration visual_suite::`
+- Visual regression: `cargo test -p director-video-core --release --test integration visual_suite::`
 
 ## Child DOX Index
 

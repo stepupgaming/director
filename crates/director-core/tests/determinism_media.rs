@@ -1,7 +1,6 @@
 //! Plan 06 — determinism & media clock acceptance tests.
 
 use director_core::director::Director;
-use director_core::errors::RenderError;
 use director_core::scripting::register_rhai_api;
 use director_core::timeline::{
     audio_samples_per_video_frame, duration_to_frame_count, export_audio_sample_count,
@@ -41,7 +40,9 @@ fn required_fonts_present_when_assets_exist() {
 }
 
 #[test]
-fn required_fonts_fail_closed_when_missing() {
+fn required_fonts_come_from_the_library_without_a_loader() {
+    // The bundled fonts compile into director-core, so a loader that has none
+    // still renders with them.
     let d = Director::new(
         64,
         64,
@@ -51,15 +52,11 @@ fn required_fonts_fail_closed_when_missing() {
         None,
     );
     assert!(
-        !d.missing_required_fonts.is_empty(),
-        "empty loader must report missing fonts"
+        d.missing_required_fonts.is_empty(),
+        "missing {:?}",
+        d.missing_required_fonts
     );
-    match d.ensure_required_fonts() {
-        Err(RenderError::MissingRequiredFonts(list)) => {
-            assert!(list.iter().any(|f| f.contains("Roboto-Regular")));
-        }
-        other => panic!("expected MissingRequiredFonts, got {other:?}"),
-    }
+    d.ensure_required_fonts().expect("fonts ok");
 }
 
 #[test]

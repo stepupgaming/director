@@ -509,6 +509,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "director-skia-safe"
+version = "0.153.3"
+dependencies = [
+ "anyhow",
+ "ash",
+ "base64 0.23.1",
+ "bitflags 2.11.0",
+ "gl",
+ "glutin",
+ "glutin-winit",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-metal 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "objc2-ui-kit 0.3.2",
+ "percent-encoding",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "skia-bindings",
+ "skia-svg-macros",
+ "static_assertions",
+ "ureq",
+ "vulkano",
+ "windows",
+ "winit",
+ "zip",
+]
+
+[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1951,38 +1983,6 @@ dependencies = [
  "serde_json",
  "tar",
  "toml",
-]
-
-[[package]]
-name = "skia-safe"
-version = "0.153.3"
-dependencies = [
- "anyhow",
- "ash",
- "base64 0.23.1",
- "bitflags 2.11.0",
- "gl",
- "glutin",
- "glutin-winit",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-metal 0.3.2",
- "objc2-quartz-core 0.3.2",
- "objc2-ui-kit 0.3.2",
- "percent-encoding",
- "raw-window-handle",
- "serde",
- "serde_json",
- "serial_test",
- "skia-bindings",
- "skia-svg-macros",
- "static_assertions",
- "ureq",
- "vulkano",
- "windows",
- "winit",
- "zip",
 ]
 
 [[package]]

@@ -154,6 +154,29 @@ pub trait AssetLoader: Send + Sync {
     }
 }
 
+/// A font Director ships inside the library, by its `fonts/<file>` path, so
+/// text renders the same wherever the binary runs.
+pub fn bundled_asset(path: &str) -> Option<&'static [u8]> {
+    macro_rules! fonts {
+        ($($file:literal),* $(,)?) => {
+            match path {
+                $(concat!("fonts/", $file) => Some(include_bytes!(concat!("../assets/fonts/", $file)).as_slice()),)*
+                _ => None,
+            }
+        };
+    }
+    fonts!(
+        "Roboto-Regular.ttf",
+        "Roboto-Bold.ttf",
+        "Roboto-Italic.ttf",
+        "Inter-Regular.ttf",
+        "Inter-Bold.ttf",
+        "Poppins-Bold.ttf",
+        "Archivo-Variable.ttf",
+        "JetBrainsMono-Variable.ttf",
+    )
+}
+
 /// The default implementation of `AssetLoader` using the standard `std::fs` filesystem.
 pub struct DefaultAssetLoader;
 
@@ -164,14 +187,13 @@ impl AssetLoader for DefaultAssetLoader {
         if let Ok(bytes) = std::fs::read(path) {
             return Ok(bytes);
         }
-        // Fallback to assets/ and the crate assets directory so bundled fonts
-        // are discoverable both from the workspace root and from test runners.
-        for alt in [format!("assets/{}", path), format!("crates/director-core/assets/{}", path)] {
-            if let Ok(bytes) = std::fs::read(&alt) {
-                return Ok(bytes);
-            }
+        if let Ok(bytes) = std::fs::read(format!("assets/{}", path)) {
+            return Ok(bytes);
         }
-        anyhow::bail!("Asset not found: {} (checked '{}' and '{}'): file not found", path, path, path)
+        if let Some(bytes) = bundled_asset(path) {
+            return Ok(bytes.to_vec());
+        }
+        anyhow::bail!("Asset not found: {} (checked '{}' and 'assets/{}'): file not found", path, path, path)
     }
 
     /// Attempts to load an emoji font.

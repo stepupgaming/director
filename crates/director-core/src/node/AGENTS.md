@@ -25,7 +25,7 @@ build/tests fail. Plan 10 phase 2 collapses this into one effect table.
 
 - `caption.rs` measures content height only. Anchor margins belong to Taffy insets, not the measured caption box.
 - Measurement and rendering both compute paragraph width as `max(rect_width * layout_width_fraction, 20)` so narrow boxes preserve the same wrapping and height.
-- Regression checks: `cargo test -p director-core --lib node::caption::tests`, including margin/inset separation and narrow measure/render equivalence.
+- Regression checks: `cargo test -p director-video-core --lib node::caption::tests`, including margin/inset separation and narrow measure/render equivalence.
 
 ### Text stroke pass
 
@@ -91,7 +91,7 @@ build/tests fail. Plan 10 phase 2 collapses this into one effect table.
 ## Verification
 
 - `cargo check --workspace --all-targets`
-- `cargo test -p director-core --lib shader_compile_tests` — every shader SkSL
+- `cargo test -p director-video-core --lib shader_compile_tests` — every shader SkSL
   compiles to an `ImageFilter`.
 - `cargo test -p director-schema` — catalog↔schema round-trip (incl. new tags).
 - `cargo clippy --workspace --all-targets -- -D warnings`

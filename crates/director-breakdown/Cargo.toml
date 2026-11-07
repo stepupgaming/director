@@ -1,7 +1,9 @@
 [package]
 name = "director-breakdown"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
 autotests = false
 description = "Shot breakdown of a reference video for Director: cuts, transitions and container provenance."
 license = "Apache-2.0"

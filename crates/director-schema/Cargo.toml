@@ -1,14 +1,18 @@
 [package]
 name = "director-schema"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "JSON schema reflection of Director's scripting and node API"
 
 [dependencies]
-director-core = { path = "../director-core" }
+director-core = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 schemars = { workspace = true }
 
 [build-dependencies]
-director-core = { path = "../director-core" }
+director-core = { workspace = true }
 

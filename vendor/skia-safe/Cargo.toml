@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 rust-version = "1.85"
-name = "skia-safe"
+name = "director-skia-safe"
 version = "0.153.3"
 authors = ["Armin Sander <armin@replicator.org>"]
 build = false
@@ -21,9 +21,8 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Safe Skia Bindings for Rust"
+description = "skia-safe 0.153.3 with Director's Vulkan resolver lifetime fix: the get_proc resolver outlives context construction for lazy readback and flush resolution"
 homepage = "https://github.com/rust-skia/rust-skia"
-documentation = "https://docs.rs/skia-safe"
 readme = "README.md"
 keywords = [
     "skia",
@@ -40,7 +39,7 @@ categories = [
     "visualization",
 ]
 license = "MIT"
-repository = "https://github.com/rust-skia/rust-skia"
+repository = "https://github.com/stepupgaming/director"
 
 [features]
 all-linux = [
