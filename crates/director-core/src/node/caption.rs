@@ -40,6 +40,41 @@ pub struct CaptionLine {
     pub words: Vec<CaptionWord>,
     pub start_sec: f64,
     pub end_sec: f64,
+    /// The word times are measured: speech recognition or authored per word.
+    /// Phrase break keeps them, and each display line reveals by its first
+    /// word. Without it the words split the cue evenly, an estimate.
+    #[serde(default)]
+    pub measured: bool,
+}
+
+/// One spoken word with measured times in seconds, as `director-engine asr
+/// transcribe --format json` writes it. `word` is accepted for `text`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TimedWord {
+    #[serde(alias = "word")]
+    pub text: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+/// When [`cues_from_words`] starts a new cue. The defaults match
+/// `director-engine asr transcribe --format srt`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CueRules {
+    /// Most characters on a cue, spaces included. A longer word keeps its own cue.
+    pub max_chars: usize,
+    /// Longest cue in seconds.
+    pub max_duration: f64,
+    /// A pause of at least this many seconds between words ends the cue.
+    pub max_gap: f64,
+    /// A word ending in `.`, `?` or `!` ends the cue.
+    pub break_on_sentence: bool,
+}
+
+impl Default for CueRules {
+    fn default() -> Self {
+        Self { max_chars: 42, max_duration: 5.0, max_gap: 0.8, break_on_sentence: true }
+    }
 }
 
 /// Where to position the caption within the layout rect.
@@ -254,8 +289,9 @@ pub struct CaptionStyle {
     pub future_opacity: f32,
     pub spoken_color_opacity: f32,  // alpha multiplier for spoken color
 
-    // Future→active entry ramp (smooth, no overshoot).
-    pub color_transition_duration: f64, // seconds
+    // Optional future→active color lead-in before each word starts, in
+    // seconds. 0 (the default) lands the highlight on the word's start.
+    pub color_transition_duration: f64,
 
     // Active word emphasis: small scale pop at activation moment only.
     // The pop is implemented as a per-token canvas-scale transform applied
@@ -338,7 +374,7 @@ impl Default for CaptionStyle {
             future_opacity: 0.92,
             spoken_color_opacity: 0.55,
 
-            color_transition_duration: 0.10,
+            color_transition_duration: 0.0,
 
             active_pop_scale: 1.04,
             active_pop_duration: 0.08,
@@ -608,7 +644,7 @@ impl CaptionNode {
     fn compute_word_color(&self, word: &CaptionWord, time: f64, is_active: bool) -> Color {
         let start = word.start_sec;
         let end = word.end_sec;
-        let t_dur = self.style.color_transition_duration.max(0.001);
+        let t_dur = self.style.color_transition_duration;
 
         if is_active {
             return self.style.highlight_color;
@@ -621,7 +657,7 @@ impl CaptionNode {
             // Smooth future→active entry over `color_transition_duration`
             // before `start`. At `time = start - t_dur` we are 100% base
             // color; at `time = start` we are 100% highlight (entry frame).
-            if time > start - t_dur {
+            if t_dur > 0.0 && time > start - t_dur {
                 let p = ((start - time) / t_dur) as f32;
                 let p = p.clamp(0.0, 1.0);
                 return lerp_color(self.style.highlight_color, self.style.color, p);
@@ -1850,21 +1886,47 @@ pub fn display_line_window_fracs(
 
 /// Line-reveal factor: returns 0.0 → 1.0 over `reveal_duration`
 /// seconds starting at `cue.start_sec + offset_frac * cue_duration`.
+///
+/// A measured cue shows line 0 from `cue.start_sec` and finishes each later
+/// line's ramp at its first word's start, so a spoken word is never faded.
 pub fn line_reveal_factor(
     line: &CaptionLine,
     display_line_idx: usize,
     time: f64,
     style: &CaptionStyle,
 ) -> f32 {
-    let total_dur = (line.end_sec - line.start_sec).max(0.001);
-    let num_lines = display_line_count(line);
-    let (offset_frac, _) =
-        display_line_window_fracs(style, display_line_idx, num_lines);
     let duration = style
         .line_reveal_durations
         .get(display_line_idx)
         .copied()
         .unwrap_or(0.10);
+    if line.measured {
+        if display_line_idx == 0 {
+            return if time >= line.start_sec { 1.0 } else { 0.0 };
+        }
+        let first = line
+            .words
+            .iter()
+            .filter(|w| w.display_line_idx == display_line_idx)
+            .map(|w| w.start_sec)
+            .fold(f64::INFINITY, f64::min);
+        if first.is_finite() {
+            if time >= first {
+                return 1.0;
+            }
+            let reveal_start = (first - duration as f64).max(line.start_sec);
+            let span = first - reveal_start;
+            if span <= 0.0 || time < reveal_start {
+                return 0.0;
+            }
+            let raw = ((time - reveal_start) / span) as f32;
+            return CaptionNode::ease_out_sine_inline(raw).clamp(0.0, 1.0);
+        }
+    }
+    let total_dur = (line.end_sec - line.start_sec).max(0.001);
+    let num_lines = display_line_count(line);
+    let (offset_frac, _) =
+        display_line_window_fracs(style, display_line_idx, num_lines);
     let reveal_start = line.start_sec + total_dur * (offset_frac as f64);
     let dt = (time - reveal_start).max(0.0);
     let raw = if duration <= 0.0 { 1.0 } else { dt / (duration as f64) };
@@ -1952,14 +2014,110 @@ pub fn retime_words_by_display_line(line: &mut CaptionLine, style: &CaptionStyle
     }
 }
 
-/// Re-run phrase break for all cues (after style props change).
+/// Re-run phrase break for all cues (after style props change). Measured
+/// cues keep their word times; estimated cues re-split each display line's
+/// window evenly.
 pub fn refresh_caption_lines(lines: &mut [CaptionLine], style: &CaptionStyle) {
     for line in lines.iter_mut() {
         if style.auto_phrase_break && !line.text.contains('\n') {
             apply_phrase_break(line, style.max_words_per_line);
-            retime_words_by_display_line(line, style);
+            if !line.measured {
+                retime_words_by_display_line(line, style);
+            }
         }
     }
+}
+
+/// The word highlighted at `time`: `(cue index, word index)` into `lines`,
+/// as the renderer picks it. The newest cue showing at `time` wins, and in it
+/// the word whose `[start, end)` holds `time` with the latest start.
+pub fn active_word_at(lines: &[CaptionLine], time: f64) -> Option<(usize, usize)> {
+    let cue = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| time >= line.start_sec && time < line.end_sec)
+        .max_by(|a, b| a.1.start_sec.partial_cmp(&b.1.start_sec).unwrap_or(std::cmp::Ordering::Equal))?;
+    CaptionNode::find_global_active(&[cue], time)
+}
+
+/// Groups measured words into cues by `rules`, in start order. Words with no
+/// text are dropped. Every cue is measured and spans its first word's start
+/// to its last word's end.
+pub fn cues_from_words(words: &[TimedWord], rules: &CueRules) -> Vec<CaptionLine> {
+    let mut words: Vec<&TimedWord> = words.iter().filter(|w| !w.text.trim().is_empty()).collect();
+    words.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+    let mut out: Vec<CaptionLine> = Vec::new();
+    let mut open = false;
+    let mut previous_end = f64::NEG_INFINITY;
+    for word in words {
+        let text = word.text.trim();
+        if open {
+            let cue = out.last().expect("an open cue exists");
+            let fits = cue.text.chars().count() + 1 + text.chars().count() <= rules.max_chars
+                && word.end - cue.start_sec <= rules.max_duration
+                && word.start - previous_end < rules.max_gap;
+            open = fits;
+        }
+        if !open {
+            out.push(CaptionLine {
+                text: String::new(),
+                words: Vec::new(),
+                start_sec: word.start,
+                end_sec: word.end,
+                measured: true,
+            });
+            open = true;
+        }
+        let cue = out.last_mut().expect("a cue was just pushed");
+        if !cue.text.is_empty() {
+            cue.text.push(' ');
+        }
+        cue.text.push_str(text);
+        cue.end_sec = cue.end_sec.max(word.end);
+        cue.words.push(CaptionWord {
+            text: text.to_string(),
+            start_sec: word.start,
+            end_sec: word.end.max(word.start),
+            display_line_idx: 0,
+        });
+        previous_end = word.end;
+        if rules.break_on_sentence && text.ends_with(['.', '?', '!']) {
+            open = false;
+        }
+    }
+    out
+}
+
+/// Reads a word-timed transcript: a JSON array of `{text, start, end}` words
+/// (`word` works for `text`), or an object holding such a `words` array, such
+/// as the output of `director-engine asr transcribe --format json`. Times are
+/// seconds. A word whose times are not finite or whose end precedes its start
+/// fails.
+pub fn parse_transcript_words(content: &str) -> Result<Vec<TimedWord>, String> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Transcript {
+        Words(Vec<TimedWord>),
+        Object { words: Vec<TimedWord> },
+    }
+    let words = match serde_json::from_str::<Transcript>(content.trim_start_matches('\u{feff}')) {
+        Ok(Transcript::Words(words)) | Ok(Transcript::Object { words }) => words,
+        Err(e) => {
+            return Err(format!(
+                "not a word-timed transcript ({e}); expected [{{\"text\", \"start\", \"end\"}}, ...] or {{\"words\": [...]}}"
+            ))
+        }
+    };
+    if let Some(bad) = words
+        .iter()
+        .find(|w| !(w.start.is_finite() && w.end.is_finite() && w.start >= 0.0 && w.end >= w.start))
+    {
+        return Err(format!(
+            "word {:?} has start {} and end {}; times must be finite seconds with end >= start >= 0",
+            bad.text, bad.start, bad.end
+        ));
+    }
+    Ok(words)
 }
 
 /// Format token text (optional uppercase).
@@ -2071,65 +2229,165 @@ pub fn auto_time_words(line: &mut CaptionLine) {
         .collect();
 }
 
+/// Reads SubRip cues. SRT holds cue times only, so each cue's words split it
+/// evenly: an estimate. The index line is optional and CRLF line ends work.
 pub fn parse_srt(content: &str) -> Vec<CaptionLine> {
-    let mut lines = Vec::new();
-    let blocks: Vec<&str> = content.trim().split("\n\n").collect();
-    for block in blocks {
-        let block = block.trim();
-        if block.is_empty() {
-            continue;
+    cue_blocks(content)
+        .into_iter()
+        .map(|(start_sec, end_sec, text)| {
+            let mut line = CaptionLine {
+                text: text.join("\n"),
+                words: Vec::new(),
+                start_sec,
+                end_sec,
+                measured: false,
+            };
+            auto_time_words(&mut line);
+            line
+        })
+        .collect()
+}
+
+/// Reads WebVTT cues. A cue with inline timestamps (`<00:00:01.250>word`, the
+/// karaoke form `director-engine asr transcribe --format vtt` writes) is
+/// measured: each word starts at the timestamp before it, the first word at
+/// the cue start, and ends where the next word starts or the cue ends. A cue
+/// without them splits its words evenly, an estimate. Cue settings, `NOTE`,
+/// `STYLE` and `REGION` blocks and tags such as `<c>`, `<v>` and `<i>` are
+/// skipped; `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&#39;` and `&nbsp;` decode.
+pub fn parse_vtt(content: &str) -> Vec<CaptionLine> {
+    cue_blocks(content)
+        .into_iter()
+        .map(|(start_sec, end_sec, text)| vtt_cue(start_sec, end_sec, &text))
+        .collect()
+}
+
+/// `(start, end, text lines)` of each cue in SRT or WebVTT text.
+fn cue_blocks(content: &str) -> Vec<(f64, f64, Vec<String>)> {
+    let content = content.trim_start_matches('\u{feff}').replace("\r\n", "\n").replace('\r', "\n");
+    let mut out = Vec::new();
+    let mut block: Vec<&str> = Vec::new();
+    let mut flush = |block: &mut Vec<&str>| {
+        if let Some(at) = block.iter().position(|l| l.contains("-->")) {
+            if let Some((start, end)) = parse_cue_timing(block[at]) {
+                let text: Vec<String> = block[at + 1..].iter().map(|l| l.trim().to_string()).collect();
+                if text.iter().any(|l| !l.is_empty()) {
+                    out.push((start, end, text));
+                }
+            }
         }
-        let parts: Vec<&str> = block.splitn(3, '\n').collect();
-        if parts.len() < 3 {
-            continue;
+        block.clear();
+    };
+    for line in content.lines().chain(std::iter::once("")) {
+        if line.trim().is_empty() {
+            flush(&mut block);
+        } else {
+            block.push(line);
         }
-        let time_line = parts[1].trim();
-        let text = parts[2].trim().to_string();
-        let (start_ms, end_ms) = match parse_srt_timestamp(time_line) {
-            Some(t) => t,
-            None => continue,
-        };
-        let mut line = CaptionLine {
-            text: text.clone(),
-            words: Vec::new(),
-            start_sec: start_ms / 1000.0,
-            end_sec: end_ms / 1000.0,
-        };
-        auto_time_words(&mut line);
-        lines.push(line);
     }
-    lines
+    out
 }
 
-fn parse_srt_timestamp(line: &str) -> Option<(f64, f64)> {
-    let arrow = " --> ";
-    let mut parts = line.split(arrow);
-    let start_str = parts.next()?;
-    let end_str = parts.next()?;
-    let start_ms = parse_srt_time(start_str.trim())?;
-    let end_ms = parse_srt_time(end_str.trim())?;
-    Some((start_ms, end_ms))
+/// `HH:MM:SS,mmm --> HH:MM:SS,mmm`, `.` for `,`, hours optional, cue settings ignored.
+fn parse_cue_timing(line: &str) -> Option<(f64, f64)> {
+    let (start, rest) = line.split_once("-->")?;
+    let end = rest.split_whitespace().next()?;
+    Some((parse_timestamp(start.trim())?, parse_timestamp(end)?))
 }
 
-fn parse_srt_time(s: &str) -> Option<f64> {
+/// Seconds of `HH:MM:SS.mmm`, `MM:SS.mmm` or `HH:MM:SS,mmm`.
+fn parse_timestamp(s: &str) -> Option<f64> {
     let s = s.replace(',', ".");
     let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let hours: f64 = parts[0].parse().ok()?;
-    let minutes: f64 = parts[1].parse().ok()?;
-    let seconds: f64 = parts[2].parse().ok()?;
-    Some(hours * 3600.0 * 1000.0 + minutes * 60.0 * 1000.0 + seconds * 1000.0)
+    let (h, m, sec) = match parts.as_slice() {
+        [h, m, sec] => (h.parse::<f64>().ok()?, m.parse::<f64>().ok()?, sec.parse::<f64>().ok()?),
+        [m, sec] => (0.0, m.parse::<f64>().ok()?, sec.parse::<f64>().ok()?),
+        _ => return None,
+    };
+    let total = h * 3600.0 + m * 60.0 + sec;
+    total.is_finite().then_some(total)
 }
 
-pub fn parse_vtt(content: &str) -> Vec<CaptionLine> {
-    let body = if let Some(idx) = content.find("\n\n") {
-        &content[idx + 2..]
-    } else {
-        content
-    };
-    parse_srt(body)
+fn decode_entities(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&lrm;", "")
+        .replace("&rlm;", "")
+        .replace("&amp;", "&")
+}
+
+/// One WebVTT cue: tags stripped, words timed by inline timestamps when present.
+fn vtt_cue(start_sec: f64, end_sec: f64, lines: &[String]) -> CaptionLine {
+    // (display line, word text, start of the word when a timestamp precedes it)
+    let mut words: Vec<(usize, String, f64)> = Vec::new();
+    let mut timed = false;
+    let mut clean_lines = Vec::new();
+    for (line_idx, raw) in lines.iter().enumerate() {
+        let mut clean = String::new();
+        let mut current = String::new();
+        let mut current_start = None;
+        let mut mark = start_sec;
+        let mut rest = raw.as_str();
+        let push_word = |current: &mut String, current_start: &mut Option<f64>, words: &mut Vec<(usize, String, f64)>| {
+            if !current.is_empty() {
+                let text = decode_entities(current);
+                words.push((line_idx, text, current_start.unwrap_or(start_sec)));
+                current.clear();
+            }
+            *current_start = None;
+        };
+        while !rest.is_empty() {
+            if let Some(tag) = rest.strip_prefix('<') {
+                let Some(close) = tag.find('>') else {
+                    rest = "";
+                    continue;
+                };
+                if let Some(at) = parse_timestamp(&tag[..close]) {
+                    timed = true;
+                    mark = at;
+                }
+                rest = &tag[close + 1..];
+                continue;
+            }
+            let ch = rest.chars().next().expect("rest is not empty");
+            rest = &rest[ch.len_utf8()..];
+            if ch.is_whitespace() {
+                push_word(&mut current, &mut current_start, &mut words);
+                if !clean.ends_with(' ') && !clean.is_empty() {
+                    clean.push(' ');
+                }
+            } else {
+                if current.is_empty() {
+                    current_start = Some(mark);
+                }
+                current.push(ch);
+                clean.push(ch);
+            }
+        }
+        push_word(&mut current, &mut current_start, &mut words);
+        clean_lines.push(decode_entities(clean.trim()));
+    }
+    let text = clean_lines.join("\n");
+    if !timed {
+        let mut line = CaptionLine { text, words: Vec::new(), start_sec, end_sec, measured: false };
+        auto_time_words(&mut line);
+        return line;
+    }
+    let starts: Vec<f64> = words.iter().map(|w| w.2.clamp(start_sec, end_sec.max(start_sec))).collect();
+    let words = words
+        .into_iter()
+        .enumerate()
+        .map(|(i, (display_line_idx, text, _))| CaptionWord {
+            text,
+            start_sec: starts[i],
+            end_sec: starts.get(i + 1).copied().unwrap_or(end_sec).max(starts[i]),
+            display_line_idx,
+        })
+        .collect();
+    CaptionLine { text, words, start_sec, end_sec, measured: true }
 }
 
 #[cfg(test)]
@@ -2167,6 +2425,7 @@ mod tests {
         let fc = test_font_collection();
         let lines = vec![
             CaptionLine {
+                measured: false,
                 text: "first".into(),
                 words: vec![CaptionWord {
                     text: "first".into(),
@@ -2178,6 +2437,7 @@ mod tests {
                 end_sec: 2.0,
             },
             CaptionLine {
+                measured: false,
                 text: "second".into(),
                 words: vec![CaptionWord {
                     text: "second".into(),
@@ -2225,8 +2485,8 @@ mod tests {
     #[test]
     fn test_max_overlapping_lines() {
         let lines = vec![
-            CaptionLine { text: "A".into(), words: vec![], start_sec: 0.0, end_sec: 5.0 },
-            CaptionLine { text: "B".into(), words: vec![], start_sec: 2.0, end_sec: 7.0 },
+            CaptionLine { measured: false, text: "A".into(), words: vec![], start_sec: 0.0, end_sec: 5.0 },
+            CaptionLine { measured: false, text: "B".into(), words: vec![], start_sec: 2.0, end_sec: 7.0 },
         ];
         assert_eq!(max_overlapping_lines(&lines), 2);
     }
@@ -2234,9 +2494,9 @@ mod tests {
     #[test]
     fn test_slot_assignments_stable() {
         let lines = vec![
-            CaptionLine { text: "A".into(), words: vec![], start_sec: 0.0, end_sec: 4.0 },
-            CaptionLine { text: "B".into(), words: vec![], start_sec: 2.0, end_sec: 7.0 },
-            CaptionLine { text: "C".into(), words: vec![], start_sec: 5.0, end_sec: 8.0 },
+            CaptionLine { measured: false, text: "A".into(), words: vec![], start_sec: 0.0, end_sec: 4.0 },
+            CaptionLine { measured: false, text: "B".into(), words: vec![], start_sec: 2.0, end_sec: 7.0 },
+            CaptionLine { measured: false, text: "C".into(), words: vec![], start_sec: 5.0, end_sec: 8.0 },
         ];
         let slots = CaptionNode::compute_slot_assignments(&lines);
         assert_eq!(slots[0], 0);
@@ -2247,6 +2507,7 @@ mod tests {
     #[test]
     fn test_single_global_active_word() {
         let line_a = CaptionLine {
+            measured: false,
             text: "alpha beta".into(),
             words: vec![
                 CaptionWord { text: "alpha".into(), start_sec: 0.0, end_sec: 2.0, display_line_idx: 0 },
@@ -2256,6 +2517,7 @@ mod tests {
             end_sec: 4.0,
         };
         let line_b = CaptionLine {
+            measured: false,
             text: "gamma delta".into(),
             words: vec![
                 CaptionWord { text: "gamma".into(), start_sec: 1.0, end_sec: 3.0, display_line_idx: 0 },
@@ -2301,6 +2563,7 @@ mod tests {
             display_line_idx: 0,
         };
         let line = CaptionLine {
+            measured: false,
             text: "alpha beta".into(),
             words: vec![word_a.clone(), word_b.clone()],
             start_sec: 0.0,
@@ -2331,6 +2594,7 @@ mod tests {
         let fc = Arc::new(Mutex::new(skia_safe::textlayout::FontCollection::new()));
         let node = CaptionNode::new(Vec::new(), fc);
         let mut line = CaptionLine {
+            measured: false,
             text: "test".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2360,6 +2624,7 @@ mod tests {
     #[test]
     fn test_word_display_assigns_line_idx() {
         let mut line = CaptionLine {
+            measured: false,
             text: "Line one\nLine two".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2400,6 +2665,7 @@ mod tests {
     fn test_caption_rtl_word_order() {
         let fc = test_font_collection();
         let mut line = CaptionLine {
+            measured: false,
             text: "مرحبا بالعالم".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2422,6 +2688,7 @@ mod tests {
     #[test]
     fn test_phrase_break_retimes_three_display_lines() {
         let mut line = CaptionLine {
+            measured: false,
             text: "one two three four five six seven eight nine ten".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2459,6 +2726,7 @@ mod tests {
     #[test]
     fn test_phrase_break_retimes_per_display_line() {
         let mut line = CaptionLine {
+            measured: false,
             text: "one two three four five six seven eight".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2483,6 +2751,7 @@ mod tests {
     #[test]
     fn test_phrase_auto_break_splits_long_cue() {
         let mut line = CaptionLine {
+            measured: false,
             text: "one two three four five six seven".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2537,6 +2806,7 @@ mod tests {
     fn test_phrase_replace_reserves_single_line_height() {
         let fc = test_font_collection();
         let mut line = CaptionLine {
+            measured: false,
             text: "one two three four five six seven eight nine ten".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2572,6 +2842,7 @@ mod tests {
     fn test_free_position_block_top_is_centered() {
         let fc = test_font_collection();
         let mut line = CaptionLine {
+            measured: false,
             text: "hello".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2594,6 +2865,7 @@ mod tests {
     fn test_free_position_normalized_in_non_full_canvas_container() {
         let fc = test_font_collection();
         let mut line = CaptionLine {
+            measured: false,
             text: "hello".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2669,6 +2941,7 @@ mod tests {
     #[test]
     fn test_measure_keeps_anchor_margins_out_of_content_height() {
         let mut line = CaptionLine {
+            measured: false,
             text: "caption content".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2708,6 +2981,7 @@ mod tests {
     #[test]
     fn test_narrow_caption_measure_and_render_share_block_width() {
         let mut line = CaptionLine {
+            measured: false,
             text: "narrow caption".into(),
             words: vec![],
             start_sec: 0.0,
@@ -2751,6 +3025,7 @@ mod tests {
         let fc = test_font_collection();
         let long_text = "The quick brown fox jumps over the lazy dog repeatedly";
         let mut line = CaptionLine {
+            measured: false,
             text: long_text.into(),
             words: vec![],
             start_sec: 0.0,
@@ -2788,5 +3063,158 @@ mod tests {
             "long text at {:.0}px block width should wrap to multiple lines",
             block_width
         );
+    }
+
+    // ── Measured word times ───────────────────────────────────────
+
+    fn tw(text: &str, start: f64, end: f64) -> TimedWord {
+        TimedWord { text: text.to_string(), start, end }
+    }
+
+    /// Eight words with uneven spacing, as speech recognition reports them.
+    fn spoken() -> Vec<TimedWord> {
+        vec![
+            tw("Root", 0.32, 0.55),
+            tw("beer", 0.56, 0.88),
+            tw("is", 1.20, 1.31),
+            tw("the", 1.33, 1.41),
+            tw("best", 1.44, 1.97),
+            tw("drink", 2.40, 2.71),
+            tw("ever", 2.75, 3.02),
+            tw("made", 3.10, 3.60),
+        ]
+    }
+
+    fn starts(line: &CaptionLine) -> Vec<f64> {
+        line.words.iter().map(|w| w.start_sec).collect()
+    }
+
+    #[test]
+    fn measured_word_times_survive_phrase_break() {
+        let mut lines = cues_from_words(&spoken(), &CueRules::default());
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].measured);
+        let before = starts(&lines[0]);
+        let style = CaptionStyle { max_words_per_line: 3, ..CaptionStyle::default() };
+        refresh_caption_lines(&mut lines, &style);
+        assert_eq!(starts(&lines[0]), before);
+        let dl: Vec<usize> = lines[0].words.iter().map(|w| w.display_line_idx).collect();
+        assert_eq!(dl, [0, 0, 0, 1, 1, 1, 2, 2]);
+        // The node constructor runs the same refresh.
+        let node = CaptionNode::new(lines.clone(), test_font_collection());
+        assert_eq!(starts(&node.lines[0]), before);
+    }
+
+    #[test]
+    fn estimated_cues_still_split_each_display_line_evenly() {
+        let mut lines = parse_srt("1\n00:00:00,000 --> 00:00:02,000\none two three four five six\n");
+        assert!(!lines[0].measured);
+        refresh_caption_lines(&mut lines, &CaptionStyle { max_words_per_line: 3, ..CaptionStyle::default() });
+        let first_of_line_1 = lines[0].words.iter().find(|w| w.display_line_idx == 1).unwrap();
+        assert!(first_of_line_1.start_sec > 0.0);
+    }
+
+    #[test]
+    fn cues_from_words_follow_the_asr_cue_rules() {
+        let mut words = spoken();
+        words[4].text = "best.".to_string();
+        words.insert(0, tw("  ", 0.0, 0.1));
+        let lines = cues_from_words(&words, &CueRules::default());
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["Root beer is the best.", "drink ever made"]);
+        assert_eq!((lines[1].start_sec, lines[1].end_sec), (2.40, 3.60));
+        let tight = CueRules { max_gap: 0.3, ..CueRules::default() };
+        let texts: Vec<String> = cues_from_words(&spoken(), &tight).into_iter().map(|l| l.text).collect();
+        assert_eq!(texts, ["Root beer", "is the best", "drink ever made"]);
+    }
+
+    #[test]
+    fn transcript_json_reads_the_asr_object_and_a_bare_array() {
+        let asr = "\u{feff}{\"model\":\"bark-3.0\",\"words\":[{\"text\":\"Hi\",\"start\":0.25,\"end\":0.5},{\"text\":\"all.\",\"start\":0.55,\"end\":0.9}]}";
+        assert_eq!(parse_transcript_words(asr).unwrap(), [tw("Hi", 0.25, 0.5), tw("all.", 0.55, 0.9)]);
+        let array = "[{\"word\":\"Hi\",\"start\":0.25,\"end\":0.5}]";
+        assert_eq!(parse_transcript_words(array).unwrap(), [tw("Hi", 0.25, 0.5)]);
+        assert!(parse_transcript_words("[{\"text\":\"x\",\"start\":1.0,\"end\":0.5}]").is_err());
+        assert!(parse_transcript_words("[{\"text\":\"x\",\"start\":-1.0,\"end\":0.5}]").is_err());
+        assert!(parse_transcript_words("{\"cues\":[]}").is_err());
+    }
+
+    #[test]
+    fn vtt_inline_timestamps_set_each_word_start() {
+        let vtt = "WEBVTT\r\n\r\n00:00:00.320 --> 00:00:01.200 align:center line:90%\r\nFish <00:00:00.640>&amp; <00:00:00.880>chips.\r\n\r\nnext-cue\r\n00:02.400 --> 00:02.700\r\n<v Sam>Next</v>\r\n";
+        let lines = parse_vtt(vtt);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].measured);
+        assert_eq!(lines[0].text, "Fish & chips.");
+        let times: Vec<(f64, f64)> = lines[0].words.iter().map(|w| (w.start_sec, w.end_sec)).collect();
+        assert_eq!(times, [(0.32, 0.64), (0.64, 0.88), (0.88, 1.2)]);
+        assert_eq!(lines[1].text, "Next");
+        assert_eq!((lines[1].start_sec, lines[1].end_sec), (2.4, 2.7));
+    }
+
+    #[test]
+    fn director_asr_vtt_output_round_trips_its_word_starts() {
+        // The text `director-engine asr transcribe --format vtt` writes.
+        let vtt = "WEBVTT\n\n00:00:00.320 --> 00:00:01.970\nRoot <00:00:00.560>beer <00:00:01.200>is <00:00:01.330>the <00:00:01.440>best\n\n";
+        let mut lines = parse_vtt(vtt);
+        refresh_caption_lines(&mut lines, &CaptionStyle { max_words_per_line: 2, ..CaptionStyle::default() });
+        assert_eq!(starts(&lines[0]), [0.32, 0.56, 1.2, 1.33, 1.44]);
+    }
+
+    #[test]
+    fn srt_with_crlf_bom_and_no_index_reads() {
+        let srt = "\u{feff}00:00:01,000 --> 00:00:02,000\r\nHello there\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,500\r\nSecond line\r\nwraps\r\n";
+        let lines = parse_srt(srt);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].text, "Hello there");
+        assert_eq!(lines[1].text, "Second line\nwraps");
+        assert_eq!((lines[1].start_sec, lines[1].end_sec), (3.0, 4.5));
+        assert!(lines.iter().all(|l| !l.measured));
+    }
+
+    #[test]
+    fn measured_lines_reveal_by_their_first_word() {
+        let mut lines = cues_from_words(&spoken(), &CueRules::default());
+        let style = CaptionStyle { max_words_per_line: 3, ..CaptionStyle::default() };
+        refresh_caption_lines(&mut lines, &style);
+        let cue = &lines[0];
+        assert_eq!(line_reveal_factor(cue, 0, 0.32, &style), 1.0);
+        assert_eq!(line_reveal_factor(cue, 0, 0.30, &style), 0.0);
+        // Line 1 starts with "the" at 1.33 and line 2 with "ever" at 2.75.
+        assert_eq!(line_reveal_factor(cue, 1, 1.33, &style), 1.0);
+        assert!(line_reveal_factor(cue, 1, 1.30, &style) < 1.0);
+        assert_eq!(line_reveal_factor(cue, 1, 1.0, &style), 0.0);
+        assert_eq!(line_reveal_factor(cue, 2, 2.75, &style), 1.0);
+    }
+
+    #[test]
+    fn every_highlight_lands_within_one_frame_of_its_word() {
+        let mut lines = cues_from_words(&spoken(), &CueRules { max_chars: 14, ..CueRules::default() });
+        assert!(lines.len() > 1);
+        refresh_caption_lines(&mut lines, &CaptionStyle { max_words_per_line: 2, ..CaptionStyle::default() });
+        let fps = 30.0;
+        let frame = 1.0 / fps;
+        for (ci, line) in lines.iter().enumerate() {
+            for (wi, word) in line.words.iter().enumerate() {
+                let first = (0..200)
+                    .map(|k| k as f64 / fps)
+                    .find(|&t| active_word_at(&lines, t) == Some((ci, wi)))
+                    .unwrap_or_else(|| panic!("{:?} is never highlighted", word.text));
+                assert!(
+                    first >= word.start_sec - 1e-9 && first - word.start_sec < frame,
+                    "{:?} starts at {} and lights at {first}",
+                    word.text,
+                    word.start_sec
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn highlight_color_has_no_lead_by_default() {
+        let lines = cues_from_words(&spoken(), &CueRules::default());
+        let node = CaptionNode::new(lines, test_font_collection());
+        let word = &node.lines[0].words[1];
+        assert_eq!(node.compute_word_color(word, word.start_sec - 0.05, false), node.style.color);
     }
 }

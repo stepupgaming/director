@@ -386,6 +386,7 @@ fn caption_renders_visible_pixels() {
 
     // Caption: red text on yellow pill, absolute at bottom
     let mut caption_line = CaptionLine {
+        measured: false,
         text: "CAPTION TEST".to_string(),
         words: Vec::new(),
         start_sec: 0.0,

@@ -335,6 +335,7 @@ fn project_roundtrip_preserves_smart_caption() {
 
     // Build a SmartCaptionNode directly.
     let line = CaptionLine {
+        measured: false,
         text: "hello world".into(),
         words: vec![
             CaptionWord {
@@ -437,6 +438,7 @@ fn project_roundtrip_preserves_smart_caption_continuous() {
         .expect("build script must evaluate");
 
     let line = CaptionLine {
+        measured: false,
         text: "continuous".into(),
         words: vec![CaptionWord {
             text: "continuous".into(),
@@ -969,6 +971,7 @@ fn loaded_smart_caption_trajectory_avoids_entities() {
 
     // Build a SmartCaptionNode that avoids a face at the bottom of the frame.
     let line = CaptionLine {
+        measured: false,
         text: "hello world".into(),
         words: vec![CaptionWord {
             text: "hello world".into(),

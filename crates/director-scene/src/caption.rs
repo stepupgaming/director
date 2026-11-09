@@ -21,6 +21,10 @@ pub struct CaptionLine {
     pub words: Vec<CaptionWord>,
     pub start_sec: f64,
     pub end_sec: f64,
+    /// Word times were measured (speech recognition or authored per word), so
+    /// phrase break keeps them. Absent means estimated.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub measured: bool,
 }
 
 /// One timed word within a cue.

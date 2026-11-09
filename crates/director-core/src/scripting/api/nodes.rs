@@ -894,7 +894,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
             let font_collection = d.assets.font_collection.clone();
-            let lines = parse_caption_lines(&d, &props);
+            let lines = parse_caption_lines(&d, &props)?;
             let mut caption_node = CaptionNode::new(lines, font_collection);
             parse_layout_style(&props, &mut caption_node.style_cache);
             apply_caption_props(&mut caption_node, &props);
@@ -929,7 +929,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
             let font_collection = d.assets.font_collection.clone();
-            let lines = parse_caption_lines(&d, &props);
+            let lines = parse_caption_lines(&d, &props)?;
             let mut caption_node = CaptionNode::new(lines, font_collection);
             parse_layout_style(&props, &mut caption_node.style_cache);
             apply_caption_props(&mut caption_node, &props);
@@ -966,7 +966,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
             let font_collection = d.assets.font_collection.clone();
-            let lines = parse_caption_lines(&d, &props);
+            let lines = parse_caption_lines(&d, &props)?;
             let mut caption_node = CaptionNode::new(lines, font_collection);
             parse_layout_style(&props, &mut caption_node.style_cache);
             apply_caption_props(&mut caption_node, &props);
@@ -1008,7 +1008,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
             let font_collection = d.assets.font_collection.clone();
-            let lines = parse_caption_lines(&d, &props);
+            let lines = parse_caption_lines(&d, &props)?;
             let mut caption_node = CaptionNode::new(lines, font_collection);
             parse_layout_style(&props, &mut caption_node.style_cache);
             apply_caption_props(&mut caption_node, &props);
@@ -1778,19 +1778,114 @@ fn parse_path_commands(props: &rhai::Map) -> Vec<PathCommand> {
     commands
 }
 
-/// Apply text-specific properties from a Rhai map
-/// Parse caption lines from Rhai props.
-fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Vec<CaptionLine> {
-    // Priority: file path > raw SRT source > inline content array
-    if let Some(file_path) = props.get("file").and_then(|v| v.clone().into_string().ok()) {
-        if let Ok(blob) = d.assets.load_blob(&file_path) {
-            let content = String::from_utf8_lossy(&blob);
-            return crate::node::caption::parse_srt(&content);
+/// Cue grouping rules for measured words from caption props.
+fn caption_cue_rules(props: &rhai::Map) -> crate::node::caption::CueRules {
+    let mut rules = crate::node::caption::CueRules::default();
+    if let Some(v) = props.get("max_cue_chars").and_then(|v| v.as_int().ok()) {
+        rules.max_chars = v.max(1) as usize;
+    }
+    if let Some(v) = props.get("max_cue_duration").and_then(rhai_number) {
+        rules.max_duration = v;
+    }
+    if let Some(v) = props.get("max_cue_gap").and_then(rhai_number) {
+        rules.max_gap = v;
+    }
+    if let Some(v) = props.get("break_on_sentence").and_then(|v| v.as_bool().ok()) {
+        rules.break_on_sentence = v;
+    }
+    rules
+}
+
+fn rhai_number(v: &rhai::Dynamic) -> Option<f64> {
+    v.as_float().ok().or_else(|| v.as_int().ok().map(|i| i as f64))
+}
+
+/// Words from a Rhai array of `#{ text, start, end }` maps (`word` works for `text`).
+fn rhai_timed_words(items: rhai::Array, prop: &str) -> Result<Vec<crate::node::caption::TimedWord>, String> {
+    let mut words = Vec::with_capacity(items.len());
+    for (i, item) in items.into_iter().enumerate() {
+        let map = item
+            .try_cast::<rhai::Map>()
+            .ok_or_else(|| format!("add_caption: {prop}[{i}] is not a map of text, start and end"))?;
+        let text = map
+            .get("text")
+            .or_else(|| map.get("word"))
+            .map(|v| v.to_string())
+            .ok_or_else(|| format!("add_caption: {prop}[{i}] has no text"))?;
+        let start = map.get("start").and_then(rhai_number);
+        let end = map.get("end").and_then(rhai_number);
+        let (Some(start), Some(end)) = (start, end) else {
+            return Err(format!("add_caption: {prop}[{i}] ({text:?}) needs numeric start and end seconds"));
+        };
+        words.push(crate::node::caption::TimedWord { text, start, end });
+    }
+    let json = serde_json::to_string(&words).map_err(|e| e.to_string())?;
+    crate::node::caption::parse_transcript_words(&json).map_err(|e| format!("add_caption: {prop}: {e}"))
+}
+
+/// Parse caption lines from Rhai props: `media` (transcribed for measured word
+/// times), `words` (measured words), `file` (word-timed JSON, WebVTT or SRT,
+/// read by extension, else by content), `source` (SRT or WebVTT text) or a
+/// `content` array of cues.
+fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Result<Vec<CaptionLine>, Box<rhai::EvalAltResult>> {
+    use crate::node::caption::{cues_from_words, parse_srt, parse_transcript_words, parse_vtt};
+    let rules = caption_cue_rules(props);
+
+    if let Some(media) = props.get("media").and_then(|v| v.clone().into_string().ok()) {
+        let path = d
+            .assets
+            .loader
+            .media_path(&media)
+            .ok_or_else(|| format!("add_caption: media {media:?} is not a readable file"))?;
+        let model = props.get("model").and_then(|v| v.clone().into_string().ok());
+        let graphs = props.get("graphs").and_then(|v| v.clone().into_string().ok());
+        let request = crate::transcribe::TranscribeRequest {
+            media: &path,
+            model: model.as_deref(),
+            graphs: graphs.as_deref(),
+        };
+        let words = crate::transcribe::transcribe(&request).map_err(|e| format!("add_caption: {e}"))?;
+        let lines = cues_from_words(&words, &rules);
+        if lines.is_empty() {
+            return Err(format!("add_caption: no speech found in {media:?}").into());
         }
+        return Ok(lines);
+    }
+
+    if let Some(words) = props.get("words").and_then(|v| v.clone().into_array().ok()) {
+        return Ok(cues_from_words(&rhai_timed_words(words, "words")?, &rules));
+    }
+
+    if let Some(file_path) = props.get("file").and_then(|v| v.clone().into_string().ok()) {
+        let blob = d
+            .assets
+            .load_blob(&file_path)
+            .map_err(|e| format!("add_caption: cannot read caption file {file_path:?}: {e}"))?;
+        let content = String::from_utf8_lossy(&blob);
+        let body = content.trim_start_matches('\u{feff}').trim_start();
+        let ext = std::path::Path::new(&file_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        let lines = match ext.as_deref() {
+            Some("json") => cues_from_words(&parse_transcript_words(&content).map_err(|e| format!("add_caption: {file_path:?}: {e}"))?, &rules),
+            Some("vtt") => parse_vtt(&content),
+            Some("srt") => parse_srt(&content),
+            _ if body.starts_with('[') || body.starts_with('{') => {
+                cues_from_words(&parse_transcript_words(&content).map_err(|e| format!("add_caption: {file_path:?}: {e}"))?, &rules)
+            }
+            _ if body.starts_with("WEBVTT") => parse_vtt(&content),
+            _ => parse_srt(&content),
+        };
+        if lines.is_empty() {
+            return Err(format!("add_caption: no caption cues in {file_path:?}").into());
+        }
+        return Ok(lines);
     }
 
     if let Some(source) = props.get("source").and_then(|v| v.clone().into_string().ok()) {
-        return crate::node::caption::parse_srt(&source);
+        let body = source.trim_start_matches('\u{feff}').trim_start();
+        return Ok(if body.starts_with("WEBVTT") { parse_vtt(&source) } else { parse_srt(&source) });
     }
 
     if let Some(arr) = props.get("content").and_then(|v| v.clone().into_array().ok()) {
@@ -1798,40 +1893,49 @@ fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Vec<
         for item in arr {
             if let Some(map) = item.clone().try_cast::<rhai::Map>() {
                 let text = map.get("text").map(|v| v.to_string()).unwrap_or_default();
-                let start_sec = map.get("start").and_then(|v| v.as_float().ok()).unwrap_or(0.0);
-                let end_sec = map.get("end").and_then(|v| v.as_float().ok()).unwrap_or(0.0);
+                let start_sec = map.get("start").and_then(rhai_number).unwrap_or(0.0);
+                let end_sec = map.get("end").and_then(rhai_number).unwrap_or(0.0);
 
+                // Words given per cue keep their times. Each word's display
+                // line follows the `\n` breaks of the cue text.
                 let mut words = Vec::new();
                 if let Some(w) = map.get("words").and_then(|v| v.clone().into_array().ok()) {
-                    for w_item in w {
-                        if let Some(w_map) = w_item.clone().try_cast::<rhai::Map>() {
-                            let word_text = w_map.get("word").map(|v| v.to_string()).unwrap_or_default();
-                            let w_start = w_map.get("start").and_then(|v| v.as_float().ok()).unwrap_or(start_sec);
-                            let w_end = w_map.get("end").and_then(|v| v.as_float().ok()).unwrap_or(end_sec);
-                            words.push(CaptionWord {
-                                text: word_text,
-                                start_sec: w_start,
-                                end_sec: w_end,
-                                display_line_idx: words.len(),
-                            });
+                    let breaks: Vec<usize> = text.split('\n').map(|l| l.split_whitespace().count()).collect();
+                    for (i, timed) in rhai_timed_words(w, "content.words")?.into_iter().enumerate() {
+                        let mut display_line_idx = breaks.len().saturating_sub(1);
+                        let mut seen = 0;
+                        for (dl, count) in breaks.iter().enumerate() {
+                            seen += count;
+                            if i < seen {
+                                display_line_idx = dl;
+                                break;
+                            }
                         }
+                        words.push(CaptionWord {
+                            text: timed.text,
+                            start_sec: timed.start,
+                            end_sec: timed.end,
+                            display_line_idx,
+                        });
                     }
                 }
 
+                let measured = !words.is_empty();
                 let mut line = CaptionLine {
                     text,
                     words,
                     start_sec,
                     end_sec,
+                    measured,
                 };
                 crate::node::caption::auto_time_words(&mut line);
                 lines.push(line);
             }
         }
-        return lines;
+        return Ok(lines);
     }
 
-    Vec::new()
+    Ok(Vec::new())
 }
 
 /// Apply caption style properties from a Rhai map.
@@ -2244,7 +2348,7 @@ fn add_smart_caption_from_manifest(
     force_continuous: bool,
 ) -> Result<NodeId, Box<rhai::EvalAltResult>> {
     let font_collection = d.assets.font_collection.clone();
-    let lines = parse_caption_lines(d, props);
+    let lines = parse_caption_lines(d, props)?;
     let mut caption_node = CaptionNode::new(lines, font_collection);
     parse_layout_style(props, &mut caption_node.style_cache);
     apply_caption_props(&mut caption_node, props);

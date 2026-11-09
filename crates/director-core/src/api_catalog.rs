@@ -137,10 +137,10 @@ pub const NODE_CATALOG: &[NodeCatalogEntry] = &[
     node(
         "Caption",
         "caption",
-        "Timed kinetic captions (SRT/VTT) with per-word highlight",
+        "Timed kinetic captions with per-word highlight: measured word times from speech (media), a word-timed transcript or WebVTT word timestamps, or SRT cues split evenly",
         false,
         &["opacity", "font_size"],
-        &["srt_import", "vtt_import", "auto_caption", "text_direction", "rtl"],
+        &["auto_caption", "word_timestamps", "transcript_import", "srt_import", "vtt_import", "text_direction", "rtl"],
         true,
     ),
     node(

@@ -700,6 +700,7 @@ mod tests {
 
     fn single_word_line(text: &str, start: f64, end: f64) -> CaptionLine {
         CaptionLine {
+            measured: false,
             text: text.to_string(),
             words: vec![CaptionWord {
                 text: text.to_string(),

@@ -526,6 +526,8 @@ fn main() {
     let mcp = matches!(cli.command, Some(Commands::Mcp(_)));
     let level = cli.log_level.unwrap_or(if mcp { LogLevel::Warn } else { LogLevel::Info });
     init_logging(level, cli.log_format, mcp);
+    #[cfg(feature = "asr")]
+    asr::install_transcriber();
 
     match cli.command {
         Some(Commands::Render(args)) => cmd_render(args),

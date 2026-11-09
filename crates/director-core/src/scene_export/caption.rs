@@ -73,6 +73,7 @@ fn caption_fields(node: &CaptionNode) -> ds::CaptionBody {
                     .collect(),
                 start_sec: line.start_sec,
                 end_sec: line.end_sec,
+                measured: line.measured,
             })
             .collect(),
         style: caption_style(&node.style),

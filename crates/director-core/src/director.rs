@@ -1292,6 +1292,8 @@ mod tests {
         );
 
         let line = CaptionLine {
+
+            measured: false,
             text: "hello".to_string(),
             words: vec![CaptionWord {
                 text: "hello".to_string(),
@@ -1357,6 +1359,8 @@ mod tests {
         );
 
         let line = CaptionLine {
+
+            measured: false,
             text: "hello".to_string(),
             words: vec![CaptionWord {
                 text: "hello".to_string(),
@@ -1425,6 +1429,8 @@ mod tests {
         );
 
         let line = CaptionLine {
+
+            measured: false,
             text: "hello".to_string(),
             words: vec![CaptionWord {
                 text: "hello".to_string(),

@@ -1,13 +1,18 @@
 //! `asr`: the Bark 3.0 model store and word-timed transcripts as JSON, SRT, VTT or text.
 
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use director_asr::audio::decode;
+use director_asr::store::sha256_file;
 use director_asr::subtitle::{cues, srt, vtt};
-use director_asr::{AsrError, CueOptions, Engine, Graphs, Model, Status, Store, SAMPLE_RATE};
+use director_asr::{AsrError, CueOptions, Engine, Graphs, Model, Status, Store, Transcript, SAMPLE_RATE};
+use director_core::node::caption::TimedWord;
+use director_core::transcribe::TranscribeRequest;
 
 #[derive(Parser, Debug)]
 pub struct AsrArgs {
@@ -226,6 +231,96 @@ fn transcribe(store: &Store, args: TranscribeArgs) -> i32 {
     });
     println!("{summary}");
     0
+}
+
+/// The engine `add_caption(#{ media })` transcribes with. `bark-asr` builds one
+/// ONNX Runtime environment per process, so the first model loaded stays.
+static CAPTION_ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
+
+/// Installs the Bark transcriber that `add_caption(#{ media })` runs in every
+/// command of this process.
+pub fn install_transcriber() {
+    director_core::transcribe::set_transcriber(Arc::new(transcribe_for_captions));
+}
+
+/// The requested model, else the first installed of 3.0, Plus and Clean; the
+/// requested graph set, else the default when installed, else any installed.
+fn caption_model(store: &Store, model: Option<&str>, graphs: Option<&str>) -> Result<(Model, Graphs), String> {
+    let installed = |m: Model| store.status(&m.asset()) == Status::Present;
+    let graphs_installed = |g: Graphs| g.assets().iter().all(|a| store.status(a) == Status::Present);
+    let model = match model {
+        Some(id) => {
+            let m = Model::from_str(id).map_err(|e| e.to_string())?;
+            if !installed(m) {
+                return Err(format!("{id} is not installed; run `director-engine asr fetch {id}`"));
+            }
+            m
+        }
+        None => [Model::Bark, Model::BarkPlus, Model::BarkClean]
+            .into_iter()
+            .find(|m| installed(*m))
+            .ok_or("no Bark model is installed; run `director-engine asr fetch bark-3.0`")?,
+    };
+    let graphs = match graphs {
+        Some(id) => {
+            let g = Graphs::from_str(id).map_err(|e| e.to_string())?;
+            if !graphs_installed(g) {
+                return Err(format!("graph set {id} is not installed; run `director-engine asr fetch {} --graphs {id}`", model.id()));
+            }
+            g
+        }
+        None => std::iter::once(Graphs::default())
+            .chain(Graphs::ALL)
+            .find(|g| graphs_installed(*g))
+            .ok_or_else(|| format!("no graph set is installed; run `director-engine asr fetch {}`", model.id()))?,
+    };
+    Ok((model, graphs))
+}
+
+/// Words of `request.media`, read from `<cache>/transcripts/<media sha256>-<model>-<graphs>.json`
+/// when an earlier run wrote it, else transcribed and written there.
+fn transcribe_for_captions(request: &TranscribeRequest<'_>) -> Result<Vec<TimedWord>, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    let (model, graphs) = caption_model(&store, request.model, request.graphs)?;
+    let hash = sha256_file(request.media).map_err(|e| e.to_string())?;
+    let cached = store.root().join("transcripts").join(format!("{hash}-{}-{}.json", model.id(), graphs.id()));
+    let timed = |transcript: Transcript| -> Vec<TimedWord> {
+        transcript.words.into_iter().map(|w| TimedWord { text: w.text, start: w.start, end: w.end }).collect()
+    };
+    if let Some(transcript) = std::fs::read_to_string(&cached).ok().and_then(|text| serde_json::from_str::<Transcript>(&text).ok()) {
+        tracing::info!(media = %request.media.display(), model = model.id(), graphs = graphs.id(), "caption words from the transcript cache");
+        return Ok(timed(transcript));
+    }
+    let samples = decode(request.media).map_err(|e| e.to_string())?;
+    let mut slot = CAPTION_ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(engine) = slot.as_ref().filter(|e| e.model() != model || e.graphs() != graphs) {
+        return Err(format!(
+            "this process already loaded {} with {} graphs and loads one Bark model; transcribe {} with {model} in another run",
+            engine.model(),
+            engine.graphs(),
+            request.media.display()
+        ));
+    }
+    if slot.is_none() {
+        *slot = Some(Engine::open(&store, model, graphs, 0).map_err(|e| e.to_string())?);
+    }
+    let engine = slot.as_mut().expect("the engine was just loaded");
+    let started = Instant::now();
+    let mut progress = |done: f64, total: f64| tracing::info!("asr: {done:.1} / {total:.1} s");
+    let transcript = engine.transcribe(&samples, &mut progress, &AtomicBool::new(false)).map_err(|e| e.to_string())?;
+    tracing::info!(
+        media = %request.media.display(),
+        model = model.id(),
+        graphs = graphs.id(),
+        words = transcript.words.len(),
+        seconds = started.elapsed().as_secs_f64(),
+        "transcribed caption words"
+    );
+    let json = serde_json::to_string_pretty(&transcript).expect("transcripts serialize");
+    if let Err(e) = write(&cached, &json) {
+        tracing::warn!("could not cache the transcript at {}: {e}", cached.display());
+    }
+    Ok(timed(transcript))
 }
 
 fn write(path: &Path, text: &str) -> std::io::Result<()> {

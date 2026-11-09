@@ -17,11 +17,37 @@ reflows when a second line enters; exactly one global active word.
 
 * `CaptionNode { lines: Vec<CaptionLine>, ... }` — a node renders a
   sequence of SRT-style caption cues.
-* `CaptionLine { text, words, start_sec, end_sec }` — one cue. Words
-  carry `display_line_idx` so `\n` in cue text maps to separate
-  paragraphs.
+* `CaptionLine { text, words, start_sec, end_sec, measured }` — one cue.
+  Words carry `display_line_idx` so `\n` in cue text maps to separate
+  paragraphs. `measured` marks word times from speech recognition or
+  authored per word; it round-trips through scene documents and projects.
 * `CaptionWord { text, start_sec, end_sec, display_line_idx }` — one
-  word. Per-cue word timing implicit (auto-timed) or explicit.
+  word. Estimated cues (SRT, cues without words) split the cue evenly with
+  `auto_time_words`; measured cues keep their times everywhere.
+
+## Word-timed input
+
+* `TimedWord { text, start, end }` (`word` accepted for `text`) and
+  `parse_transcript_words` read `asr transcribe --format json` output or a
+  bare array; non-finite, negative or reversed times fail.
+* `cues_from_words(words, CueRules)` groups words into measured cues with
+  the `director-asr` cue rules: 42 chars, 5 s, a 0.8 s pause, sentence end.
+  Rhai keys `max_cue_chars`, `max_cue_duration`, `max_cue_gap`,
+  `break_on_sentence`.
+* `parse_vtt` reads inline `<HH:MM:SS.mmm>` word timestamps as measured
+  word starts (each word ends at the next start or the cue end), cues with
+  or without ids, cue settings, CRLF and a BOM. `parse_srt` stays an
+  estimate.
+* `add_caption` input order: `media`, `words`, `file` (`.json`, `.vtt`,
+  `.srt`, else sniffed), `source`, `content`. A missing file, a bad
+  transcript or an input with no cues fails the script.
+* `src/transcribe.rs` holds the process-wide transcriber hook
+  (`set_transcriber`, `transcribe`). `media` calls it with the file, `model`
+  and `graphs`; with no transcriber installed it fails and names
+  `--features asr` and `file: "words.json"`. director-cli installs the Bark
+  transcriber under its `asr` feature.
+* `active_word_at(lines, time)` returns the word the renderer highlights:
+  the newest visible cue, then `find_global_active`.
 * `CaptionStyle` — visible defaults and motion configuration. Defaults:
   bold Poppins (700), black stroke outline, per-line pill background,
   drop shadow + active-word glow, auto phrase break (4 words/line),
@@ -54,9 +80,10 @@ producing exactly one of:
 * **Past**: `spoken_color` with `spoken_color_opacity` multiplier.
   Snapped instantly at `word.end_sec` (no transition phase — see
   "Boundary handling" below).
-* **Future**: `color` with `future_opacity` multiplier. Smooth ramp from
-  `color` to `highlight_color` over `color_transition_duration`
-  (default 0.10 s) in the entry window `[start - t_dur, start)`.
+* **Future**: `color` with `future_opacity` multiplier. An optional ramp
+  from `color` to `highlight_color` over `color_transition_duration` in the
+  entry window `[start - t_dur, start)`. The default 0 lands the highlight
+  on the word's first frame.
 
 Plus a 4-direction font padding inside the per-word TextStyle push so
 inter-word spaces always advance by the same font_size as the words
@@ -77,7 +104,7 @@ the scale affects only the active word's overlay. Scale returns to
 
 **No continuous scale wobble. No kinetic lift. No ease_out_back
 overshoot. No per-word pulse.** Motion is limited to:
-1. Color entry ramp (100 ms).
+1. Optional color entry ramp (`color_transition_duration`, default 0).
 2. Active pop scale (1.04 → 1.0 over 80 ms).
 3. Per-display-line reveal (line 0 immediate, line 1 fades in via
    `save_layer` opacity ramp).
@@ -103,6 +130,10 @@ phrase chunk replaces the previous instead of stacking. Set
   (default 0.45 for two-line cues) with `reveal_duration` (default
   0.20 s) ease-out ramp. Cues with **3+ display lines** use even
   thirds/fourths via `display_line_window_fracs()`.
+* **Measured cues**: phrase break assigns display lines and keeps word
+  times (`retime_words_by_display_line` runs on estimated cues only).
+  Line 0 shows at `cue.start_sec`; each later line finishes its reveal
+  ramp at its first word's start.
 
 Dimensional scaling uses `reference_canvas_height` (1920) when
 `scale_with_canvas` is true — not the caption node's tight layout box
@@ -152,7 +183,10 @@ etc.). Values scale from 1920 px reference height via
 * `auto_phrase_break`, `max_words_per_line`
 * `safe_area` / `safe_area_preset`, `scale_with_canvas`,
   `reference_canvas_height`, `uppercase`
-* `color_transition_duration` (default 0.10 s — entry ramp only)
+* Input: `media` (+ `model`, `graphs`), `words`, `file`, `source`,
+  `content`; cue rules `max_cue_chars`, `max_cue_duration`, `max_cue_gap`,
+  `break_on_sentence`
+* `color_transition_duration` (default 0, entry ramp only)
 * `future_opacity` (0.92), `spoken_opacity` (mapped to
   `spoken_color_opacity`, default 0.55), `active_opacity` (1.0)
 * `glow_enabled`, `glow_blur` (default 4.0 px) — subtle glow only on
@@ -166,7 +200,17 @@ etc.). Values scale from 1920 px reference height via
 
 ## Tests
 
-* SRT / VTT parsing — `test_parse_srt_*`, `test_parse_vtt_*`
+* SRT / VTT parsing — `test_parse_srt_*`, `srt_with_crlf_bom_and_no_index_reads`,
+  `vtt_inline_timestamps_set_each_word_start`,
+  `director_asr_vtt_output_round_trips_its_word_starts`
+* Measured word times — `measured_word_times_survive_phrase_break`,
+  `cues_from_words_follow_the_asr_cue_rules`,
+  `transcript_json_reads_the_asr_object_and_a_bare_array`,
+  `measured_lines_reveal_by_their_first_word`,
+  `every_highlight_lands_within_one_frame_of_its_word`,
+  `highlight_color_has_no_lead_by_default`
+* Word times through every input, phrase break, scene export and import,
+  and project save and load — `tests/caption_word_times.rs`
 * Word auto-timing across `\n`-separated lines —
   `test_word_display_assigns_line_idx`
 * Phrase auto-break — `test_phrase_auto_break_splits_long_cue`

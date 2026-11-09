@@ -31,14 +31,26 @@ fn cues_break_at_sentences_pauses_length_and_duration() {
 #[test]
 fn srt_and_vtt_text() {
     let cues = vec![
-        Cue { start: 0.0, end: 1.2345, text: "Fish & <chips>".to_string() },
-        Cue { start: 3725.5, end: 3727.0, text: "An hour in.".to_string() },
+        Cue { start: 0.0, end: 1.2345, text: "Fish & <chips>".to_string(), words: vec![] },
+        Cue { start: 3725.5, end: 3727.0, text: "An hour in.".to_string(), words: vec![] },
     ];
     assert_eq!(srt(&cues), "1\n00:00:00,000 --> 00:00:01,235\nFish & <chips>\n\n2\n01:02:05,500 --> 01:02:07,000\nAn hour in.\n\n");
     assert_eq!(
         vtt(&cues),
         "WEBVTT\n\n00:00:00.000 --> 00:00:01.235\nFish &amp; &lt;chips&gt;\n\n01:02:05.500 --> 01:02:07.000\nAn hour in.\n\n"
     );
+}
+
+#[test]
+fn vtt_carries_each_later_word_start_as_an_inline_timestamp() {
+    let words = vec![word("Fish", 0.32, 0.6), word("&", 0.64, 0.7), word("chips.", 0.88, 1.2), word("Next", 2.4, 2.7)];
+    let got = vtt(&cues(&words, &CueOptions::default()));
+    assert_eq!(
+        got,
+        "WEBVTT\n\n00:00:00.320 --> 00:00:01.200\nFish <00:00:00.640>&amp; <00:00:00.880>chips.\n\n00:00:02.400 --> 00:00:02.700\nNext\n\n"
+    );
+    // SRT keeps cue times only.
+    assert_eq!(srt(&cues(&words, &CueOptions::default())), "1\n00:00:00,320 --> 00:00:01,200\nFish & chips.\n\n2\n00:00:02,400 --> 00:00:02,700\nNext\n\n");
 }
 
 #[test]

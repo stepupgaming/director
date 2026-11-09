@@ -93,6 +93,7 @@ fn smart_caption_avoids_bottom_face() {
 
         // Smart caption that should avoid the face.
         let line = CaptionLine {
+            measured: false,
             text: "hello world".into(),
             words: vec![CaptionWord {
                 text: "hello world".into(),
@@ -251,6 +252,7 @@ fn smart_caption_switches_anchor_with_moving_face() {
 
     // Smart caption that should switch anchors as the face moves.
     let line = CaptionLine {
+        measured: false,
         text: "hello world".into(),
         words: vec![CaptionWord {
             text: "hello world".into(),

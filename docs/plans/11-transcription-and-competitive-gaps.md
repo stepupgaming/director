@@ -78,6 +78,7 @@ Gate: median word-boundary error is recorded per model with and without refineme
 
 **A4. Document and edit integration.** The transcript asset in `director-scene`, `captions_from_transcript`, and the cut and tighten operations through the host session.
 Gate: removing fillers and long pauses from a talking-head fixture exports with audio and video in sync (framemd5 and sample checks at every cut), and captions follow the retimed words.
+Status 2026-11-09: captions from speech landed. `add_caption` takes `media` (Bark through the director-cli transcriber, cached by file hash), `words`, transcript JSON and word-timed VTT, keeps measured word times through phrase break, scene documents and projects, and lights every word of the rootbeer clip on its first frame for Bark, Plus and Clean. The transcript asset and the cut operations remain.
 
 Backlog: Whisper through `whisper-rs` for 99 languages (libclang and CMake on Windows, DTW word timing), Parakeet v3 for 25 European languages on the same graphs, speaker diarization feeding the `Speaker` entities, streaming transcription for the preview session, and keyword boosting in a TDT beam search.
 
@@ -91,7 +92,7 @@ Sources: the FFrames README at `github.com/dmtrKovalenko/fframes` (3.0k stars, M
 | --- | --- | --- | --- |
 | Authoring | Rust returning SVG; edits recompile, with live reload in the editor | HTML/CSS (primary) and Rhai, no compile step, native HyperFrames-style HTML | Plan 10 phase 5 |
 | Layout and text | Hand-placed SVG, SVG `<text>` | Taffy flexbox and grid, Skia paragraph text with spans, fit, per-glyph animators, strokes and shadows | Holds |
-| Captions and speech | WebVTT parser and a subtitle example | Caption engine, smart captions, entity registry, active-speaker reframing; SRT and VTT input; no ASR | Plan 11 Part A |
+| Captions and speech | WebVTT parser and a subtitle example | Caption engine, smart captions, entity registry, active-speaker reframing; captions from speech with measured word times (`media`, transcript JSON, word-timed VTT); SRT as an estimate | Plan 11 Part A |
 | Rendering | Skia on the GPU by default (Metal, Vulkan), CPU fallback, author claims about 10x | Pipelined CPU pool export by default, Vulkan session opt-in; measured in the plan 10 table | Plan 10 phase 3 next options |
 | Static reuse | Expression-free SVG parts hashed at compile time and drawn once | Static layer cache in `director-render`; `director-html` marks no node static, so HTML scenes repaint every node | Plan 10 phase 3 layer cache |
 | Encoding | libav linked in process | One FFmpeg process per export, RGBA pipe, premixed audio over a loopback input in the same pass | Plan 10 phase 3 encoder path |

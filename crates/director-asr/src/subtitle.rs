@@ -23,12 +23,14 @@ impl Default for CueOptions {
     }
 }
 
-/// One subtitle: text shown from `start` to `end` seconds.
+/// One subtitle: text shown from `start` to `end` seconds, with the timed
+/// words it holds when it came from [`cues`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cue {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    pub words: Vec<Word>,
 }
 
 /// Groups words into cues in order.
@@ -45,12 +47,13 @@ pub fn cues(words: &[Word], options: &CueOptions) -> Vec<Cue> {
                 cue.text.push(' ');
                 cue.text.push_str(&word.text);
                 cue.end = word.end;
+                cue.words.push(word.clone());
             } else {
                 open = false;
             }
         }
         if !open {
-            out.push(Cue { start: word.start, end: word.end, text: word.text.clone() });
+            out.push(Cue { start: word.start, end: word.end, text: word.text.clone(), words: vec![word.clone()] });
             open = true;
         }
         if options.break_on_sentence && word.text.ends_with(['.', '?', '!']) {
@@ -65,7 +68,8 @@ fn timestamp(seconds: f64, separator: char) -> String {
     format!("{:02}:{:02}:{:02}{separator}{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
 }
 
-/// SubRip text: numbered cues with `HH:MM:SS,mmm` times.
+/// SubRip text: numbered cues with `HH:MM:SS,mmm` times. SRT holds no word
+/// times, so a caption reader can only estimate them; JSON and VTT keep them.
 pub fn srt(cues: &[Cue]) -> String {
     let mut out = String::new();
     for (i, cue) in cues.iter().enumerate() {
@@ -74,11 +78,27 @@ pub fn srt(cues: &[Cue]) -> String {
     out
 }
 
-/// WebVTT text with `HH:MM:SS.mmm` times and `&`, `<` and `>` escaped.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// WebVTT text with `HH:MM:SS.mmm` times and `&`, `<` and `>` escaped. A cue
+/// holding two or more words carries each later word's start as an inline
+/// timestamp (`Hello <00:00:00.450>there.`), the karaoke form, so a reader
+/// keeps the measured word times.
 pub fn vtt(cues: &[Cue]) -> String {
     let mut out = String::from("WEBVTT\n\n");
     for cue in cues {
-        let text = cue.text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let text = match cue.words.split_first() {
+            Some((first, rest)) if !rest.is_empty() => {
+                let mut text = escape(&first.text);
+                for word in rest {
+                    text.push_str(&format!(" <{}>{}", timestamp(word.start, '.'), escape(&word.text)));
+                }
+                text
+            }
+            _ => escape(&cue.text),
+        };
         out.push_str(&format!("{} --> {}\n{text}\n\n", timestamp(cue.start, '.'), timestamp(cue.end, '.')));
     }
     out

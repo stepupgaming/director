@@ -115,6 +115,9 @@ pub mod style_policy;
 /// True IT-R BS.1770 loudness analysis (LUFS, true peak, loudness range).
 pub mod loudness;
 
+/// Speech to text hook that word-timed captions from media run through.
+pub mod transcribe;
+
 pub use director::Director;
 pub use render_manifest::{
     build_render_manifest, render_manifest_json, RenderManifest, RENDER_MANIFEST_VERSION,

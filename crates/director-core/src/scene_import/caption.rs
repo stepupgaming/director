@@ -76,6 +76,7 @@ fn caption_line(line: &ds::CaptionLine) -> CaptionLine {
             .collect(),
         start_sec: line.start_sec,
         end_sec: line.end_sec,
+        measured: line.measured,
     }
 }
 

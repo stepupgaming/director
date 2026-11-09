@@ -40,6 +40,26 @@ Adds a text node to the scene root.
 - `props`: Map of properties (including `content`)
 - Returns: `NodeHandle`
 
+### `add_caption(props)`
+Adds word-highlight captions (also a node method). Each word's highlight starts on the first frame at or after its start time. Input, first match wins:
+- `media`: a video or audio file. Speech to text runs on it with the Bark 3.0 model `model` (`bark-3.0`, `bark-3.0-plus`, `bark-3.0-clean`; default: the first installed) and graph set `graphs` (`int8` or `exact`). Needs `director-engine` built with `--features asr` and a model from `director-engine asr fetch`. Transcripts cache by file hash under the model cache.
+- `words`: an array of `#{ text, start, end }` in seconds.
+- `file`: a `.json` transcript (`asr transcribe --format json`, or an array of `{text, start, end}`), a `.vtt` file (inline `<00:00:01.200>` word timestamps set word starts, as `asr transcribe --format vtt` writes), or a `.srt` file. SRT holds cue times only, so its words split each cue evenly: an estimate.
+- `source`: SRT or WebVTT text.
+- `content`: `[#{ text, start, end, words: [#{ text, start, end }] }]`. Cues without `words` split evenly.
+
+`media`, `words` and JSON group words into cues by `max_cue_chars` (42), `max_cue_duration` (5.0 s), `max_cue_gap` (0.8 s) and `break_on_sentence` (true). `auto_phrase_break` with `max_words_per_line` splits cues into display lines and keeps measured word times. Style keys include `font_size`, `font_family`, `uppercase`, `color`, `highlight_color`, `spoken_color`, `color_transition_duration` (seconds of highlight lead-in, default 0), `pill_enabled` and `caption_position`.
+
+Video to captions:
+```rhai
+root.add_video("clip.mp4", #{ width: "100%", height: "100%", position: "absolute" });
+movie.add_audio("clip.mp4");
+root.add_caption(#{ media: "clip.mp4", model: "bark-3.0", auto_phrase_break: true, max_words_per_line: 4 });
+// Or transcribe once: director-engine asr transcribe clip.mp4 --format json -o words.json
+// root.add_caption(#{ file: "words.json", ... });
+```
+Check timing with `director-engine qa movie.rhai --words words.json`.
+
 ## Node Methods
 
 ### `add_box(props)` / `add_text(props)` / `add_image(path[, props])`
