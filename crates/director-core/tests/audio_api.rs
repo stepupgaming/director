@@ -20,6 +20,40 @@ fn generate_sine_wave(sample_rate: u32, duration_secs: f64, frequency: f32, dbfs
     samples
 }
 
+/// `add_audio` on an ordinary H.264 + AAC MP4, whose first track is the
+/// picture, loads the AAC track.
+#[test]
+fn add_audio_loads_the_aac_track_of_an_mp4_with_video_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let clip = dir.path().join("clip.mp4");
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y"])
+        .args(["-f", "lavfi", "-i", "testsrc=size=64x64:rate=30:duration=2"])
+        .args(["-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000:duration=2"])
+        .args(["-map", "0:v", "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+        .args(["-map", "1:a", "-c:a", "aac", "-ac", "2"])
+        .arg(&clip)
+        .status()
+        .expect("ffmpeg must be in PATH");
+    assert!(status.success());
+
+    let mut engine = Engine::new();
+    register_rhai_api(&mut engine, Arc::new(DefaultAssetLoader));
+    let mut scope = rhai::Scope::new();
+    scope.push("clip", clip.to_string_lossy().replace('\\', "/"));
+    let lufs: f64 = engine
+        .eval_with_scope(
+            &mut scope,
+            r#"
+                let movie = new_director(64, 64, 30);
+                movie.add_audio(clip).loudness().integrated_lufs
+            "#,
+        )
+        .expect("add_audio must load the AAC track");
+    // FFmpeg's sine source plays at 1/8 full scale, about -18 dBFS.
+    assert!(lufs > -24.0 && lufs < -12.0, "expected the tone near -18 LUFS, got {lufs}");
+}
+
 #[test]
 fn audio_track_loudness_returns_lufs_true_peak_and_range() {
     let mut engine = Engine::new();

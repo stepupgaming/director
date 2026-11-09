@@ -24,8 +24,9 @@ Adds a transition between two scenes.
 
 ### `add_audio(path)`
 Adds a global audio track.
-- `path`: String (asset path)
+- `path`: String (asset path): an audio file or a video file. A video's first audio stream plays, so a phone or downloaded H.264 + AAC MP4 loads as is. Any audio FFmpeg reads works.
 - Returns: `AudioTrackHandle`
+- `add_video` paints picture only. To keep a clip's own sound, also call `add_audio` with the same path (`scene.add_audio(path)` plays it for that scene).
 
 ## Scene Methods
 

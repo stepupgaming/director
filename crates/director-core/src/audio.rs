@@ -450,10 +450,26 @@ pub fn resample_audio(samples: &[f32], source_rate: u32, target_rate: u32) -> Re
     Ok(result)
 }
 
-/// Decodes an audio file from raw bytes into interleaved stereo float samples.
+/// Decodes an audio file, or the first audio stream of a video file, from raw
+/// bytes into interleaved stereo float samples at `target_sample_rate`.
 ///
-/// Automatically handles format detection and resampling to the target rate.
+/// Symphonia decodes WAV, PCM, MP3 and AAC-LC in WAV, MP3, ADTS and MP4/MOV
+/// containers in process. Anything else FFmpeg reads (Opus, Vorbis, FLAC,
+/// AC-3, HE-AAC, Matroska, WebM, ...) decodes through the `ffmpeg` binary.
 pub fn load_audio_bytes(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>> {
+    match decode_with_symphonia(data, target_sample_rate) {
+        Ok(samples) => Ok(samples),
+        Err(native) => decode_with_ffmpeg(data, target_sample_rate)
+            .map_err(|ffmpeg| anyhow::anyhow!("{native:#}; ffmpeg: {ffmpeg:#}")),
+    }
+}
+
+/// Decodes the first track symphonia has a decoder for. A video file's
+/// picture track comes first, so the first track is often not audio.
+fn decode_with_symphonia(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>> {
+    use symphonia::core::codecs::CODEC_TYPE_NULL;
+    use symphonia::core::errors::Error;
+
     let mss = MediaSourceStream::new(Box::new(Cursor::new(data.to_vec())), Default::default());
     let hint = Hint::new();
     let format_opts = FormatOptions::default();
@@ -465,24 +481,20 @@ pub fn load_audio_bytes(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>
         .context("Unsupported format")?;
 
     let mut format = probed.format;
-    let track = format.default_track().context("No track found")?;
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &decoder_opts)
-        .context("Unsupported codec")?;
-
-    let track_id = track.id;
-    let source_rate = track.codec_params.sample_rate.unwrap_or(44100);
+    let codecs = symphonia::default::get_codecs();
+    let (track_id, source_rate, mut decoder) = format
+        .tracks()
+        .iter()
+        .filter(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .find_map(|t| {
+            let decoder = codecs.make(&t.codec_params, &decoder_opts).ok()?;
+            Some((t.id, t.codec_params.sample_rate.unwrap_or(44100), decoder))
+        })
+        .context("Unsupported codec: no decodable audio track")?;
 
     let mut samples = Vec::new();
 
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(symphonia::core::errors::Error::IoError(_)) => break,
-            Err(symphonia::core::errors::Error::ResetRequired) => break,
-            Err(_) => break,
-        };
-
+    while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
             continue;
         }
@@ -509,16 +521,127 @@ pub fn load_audio_bytes(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>
                     }
                 }
             }
+            // One corrupt packet skips that packet; the rest still plays.
+            Err(Error::DecodeError(_)) => continue,
             Err(_) => break,
         }
     }
 
+    if samples.is_empty() {
+        anyhow::bail!("decoded no audio samples");
+    }
     resample_audio(&samples, source_rate, target_sample_rate)
+}
+
+/// Decodes the first audio stream through the `ffmpeg` binary as stereo f32
+/// at `target_sample_rate`. The bytes go to a temporary file because MP4s
+/// with the index at the end cannot be read from a pipe.
+fn decode_with_ffmpeg(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>> {
+    use std::io::Write;
+
+    let mut file = tempfile::NamedTempFile::new().context("temporary audio file")?;
+    file.write_all(data).context("temporary audio file")?;
+    file.flush().context("temporary audio file")?;
+    let output = std::process::Command::new(crate::video_wrapper::FFmpegDriver::binary())
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(file.path())
+        .args(["-map", "0:a:0", "-vn", "-sn", "-dn", "-f", "f32le", "-ac", "2", "-ar"])
+        .arg(target_sample_rate.to_string())
+        .arg("pipe:1")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .context("failed to run ffmpeg")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = if stderr.contains("matches no streams") {
+            "no audio stream".to_string()
+        } else {
+            stderr.trim().to_string()
+        };
+        anyhow::bail!("{reason}");
+    }
+    let samples: Vec<f32> = output
+        .stdout
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect();
+    if samples.is_empty() {
+        anyhow::bail!("no audio stream");
+    }
+    Ok(samples)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+    use std::process::Command;
+
+    /// Writes a 1 s clip with a 64x64 picture and a 440 Hz tone with FFmpeg.
+    /// `audio` holds the codec arguments; `None` writes no audio stream.
+    fn ffmpeg_clip(path: &Path, audio: Option<&[&str]>) {
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=30:duration=1"]);
+        if audio.is_some() {
+            cmd.args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=1"]);
+        }
+        // Map the picture first, as cameras and FFmpeg write it.
+        cmd.args(["-map", "0:v", "-c:v", "libx264", "-pix_fmt", "yuv420p"]);
+        if let Some(args) = audio {
+            cmd.args(["-map", "1:a", "-ac", "2"]).args(args);
+        }
+        let status = cmd.arg(path).status().expect("ffmpeg must be in PATH");
+        assert!(status.success(), "ffmpeg failed to write {}", path.display());
+    }
+
+    fn assert_tone(samples: &[f32]) {
+        let frames = samples.len() / 2;
+        assert!((47_000..=50_500).contains(&frames), "expected about 1 s at 48 kHz, got {frames} frames");
+        let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+        assert!(rms > 0.05, "expected an audible tone, rms {rms}");
+        // Sign changes of the left channel, ignoring wiggles near zero.
+        let mut sign = 0i8;
+        let mut crossings = 0;
+        for s in samples.iter().step_by(2) {
+            let now = if *s > 0.02 { 1 } else if *s < -0.02 { -1 } else { continue };
+            if sign != 0 && now != sign {
+                crossings += 1;
+            }
+            sign = now;
+        }
+        assert!((840..=920).contains(&crossings), "expected a 440 Hz tone, got {crossings} zero crossings");
+    }
+
+    #[test]
+    fn symphonia_decodes_aac_in_mp4_after_the_video_track() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clip.mp4");
+        ffmpeg_clip(&path, Some(&["-c:a", "aac"]));
+        let bytes = std::fs::read(&path).unwrap();
+        assert_tone(&decode_with_symphonia(&bytes, 48000).expect("symphonia decodes AAC in MP4"));
+        assert_tone(&load_audio_bytes(&bytes, 48000).unwrap());
+    }
+
+    #[test]
+    fn ffmpeg_decodes_audio_symphonia_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clip.mkv");
+        ffmpeg_clip(&path, Some(&["-c:a", "ac3"]));
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(decode_with_symphonia(&bytes, 48000).is_err());
+        assert_tone(&load_audio_bytes(&bytes, 48000).expect("ffmpeg decodes AC-3 in Matroska"));
+    }
+
+    #[test]
+    fn a_silent_video_reports_no_audio_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("silent.mp4");
+        ffmpeg_clip(&path, None);
+        let error = load_audio_bytes(&std::fs::read(&path).unwrap(), 48000).unwrap_err();
+        assert!(error.to_string().contains("no audio stream"), "{error:#}");
+    }
 
     #[test]
     fn test_mixing_logic() {

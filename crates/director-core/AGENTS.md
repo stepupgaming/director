@@ -374,6 +374,12 @@ five 640x360 premultiplied RGBA frames per workload via
 - `FFmpegDriver::ensure_available` reads `libavcodec_version` and warns below 61.19 (FFmpeg 7.1). Git builds print `N-...` in place of a release number, so the libavcodec line is the only reliable version. Unit test: `reads_libavcodec_version_from_release_and_git_builds`.
 - Alpha export (`--alpha`, lossless VP9 `yuva420p` at `-deadline realtime -cpu-used 8`, where the speed only changes file size) sets `Director::transparent_background`, so every frame clears to transparent, and reads unpremultiplied pixels because FFmpeg treats `rgba` input as straight alpha. Opaque export clears to black. Decode alpha WebM with `-c:v libvpx-vp9` before `-i` to keep the alpha plane. Acceptance: `alpha_export_keeps_empty_pixels_transparent_and_alpha_straight` in `crates/director-cli/tests/html_export.rs`.
 
+## Audio decode
+
+- `audio::load_audio_bytes` is the one decoder for `add_audio`, HTML `<audio>`, scene import and live preview. Symphonia decodes the first track it has a decoder for, so the audio stream of a video file plays even when the picture track comes first. A corrupt packet is skipped. When symphonia cannot read the container or codec (Opus, AC-3, HE-AAC and others), the bytes go to a temporary file and the `ffmpeg` binary decodes its first audio stream as stereo f32. A file with no audio stream fails with `no audio stream`.
+- `add_video` paints picture only and adds no audio track; HTML `<video>` must be `muted`. A clip's own sound plays through `add_audio` on the same path.
+- Unit tests in `src/audio.rs` cover AAC in MP4 after an H.264 track, AC-3 in Matroska through FFmpeg and a silent video; `tests/audio_api.rs` covers `add_audio` on an MP4. They need FFmpeg in PATH.
+
 ## Video decoder lifecycle and verification
 
 - `src/video_wrapper.rs`: `DecodeSession` owns its FFmpeg child and kills/reaps it on drop, including read errors and restarts. Drop the old session before spawning its replacement.
