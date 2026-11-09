@@ -3257,7 +3257,7 @@ dependencies = [
 
 [[package]]
 name = "director-3d"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "ash",
@@ -3276,7 +3276,7 @@ dependencies = [
 
 [[package]]
 name = "director-asr"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bark-asr",
  "serde",
@@ -3288,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "director-breakdown"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "regex",
  "schemars",
@@ -3300,7 +3300,7 @@ dependencies = [
 
 [[package]]
 name = "director-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "ash",
@@ -3333,7 +3333,7 @@ dependencies = [
 
 [[package]]
 name = "director-dom"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ego-tree",
  "html5ever",
@@ -3344,7 +3344,7 @@ dependencies = [
 
 [[package]]
 name = "director-host"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "director-html",
@@ -3363,7 +3363,7 @@ dependencies = [
 
 [[package]]
 name = "director-html"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3393,7 +3393,7 @@ dependencies = [
 
 [[package]]
 name = "director-lottie-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "boa_engine",
@@ -3410,7 +3410,7 @@ dependencies = [
 
 [[package]]
 name = "director-lottie-data"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -3418,7 +3418,7 @@ dependencies = [
 
 [[package]]
 name = "director-lottie-skia"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "director-lottie-core",
  "director-lottie-data",
@@ -3430,7 +3430,7 @@ dependencies = [
 
 [[package]]
 name = "director-recorder"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "director-dom",
  "serde_json",
@@ -3439,7 +3439,7 @@ dependencies = [
 
 [[package]]
 name = "director-render"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3458,7 +3458,7 @@ dependencies = [
 
 [[package]]
 name = "director-scene"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "schemars",
  "serde",
@@ -3468,7 +3468,7 @@ dependencies = [
 
 [[package]]
 name = "director-schema"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "director-video-core",
  "schemars",
@@ -3486,7 +3486,7 @@ dependencies = [
 
 [[package]]
 name = "director-track"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "nalgebra",
  "rayon",
@@ -3496,7 +3496,7 @@ dependencies = [
 
 [[package]]
 name = "director-video-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

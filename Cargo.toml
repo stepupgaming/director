@@ -22,7 +22,7 @@ exclude = ["vendor/skia-safe", "vendor/bevy_pbr"]
 
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/stepupgaming/director"
@@ -47,21 +47,21 @@ ron = "0.8"
 # Internal. Every crate publishes at the workspace version. The core crate
 # publishes as `director-video-core` because crates.io already holds
 # `director_core`; its library name stays `director_core`.
-lottie-core = { package = "director-lottie-core", path = "crates/lottie-core", version = "0.1.1" }
-lottie-data = { package = "director-lottie-data", path = "crates/lottie-data", version = "0.1.1" }
-lottie-skia = { package = "director-lottie-skia", path = "crates/lottie-skia", version = "0.1.1" }
-director-core = { package = "director-video-core", path = "crates/director-core", version = "0.1.1" }
-director-scene = { path = "crates/director-scene", version = "0.1.1" }
-director-dom = { path = "crates/director-dom", version = "0.1.1" }
-director-recorder = { path = "crates/director-recorder", version = "0.1.1" }
-director-track = { path = "crates/director-track", version = "0.1.1" }
-director-render = { path = "crates/director-render", version = "0.1.1" }
-director-schema = { path = "crates/director-schema", version = "0.1.1" }
-director-3d = { path = "crates/director-3d", version = "0.1.1" }
-director-html = { path = "crates/director-html", version = "0.1.1" }
-director-host = { path = "crates/director-host", version = "0.1.1" }
-director-breakdown = { path = "crates/director-breakdown", version = "0.1.1" }
-director-asr = { path = "crates/director-asr", version = "0.1.1" }
+lottie-core = { package = "director-lottie-core", path = "crates/lottie-core", version = "0.1.2" }
+lottie-data = { package = "director-lottie-data", path = "crates/lottie-data", version = "0.1.2" }
+lottie-skia = { package = "director-lottie-skia", path = "crates/lottie-skia", version = "0.1.2" }
+director-core = { package = "director-video-core", path = "crates/director-core", version = "0.1.2" }
+director-scene = { path = "crates/director-scene", version = "0.1.2" }
+director-dom = { path = "crates/director-dom", version = "0.1.2" }
+director-recorder = { path = "crates/director-recorder", version = "0.1.2" }
+director-track = { path = "crates/director-track", version = "0.1.2" }
+director-render = { path = "crates/director-render", version = "0.1.2" }
+director-schema = { path = "crates/director-schema", version = "0.1.2" }
+director-3d = { path = "crates/director-3d", version = "0.1.2" }
+director-html = { path = "crates/director-html", version = "0.1.2" }
+director-host = { path = "crates/director-host", version = "0.1.2" }
+director-breakdown = { path = "crates/director-breakdown", version = "0.1.2" }
+director-asr = { path = "crates/director-asr", version = "0.1.2" }
 
 # Repo builds only: the fog composite's alpha blend in `vendor/bevy_pbr`.
 # Published builds take upstream bevy_pbr; see vendor/AGENTS.md.
