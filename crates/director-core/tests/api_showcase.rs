@@ -580,3 +580,67 @@ fn caption_pop_draws_the_active_word_once_and_whole() {
     assert!((1.07..1.13).contains(&w_ratio), "pop width ratio {w_ratio:.3}");
     assert!((1.14..1.28).contains(&area_ratio), "pop ink area ratio {area_ratio:.3}");
 }
+
+/// A popping word never reaches its neighbor: at the pop's peak, a clear
+/// column still separates the two words' ink.
+#[test]
+fn caption_pop_keeps_a_space_to_the_next_word() {
+    let loader = Arc::new(DefaultAssetLoader);
+    let mut director = Director::new(1080, 300, 30.0, loader, RenderMode::Preview, None);
+    let mut root = BoxNode::new();
+    root.bg_color = Some(Animated::new(Color::WHITE));
+    root.style.size.width = Dimension::percent(1.0);
+    root.style.size.height = Dimension::percent(1.0);
+    root.style.position = Position::Relative;
+    let root_id = director.scene.add_node(Box::new(root));
+
+    let mut line = CaptionLine {
+        measured: true,
+        text: "REVENUEWISE NEXT".to_string(),
+        words: Vec::new(),
+        start_sec: 0.0,
+        end_sec: 5.0,
+    };
+    auto_time_words(&mut line);
+    let time = line.words[0].start_sec;
+    let mut caption = CaptionNode::new(vec![line], director.assets.font_collection.clone());
+    caption.style.font_size = 76.0;
+    caption.style.color = Color::new(0.0, 0.0, 1.0, 1.0);
+    caption.style.highlight_color = Color::new(1.0, 0.0, 0.0, 1.0);
+    caption.style.stroke_enabled = true;
+    caption.style.stroke_width = 6.0;
+    caption.style.stroke_color = Color::new(0.0, 0.0, 0.0, 1.0);
+    caption.style.text_shadow_enabled = false;
+    caption.style.pill_enabled = false;
+    caption.style.glow_enabled = false;
+    caption.style.auto_adapt_shadow = false;
+    caption.style.active_pop_scale = 1.10;
+    caption.style.active_pop_duration = 0.5;
+    caption.style.position = CaptionPosition::Free(0.5);
+    caption.style_cache.position = Position::Absolute;
+    caption.style_cache.inset.top = LengthPercentage::length(0.0).into();
+    caption.style_cache.inset.left = LengthPercentage::length(0.0).into();
+    caption.style_cache.size.width = Dimension::percent(1.0);
+    caption.style_cache.size.height = Dimension::percent(1.0);
+    let caption_id = director.scene.add_node(Box::new(caption));
+    director.scene.try_add_child(root_id, caption_id);
+    director.push_scene_root(root_id, 5.0);
+
+    let (w, h) = (1080usize, 300usize);
+    let mut surface = skia_safe::surfaces::raster_n32_premul((w as i32, h as i32)).unwrap();
+    director_render::render_frame(&mut director, time, &mut surface).unwrap();
+    let mut px = vec![0u8; w * h * 4];
+    surface.read_pixels(
+        &skia_safe::ImageInfo::new((w as i32, h as i32), skia_safe::ColorType::RGBA8888, skia_safe::AlphaType::Premul, None),
+        &mut px,
+        w * 4,
+        (0, 0),
+    );
+    let inked: Vec<bool> = (0..w)
+        .map(|x| (0..h).any(|y| px[(y * w + x) * 4 + 1] < 200))
+        .collect();
+    let first = inked.iter().position(|&i| i).expect("no caption ink");
+    let last = inked.iter().rposition(|&i| i).unwrap();
+    let clear = (first..=last).filter(|&x| !inked[x]).count();
+    assert!(clear >= 2, "the popping word touches the next word ({clear} clear columns)");
+}

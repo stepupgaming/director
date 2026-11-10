@@ -98,7 +98,9 @@ full-line paragraph paint AFTER the base pass. While the word pops,
 the base pass paints it transparent (`PopPass::ExceptActive`) and the
 scaled overlay paints only it (`PopPass::ActiveOnly`), unclipped, so
 the word shows once and whole: no unscaled copy under it and no edges
-cut at its unscaled box. The renderer must always paint the rest of
+cut at its unscaled box. Each side of the word grows at most half the clear
+gap to its neighbor's stroke, so a long word pops less and never
+touches the next word. The renderer must always paint the rest of
 the line in the base pass, or every other word flashes off on each
 word change. The base paragraph is not re-laid; the scale affects
 only the active word's overlay. Scale returns to

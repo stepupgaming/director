@@ -1611,12 +1611,26 @@ impl Element for CaptionNode {
                 // other word transparent. No tight clip, so the scaled
                 // word's edges, stroke and shadow stay whole.
                 if let Some(local_idx) = popping {
-                    let active_token = &display_line.tokens[local_idx];
+                    let tokens = &display_line.tokens;
+                    let active_token = &tokens[local_idx];
                     let cx = line_left_x + active_token.center_x;
                     let cy = line_y_cursor + active_token.center_y;
+                    // The pop never reaches a neighbor: each side grows at
+                    // most half the clear gap between the two strokes, so
+                    // a long word pops less than a short one.
+                    let stroke = if layout_style.stroke_enabled { layout_style.stroke_width } else { 0.0 };
+                    let gap = |a: &TokenLayout, b: &TokenLayout| b.x - (a.x + a.width) - 2.0 * stroke;
+                    let mut room = f32::INFINITY;
+                    if local_idx > 0 {
+                        room = room.min(gap(&tokens[local_idx - 1], active_token));
+                    }
+                    if local_idx + 1 < tokens.len() {
+                        room = room.min(gap(active_token, &tokens[local_idx + 1]));
+                    }
+                    let scale = pop_scale.min(1.0 + room.max(0.0) / active_token.width.max(1.0));
                     canvas.save();
                     canvas.translate(Point::new(cx, cy));
-                    canvas.scale((pop_scale, pop_scale));
+                    canvas.scale((scale, scale));
                     canvas.translate(Point::new(-cx, -cy));
                     self.paint_line_paragraph_at(
                         &layout_style,
