@@ -610,7 +610,16 @@ impl Element for HtmlElement {
                     model.close = Some((media(close), paint.camera));
                 }
             }
-            content.update(media(time));
+            // A video that paints nothing now decodes nothing: `render` skips
+            // it, and the next frame it shows seeks to its own time.
+            let painted = !self.hidden
+                && self.paint.visible
+                && self.paint.opacity > 0.0
+                && time >= self.start
+                && time < self.end;
+            if painted || !matches!(content.kind(), "video" | "html_video") {
+                content.update(media(time));
+            }
         }
         // An animated atomic box publishes its live margin box for its text line.
         if let Some(InlineLink::Box(flow, slot, sizing)) = self.inline.clone() {
