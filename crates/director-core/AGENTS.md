@@ -94,11 +94,14 @@ glyph.
 The active word gets a tiny **1.04 scale pop** at the moment of
 activation. The pop is implemented as a `canvas.scale(1.04, 1.04)`
 transform around the active word's center, applied with a second
-full-line paragraph paint AFTER the base pass, clipped to the active
-word's bbox. The renderer must always paint the full line first;
-painting only inside the pop clip hides every other word for ~80 ms
-and flashes on each word change. The base paragraph is not re-laid;
-the scale affects only the active word's overlay. Scale returns to
+full-line paragraph paint AFTER the base pass. While the word pops,
+the base pass paints it transparent (`PopPass::ExceptActive`) and the
+scaled overlay paints only it (`PopPass::ActiveOnly`), unclipped, so
+the word shows once and whole: no unscaled copy under it and no edges
+cut at its unscaled box. The renderer must always paint the rest of
+the line in the base pass, or every other word flashes off on each
+word change. The base paragraph is not re-laid; the scale affects
+only the active word's overlay. Scale returns to
 `active_pop_duration` (0.08 s default) via `ease_out_quad`. Maximum
 `active_pop_scale` is clamped to 1.10 (TikTok/Reels-appropriate).
 

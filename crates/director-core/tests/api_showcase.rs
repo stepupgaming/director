@@ -499,3 +499,84 @@ fn caption_renders_visible_pixels() {
          but those rows are all white. Non-white pixels exist at rows {}..{}",
         caption_top, caption_bot, first_row, last_row);
 }
+
+/// Paints one caption word on white `after_start` seconds into its
+/// highlight and returns its ink extent (columns) and ink area (pixels).
+fn caption_word_ink(after_start: f64) -> (usize, usize) {
+    let loader = Arc::new(DefaultAssetLoader);
+    let mut director = Director::new(800, 300, 30.0, loader, RenderMode::Preview, None);
+    let mut root = BoxNode::new();
+    root.bg_color = Some(Animated::new(Color::WHITE));
+    root.style.size.width = Dimension::percent(1.0);
+    root.style.size.height = Dimension::percent(1.0);
+    root.style.position = Position::Relative;
+    let root_id = director.scene.add_node(Box::new(root));
+
+    // measured: the cue shows at its start, with no 0.1 s fade in
+    let mut line = CaptionLine {
+        measured: true,
+        text: "WIDE".to_string(),
+        words: Vec::new(),
+        start_sec: 0.0,
+        end_sec: 5.0,
+    };
+    auto_time_words(&mut line);
+    let time = line.words[0].start_sec + after_start;
+    let mut caption = CaptionNode::new(vec![line], director.assets.font_collection.clone());
+    caption.style.font_size = 96.0;
+    caption.style.highlight_color = Color::new(1.0, 0.0, 0.0, 1.0);
+    caption.style.stroke_enabled = false;
+    caption.style.text_shadow_enabled = false;
+    caption.style.pill_enabled = false;
+    caption.style.glow_enabled = false;
+    caption.style.auto_adapt_shadow = false;
+    caption.style.active_pop_scale = 1.10;
+    caption.style.active_pop_duration = 0.5;
+    caption.style.position = CaptionPosition::Free(0.5);
+    caption.style_cache.position = Position::Absolute;
+    caption.style_cache.inset.top = LengthPercentage::length(0.0).into();
+    caption.style_cache.inset.left = LengthPercentage::length(0.0).into();
+    caption.style_cache.size.width = Dimension::percent(1.0);
+    caption.style_cache.size.height = Dimension::percent(1.0);
+    let caption_id = director.scene.add_node(Box::new(caption));
+    director.scene.try_add_child(root_id, caption_id);
+    director.push_scene_root(root_id, 5.0);
+
+    let mut surface = skia_safe::surfaces::raster_n32_premul((800, 300)).unwrap();
+    director_render::render_frame(&mut director, time, &mut surface).unwrap();
+    let (w, h) = (800usize, 300usize);
+    let mut px = vec![0u8; w * h * 4];
+    surface.read_pixels(
+        &skia_safe::ImageInfo::new((w as i32, h as i32), skia_safe::ColorType::RGBA8888, skia_safe::AlphaType::Premul, None),
+        &mut px,
+        w * 4,
+        (0, 0),
+    );
+    let (mut x0, mut x1, mut area) = (w, 0, 0);
+    for y in 0..h {
+        for x in 0..w {
+            let p = &px[(y * w + x) * 4..(y * w + x) * 4 + 3];
+            if p[1] < 128 {
+                area += 1;
+                x0 = x0.min(x);
+                x1 = x1.max(x);
+            }
+        }
+    }
+    assert!(area > 0, "no caption ink at {time} s");
+    (x1 + 1 - x0, area)
+}
+
+/// The active word's pop draws the word once, whole and scaled: wider
+/// than the settled word by about the pop scale (a clip to the unscaled
+/// box cut it off), with about scale squared the ink (no unscaled copy
+/// left under it).
+#[test]
+fn caption_pop_draws_the_active_word_once_and_whole() {
+    let (settled_w, settled_area) = caption_word_ink(1.0);
+    let (pop_w, pop_area) = caption_word_ink(0.0);
+    let w_ratio = pop_w as f64 / settled_w as f64;
+    let area_ratio = pop_area as f64 / settled_area as f64;
+    assert!((1.07..1.13).contains(&w_ratio), "pop width ratio {w_ratio:.3}");
+    assert!((1.14..1.28).contains(&area_ratio), "pop ink area ratio {area_ratio:.3}");
+}

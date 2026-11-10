@@ -1588,7 +1588,10 @@ impl Element for CaptionNode {
                 );
 
                 // Base pass: always paint the full line at scale 1.0 so
-                // non-active words stay visible every frame.
+                // non-active words stay visible every frame. While the
+                // active word pops, it is transparent here and the
+                // overlay below paints it, so it never shows twice.
+                let popping = if active_pop_active { active_local_in_line } else { None };
                 self.paint_line_paragraph_at(
                     &layout_style,
                     display_line,
@@ -1596,32 +1599,22 @@ impl Element for CaptionNode {
                     current_time,
                     block_width,
                     active_local_in_line,
+                    if popping.is_some() { PopPass::ExceptActive } else { PopPass::All },
                     shadow_color,
                     canvas,
                     line_left_x,
                     line_y_cursor,
                 );
 
-                // Pop overlay: during the ~80 ms activation window,
-                // paint the same line paragraph again inside a clipped,
-                // scaled canvas so only the active word grows. Without
-                // the base pass above, the clip hid every other word
-                // and caused a flash on each word change.
-                if active_pop_active {
-                    if let Some(local_idx) = active_local_in_line {
+                // Pop overlay: during the activation window, paint the
+                // line again scaled around the active word, with every
+                // other word transparent. No tight clip, so the scaled
+                // word's edges, stroke and shadow stay whole.
+                if let Some(local_idx) = popping {
                     let active_token = &display_line.tokens[local_idx];
                     let cx = line_left_x + active_token.center_x;
                     let cy = line_y_cursor + active_token.center_y;
-
-                    let clip_bbox = Rect::from_xywh(
-                        line_left_x + active_token.x - 2.0,
-                        line_y_cursor + active_token.baseline_y - 2.0,
-                        active_token.width + 4.0,
-                        active_token.height + 4.0,
-                    );
-
                     canvas.save();
-                    canvas.clip_rect(clip_bbox, skia_safe::ClipOp::Intersect, true);
                     canvas.translate(Point::new(cx, cy));
                     canvas.scale((pop_scale, pop_scale));
                     canvas.translate(Point::new(-cx, -cy));
@@ -1632,13 +1625,13 @@ impl Element for CaptionNode {
                         current_time,
                         block_width,
                         active_local_in_line,
+                        PopPass::ActiveOnly,
                         shadow_color,
                         canvas,
                         line_left_x,
                         line_y_cursor,
                     );
                     canvas.restore();
-                    }
                 }
 
                 if line_needs_layer {
@@ -1701,6 +1694,7 @@ impl CaptionNode {
         time: f64,
         layout_width: f32,
         active_local_in_line: Option<usize>,
+        pass: PopPass,
         shadow_color: Color,
     ) -> Paragraph {
         let line_text: String = display_line
@@ -1735,7 +1729,14 @@ impl CaptionNode {
             } else {
                 self.style.color
             };
-            let opacity = if is_active {
+            let hidden = match pass {
+                PopPass::All => false,
+                PopPass::ExceptActive => is_active,
+                PopPass::ActiveOnly => !is_active,
+            };
+            let opacity = if hidden {
+                0.0
+            } else if is_active {
                 self.style.active_opacity
             } else if time >= word.end_sec {
                 self.style.spoken_color_opacity
@@ -1777,6 +1778,7 @@ impl CaptionNode {
         time: f64,
         layout_width: f32,
         active_local_in_line: Option<usize>,
+        pass: PopPass,
         shadow_color: Color,
         canvas: &Canvas,
         x: f32,
@@ -1789,10 +1791,20 @@ impl CaptionNode {
             time,
             layout_width,
             active_local_in_line,
+            pass,
             shadow_color,
         );
         p.paint(canvas, (x, y));
     }
+}
+
+/// Which words a line paint draws. While the active word pops, the base
+/// pass leaves it transparent and the scaled overlay draws only it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PopPass {
+    All,
+    ExceptActive,
+    ActiveOnly,
 }
 
 // ── Public helpers ────────────────────────────────────────────────
