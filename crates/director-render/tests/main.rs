@@ -10,6 +10,7 @@ mod html_examples;
 mod incremental_render;
 mod motion_blur;
 mod rhai_examples;
+mod shared_video;
 
 #[test]
 fn every_test_file_is_a_module() {

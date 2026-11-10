@@ -315,7 +315,7 @@ pub fn video_node(body: &doc::MediaBody, opacity: &Channel, cx: &ImportContext) 
         Some(file) => VideoSource::Path(file),
         None => VideoSource::Bytes(cx.asset_bytes(&body.asset)?),
     };
-    let mut node = VideoNode::new(source, cx.render_mode);
+    let mut node = VideoNode::shared(source, cx.render_mode, &cx.assets.video_sources);
     if let Some(path) = path {
         node = node.with_source_path(path);
     }

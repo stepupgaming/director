@@ -25,6 +25,9 @@ pub struct AssetManager {
     pub blob_cache: Arc<Mutex<HashMap<String, Arc<Vec<u8>>>>>,
     /// Faces registered on the dynamic font manager, in registration order.
     pub font_faces: Arc<Mutex<Vec<FontFace>>>,
+    /// Export video sources by file: every video node of this asset manager
+    /// that plays one file reads one probed source.
+    pub video_sources: crate::video_wrapper::FrameSources,
 }
 
 /// A font file registered under a family on top of the bundled fonts.
@@ -51,6 +54,7 @@ impl AssetManager {
             image_cache: Arc::new(Mutex::new(HashMap::new())),
             blob_cache: Arc::new(Mutex::new(HashMap::new())),
             font_faces: Arc::new(Mutex::new(Vec::new())),
+            video_sources: Default::default(),
         }
     }
 

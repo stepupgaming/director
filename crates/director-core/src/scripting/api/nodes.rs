@@ -606,7 +606,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mode = d.render_mode;
             let source = build_video_source(&d, path);
 
-            let vid_node = VideoNode::new(source, mode).with_source_path(path);
+            let vid_node = VideoNode::shared(source, mode, &d.assets.video_sources).with_source_path(path);
             let id = d.scene.add_node(Box::new(vid_node));
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
@@ -636,7 +636,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mode = d.render_mode;
             let source = build_video_source(&d, path);
 
-            let mut vid_node = VideoNode::new(source, mode).with_source_path(path);
+            let mut vid_node = VideoNode::shared(source, mode, &d.assets.video_sources).with_source_path(path);
             parse_layout_style(&props, &mut vid_node.style);
 
             if let Some(fit_str) = props
@@ -681,7 +681,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mode = d.render_mode;
             let source = build_video_source(&d, path);
 
-            let vid_node = VideoNode::new(source, mode).with_source_path(path);
+            let vid_node = VideoNode::shared(source, mode, &d.assets.video_sources).with_source_path(path);
             let id = d.scene.add_node(Box::new(vid_node));
             if let Some(n) = d.scene.get_node_mut(id) {
                 n.filter = FilterConfig::default();
@@ -712,7 +712,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
             let mode = d.render_mode;
             let source = build_video_source(&d, path);
 
-            let mut vid_node = VideoNode::new(source, mode).with_source_path(path);
+            let mut vid_node = VideoNode::shared(source, mode, &d.assets.video_sources).with_source_path(path);
             parse_layout_style(&props, &mut vid_node.style);
 
             if let Some(fit_str) = props

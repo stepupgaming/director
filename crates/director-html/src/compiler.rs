@@ -1675,7 +1675,8 @@ impl Builder {
                 let path = self.assets.media_path(src)?;
                 let looped = el.value().attr_text("loop").is_some();
                 let duration = if looped { media_duration(&path)? } else { 0.0 };
-                let mut video = VideoNode::new(VideoSource::Path(path), RenderMode::Export);
+                let mut video =
+                    VideoNode::shared(VideoSource::Path(path), RenderMode::Export, &self.director.assets.video_sources);
                 // The document references the file through the compile asset loader.
                 if !src.starts_with("data:") {
                     video = video.with_source_path(src);

@@ -21,7 +21,7 @@ use crate::director::{Director, DirectorContext};
 use crate::element::Element;
 use crate::systems::assets::{AssetManager, FontFace};
 use crate::types::{Color, FilterConfig, GradientConfig, GradientType, NodeId, PathAnimationState, PathMorphState};
-use crate::video_wrapper::RenderMode;
+use crate::video_wrapper::{FrameSources, RenderMode};
 use crate::AssetLoader;
 use base64::Engine as _;
 use director_scene::{
@@ -197,6 +197,7 @@ impl ImportContext<'_> {
             Some(DirectorContext {
                 assets: self.assets.clone(),
             }),
+            &self.assets.video_sources,
         )
     }
 }
@@ -208,7 +209,20 @@ pub fn import_scene(
     registry: &ImportRegistry,
     render_mode: RenderMode,
 ) -> Result<Director, ImportError> {
-    import_into(document, loader, registry, render_mode, None)
+    import_into(document, loader, registry, render_mode, None, &FrameSources::default())
+}
+
+/// [`import_scene`] with video elements reading the sources in `frames`, so
+/// several imports of one document, such as export workers, open each file
+/// once.
+pub fn import_scene_with(
+    document: &SceneDocument,
+    loader: Arc<dyn AssetLoader>,
+    registry: &ImportRegistry,
+    render_mode: RenderMode,
+    frames: &FrameSources,
+) -> Result<Director, ImportError> {
+    import_into(document, loader, registry, render_mode, None, frames)
 }
 
 fn import_into(
@@ -217,8 +231,10 @@ fn import_into(
     registry: &ImportRegistry,
     render_mode: RenderMode,
     context: Option<DirectorContext>,
+    frames: &FrameSources,
 ) -> Result<Director, ImportError> {
     let mut director = Director::new(document.width, document.height, document.fps, loader, render_mode, context);
+    director.assets.video_sources = frames.clone();
     director.output_scale_x = document.output_scale_x;
     director.output_scale_y = document.output_scale_y;
     director.transparent_background = document.transparent_background;

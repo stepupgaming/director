@@ -20,8 +20,8 @@ pub use export::{export_director, export_director_with, frame_times, ExportOptio
 pub use frame::{paint_root, render_frame, FrameState};
 pub use live::{output_dimensions, render_export, render_export_at_scale, set_output_scale, validate_scale, GpuContext};
 
-use director_core::scene_import::{import_scene, ImportError, ImportRegistry};
-use director_core::video_wrapper::RenderMode;
+use director_core::scene_import::{import_scene_with, ImportError, ImportRegistry};
+use director_core::video_wrapper::{FrameSources, RenderMode};
 use director_core::{AssetLoader, Director};
 use director_scene::SceneDocument;
 use rayon::prelude::*;
@@ -68,6 +68,8 @@ pub struct Renderer {
     loader: Arc<dyn AssetLoader>,
     registry: ImportRegistry,
     render_mode: RenderMode,
+    /// Video sources every session of this renderer and its clones reads.
+    frames: FrameSources,
 }
 
 impl Renderer {
@@ -78,6 +80,7 @@ impl Renderer {
             loader,
             registry: ImportRegistry::core(),
             render_mode: RenderMode::Export,
+            frames: FrameSources::default(),
         }
     }
 
@@ -96,6 +99,17 @@ impl Renderer {
         &self.document
     }
 
+    /// The video sources its sessions share: each file opens once for all
+    /// export workers.
+    pub fn frame_sources(&self) -> &FrameSources {
+        &self.frames
+    }
+
+    /// Import the document with video read from this renderer's sources.
+    pub(crate) fn import(&self) -> Result<director_core::Director, ImportError> {
+        import_scene_with(&self.document, self.loader.clone(), &self.registry, self.render_mode, &self.frames)
+    }
+
     /// Output size after the document's output scale.
     pub fn output_size(&self) -> (i32, i32) {
         let document = &self.document;
@@ -107,7 +121,7 @@ impl Renderer {
 
     /// Import the document into a fresh session.
     pub fn session(&self) -> Result<FrameSession, RenderError> {
-        let director = import_scene(&self.document, self.loader.clone(), &self.registry, self.render_mode)?;
+        let director = self.import()?;
         FrameSession::new(director, self.output_size())
     }
 
@@ -258,7 +272,7 @@ impl TargetSession {
         let info = frame_info(renderer.output_size())?;
         let surface =
             live::render_surface(&mut { context }, &info).ok_or(RenderError::Surface(info.width(), info.height()))?;
-        let director = import_scene(&renderer.document, renderer.loader.clone(), &renderer.registry, renderer.render_mode)?;
+        let director = renderer.import()?;
         Ok(Self {
             director,
             state: FrameState::default(),

@@ -16,8 +16,8 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 // use std::sync::{Arc, Mutex};
 // actually logs say unused.
 
@@ -28,7 +28,13 @@ use std::time::SystemTime;
 pub struct FFmpegDriver;
 
 impl FFmpegDriver {
+    /// Checks once per process that `ffmpeg` runs, and warns below 7.1.
     pub fn ensure_available() -> Result<()> {
+        static CHECKED: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+        CHECKED.get_or_init(|| Self::check().map_err(|error| format!("{error:#}"))).clone().map_err(anyhow::Error::msg)
+    }
+
+    fn check() -> Result<()> {
         let output = Command::new("ffmpeg")
             .arg("-version")
             .output()
@@ -821,19 +827,35 @@ pub enum VideoResponse {
     Error(String),
 }
 
-/// Maximum frames held per decoder cache. Covers freeze frames and the
-/// motion-blur sub-samples that re-request nearby timestamps.
+/// Frames cached per decode cursor of a source. Covers freeze frames, the
+/// motion-blur sub-samples that re-request nearby timestamps and export
+/// workers that ask for neighbouring frames out of order.
 const MAX_CACHED_FRAMES: usize = 8;
 /// Sequential reads farther ahead than this restart the decode pipe instead
 /// of discarding intermediate frames one by one.
 const MAX_SKIP_AHEAD: u64 = 60;
+/// Decode cursors one source keeps open: elements that play the file at
+/// different positions each read their own pipe.
+const MAX_CURSORS: usize = 6;
+/// A cursor no request used within this many requests to its source closes.
+const IDLE_REQUESTS: u64 = 240;
+/// Spare frame buffers a source keeps for the next reads.
+const SPARE_BUFFERS: usize = 4;
+
+/// FFmpeg decode sessions started in this process.
+static SESSIONS_STARTED: AtomicU64 = AtomicU64::new(0);
+
+/// FFmpeg decode sessions this process has started, for waste reports.
+pub fn decode_sessions_started() -> u64 {
+    SESSIONS_STARTED.load(Ordering::Relaxed)
+}
 
 /// A persistent `ffmpeg` decode pipe for one video source.
 ///
 /// Export renders in timeline order, so the common case is a sequential read
-/// from a single long-lived child process — one spawn per source instead of
-/// one per frame. Random seeks (timeline jumps, scrubbing) restart the child
-/// at the new position.
+/// from a single long-lived child process: one spawn per source position
+/// instead of one per frame. Random seeks (timeline jumps, scrubbing) open a
+/// session at the new position.
 struct DecodeSession {
     child: std::process::Child,
     reader: BufReader<std::process::ChildStdout>,
@@ -841,11 +863,10 @@ struct DecodeSession {
     start_index: u64,
     /// Source frame index the next `read_frame` call will return.
     next_index: u64,
-    frame_len: usize,
 }
 
 impl DecodeSession {
-    fn start(path: &Path, seek_time: f64, start_index: u64, frame_len: usize) -> Result<Self> {
+    fn start(path: &Path, seek_time: f64, start_index: u64) -> Result<Self> {
         let mut child = Command::new(FFmpegDriver::binary())
             .arg("-ss")
             .arg(seek_time.max(0.0).to_string())
@@ -860,6 +881,7 @@ impl DecodeSession {
             .stderr(Stdio::null())
             .spawn()
             .with_context(|| format!("Failed to spawn ffmpeg decoder for {}", path.display()))?;
+        SESSIONS_STARTED.fetch_add(1, Ordering::Relaxed);
         let Some(stdout) = child.stdout.take() else {
             let _ = child.kill();
             let _ = child.wait();
@@ -870,13 +892,11 @@ impl DecodeSession {
             reader: BufReader::new(stdout),
             start_index,
             next_index: start_index,
-            frame_len,
         })
     }
 
-    /// The next frame, or `None` once the stream has ended.
-    fn read_frame(&mut self) -> Result<Option<Vec<u8>>> {
-        let mut buffer = vec![0u8; self.frame_len];
+    /// The next frame read into `buffer`, or `None` once the stream has ended.
+    fn read_frame(&mut self, mut buffer: Vec<u8>) -> Result<Option<Vec<u8>>> {
         match self.reader.read_exact(&mut buffer) {
             Ok(()) => {
                 self.next_index += 1;
@@ -895,46 +915,45 @@ impl Drop for DecodeSession {
     }
 }
 
-fn cache_insert(
-    cache: &mut HashMap<u64, Vec<u8>>,
-    order: &mut VecDeque<u64>,
-    index: u64,
-    frame: Vec<u8>,
-) {
-    if cache.contains_key(&index) {
-        return;
-    }
-    cache.insert(index, frame);
-    order.push_back(index);
-    while order.len() > MAX_CACHED_FRAMES {
-        if let Some(old) = order.pop_front() {
-            cache.remove(&old);
-        }
-    }
-}
-
 /// Frames before the container's duration where `FrameSource::find_end`
 /// starts decoding the tail.
 const TAIL_FRAMES: u64 = 8;
 
-/// The frames of one source by index: a persistent decode pipe, an
-/// eight-frame cache and the stream's end once a read runs past it.
+/// A decode session and the request count when it last served a frame.
+#[derive(Debug)]
+struct Cursor {
+    session: DecodeSession,
+    used: u64,
+}
+
+/// The frames of one source by index: up to [`MAX_CURSORS`] decode pipes at
+/// different positions, a cache of [`MAX_CACHED_FRAMES`] frames per cursor
+/// and the stream's end once a read runs past it. A request reads from the
+/// nearest cursor at or up to [`MAX_SKIP_AHEAD`] frames before it, or opens
+/// a cursor at its frame, closing the least recently used one when all are
+/// open.
 #[derive(Debug)]
 struct FrameSource {
     path: PathBuf,
     fps: f64,
     frame_len: usize,
-    session: Option<DecodeSession>,
-    cache: HashMap<u64, Vec<u8>>,
+    cursors: Vec<Cursor>,
+    /// Requests served, the clock of `Cursor::used`.
+    requests: u64,
+    cache: HashMap<u64, Arc<Vec<u8>>>,
     order: VecDeque<u64>,
+    /// Buffers of evicted or skipped frames, reused by the next reads.
+    spare: Vec<Vec<u8>>,
     /// One past the last frame FFmpeg decodes, learned when a read first
     /// runs off the end. Requests at or past it get the last frame, as an
     /// ended video holds its last frame, without another decode.
     end: Option<u64>,
+    /// Decode sessions this source started, shared with its registry.
+    started: Arc<AtomicU64>,
 }
 
 impl FrameSource {
-    fn new(path: PathBuf, probed: &VideoProbe) -> Result<Self> {
+    fn new(path: PathBuf, probed: &VideoProbe, started: Arc<AtomicU64>) -> Result<Self> {
         let frame_len = probed.width as usize * probed.height as usize * 4;
         if frame_len == 0 {
             return Err(anyhow::anyhow!("Probed zero-size video stream for {}", path.display()));
@@ -943,15 +962,18 @@ impl FrameSource {
             path,
             fps: probed.fps,
             frame_len,
-            session: None,
+            cursors: Vec::new(),
+            requests: 0,
             cache: HashMap::new(),
             order: VecDeque::new(),
+            spare: Vec::new(),
             end: None,
+            started,
         })
     }
 
     /// The frame at `index`, or the last frame when `index` is past the end.
-    fn frame(&mut self, index: u64) -> Result<Vec<u8>> {
+    fn frame(&mut self, index: u64) -> Result<Arc<Vec<u8>>> {
         let held = |end: Option<u64>| end.map_or(index, |end| index.min(end.saturating_sub(1)));
         if let Some(bytes) = self.decode(held(self.end))? {
             return Ok(bytes);
@@ -967,40 +989,96 @@ impl FrameSource {
         }
     }
 
+    fn start_session(&self, index: u64) -> Result<DecodeSession> {
+        // Seek to the exact frame-grid time, not the raw request time.
+        let seek = crate::timeline::frame_to_time(index, self.fps);
+        let session = DecodeSession::start(&self.path, seek, index)?;
+        self.started.fetch_add(1, Ordering::Relaxed);
+        Ok(session)
+    }
+
+    fn buffer(&mut self) -> Vec<u8> {
+        self.spare.pop().unwrap_or_else(|| vec![0; self.frame_len])
+    }
+
+    fn recycle(&mut self, buffer: Vec<u8>) {
+        if self.spare.len() < SPARE_BUFFERS {
+            self.spare.push(buffer);
+        }
+    }
+
+    fn cache_insert(&mut self, index: u64, frame: Arc<Vec<u8>>) {
+        if self.cache.contains_key(&index) {
+            return;
+        }
+        self.cache.insert(index, frame);
+        self.order.push_back(index);
+        while self.order.len() > MAX_CACHED_FRAMES * self.cursors.len().max(1) {
+            let Some(old) = self.order.pop_front() else { break };
+            if let Some(frame) = self.cache.remove(&old).and_then(|frame| Arc::try_unwrap(frame).ok()) {
+                self.recycle(frame);
+            }
+        }
+    }
+
+    /// The cursor that reaches `index` by reading forward, or a new one
+    /// opened at `index`.
+    fn cursor_for(&mut self, index: u64) -> Result<usize> {
+        let now = self.requests;
+        self.cursors.retain(|cursor| now - cursor.used <= IDLE_REQUESTS);
+        let reaches = |cursor: &Cursor| {
+            let next = cursor.session.next_index;
+            next <= index && index - next <= MAX_SKIP_AHEAD
+        };
+        let nearest = (0..self.cursors.len())
+            .filter(|&i| reaches(&self.cursors[i]))
+            .max_by_key(|&i| self.cursors[i].session.next_index);
+        if let Some(i) = nearest {
+            return Ok(i);
+        }
+        if self.cursors.len() >= MAX_CURSORS {
+            let oldest = (0..self.cursors.len()).min_by_key(|&i| self.cursors[i].used).expect("open cursors");
+            self.cursors.swap_remove(oldest);
+        }
+        let session = self.start_session(index)?;
+        self.cursors.push(Cursor { session, used: now });
+        Ok(self.cursors.len() - 1)
+    }
+
     /// The frame at `index`, or `None` when the stream ends before it. A
     /// session that decoded frames before ending marks the exact end.
-    fn decode(&mut self, index: u64) -> Result<Option<Vec<u8>>> {
+    fn decode(&mut self, index: u64) -> Result<Option<Arc<Vec<u8>>>> {
+        self.requests += 1;
         if let Some(hit) = self.cache.get(&index) {
-            return Ok(Some(hit.clone()));
+            return Ok(Some(Arc::clone(hit)));
         }
-        let restart = match &self.session {
-            None => true,
-            Some(s) => index < s.next_index || index - s.next_index > MAX_SKIP_AHEAD,
-        };
-        if restart {
-            // Seek to the exact frame-grid time, not the raw request time.
-            self.session = None;
-            let seek = crate::timeline::frame_to_time(index, self.fps);
-            self.session = Some(DecodeSession::start(&self.path, seek, index, self.frame_len)?);
-        }
-        let session = self.session.as_mut().expect("decode session");
+        let slot = self.cursor_for(index)?;
+        self.cursors[slot].used = self.requests;
         loop {
-            match session.read_frame() {
-                Ok(Some(bytes)) if session.next_index > index => {
-                    cache_insert(&mut self.cache, &mut self.order, index, bytes.clone());
+            let buffer = self.buffer();
+            let session = &mut self.cursors[slot].session;
+            let read = session.next_index;
+            match session.read_frame(buffer) {
+                Ok(Some(bytes)) if read == index => {
+                    let bytes = Arc::new(bytes);
+                    self.cache_insert(index, Arc::clone(&bytes));
                     return Ok(Some(bytes));
                 }
-                // Discard intermediate frames on small forward jumps.
-                Ok(Some(_)) => {}
+                // A skipped frame just before the target may be the next
+                // request of a worker running behind; farther ones go back.
+                Ok(Some(bytes)) if index - read < MAX_CACHED_FRAMES as u64 && !self.cache.contains_key(&read) => {
+                    self.cache_insert(read, Arc::new(bytes));
+                }
+                Ok(Some(bytes)) => self.recycle(bytes),
                 Ok(None) => {
+                    let session = self.cursors.swap_remove(slot).session;
                     if session.next_index > session.start_index {
                         self.end = Some(session.next_index);
                     }
-                    self.session = None;
                     return Ok(None);
                 }
                 Err(e) => {
-                    self.session = None;
+                    self.cursors.swap_remove(slot);
                     return Err(e);
                 }
             }
@@ -1015,18 +1093,81 @@ impl FrameSource {
         let mut starts = vec![guess.unwrap_or(0), 0];
         starts.dedup();
         for start in starts {
-            let seek = crate::timeline::frame_to_time(start, self.fps);
-            let mut session = DecodeSession::start(&self.path, seek, start, self.frame_len)?;
-            let mut last = None;
-            while let Some(bytes) = session.read_frame()? {
-                last = Some(bytes);
+            let mut session = self.start_session(start)?;
+            let (mut last, mut next) = (None, vec![0; self.frame_len]);
+            while let Some(bytes) = session.read_frame(next)? {
+                next = last.replace(bytes).unwrap_or_else(|| vec![0; self.frame_len]);
             }
             if let Some(bytes) = last {
-                cache_insert(&mut self.cache, &mut self.order, session.next_index - 1, bytes);
+                self.cache_insert(session.next_index - 1, Arc::new(bytes));
                 return Ok(Some(session.next_index));
             }
         }
         Ok(None)
+    }
+}
+
+/// One probed source and its frames, shared by every element that plays it.
+#[derive(Debug)]
+pub struct SharedSource {
+    width: u32,
+    height: u32,
+    fps: f64,
+    frames: Mutex<FrameSource>,
+}
+
+impl SharedSource {
+    fn open(path: PathBuf, started: Arc<AtomicU64>) -> Result<Self> {
+        let probed = probe_video(&path)?;
+        Ok(Self {
+            width: probed.width,
+            height: probed.height,
+            fps: probed.fps,
+            frames: Mutex::new(FrameSource::new(path, &probed, started)?),
+        })
+    }
+
+    fn frames(&self) -> std::sync::MutexGuard<'_, FrameSource> {
+        self.frames.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// Export-mode video sources by canonical path. Every element that plays a
+/// file through one registry probes it once and reads one [`SharedSource`]:
+/// elements at the same position share a decode pipe and its cached frames,
+/// and elements at other positions read their own cursors of it. A
+/// `director-render` `Renderer` hands one registry to all its export
+/// workers. The registry holds sources weakly, so a source closes with the
+/// last element that plays it.
+#[derive(Clone, Debug, Default)]
+pub struct FrameSources {
+    sources: Arc<Mutex<HashMap<PathBuf, Weak<SharedSource>>>>,
+    started: Arc<AtomicU64>,
+}
+
+impl FrameSources {
+    /// The open source of `path`, probed on first use.
+    pub fn source(&self, path: &Path) -> Result<Arc<SharedSource>> {
+        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let mut sources = self.sources.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(source) = sources.get(&key).and_then(Weak::upgrade) {
+            return Ok(source);
+        }
+        let source = Arc::new(SharedSource::open(path.to_path_buf(), Arc::clone(&self.started))?);
+        sources.retain(|_, source| source.strong_count() > 0);
+        sources.insert(key, Arc::downgrade(&source));
+        Ok(source)
+    }
+
+    /// Sources open now.
+    pub fn open_sources(&self) -> usize {
+        let sources = self.sources.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        sources.values().filter(|source| source.strong_count() > 0).count()
+    }
+
+    /// FFmpeg decode sessions the sources of this registry have started.
+    pub fn sessions_started(&self) -> u64 {
+        self.started.load(Ordering::Relaxed)
     }
 }
 
@@ -1061,7 +1202,7 @@ impl ThreadedDecoder {
         };
         let probed = probe_video(&video_path)?;
         let (width, height, fps) = (probed.width, probed.height, probed.fps);
-        let mut source = FrameSource::new(video_path, &probed)?;
+        let mut source = FrameSource::new(video_path, &probed, Arc::default())?;
 
         let worker = thread::spawn(move || {
             // Coalesce queued seeks: only the latest scrub position matters.
@@ -1071,7 +1212,7 @@ impl ThreadedDecoder {
                 }
                 let index = crate::timeline::video_source_frame_index(target_time.max(0.0), fps);
                 let response = match source.frame(index) {
-                    Ok(bytes) => VideoResponse::Frame(target_time, bytes, width, height),
+                    Ok(bytes) => VideoResponse::Frame(target_time, Arc::unwrap_or_clone(bytes), width, height),
                     Err(e) => VideoResponse::Error(e.to_string()),
                 };
                 let _ = resp_tx.send(response);
@@ -1226,31 +1367,36 @@ pub fn probe(path: &Path) -> Result<(u32, u32)> {
     Ok((probed.width, probed.height))
 }
 
-#[derive(Debug)]
+/// Export-mode frames of one source, read on the calling thread. Clones
+/// share the source; [`FrameSources`] shares it across elements.
+#[derive(Clone, Debug)]
 pub struct SyncDecoder {
-    width: u32,
-    height: u32,
-    source: Box<FrameSource>,
+    source: Arc<SharedSource>,
 }
 
-// `DecodeSession` holds a live child process + pipe reader; `SyncDecoder` is
-// only ever driven from the thread that owns its `VideoNode`.
+// `DecodeSession` holds a live child process + pipe reader, driven under its
+// `SharedSource` lock.
 impl std::fmt::Debug for DecodeSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DecodeSession")
+            .field("start_index", &self.start_index)
             .field("next_index", &self.next_index)
-            .field("frame_len", &self.frame_len)
             .finish()
     }
 }
 
 impl SyncDecoder {
+    /// A decoder with a source of its own.
     pub fn new(path: PathBuf) -> Result<Self> {
-        let probed = probe_video(&path)?;
         Ok(Self {
-            width: probed.width,
-            height: probed.height,
-            source: Box::new(FrameSource::new(path, &probed)?),
+            source: Arc::new(SharedSource::open(path, Arc::default())?),
+        })
+    }
+
+    /// A decoder reading the source of `path` in `sources`.
+    pub fn shared(path: &Path, sources: &FrameSources) -> Result<Self> {
+        Ok(Self {
+            source: sources.source(path)?,
         })
     }
 
@@ -1260,10 +1406,10 @@ impl SyncDecoder {
     }
 
     /// The frame at `time`, or the last frame once `time` is past the end.
-    pub fn get_frame_at(&mut self, time: f64) -> Result<(f64, Vec<u8>, u32, u32)> {
+    pub fn get_frame_at(&mut self, time: f64) -> Result<(f64, Arc<Vec<u8>>, u32, u32)> {
         let index = crate::timeline::video_source_frame_index(time.max(0.0), self.source.fps);
-        let bytes = self.source.frame(index)?;
-        Ok((time, bytes, self.width, self.height))
+        let bytes = self.source.frames().frame(index)?;
+        Ok((time, bytes, self.source.width, self.source.height))
     }
 }
 
@@ -1282,6 +1428,16 @@ impl VideoLoader {
         }
     }
 
+    /// A loader whose export frames come from the source of `path` in
+    /// `sources`. Preview keeps a threaded decoder of its own.
+    pub fn shared(path: PathBuf, mode: RenderMode, sources: &FrameSources) -> Result<Self> {
+        FFmpegDriver::ensure_available()?;
+        match mode {
+            RenderMode::Preview => Ok(Self::Threaded(ThreadedDecoder::new(path, mode)?)),
+            RenderMode::Export => Ok(Self::Sync(SyncDecoder::shared(&path, sources)?)),
+        }
+    }
+
     /// Probed source frame rate of the underlying stream.
     pub fn source_fps(&self) -> f64 {
         match self {
@@ -1294,9 +1450,12 @@ impl VideoLoader {
 #[cfg(test)]
 mod tests {
     use super::{
-        libavcodec_version, parse_frame_rate, parse_video_size, DecodeSession, FFmpegDriver,
-        RenderMode, SyncDecoder, ThreadedDecoder, VideoResponse, MAX_CACHED_FRAMES, MAX_SKIP_AHEAD,
+        libavcodec_version, parse_frame_rate, parse_video_size, DecodeSession, FFmpegDriver, FrameSources,
+        RenderMode, SyncDecoder, ThreadedDecoder, VideoResponse, IDLE_REQUESTS, MAX_CACHED_FRAMES, MAX_CURSORS,
+        MAX_SKIP_AHEAD,
     };
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     use std::process::Command;
     #[cfg(unix)]
     use std::process::Stdio;
@@ -1485,11 +1644,16 @@ mod tests {
             .unwrap_or_else(|err| panic!("decode frame {index}: {err:#}"));
         assert_eq!(returned_time, time);
         assert_eq!((width, height), (TEST_WIDTH, TEST_HEIGHT));
-        assert_eq!(
-            bytes,
-            expected_frame(index),
-            "wrong source frame at {time}s"
-        );
+        assert_eq!(*bytes, expected_frame(index), "wrong source frame at {time}s");
+    }
+
+    /// FFmpeg processes of the decoder's open cursors.
+    fn pids(decoder: &SyncDecoder) -> Vec<u32> {
+        decoder.source.frames().cursors.iter().map(|cursor| cursor.session.child.id()).collect()
+    }
+
+    fn started(decoder: &SyncDecoder) -> u64 {
+        decoder.source.frames().started.load(Ordering::Relaxed)
     }
 
     fn check_sync_decoder(rate: &str, fps: f64) {
@@ -1497,50 +1661,114 @@ mod tests {
         let mut decoder = SyncDecoder::new(src).expect("decoder");
         assert!((decoder.source_fps() - fps).abs() < 1e-6);
         assert_decoded_frame(&mut decoder, 0);
-        let first_pid = decoder.source.session.as_ref().unwrap().child.id();
+        let first = pids(&decoder);
+        assert_eq!(first.len(), 1);
         for index in 1..=MAX_CACHED_FRAMES as u64 {
             assert_decoded_frame(&mut decoder, index);
-            assert_eq!(
-                decoder.source.session.as_ref().unwrap().child.id(),
-                first_pid,
-                "sequential decode must reuse the child process"
-            );
+            assert_eq!(pids(&decoder), first, "sequential decode must reuse the child process");
         }
-        assert_eq!(decoder.source.cache.len(), MAX_CACHED_FRAMES);
-        assert!(
-            !decoder.source.cache.contains_key(&0),
-            "backward seek must miss the cache"
-        );
-        let next_index = decoder.source.session.as_ref().unwrap().next_index;
+        {
+            let source = decoder.source.frames();
+            assert_eq!(source.cache.len(), MAX_CACHED_FRAMES);
+            assert!(!source.cache.contains_key(&0), "the oldest frame must leave the cache");
+        }
+        let next = |decoder: &SyncDecoder| {
+            decoder.source.frames().cursors.iter().map(|cursor| cursor.session.next_index).collect::<Vec<_>>()
+        };
+        let before = next(&decoder);
         assert_decoded_frame(&mut decoder, MAX_CACHED_FRAMES as u64);
-        assert_eq!(
-            decoder.source.session.as_ref().unwrap().next_index,
-            next_index,
-            "cache hit must not consume the pipe"
-        );
-        assert_decoded_frame(&mut decoder, 0);
-        let backward_pid = decoder.source.session.as_ref().unwrap().child.id();
-        assert_ne!(
-            backward_pid, first_pid,
-            "uncached backward seek must restart"
-        );
-        assert_process_exited(first_pid);
+        assert_eq!(next(&decoder), before, "cache hit must not consume the pipe");
 
-        assert_decoded_frame(&mut decoder, 3);
-        assert_eq!(
-            decoder.source.session.as_ref().unwrap().child.id(),
-            backward_pid,
-            "small forward skip must reuse the pipe"
-        );
-        let far_index = MAX_SKIP_AHEAD + 10;
-        assert_decoded_frame(&mut decoder, far_index);
-        let far_pid = decoder.source.session.as_ref().unwrap().child.id();
-        assert_ne!(far_pid, backward_pid, "large forward seek must restart");
-        assert_process_exited(backward_pid);
-        assert_decoded_frame(&mut decoder, far_index + 1);
-        assert_eq!(decoder.source.session.as_ref().unwrap().child.id(), far_pid);
+        // An uncached backward seek opens a second cursor and keeps the first.
+        assert_decoded_frame(&mut decoder, 0);
+        let both = pids(&decoder);
+        assert_eq!(both.len(), 2, "backward seek must open a cursor");
+        assert!(both.contains(&first[0]), "backward seek must keep the first cursor");
+
+        // A small forward skip reads on from the nearest cursor behind it.
+        let near = MAX_CACHED_FRAMES as u64 + 4;
+        assert_decoded_frame(&mut decoder, near);
+        assert_eq!(pids(&decoder), both, "small forward skip must reuse a pipe");
+        let far = near + MAX_SKIP_AHEAD + 10;
+        assert_decoded_frame(&mut decoder, far);
+        let three = pids(&decoder);
+        assert_eq!(three.len(), 3, "large forward seek must open a cursor");
+        assert_decoded_frame(&mut decoder, far + 1);
+        assert_eq!(pids(&decoder), three);
+        assert_eq!(started(&decoder), 3);
         drop(decoder);
-        assert_process_exited(far_pid);
+        for pid in three {
+            assert_process_exited(pid);
+        }
+    }
+
+    #[test]
+    fn interleaved_positions_and_out_of_order_requests_keep_their_pipes() {
+        let (_dir, src) = video_fixture("30");
+        let mut decoder = SyncDecoder::new(src).expect("decoder");
+        // Two elements playing positions farther apart than a skip each read their own pipe.
+        for step in 0..6 {
+            assert_decoded_frame(&mut decoder, step);
+            assert_decoded_frame(&mut decoder, 70 + step);
+        }
+        let two = pids(&decoder);
+        assert_eq!(two.len(), 2);
+        // Export workers ask for neighbouring frames out of order.
+        for index in [9, 8, 7, 6, 11, 10, 13, 12] {
+            assert_decoded_frame(&mut decoder, index);
+        }
+        assert_eq!(pids(&decoder), two);
+        assert_eq!(started(&decoder), 2, "no request may reopen a pipe");
+    }
+
+    #[test]
+    fn a_source_closes_its_least_recently_used_and_idle_cursors() {
+        let (_dir, src) = video_fixture("30");
+        let mut decoder = SyncDecoder::new(src).expect("decoder");
+        // Each request lies behind every open cursor, so each opens one.
+        let starts: Vec<u64> = (0..=MAX_CURSORS as u64).map(|k| 88 - 8 * k).collect();
+        let mut opened = Vec::new();
+        for &index in &starts {
+            assert_decoded_frame(&mut decoder, index);
+            let new: Vec<u32> = pids(&decoder).into_iter().filter(|pid| !opened.contains(pid)).collect();
+            opened.extend(new);
+        }
+        assert_eq!(pids(&decoder).len(), MAX_CURSORS);
+        assert!(!pids(&decoder).contains(&opened[0]), "the least recently used cursor must close");
+        assert_process_exited(opened[0]);
+        // Cursors nobody reads close once a request opens or advances one.
+        let last = *starts.last().unwrap();
+        for k in 0..=2 * IDLE_REQUESTS {
+            assert_decoded_frame(&mut decoder, last + k / 16);
+        }
+        let open = pids(&decoder);
+        assert_eq!(open.len(), 1, "idle cursors must close");
+        for pid in opened.iter().filter(|pid| !open.contains(pid)) {
+            assert_process_exited(*pid);
+        }
+    }
+
+    #[test]
+    fn decoders_of_one_file_share_a_source_through_a_registry() {
+        let (_dir, src) = video_fixture("30");
+        let sources = FrameSources::default();
+        let mut a = SyncDecoder::shared(&src, &sources).expect("decoder");
+        let mut b = SyncDecoder::shared(&src, &sources).expect("decoder");
+        assert!(Arc::ptr_eq(&a.source, &b.source));
+        assert_eq!(sources.open_sources(), 1);
+        for index in 0..20 {
+            assert_decoded_frame(&mut a, index);
+            assert_decoded_frame(&mut b, index);
+        }
+        assert_eq!(sources.sessions_started(), 1);
+        let open = pids(&a);
+        drop(a);
+        assert_eq!(sources.open_sources(), 1);
+        drop(b);
+        assert_eq!(sources.open_sources(), 0);
+        for pid in open {
+            assert_process_exited(pid);
+        }
     }
 
     #[test]
@@ -1572,7 +1800,7 @@ mod tests {
     fn decode_session_drop_stops_a_live_child() {
         let (_dir, src) = video_fixture("30");
         let session =
-            DecodeSession::start(&src, 0.0, 0, expected_frame(0).len()).expect("decode session");
+            DecodeSession::start(&src, 0.0, 0).expect("decode session");
         let pid = session.child.id();
         assert!(process_exists(pid), "session must own a live FFmpeg child");
         drop(session);
@@ -1593,22 +1821,22 @@ mod tests {
         // session that found it is gone.
         let mut decoder = SyncDecoder::new(src.clone()).expect("decoder");
         assert_decoded_frame(&mut decoder, last);
-        let pid = decoder.source.session.as_ref().unwrap().child.id();
-        assert_eq!(frame(&mut decoder, TEST_FRAME_COUNT), expected_frame(last));
-        assert_eq!(decoder.source.end, Some(TEST_FRAME_COUNT));
-        assert!(decoder.source.session.is_none(), "EOF must discard the finished session");
+        let pid = pids(&decoder)[0];
+        assert_eq!(*frame(&mut decoder, TEST_FRAME_COUNT), expected_frame(last));
+        assert_eq!(decoder.source.frames().end, Some(TEST_FRAME_COUNT));
+        assert!(pids(&decoder).is_empty(), "EOF must discard the finished session");
         assert_process_exited(pid);
         // Later requests past the end hold the cached last frame without a decode.
         for index in [TEST_FRAME_COUNT + 1, TEST_FRAME_COUNT * 4] {
-            assert_eq!(frame(&mut decoder, index), expected_frame(last));
-            assert!(decoder.source.session.is_none(), "frame {index} spawned a decoder");
+            assert_eq!(*frame(&mut decoder, index), expected_frame(last));
+            assert!(pids(&decoder).is_empty(), "frame {index} spawned a decoder");
         }
         assert_decoded_frame(&mut decoder, 0);
         assert_decoded_frame(&mut decoder, MAX_SKIP_AHEAD);
         // A cold seek past the end decodes nothing, so the end comes from the tail.
         let mut cold = SyncDecoder::new(src).expect("decoder");
-        assert_eq!(frame(&mut cold, TEST_FRAME_COUNT * 3), expected_frame(last));
-        assert_eq!(cold.source.end, Some(TEST_FRAME_COUNT));
+        assert_eq!(*frame(&mut cold, TEST_FRAME_COUNT * 3), expected_frame(last));
+        assert_eq!(cold.source.frames().end, Some(TEST_FRAME_COUNT));
         assert_decoded_frame(&mut cold, 1);
     }
 

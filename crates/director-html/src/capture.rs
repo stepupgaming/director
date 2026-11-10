@@ -468,7 +468,7 @@ fn build(
                 CompileError::Input(format!("captured media asset missing: {src}"))
             })?;
             let path = store.media_path(packed)?;
-            let mut video = VideoNode::new(VideoSource::Path(path), RenderMode::Export);
+            let mut video = VideoNode::shared(VideoSource::Path(path), RenderMode::Export, &director.assets.video_sources);
             if !packed.starts_with("data:") {
                 video = video.with_source_path(packed);
             }

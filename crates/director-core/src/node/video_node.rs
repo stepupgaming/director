@@ -3,7 +3,7 @@ use crate::element::Element;
 use crate::errors::RenderError;
 use crate::node::calculate_object_fit_rect_at;
 use crate::types::{ObjectFit, ObjectPosition};
-use crate::video_wrapper::{RenderMode, VideoLoader, VideoResponse};
+use crate::video_wrapper::{FrameSources, RenderMode, VideoLoader, VideoResponse};
 use skia_safe::{AlphaType, Canvas, ClipOp, Color4f, ColorSpace, ColorType, Data, Image, Paint, Rect, RRect};
 use std::any::Any;
 use std::io::Write;
@@ -52,11 +52,11 @@ pub struct VideoNode {
 
 impl Clone for VideoNode {
     fn clone(&self) -> Self {
-        let loader = if self.loader.is_some() {
-            // Create new loader pointing to same file.
-            VideoLoader::new(self.path.clone(), self.render_mode).ok()
-        } else {
-            None
+        let loader = match &self.loader {
+            // Export clones read the same source.
+            Some(VideoLoader::Sync(decoder)) => Some(VideoLoader::Sync(decoder.clone())),
+            Some(VideoLoader::Threaded(_)) => VideoLoader::new(self.path.clone(), self.render_mode).ok(),
+            None => None,
         };
         let source_fps = loader.as_ref().map(|l| l.source_fps()).unwrap_or(self.source_fps);
 
@@ -78,7 +78,22 @@ impl Clone for VideoNode {
 }
 
 impl VideoNode {
+    /// A node with a decoder of its own.
     pub fn new(source: VideoSource, mode: RenderMode) -> Self {
+        Self::with_loader(source, mode, |path| VideoLoader::new(path, mode))
+    }
+
+    /// A node whose export frames come from the source of its file in
+    /// `sources`, shared with every other node that plays that file.
+    pub fn shared(source: VideoSource, mode: RenderMode, sources: &FrameSources) -> Self {
+        Self::with_loader(source, mode, |path| VideoLoader::shared(path, mode, sources))
+    }
+
+    fn with_loader(
+        source: VideoSource,
+        mode: RenderMode,
+        open: impl FnOnce(PathBuf) -> anyhow::Result<VideoLoader>,
+    ) -> Self {
         let (path, temp_file) = match source {
             VideoSource::Path(p) => (p, None),
             VideoSource::Bytes(data) => {
@@ -89,7 +104,7 @@ impl VideoNode {
             }
         };
 
-        let loader = match VideoLoader::new(path.clone(), mode) {
+        let loader = match open(path.clone()) {
             Ok(l) => Some(l),
             Err(e) => {
                 error!("Failed to create VideoLoader for {:?}: {}", path, e);

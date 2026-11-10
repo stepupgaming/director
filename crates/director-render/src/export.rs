@@ -7,7 +7,7 @@
 
 use crate::{set_output_scale, Frame, FrameSession, GpuContext, RenderError, Renderer, TargetSession};
 use director_core::scene_export::export_scene;
-use director_core::scene_import::{import_scene, ImportRegistry};
+use director_core::scene_import::ImportRegistry;
 use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_count, frame_to_time};
 use director_core::video_wrapper::{Encoder, EncoderMode, EncoderSettings};
 use director_core::Director;
@@ -209,7 +209,7 @@ impl Renderer {
                 };
                 let written = (|| {
                     if !silent {
-                        let mut audio = import_scene(&self.document, self.loader.clone(), &self.registry, self.render_mode)?;
+                        let mut audio = self.import()?;
                         let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, fps, 1);
                         encoder.send_audio(times.iter().flat_map(|&time| audio.mix_audio(block, time)).collect())?;
                     }
