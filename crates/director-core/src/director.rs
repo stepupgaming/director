@@ -446,7 +446,7 @@ impl Director {
     }
 
     /// Adds a global audio track that plays independently of scenes.
-    pub fn add_global_audio(&mut self, samples: Vec<f32>) -> usize {
+    pub fn add_global_audio(&mut self, samples: impl Into<std::sync::Arc<Vec<f32>>>) -> usize {
         let track = AudioTrack {
             samples: samples.into(),
             volume: crate::animation::Animated::new(1.0),
@@ -567,7 +567,7 @@ impl Director {
     }
 
     /// Adds an audio track synchronized to a specific scene's start time.
-    pub fn add_scene_audio(&mut self, samples: Vec<f32>, start_time: f64, duration: f64) -> usize {
+    pub fn add_scene_audio(&mut self, samples: impl Into<std::sync::Arc<Vec<f32>>>, start_time: f64, duration: f64) -> usize {
         let track = AudioTrack {
             samples: samples.into(),
             volume: crate::animation::Animated::new(1.0),

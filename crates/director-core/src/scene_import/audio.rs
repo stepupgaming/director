@@ -5,7 +5,8 @@ use crate::audio::{load_audio_bytes, AudioMixer, AudioTrack};
 use crate::audio_effects::{
     AudioEffect, AudioEffectChain, BiquadEQ, BiquadType, Compressor, Delay, EffectParamAnimation, Reverb,
 };
-use director_scene::AudioMix;
+use crate::video_wrapper::{bytes_key, file_key};
+use director_scene::{AssetSource, AudioMix};
 
 /// Rebuild `mix` into `mixer`, keeping each track at its slot.
 pub(super) fn import_audio(mix: &AudioMix, mixer: &mut AudioMixer, cx: &ImportContext) -> Result<(), ImportError> {
@@ -67,7 +68,25 @@ fn samples(
     sample_rate: u32,
     cx: &ImportContext,
 ) -> Result<std::sync::Arc<Vec<f32>>, ImportError> {
-    cx.assets.video_sources.audio_samples(id, source_start, sample_rate, || decode(id, source_start, sample_rate, cx))
+    let key = content_key(id, cx)?;
+    cx.assets.video_sources.audio_samples(&key, source_start, sample_rate, || decode(id, source_start, sample_rate, cx))
+}
+
+/// Names the audio of asset `id` by its file, or by its bytes when no file
+/// holds it, so a script, a session and every renderer share one decode.
+fn content_key(id: &str, cx: &ImportContext) -> Result<String, ImportError> {
+    let record = cx.document.asset(id).ok_or_else(|| ImportError::Asset {
+        id: id.to_string(),
+        reason: "missing from the asset table".to_string(),
+    })?;
+    let key = match &record.source {
+        AssetSource::Path { path } => match cx.assets.loader.media_path(path) {
+            Some(file) => file_key(&file),
+            None => bytes_key(&cx.asset_bytes(id)?),
+        },
+        AssetSource::Embedded { base64 } => bytes_key(base64.as_bytes()),
+    };
+    Ok(if record.media_type == "audio/x-f32le" { format!("f32le|{key}") } else { key })
 }
 
 fn decode(id: &str, source_start: f64, sample_rate: u32, cx: &ImportContext) -> Result<Vec<f32>, ImportError> {

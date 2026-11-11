@@ -16,17 +16,29 @@ use tracing::error;
 use super::super::types::{AudioTrackHandle, MovieHandle, NodeHandle, SceneHandle};
 use super::super::utils::parse_easing_result;
 
+/// Samples of `path`, decoded once for the script and every import that
+/// shares its sources.
 fn load_audio_samples(
     d: &crate::director::Director,
     path: &str,
-) -> Result<Vec<f32>, Box<rhai::EvalAltResult>> {
-    let bytes = d
-        .assets
-        .loader
-        .load_bytes(path)
-        .map_err(|e| format!("audio not found: {path}: {e}"))?;
-    let samples = crate::audio::load_audio_bytes(&bytes, d.audio_mixer.sample_rate)
-        .map_err(|e| format!("audio not decodable: {path}: {e}"))?;
+) -> Result<std::sync::Arc<Vec<f32>>, Box<rhai::EvalAltResult>> {
+    let loader = &d.assets.loader;
+    let read = || loader.load_bytes(path).map_err(|e| format!("audio not found: {path}: {e}"));
+    let (key, bytes) = match loader.media_path(path) {
+        Some(file) => (crate::video_wrapper::file_key(&file), None),
+        None => {
+            let bytes = read()?;
+            (crate::video_wrapper::bytes_key(&bytes), Some(bytes))
+        }
+    };
+    let rate = d.audio_mixer.sample_rate;
+    let samples = d.assets.video_sources.audio_samples(&key, 0.0, rate, || -> Result<Vec<f32>, String> {
+        let bytes = match bytes {
+            Some(bytes) => bytes,
+            None => read()?,
+        };
+        crate::audio::load_audio_bytes(&bytes, rate).map_err(|e| format!("audio not decodable: {path}: {e}"))
+    })?;
     if samples.is_empty() {
         return Err(format!("audio not decodable: {path}").into());
     }

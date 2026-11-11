@@ -6,7 +6,8 @@ use crate::patch::{self, NodeSelector, PatchOp};
 use director_core::audio::AudioMixer;
 use director_core::render_manifest::{build_render_manifest, RenderManifest};
 use director_core::scene_export::{export_scene, node_ref};
-use director_core::scene_import::{import_scene, ImportRegistry};
+use director_core::scene_import::{import_scene_with, ImportRegistry};
+use director_core::video_wrapper::FrameSources;
 use director_core::timeline::{audio_samples_per_video_frame, duration_to_frame_count};
 use director_core::video_wrapper::RenderMode;
 use director_core::{AssetLoader, Director};
@@ -71,6 +72,9 @@ pub struct Session {
     project: Option<NativeProject>,
     #[cfg(feature = "vulkan")]
     gpu: Option<Gpu>,
+    /// Probed video and decoded audio every import and renderer of this
+    /// session shares, starting with the loaded script's own.
+    sources: FrameSources,
 }
 
 /// A GPU context the session owns and the warm frame target painted on it.
@@ -134,8 +138,8 @@ impl Session {
     /// Load `source` in export mode and hold its scene document at revision 0.
     pub fn open(source: &Source) -> Result<Self, HostError> {
         let loaded = source.load(RenderMode::Export).map_err(|error| HostError::new(ErrorCode::Load, error))?;
-        let (document, loader, missing_fonts) = export_loaded(&loaded)?;
-        let mut session = Self::from_document(document, loader)?;
+        let (document, loader, missing_fonts, sources) = export_loaded(&loaded)?;
+        let mut session = Self::with_sources(document, loader, sources)?;
         session.adopt(loaded, missing_fonts);
         session.source = Some(source.clone());
         session.fingerprints = session.fingerprints();
@@ -145,8 +149,12 @@ impl Session {
     /// Hold `document` at revision 0. Assets resolve through `loader`. The
     /// document must import.
     pub fn from_document(document: SceneDocument, loader: Arc<dyn AssetLoader>) -> Result<Self, HostError> {
+        Self::with_sources(document, loader, FrameSources::default())
+    }
+
+    fn with_sources(document: SceneDocument, loader: Arc<dyn AssetLoader>, sources: FrameSources) -> Result<Self, HostError> {
         let registry = import_registry();
-        let inspector = import_scene(&document, loader.clone(), &registry, RenderMode::Export)
+        let inspector = import_scene_with(&document, loader.clone(), &registry, RenderMode::Export, &sources)
             .map_err(|error| HostError::new(ErrorCode::Load, error.to_string()))?;
         Ok(Self {
             document: Arc::new(document),
@@ -169,6 +177,7 @@ impl Session {
             project: None,
             #[cfg(feature = "vulkan")]
             gpu: None,
+            sources,
         })
     }
 
@@ -194,6 +203,11 @@ impl Session {
 
     pub fn document(&self) -> &Arc<SceneDocument> {
         &self.document
+    }
+
+    /// Probed video and decoded audio its imports and renderers share.
+    pub fn frame_sources(&self) -> &FrameSources {
+        &self.sources
     }
 
     /// Authored names and the nodes they select.
@@ -320,7 +334,7 @@ impl Session {
             return Ok(self.revision);
         }
         let document = patch::apply(&self.document, &self.names, ops)?;
-        let inspector = import_scene(&document, self.loader.clone(), &self.registry, RenderMode::Export).map_err(|error| {
+        let inspector = import_scene_with(&document, self.loader.clone(), &self.registry, RenderMode::Export, &self.sources).map_err(|error| {
             HostError::new(ErrorCode::InvalidPatch, format!("the patched document does not import: {error}"))
         })?;
         self.names.retain(|_, node| document.nodes.iter().any(|record| record.id == *node));
@@ -576,14 +590,16 @@ impl Session {
     }
 
     pub(crate) fn renderer(&self, document: Arc<SceneDocument>) -> Renderer {
-        Renderer::new(document, self.loader.clone()).with_registry(self.registry.clone())
+        Renderer::new(document, self.loader.clone())
+            .with_registry(self.registry.clone())
+            .with_frame_sources(self.sources.clone())
     }
 
     pub(crate) fn inspector(&mut self) -> Result<&mut Director, HostError> {
         Ok(match &mut self.inspector {
             Some(inspector) => inspector,
             slot => slot.insert(
-                import_scene(&self.document, self.loader.clone(), &self.registry, RenderMode::Export)
+                import_scene_with(&self.document, self.loader.clone(), &self.registry, RenderMode::Export, &self.sources)
                     .map_err(|error| HostError::new(ErrorCode::Render, error.to_string()))?,
             ),
         })
@@ -602,11 +618,12 @@ impl Session {
 
     /// Replace the document with a fresh load as the next revision, once it imports.
     fn replace(&mut self, loaded: Loaded) -> Result<u64, HostError> {
-        let (document, loader, missing_fonts) = export_loaded(&loaded)?;
-        let inspector = import_scene(&document, loader.clone(), &self.registry, RenderMode::Export)
+        let (document, loader, missing_fonts, sources) = export_loaded(&loaded)?;
+        let inspector = import_scene_with(&document, loader.clone(), &self.registry, RenderMode::Export, &sources)
             .map_err(|error| HostError::new(ErrorCode::Load, error.to_string()))?;
         self.document = Arc::new(document);
         self.loader = loader;
+        self.sources = sources;
         self.inspector = Some(inspector);
         self.adopt(loaded, missing_fonts);
         Ok(self.advance())
@@ -640,8 +657,9 @@ impl Session {
     }
 }
 
-/// The scene document, asset loader and missing required fonts of a fresh load.
-type Exported = (SceneDocument, Arc<dyn AssetLoader>, Vec<String>);
+/// The scene document, asset loader, missing required fonts and media
+/// sources of a fresh load.
+type Exported = (SceneDocument, Arc<dyn AssetLoader>, Vec<String>, FrameSources);
 
 fn export_loaded(loaded: &Loaded) -> Result<Exported, HostError> {
     let director = loaded
@@ -650,7 +668,7 @@ fn export_loaded(loaded: &Loaded) -> Result<Exported, HostError> {
         .lock()
         .map_err(|_| HostError::new(ErrorCode::Load, "the loaded Director lock is poisoned"))?;
     let document = export_scene(&director).map_err(|error| HostError::new(ErrorCode::Load, error.to_string()))?;
-    Ok((document, director.assets.loader.clone(), director.missing_required_fonts.clone()))
+    Ok((document, director.assets.loader.clone(), director.missing_required_fonts.clone(), director.assets.video_sources.clone()))
 }
 
 fn timeline_duration(document: &SceneDocument) -> f64 {

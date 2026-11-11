@@ -1866,11 +1866,6 @@ impl Builder {
                     .value()
                     .attr_text("src")
                     .ok_or_else(|| CompileError::Input("audio without src".into()))?;
-                let mut samples = match self.beats.take_decoded(src) {
-                    Some(samples) => samples,
-                    None => director_core::audio::load_audio_bytes(&self.assets.read(src)?, 48000)
-                        .map_err(|e| CompileError::Input(format!("audio '{src}': {e}")))?,
-                };
                 let media_start = numeric("data-media-start", 0.0)?;
                 if media_start < 0.0 {
                     return Err(CompileError::Input("negative audio media start".into()));
@@ -1881,7 +1876,22 @@ impl Builder {
                         "audio inside a time track plays on the composition clock".to_string(),
                     )]));
                 }
-                samples.drain(..((media_start * 96000.0) as usize).min(samples.len()));
+                // Decoded once for the compile and every import that shares
+                // the compiled director's sources.
+                let key = match src.starts_with("data:") {
+                    false => director_core::video_wrapper::file_key(&self.assets.media_path(src)?),
+                    true => director_core::video_wrapper::bytes_key(src.as_bytes()),
+                };
+                let sources = self.director.assets.video_sources.clone();
+                let samples = sources.audio_samples(&key, media_start, 48000, || -> Result<Vec<f32>, CompileError> {
+                    let mut samples = match self.beats.take_decoded(src) {
+                        Some(samples) => samples,
+                        None => director_core::audio::load_audio_bytes(&self.assets.read(src)?, 48000)
+                            .map_err(|e| CompileError::Input(format!("audio '{src}': {e}")))?,
+                    };
+                    samples.drain(..((media_start * 96000.0) as usize).min(samples.len()));
+                    Ok(samples)
+                })?;
                 let id = self.director.add_scene_audio(samples, start, end - start);
                 if let Some(track) = &mut self.director.audio_mixer.tracks[id] {
                     let volume = numeric("data-volume", 1.0)?;

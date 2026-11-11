@@ -18,6 +18,7 @@
 ## Local Contracts
 
 - `Session::open` loads in export mode, exports the live `Director` to a scene document and holds it at revision 0 with the authored names (HTML `id`s) mapped to `NodeRef`s. `Session::from_document` opens a document directly; both require the document to import.
+- A session holds one `FrameSources`, adopted from the loaded `Director` (`Session::frame_sources`). Every import (patch, inspection, reload) and every renderer it creates reads through it, so a session probes each video and decodes each audio track once from load to export, and a reload adopts the new load's sources. Test: `a_session_decodes_its_audio_once_from_load_to_export` covers HTML and Rhai inputs and an edited audio file.
 - `patch(base_revision, ops)` requires `base_revision` to equal the current revision (`conflict` otherwise). Ops apply in order to a copy; the copy must deserialize and import before it replaces the document. Any failure rejects the whole patch and keeps the revision. An empty patch keeps the revision. Errors from an op start with `op <index>:`.
 - `set` replaces a JSON pointer inside one node record; `/id`, `/parent` and `/children` are fixed. `set_document` replaces a JSON pointer of the document; `/version` and `/nodes` are fixed. `remove` drops a node and its subtree and refuses a subtree holding a clip's scene root or a mask a remaining node uses. Names of removed nodes leave the name table.
 - A selector is an authored name string or a `{"index","generation"}` node id. An unknown name or id is `not_found`.

@@ -345,3 +345,51 @@ fn qa_scores_a_clean_scene_and_names_nodes_never_on_the_canvas() {
     };
     assert_eq!(session.qa(&bad_every).unwrap_err().code, ErrorCode::InvalidArgument);
 }
+
+/// Writes `seconds` of a tone to `path`.
+fn tone(path: &std::path::Path, seconds: u32) {
+    let result = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+        .arg(format!("sine=frequency=440:sample_rate=48000:duration={seconds}"))
+        .arg(path)
+        .output()
+        .expect("FFmpeg must be installed for native media tests");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+}
+
+/// Sets the z-index of the first leaf of the session's outline.
+fn leaf_z(session: &Session, z: i32) -> PatchOp {
+    let outline = session.outline();
+    let mut node = &outline.roots[0];
+    while let Some(child) = node.children.first() {
+        node = child;
+    }
+    PatchOp::Set { node: NodeSelector::Ref(node.id), path: "/z_index".into(), value: json!(z) }
+}
+
+#[test]
+fn a_session_decodes_its_audio_once_from_load_to_export() {
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("tone.wav");
+    tone(&wav, 1);
+    let html = dir.path().join("scene.html");
+    std::fs::write(&html, "<main data-composition-id='main' data-width='32' data-height='32' data-duration='1'><div id='box' style='width:8px;height:8px;background:red'></div><audio src='tone.wav' data-start='0'></audio></main>").unwrap();
+    let script = dir.path().join("scene.rhai");
+    let path = wav.to_string_lossy().replace('\\', "/");
+    std::fs::write(&script, format!("let movie = new_director(32, 32, 30);\nlet scene = movie.add_scene(1.0);\nscene.add_box(#{{ width: \"100%\", height: \"100%\", bg_color: \"#ff0000\" }});\nmovie.add_audio(\"{path}\");\nmovie")).unwrap();
+    for input in [html, script] {
+        tone(&wav, 1);
+        let mut session = Session::open(&Source::new(input.clone())).unwrap();
+        let settings = ExportSettings::default();
+        session.export(&dir.path().join("out.mp4"), &settings, None).unwrap();
+        let revision = session.revision();
+        session.patch(revision, &[leaf_z(&session, 1)]).unwrap();
+        session.export(&dir.path().join("out.mp4"), &settings, None).unwrap();
+        assert_eq!(session.frame_sources().audio_decoded(), 1, "{} decodes its audio once", input.display());
+        // An edited file decodes again.
+        tone(&wav, 2);
+        let revision = session.revision();
+        session.patch(revision, &[leaf_z(&session, 2)]).unwrap();
+        assert_eq!(session.frame_sources().audio_decoded(), 2, "{} reads the edited file", input.display());
+    }
+}

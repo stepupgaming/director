@@ -1274,19 +1274,53 @@ impl SharedSource {
 /// last element that plays it.
 #[derive(Clone, Debug, Default)]
 pub struct FrameSources {
-    sources: Arc<Mutex<HashMap<PathBuf, Weak<SharedSource>>>>,
+    sources: Arc<Mutex<HashMap<SourceKey, Weak<SharedSource>>>>,
     started: Arc<AtomicU64>,
     audio: Arc<Mutex<HashMap<AudioKey, Weak<Vec<f32>>>>>,
     audio_decoded: Arc<AtomicU64>,
 }
 
-/// Asset id, skipped source seconds as bits, and sample rate of decoded audio.
+/// Content key, skipped source seconds as bits, and sample rate of decoded audio.
 type AudioKey = (String, u64, u32);
+
+/// Size and modification time of a file, so an edited file opens again.
+type FileStamp = (u64, SystemTime);
+/// A source's canonical path and its file stamp.
+type SourceKey = (PathBuf, Option<FileStamp>);
+
+fn file_stamp(path: &Path) -> Option<FileStamp> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
+}
+
+/// Names the content of a media file for [`FrameSources::audio_samples`]:
+/// its resolved path, size and modification time.
+pub fn file_key(path: &Path) -> String {
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    match file_stamp(&resolved) {
+        Some((len, modified)) => {
+            let nanos = modified.duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_nanos());
+            format!("file|{}|{len}|{nanos}", resolved.display())
+        }
+        None => format!("file|{}", resolved.display()),
+    }
+}
+
+/// Names bytes without a file for [`FrameSources::audio_samples`] by their
+/// length and hash.
+pub fn bytes_key(bytes: &[u8]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("bytes|{}|{:016x}", bytes.len(), hasher.finish())
+}
 
 impl FrameSources {
     /// The open source of `path`, probed on first use.
     pub fn source(&self, path: &Path) -> Result<Arc<SharedSource>> {
-        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let stamp = file_stamp(&resolved);
+        let key = (resolved, stamp);
         let mut sources = self.sources.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(source) = sources.get(&key).and_then(Weak::upgrade) {
             return Ok(source);
@@ -1308,18 +1342,19 @@ impl FrameSources {
         self.started.load(Ordering::Relaxed)
     }
 
-    /// Decoded samples of audio asset `id` of the one document this registry
-    /// serves, with `source_start` seconds skipped at `sample_rate`. `decode`
-    /// runs for the first import and again once every track holding the
-    /// samples is gone; imports that arrive meanwhile wait for it.
+    /// Decoded samples of the audio `key` names ([`file_key`] or
+    /// [`bytes_key`]), with `source_start` seconds skipped at `sample_rate`.
+    /// Every document and script that reads this registry shares them.
+    /// `decode` runs for the first caller and again once every track holding
+    /// the samples is gone; callers that arrive meanwhile wait for it.
     pub fn audio_samples<E>(
         &self,
-        id: &str,
+        key: &str,
         source_start: f64,
         sample_rate: u32,
         decode: impl FnOnce() -> std::result::Result<Vec<f32>, E>,
     ) -> std::result::Result<Arc<Vec<f32>>, E> {
-        let key = (id.to_string(), source_start.to_bits(), sample_rate);
+        let key = (key.to_string(), source_start.to_bits(), sample_rate);
         let mut audio = self.audio.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(samples) = audio.get(&key).and_then(Weak::upgrade) {
             return Ok(samples);
@@ -1512,72 +1547,38 @@ pub fn grid_rate(nominal: Option<f64>, average: Option<f64>) -> Option<f64> {
     }
 }
 
-fn probe_frame_rate(path: &Path) -> f64 {
-    let output = ffprobe()
-        .arg("-v")
-        .arg("error")
-        .arg("-select_streams")
-        .arg("v:0")
-        .arg("-show_entries")
-        .arg("stream=r_frame_rate,avg_frame_rate")
-        .arg("-of")
-        .arg("csv=p=0")
-        .arg(path)
-        .output();
-    if let Ok(output) = output {
-        if output.status.success() {
-            // `r_frame_rate,avg_frame_rate`, in ffprobe's own order.
-            let out = String::from_utf8_lossy(&output.stdout);
-            let mut rates = out.lines().next().unwrap_or("").split(',').map(parse_frame_rate);
-            let nominal = rates.next().flatten();
-            if let Some(fps) = grid_rate(nominal, rates.next().flatten()) {
-                return fps;
-            }
-        }
-    }
-    tracing::warn!(
-        "Could not probe source fps for {:?}; falling back to 30.0",
-        path
-    );
-    30.0
-}
-
-/// Probes dimensions and source frame rate via ffprobe.
+/// Probes size, color and frame rate through one ffprobe run.
 pub fn probe_video(path: &Path) -> Result<VideoProbe> {
     let output = ffprobe()
-        .arg("-v")
-        .arg("error")
-        .arg("-select_streams")
-        .arg("v:0")
-        .arg("-show_entries")
-        .arg("stream=width,height,pix_fmt,color_range,color_space")
-        .arg("-of")
-        .arg("csv=s=x:p=0")
+        .args(["-v", "error", "-select_streams", "v:0", "-show_entries"])
+        .arg("stream=width,height,pix_fmt,color_range,color_space,r_frame_rate,avg_frame_rate")
+        .args(["-of", "default=noprint_wrappers=1"])
         .arg(path)
         .output()?;
-
-    let out = String::from_utf8_lossy(&output.stdout);
-    let (width, height) =
-        parse_video_size(&out).ok_or_else(|| anyhow::anyhow!("Failed to probe video size"))?;
-    // `WxHxpix_fmtxrangexspace`, where only a pixel format name may hold an x
-    // and side data adds an empty last field.
-    let fields: Vec<&str> = out.lines().next().unwrap_or("").trim().trim_end_matches('x').split('x').collect();
-    let color = match fields.as_slice() {
-        [_, _, pix_fmt @ .., range, space] => source_color(&pix_fmt.join("x"), range, space),
-        _ => None,
-    };
-    let fps = probe_frame_rate(path);
-    Ok(VideoProbe { width, height, fps, color })
+    let probed = parse_probe(&String::from_utf8_lossy(&output.stdout))
+        .ok_or_else(|| anyhow::anyhow!("Failed to probe video size of {}", path.display()))?;
+    if probed.fps.is_nan() {
+        tracing::warn!("Could not probe source fps for {:?}; falling back to 30.0", path);
+        return Ok(VideoProbe { fps: 30.0, ..probed });
+    }
+    Ok(probed)
 }
 
-/// Parses ffprobe `stream=width,height` output in `csv=s=x:p=0` form
-/// (`"1920x1080"`). Side data adds an empty trailing field (`"1920x1080x"`),
-/// so the first two fields are read and the rest ignored.
-pub fn parse_video_size(out: &str) -> Option<(u32, u32)> {
-    let mut fields = out.trim().split('x').map(str::trim);
-    let width = fields.next()?.parse().ok()?;
-    let height = fields.next()?.parse().ok()?;
-    Some((width, height))
+/// Reads ffprobe's `key=value` lines of a video stream. `fps` is NaN when
+/// the stream reports no usable rate. Keys it does not ask for, such as side
+/// data, are ignored.
+pub fn parse_probe(out: &str) -> Option<VideoProbe> {
+    let field = |key: &str| out.lines().find_map(|line| line.trim().strip_prefix(key)?.strip_prefix('=')).map(str::trim);
+    let width = field("width")?.parse().ok()?;
+    let height = field("height")?.parse().ok()?;
+    let rate = |key| field(key).and_then(parse_frame_rate);
+    let fps = grid_rate(rate("r_frame_rate"), rate("avg_frame_rate")).unwrap_or(f64::NAN);
+    let color = source_color(
+        field("pix_fmt").unwrap_or(""),
+        field("color_range").unwrap_or(""),
+        field("color_space").unwrap_or(""),
+    );
+    Some(VideoProbe { width, height, fps, color })
 }
 
 pub fn probe(path: &Path) -> Result<(u32, u32)> {
@@ -1678,7 +1679,7 @@ impl VideoLoader {
 #[cfg(test)]
 mod tests {
     use super::{
-        grid_rate, libavcodec_version, parse_frame_rate, parse_video_size, DecodeSession, FFmpegDriver, FrameSources,
+        grid_rate, libavcodec_version, parse_frame_rate, parse_probe, DecodeSession, SourceColor, FFmpegDriver, FrameSources,
         RenderMode, SyncDecoder, ThreadedDecoder, VideoResponse, cache_frames, IDLE_REQUESTS, MAX_CACHED_FRAMES, MAX_CURSORS, MIN_CACHED_FRAMES,
         MAX_SKIP_AHEAD,
     };
@@ -1769,10 +1770,14 @@ mod tests {
     #[test]
     fn reads_probe_output_with_a_side_data_field() {
         assert!((parse_frame_rate("30/1,\r\n").unwrap() - 30.0).abs() < 1e-9);
-        assert_eq!(parse_video_size("1920x1080x\r\n"), Some((1920, 1080)));
-        assert_eq!(parse_video_size("1280x720\n"), Some((1280, 720)));
-        assert_eq!(parse_video_size("x\n"), None);
-        assert_eq!(parse_video_size(""), None);
+        let phone = "width=1080\r\nheight=1920\r\npix_fmt=yuv420p\r\ncolor_range=tv\r\ncolor_space=bt709\r\nr_frame_rate=30/1\r\navg_frame_rate=2997/100\r\nside_data_type=Display Matrix\r\nrotation=-90\r\n";
+        let probed = parse_probe(phone).unwrap();
+        assert_eq!((probed.width, probed.height, probed.fps), (1080, 1920, 30.0));
+        assert_eq!(probed.color, Some(SourceColor { matrix: Some("bt709"), full_range: false }));
+        let rgb = parse_probe("width=64\nheight=48\npix_fmt=bgr0\nr_frame_rate=0/0\navg_frame_rate=0/0\n").unwrap();
+        assert!(rgb.fps.is_nan() && rgb.color.is_none(), "no rate and no color an encoder takes as decoded");
+        assert!(parse_probe("height=48\n").is_none());
+        assert!(parse_probe("").is_none());
     }
 
     #[test]

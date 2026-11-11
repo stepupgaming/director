@@ -91,6 +91,13 @@ impl Renderer {
         self
     }
 
+    /// Read video and audio through `frames`, shared with whatever else
+    /// imported through it, such as a host session's inspector.
+    pub fn with_frame_sources(mut self, frames: FrameSources) -> Self {
+        self.frames = frames;
+        self
+    }
+
     pub fn with_render_mode(mut self, render_mode: RenderMode) -> Self {
         self.render_mode = render_mode;
         self
