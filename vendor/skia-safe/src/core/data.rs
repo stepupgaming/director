@@ -97,6 +97,21 @@ impl Data {
         }
     }
 
+    /// Constructs Data over `bytes` without copying them. Skia holds one
+    /// reference to `bytes` and releases it when the last reference to the
+    /// Data goes away. (Director edit.)
+    pub fn new_shared(bytes: std::sync::Arc<Vec<u8>>) -> Self {
+        unsafe extern "C" fn release(_: *const std::ffi::c_void, context: *mut std::ffi::c_void) {
+            drop(unsafe { std::sync::Arc::from_raw(context as *const Vec<u8>) });
+        }
+        // The Arc keeps the bytes in place for as long as the Data lives.
+        let data = unsafe { Data::new_bytes(&bytes) };
+        let native = unsafe { &mut *data.native_mut_force() };
+        native.fReleaseProc = Some(release);
+        native.fReleaseProcContext = std::sync::Arc::into_raw(bytes) as *mut _;
+        data
+    }
+
     #[allow(clippy::missing_safety_doc)]
     pub unsafe fn new_uninitialized(length: usize) -> Data {
         unsafe { Data::from_ptr(sb::C_SkData_MakeUninitialized(length)).unwrap() }

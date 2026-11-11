@@ -835,7 +835,7 @@ pub enum VideoCommand {
 
 #[derive(Debug)]
 pub enum VideoResponse {
-    Frame(f64, Vec<u8>, u32, u32),
+    Frame(f64, Arc<Vec<u8>>, u32, u32),
     Error(String),
 }
 
@@ -1312,7 +1312,7 @@ impl ThreadedDecoder {
                 }
                 let index = crate::timeline::video_source_frame_index(target_time.max(0.0), fps);
                 let response = match source.frame(index) {
-                    Ok(bytes) => VideoResponse::Frame(target_time, Arc::unwrap_or_clone(bytes), width, height),
+                    Ok(bytes) => VideoResponse::Frame(target_time, bytes, width, height),
                     Err(e) => VideoResponse::Error(e.to_string()),
                 };
                 let _ = resp_tx.send(response);
@@ -1907,6 +1907,24 @@ mod tests {
     }
 
     #[test]
+    fn video_nodes_paint_the_decoded_frame_without_copying_it() {
+        use crate::element::Element;
+        use crate::node::video_node::{VideoNode, VideoSource};
+        let (_dir, src) = video_fixture("30");
+        let mut first = VideoNode::new(VideoSource::Path(src), RenderMode::Export);
+        let mut second = first.clone();
+        first.update(0.0);
+        second.update(0.0);
+        let (_, image) = first.get_current_frame().expect("a decoded frame");
+        let (_, other) = second.get_current_frame().expect("a decoded frame");
+        let pixels = image.peek_pixels().expect("raster pixels");
+        assert_eq!(pixels.addr(), other.peek_pixels().expect("raster pixels").addr(), "both nodes read the decoder's buffer");
+        // The image keeps the buffer after the nodes and their decoder go away.
+        drop((first, second, other));
+        assert_eq!(pixels.bytes().expect("pixel bytes"), expected_frame(0));
+    }
+
+    #[test]
     fn decode_session_drop_stops_a_live_child() {
         let (_dir, src) = video_fixture("30");
         let session =
@@ -1965,7 +1983,7 @@ mod tests {
             VideoResponse::Frame(time, bytes, width, height) => {
                 assert_eq!(time, 0.0);
                 assert_eq!((width, height), (TEST_WIDTH, TEST_HEIGHT));
-                assert_eq!(bytes, expected_frame(0));
+                assert_eq!(*bytes, expected_frame(0));
             }
             VideoResponse::Error(err) => panic!("worker decode failed: {err}"),
         }
