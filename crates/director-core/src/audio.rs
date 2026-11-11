@@ -411,38 +411,27 @@ pub fn resample_audio(samples: &[f32], source_rate: u32, target_rate: u32) -> Re
         right.push(chunk[1]);
     }
 
-    let input_chunk_size = resampler.input_frames_max();
-    let mut output_left = Vec::with_capacity((frames as f64 * ratio) as usize + 1024);
-    let mut output_right = Vec::with_capacity((frames as f64 * ratio) as usize + 1024);
-
+    // Feed every frame, then silence until the output holds `frames * ratio`
+    // frames, and keep those. The resampler's first output frame lines up
+    // with its first input frame.
+    let wanted = (frames as f64 * ratio).round() as usize;
+    let mut output_left = Vec::with_capacity(wanted + 2048);
+    let mut output_right = Vec::with_capacity(wanted + 2048);
     let mut input_idx = 0;
-    while input_idx < frames {
-        let end = (input_idx + input_chunk_size).min(frames);
-        let len = end - input_idx;
-
-        let chunk_left = &left[input_idx..end];
-        let chunk_right = &right[input_idx..end];
-
-        let mut input_batch = vec![chunk_left.to_vec(), chunk_right.to_vec()];
-
-        if len < input_chunk_size {
-            input_batch[0].resize(input_chunk_size, 0.0);
-            input_batch[1].resize(input_chunk_size, 0.0);
-        }
-
-        let output_batch = resampler
-            .process(&input_batch, None)
-            .context("Resampling failed")?;
-
+    while output_left.len() < wanted {
+        let needed = resampler.input_frames_next();
+        let end = (input_idx + needed).min(frames);
+        let mut input_batch = vec![left[input_idx.min(frames)..end].to_vec(), right[input_idx.min(frames)..end].to_vec()];
+        input_batch[0].resize(needed, 0.0);
+        input_batch[1].resize(needed, 0.0);
+        let output_batch = resampler.process(&input_batch, None).context("Resampling failed")?;
         output_left.extend_from_slice(&output_batch[0]);
         output_right.extend_from_slice(&output_batch[1]);
-
-        input_idx += input_chunk_size;
+        input_idx += needed;
     }
 
-    let out_len = output_left.len();
-    let mut result = Vec::with_capacity(out_len * 2);
-    for i in 0..out_len {
+    let mut result = Vec::with_capacity(wanted * 2);
+    for i in 0..wanted {
         result.push(output_left[i]);
         result.push(output_right[i]);
     }
@@ -473,7 +462,9 @@ fn decode_with_symphonia(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32
 
     let mss = MediaSourceStream::new(Box::new(Cursor::new(data.to_vec())), Default::default());
     let hint = Hint::new();
-    let format_opts = FormatOptions::default();
+    // Gapless reading trims the MP3 encoder delay and padding.
+    let format_opts = FormatOptions { enable_gapless: true, ..Default::default() };
+    let edit = crate::mp4_edit::sound_edit(data).map_err(|reason| anyhow::anyhow!("MP4 edit list: {reason}"))?;
     let metadata_opts = MetadataOptions::default();
     let decoder_opts = DecoderOptions::default();
 
@@ -531,6 +522,9 @@ fn decode_with_symphonia(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32
     if samples.is_empty() {
         anyhow::bail!("decoded no audio samples");
     }
+    if let Some(edit) = edit {
+        samples = edit.apply(samples, source_rate);
+    }
     resample_audio(&samples, source_rate, target_sample_rate)
 }
 
@@ -546,7 +540,10 @@ fn decode_with_ffmpeg(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>> 
     let output = crate::video_wrapper::FFmpegDriver::command()
         .args(["-v", "error", "-nostdin", "-i"])
         .arg(file.path())
-        .args(["-map", "0:a:0", "-vn", "-sn", "-dn", "-f", "f32le", "-ac", "2", "-ar"])
+        // Pad or trim the start so sample 0 plays at time 0 of the file,
+        // where the picture's timeline starts.
+        .args(["-map", "0:a:0", "-vn", "-sn", "-dn", "-af", "aresample=async=1:first_pts=0"])
+        .args(["-f", "f32le", "-ac", "2", "-ar"])
         .arg(target_sample_rate.to_string())
         .arg("pipe:1")
         .stdin(std::process::Stdio::null())
@@ -642,6 +639,84 @@ mod tests {
         ffmpeg_clip(&path, None);
         let error = load_audio_bytes(&std::fs::read(&path).unwrap(), 48000).unwrap_err();
         assert!(error.to_string().contains("no audio stream"), "{error:#}");
+    }
+
+    /// Two seconds of pink noise, which lines up at one lag only, written
+    /// by FFmpeg with `args` after the inputs. `late` starts the sound a
+    /// quarter second after the picture by its timestamps.
+    fn noise(path: &Path, late: bool, args: &[&str]) {
+        let status = Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=30:duration=2"])
+            .args(if late { &["-itsoffset", "0.25"][..] } else { &[] })
+            .args(["-f", "lavfi", "-i", "anoisesrc=color=pink:seed=7:amplitude=0.4:duration=2:sample_rate=48000"])
+            .args(args)
+            .arg(path)
+            .status()
+            .expect("ffmpeg must be in PATH");
+        assert!(status.success(), "ffmpeg failed to write {}", path.display());
+    }
+
+    /// FFmpeg's decode of the first audio stream as stereo at 48 kHz with
+    /// sample 0 at time 0 of the file, as a player lines it up with the picture.
+    fn reference(path: &Path) -> Vec<f32> {
+        let output = Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(path)
+            .args(["-map", "0:a:0", "-af", "aresample=async=1:first_pts=0", "-f", "f32le", "-ac", "2", "-ar", "48000", "-"])
+            .output()
+            .expect("ffmpeg must be in PATH");
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        output.stdout.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect()
+    }
+
+    /// The lag in frames at which `decoded` best matches `reference`, and
+    /// the normalized correlation there. A positive lag means `decoded` is late.
+    fn alignment(decoded: &[f32], reference: &[f32]) -> (i64, f64) {
+        let left = |samples: &[f32]| samples.iter().step_by(2).map(|s| *s as f64).collect::<Vec<_>>();
+        let (a, b) = (left(decoded), left(reference));
+        let window = 24_000;
+        let correlate = |lag: i64| {
+            let (x, y) = if lag >= 0 { (&a[lag as usize..], &b[..]) } else { (&a[..], &b[(-lag) as usize..]) };
+            let (x, y) = (&x[1_000..1_000 + window], &y[1_000..1_000 + window]);
+            let dot = |p: &[f64], q: &[f64]| p.iter().zip(q).map(|(p, q)| p * q).sum::<f64>();
+            dot(x, y) / (dot(x, x) * dot(y, y)).sqrt()
+        };
+        (-13_000..=13_000).map(|lag| (lag, correlate(lag))).max_by(|p, q| p.1.total_cmp(&q.1)).unwrap()
+    }
+
+    #[test]
+    fn decoded_audio_starts_at_the_time_ffmpeg_and_players_start_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = ["-map", "0:v", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-map", "1:a"];
+        let cases: [(&str, Vec<&str>); 11] = [
+            ("aac.mp4", [&video[..], &["-c:a", "aac"]].concat()),
+            ("aac44.m4a", vec!["-map", "1:a", "-c:a", "aac", "-ar", "44100"]),
+            ("mono.mov", [&video[..], &["-c:a", "aac", "-ac", "1"]].concat()),
+            ("late.mp4", [&video[..], &["-c:a", "aac"]].concat()),
+            ("late.mov", [&video[..], &["-c:a", "pcm_s16le"]].concat()),
+            ("late.mkv", [&video[..], &["-c:a", "libopus"]].concat()),
+            ("noise.mp3", vec!["-map", "1:a", "-c:a", "libmp3lame", "-ar", "44100"]),
+            ("noise.wav", vec!["-map", "1:a", "-c:a", "pcm_s16le", "-ar", "44100"]),
+            ("pcm.mov", [&video[..], &["-c:a", "pcm_s16le"]].concat()),
+            ("opus.mkv", [&video[..], &["-c:a", "libopus"]].concat()),
+            ("opus.webm", vec!["-map", "1:a", "-c:a", "libopus", "-ar", "48000"]),
+        ];
+        let (mut report, mut wrong) = (Vec::new(), false);
+        for (name, args) in cases {
+            let path = dir.path().join(name);
+            noise(&path, name.starts_with("late"), &args);
+            let decoded = load_audio_bytes(&std::fs::read(&path).unwrap(), 48000).unwrap();
+            let reference = reference(&path);
+            let (lag, correlation) = alignment(&decoded, &reference);
+            let (frames, expected) = (decoded.len() / 2, reference.len() / 2);
+            report.push(format!("{name}: lag {lag} frames, correlation {correlation:.4}, {frames} frames, FFmpeg {expected}"));
+            // Two seconds of sound, a quarter second later for a late start.
+            // FFmpeg keeps the padding after the last AAC frame, so its
+            // length is no reference.
+            let seconds = if name.starts_with("late") { 2.25 } else { 2.0 };
+            wrong |= lag != 0 || correlation < 0.99 || frames.abs_diff((seconds * 48_000.0) as usize) > 64;
+        }
+        assert!(!wrong, "{}", report.join("\n"));
     }
 
     #[test]

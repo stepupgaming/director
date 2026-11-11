@@ -232,10 +232,13 @@ fn the_base_videos_own_audio_goes_from_ffmpeg_input_to_output() {
     };
     // Name, body, source, and the level against the source of a track
     // encoded again. AAC from the start of the source keeps its packets.
+    // The engine plays mono at full level on both channels, where FFmpeg's
+    // upmix of the source takes 3 dB off.
     let cases = [
         ("AAC from the start of the source", own("clip.mp4", ""), "clip.mp4", None),
         ("PCM", own("clip.mov", ""), "clip.mov", Some(1.0)),
         ("a quieter track the engine mixes", own("clip.mov", " data-volume='0.5'"), "clip.mov", Some(0.5)),
+        ("a quieter AAC track the engine mixes", own("clip.mp4", " data-volume='0.5'"), "clip.mp4", Some(0.5 * std::f64::consts::SQRT_2)),
     ];
     let options = ExportOptions { workers: Some(2), ..ExportOptions::new(EncoderMode::Software) };
     for (name, body, source, level) in cases {

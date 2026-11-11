@@ -69,6 +69,9 @@ pub mod passthrough;
 /// Audio mixing and processing.
 pub mod audio;
 
+/// MP4 and QuickTime edit lists that place a sound track on the file timeline.
+pub mod mp4_edit;
+
 /// Audio effects (reverb, delay, EQ, compressor).
 pub mod audio_effects;
 
