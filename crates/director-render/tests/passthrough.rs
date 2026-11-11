@@ -16,13 +16,25 @@ const FRAMES: usize = 90;
 /// Smooth waves that move every frame, so a frame out of step stands out.
 const PATTERN: &str = "color=s=128x96:r=30:d=3,format=yuv420p,    geq=lum='128+90*sin((X+N*7)/9)':cb='128+50*sin((Y+N*5)/11)':cr='128+40*cos((X-N*3)/13)'";
 
-/// Three seconds of [`PATTERN`] with a tone:
-/// `clip.mp4` as H.264 4:2:0 and `rgb.mkv` as FFV1 RGB.
+/// Drops the frames [`dropped`] names and keeps the rest at their times.
+const GAPS: [&str; 4] = ["-vf", "select='not(eq(mod(n,10),3))'", "-fps_mode", "vfr"];
+
+/// A frame `vfr.mp4` lacks.
+fn dropped(index: usize) -> bool {
+    index % 10 == 3
+}
+
+/// Three seconds of [`PATTERN`] with a tone: `clip.mp4` as H.264 4:2:0,
+/// `vfr.mp4` as the same with every tenth frame missing (27 frames a second
+/// on average, 30 nominal) and `rgb.mkv` as FFV1 RGB.
 fn clips(dir: &Path) {
-    for (name, codec) in [("clip.mp4", ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"]), ("rgb.mkv", ["-c:v", "ffv1", "-pix_fmt", "bgr0", "-c:a", "pcm_s16le"])] {
+    let h264 = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"];
+    let clips = [("clip.mp4", h264, &[][..]), ("vfr.mp4", h264, &GAPS[..]), ("rgb.mkv", ["-c:v", "ffv1", "-pix_fmt", "bgr0", "-c:a", "pcm_s16le"], &[][..])];
+    for (name, codec, filter) in clips {
         let result = std::process::Command::new("ffmpeg")
             .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", PATTERN])
             .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3"])
+            .args(filter)
             .args(codec)
             .arg(dir.join(name))
             .output()
@@ -123,6 +135,29 @@ fn a_caption_over_a_full_frame_video_leaves_the_video_to_ffmpeg() {
     let exports = Exports::of(&format!("{VIDEO}<audio src='clip.mp4' data-start='0'></audio><div class='caption'></div>"), SIZE);
     assert_eq!(exports.started, 0, "the engine decodes no video frame");
     exports.assert_same_picture();
+}
+
+#[test]
+fn a_variable_rate_video_shows_each_frame_at_its_own_time() {
+    let steady = Exports::of(&format!("{VIDEO}<div class='caption'></div>"), SIZE);
+    let gapped = Exports::of(&format!("{}<div class='caption'></div>", VIDEO.replace("clip.mp4", "vfr.mp4")), SIZE);
+    assert_eq!(gapped.started, 0, "the engine decodes no video frame");
+    let steady: Vec<&[u8]> = steady.full.chunks_exact(steady.frame).collect();
+    for (name, frames) in [("over the base video", &gapped.over), ("through the full paint", &gapped.full)] {
+        let frames: Vec<&[u8]> = frames.chunks_exact(gapped.frame).collect();
+        for index in (0..FRAMES).filter(|index| !dropped(*index)) {
+            let same = apart(frames[index], steady[index]);
+            for other in [index.wrapping_sub(1), index + 1] {
+                if let Some(other) = steady.get(other) {
+                    assert!(same < apart(frames[index], other), "frame {index} {name} shows another time of the source");
+                }
+            }
+        }
+    }
+    for index in 0..FRAMES {
+        let same = apart(&gapped.over[index * gapped.frame..][..gapped.frame], &gapped.full[index * gapped.frame..][..gapped.frame]);
+        assert!(same < 5.0, "frame {index} differs from the full paint by {same} levels a channel");
+    }
 }
 
 #[test]

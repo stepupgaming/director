@@ -953,12 +953,16 @@ struct DecodeSession {
 }
 
 impl DecodeSession {
-    fn start(path: &Path, seek_time: f64, start_index: u64, frame_len: usize) -> Result<Self> {
+    /// Frames from `seek_time` on a grid of `fps` frames a second, each the
+    /// source frame FFmpeg's `fps` filter shows at that time.
+    fn start(path: &Path, seek_time: f64, fps: f64, start_index: u64, frame_len: usize) -> Result<Self> {
         let mut child = FFmpegDriver::command()
             .arg("-ss")
             .arg(seek_time.max(0.0).to_string())
             .arg("-i")
             .arg(path)
+            .arg("-vf")
+            .arg(format!("fps={fps}:start_time=0"))
             .arg("-f")
             .arg("rawvideo")
             .arg("-pix_fmt")
@@ -1116,7 +1120,7 @@ impl FrameSource {
     fn start_session(&self, index: u64) -> Result<DecodeSession> {
         // Seek to the exact frame-grid time, not the raw request time.
         let seek = crate::timeline::frame_to_time(index, self.fps);
-        let session = DecodeSession::start(&self.path, seek, index, self.frame_len)?;
+        let session = DecodeSession::start(&self.path, seek, self.fps, index, self.frame_len)?;
         self.started.fetch_add(1, Ordering::Relaxed);
         Ok(session)
     }
@@ -1495,25 +1499,39 @@ pub fn parse_frame_rate(token: &str) -> Option<f64> {
     }
 }
 
+/// The rate of the grid a source decodes onto, from its nominal
+/// (`r_frame_rate`) and average rates. A constant-rate source reports one
+/// rate twice. A variable-rate source, or one with gaps in its timestamps,
+/// averages below its nominal rate and decodes onto the nominal grid, where
+/// each frame lands at its own time. A nominal rate far above the average
+/// (a field rate, a timebase) gives way to the average.
+pub fn grid_rate(nominal: Option<f64>, average: Option<f64>) -> Option<f64> {
+    match (nominal, average) {
+        (Some(nominal), Some(average)) if average <= nominal * 1.01 && nominal <= average * 1.5 => Some(nominal),
+        (nominal, average) => average.or(nominal),
+    }
+}
+
 fn probe_frame_rate(path: &Path) -> f64 {
-    for entry in ["avg_frame_rate", "r_frame_rate"] {
-        let output = ffprobe()
-            .arg("-v")
-            .arg("error")
-            .arg("-select_streams")
-            .arg("v:0")
-            .arg("-show_entries")
-            .arg(format!("stream={entry}"))
-            .arg("-of")
-            .arg("csv=p=0")
-            .arg(path)
-            .output();
-        if let Ok(output) = output {
-            if output.status.success() {
-                let token = String::from_utf8_lossy(&output.stdout);
-                if let Some(fps) = parse_frame_rate(token.trim()) {
-                    return fps;
-                }
+    let output = ffprobe()
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("v:0")
+        .arg("-show_entries")
+        .arg("stream=r_frame_rate,avg_frame_rate")
+        .arg("-of")
+        .arg("csv=p=0")
+        .arg(path)
+        .output();
+    if let Ok(output) = output {
+        if output.status.success() {
+            // `r_frame_rate,avg_frame_rate`, in ffprobe's own order.
+            let out = String::from_utf8_lossy(&output.stdout);
+            let mut rates = out.lines().next().unwrap_or("").split(',').map(parse_frame_rate);
+            let nominal = rates.next().flatten();
+            if let Some(fps) = grid_rate(nominal, rates.next().flatten()) {
+                return fps;
             }
         }
     }
@@ -1660,7 +1678,7 @@ impl VideoLoader {
 #[cfg(test)]
 mod tests {
     use super::{
-        libavcodec_version, parse_frame_rate, parse_video_size, DecodeSession, FFmpegDriver, FrameSources,
+        grid_rate, libavcodec_version, parse_frame_rate, parse_video_size, DecodeSession, FFmpegDriver, FrameSources,
         RenderMode, SyncDecoder, ThreadedDecoder, VideoResponse, cache_frames, IDLE_REQUESTS, MAX_CACHED_FRAMES, MAX_CURSORS, MIN_CACHED_FRAMES,
         MAX_SKIP_AHEAD,
     };
@@ -1726,6 +1744,18 @@ mod tests {
             .output()
             .expect("ffprobe must be installed for encoder tests");
         assert_eq!(String::from_utf8_lossy(&probe.stdout).split_whitespace().collect::<Vec<_>>(), ["video", "audio"]);
+    }
+
+    #[test]
+    fn a_variable_rate_source_decodes_on_its_nominal_grid() {
+        assert_eq!(grid_rate(Some(30.0), Some(30.0)), Some(30.0));
+        assert_eq!(grid_rate(Some(30.0), Some(29.96)), Some(30.0), "gaps in the timestamps");
+        assert_eq!(grid_rate(Some(30.0), Some(24.3)), Some(30.0), "a phone in low light");
+        assert_eq!(grid_rate(Some(59.94), Some(29.97)), Some(29.97), "a field rate");
+        assert_eq!(grid_rate(Some(90000.0), Some(29.5)), Some(29.5), "a timebase");
+        assert_eq!(grid_rate(None, Some(25.0)), Some(25.0));
+        assert_eq!(grid_rate(Some(25.0), None), Some(25.0));
+        assert_eq!(grid_rate(None, None), None);
     }
 
     #[test]
@@ -2038,7 +2068,7 @@ mod tests {
     fn decode_session_drop_stops_a_live_child() {
         let (_dir, src) = video_fixture("30");
         let session =
-            DecodeSession::start(&src, 0.0, 0, (TEST_WIDTH * TEST_HEIGHT * 4) as usize).expect("decode session");
+            DecodeSession::start(&src, 0.0, 30.0, 0, (TEST_WIDTH * TEST_HEIGHT * 4) as usize).expect("decode session");
         let pid = session.child.id();
         assert!(process_exists(pid), "session must own a live FFmpeg child");
         drop(session);
