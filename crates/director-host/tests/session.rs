@@ -393,3 +393,30 @@ fn a_session_decodes_its_audio_once_from_load_to_export() {
         assert_eq!(session.frame_sources().audio_decoded(), 2, "{} reads the edited file", input.display());
     }
 }
+
+#[test]
+fn a_session_decodes_each_image_once_and_names_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, color) in [("a.png", "red"), ("b.png", "blue")] {
+        let result = std::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+            .arg(format!("color=c={color}:s=8x8"))
+            .args(["-frames:v", "1"])
+            .arg(dir.path().join(name))
+            .output()
+            .expect("FFmpeg must be installed for native media tests");
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    }
+    let html = dir.path().join("scene.html");
+    std::fs::write(&html, "<main data-composition-id='main' data-width='32' data-height='32' data-duration='0.2'><img id='one' src='a.png' style='width:16px;height:16px'><img src='a.png' style='width:8px;height:8px'><div style='width:16px;height:16px;background-image:url(b.png)'></div></main>").unwrap();
+    let mut session = Session::open(&Source::new(html)).unwrap();
+    let settings = ExportSettings::default();
+    session.export(&dir.path().join("out.mp4"), &settings, None).unwrap();
+    let z = PatchOp::Set { node: NodeSelector::Name("one".into()), path: "/z_index".into(), value: json!(1) };
+    session.patch(session.revision(), &[z]).unwrap();
+    session.export(&dir.path().join("out.mp4"), &settings, None).unwrap();
+    assert_eq!(session.frame_sources().images_decoded(), 2, "the compile, the imports and the export share each decode");
+    let document = serde_json::to_value(&**session.document()).unwrap();
+    let paths: Vec<_> = document["assets"].as_array().unwrap().iter().filter_map(|asset| asset["source"]["path"].as_str()).collect();
+    assert!(paths.contains(&"a.png"), "an img names its file: {paths:?}");
+}

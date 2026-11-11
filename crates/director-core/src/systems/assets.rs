@@ -102,9 +102,7 @@ impl AssetManager {
         let bytes = self.loader.load_bytes(path).ok()?;
 
         // 3. Decode
-        let data = Data::new_copy(&bytes);
-        crate::counters::count(crate::counters::Counter::image_decodes);
-        if let Some(img) = Image::from_encoded(data) {
+        if let Some(img) = decode_image(&bytes) {
             // 4. Cache
             let mut cache = self.image_cache.lock().unwrap();
             cache.insert(path.to_string(), img.clone());
@@ -134,6 +132,14 @@ impl AssetManager {
 
         Ok(blob)
     }
+}
+
+/// Wraps encoded image bytes in a lazy Skia image, which decodes its pixels
+/// when first drawn. Share one through `FrameSources::image` so every copy
+/// paints the same decode.
+pub fn decode_image(bytes: &[u8]) -> Option<Image> {
+    crate::counters::count(crate::counters::Counter::image_decodes);
+    Image::from_encoded(Data::new_copy(bytes))
 }
 
 #[cfg(test)]

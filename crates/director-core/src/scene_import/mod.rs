@@ -131,6 +131,23 @@ impl ImportContext<'_> {
     }
 
     /// The bytes of asset `id`: decoded base64, or the file through the loader.
+    /// Names an asset's content for the shared caches of `FrameSources`: a
+    /// file by its path and stamp, other bytes by their hash, so an embedded
+    /// image matches the bytes a compiler decoded.
+    pub fn content_key(&self, id: &str) -> Result<String, ImportError> {
+        let record = self.document.asset(id).ok_or_else(|| ImportError::Asset {
+            id: id.to_string(),
+            reason: "missing from the asset table".to_string(),
+        })?;
+        Ok(match &record.source {
+            AssetSource::Path { path } => match self.assets.loader.media_path(path) {
+                Some(file) => crate::video_wrapper::file_key(&file),
+                None => crate::video_wrapper::bytes_key(&self.asset_bytes(id)?),
+            },
+            AssetSource::Embedded { .. } => crate::video_wrapper::bytes_key(&self.asset_bytes(id)?),
+        })
+    }
+
     pub fn asset_bytes(&self, id: &str) -> Result<Vec<u8>, ImportError> {
         let record = self.document.asset(id).ok_or_else(|| ImportError::Asset {
             id: id.to_string(),

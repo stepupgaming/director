@@ -740,6 +740,7 @@ fn build(
         RenderMode::Export,
         None,
     );
+    director.assets.video_sources = assets.sources.clone();
     (director.samples_per_frame, director.shutter_angle) = motion_blur(root)?;
     load_fonts(&mut director, &css.fonts, &assets)?;
     let timeline = if probing { BTreeMap::new() } else { crate::timeline::collect(dom, &beats)? };
@@ -748,7 +749,6 @@ fn build(
         css,
         options,
         ids: BTreeMap::new(),
-        images: HashMap::new(),
         errors: Vec::new(),
         nodes: 0,
         assets,
@@ -808,7 +808,6 @@ struct Builder {
     css: Css,
     options: CompileOptions,
     ids: BTreeMap<String, NodeId>,
-    images: HashMap<String, skia_safe::Image>,
     errors: Vec<crate::Diagnostic>,
     nodes: usize,
     assets: Arc<AssetStore>,
@@ -1270,6 +1269,15 @@ enum Level {
 }
 
 impl Builder {
+    /// Names a media `src` for the shared caches of the compiled director's
+    /// `FrameSources`: a file by its path and stamp, a data URI by its hash.
+    fn media_key(&self, src: &str) -> Result<String, CompileError> {
+        Ok(match src.starts_with("data:") {
+            false => director_core::video_wrapper::file_key(&self.assets.media_path(src)?),
+            true => director_core::video_wrapper::bytes_key(src.as_bytes()),
+        })
+    }
+
     /// Whether GSAP or the timeline animates `el`.
     fn animated(&self, el: ElementRef<'_>) -> bool {
         let path = crate::timeline::element_path(el, self.root_element);
@@ -1580,18 +1588,21 @@ impl Builder {
                         "responsive srcset requires extraction".into(),
                     ));
                 }
-                let image = if let Some(image) = self.images.get(src) {
-                    image.clone()
-                } else {
-                    let bytes = self.assets.read(src)?;
-                    director_core::counters::count(director_core::counters::Counter::image_decodes);
-                    let image =
-                        skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))
-                            .ok_or_else(|| CompileError::Input(format!("invalid image '{src}'")))?;
-                    self.images.insert(src.into(), image.clone());
-                    image
+                // Decoded once for the compile and every import of its
+                // document. A file keeps its path, so the document names it.
+                let data = src.starts_with("data:");
+                let key = match data {
+                    true => director_core::video_wrapper::bytes_key(&self.assets.read(src)?),
+                    false => director_core::video_wrapper::file_key(&self.assets.media_path(src)?),
                 };
-                let mut image = ImageNode::from_image(Some(image));
+                let image = self.assets.sources.image(&key, || {
+                    director_core::systems::assets::decode_image(&self.assets.read(src)?)
+                        .ok_or_else(|| CompileError::Input(format!("invalid image '{src}'")))
+                })?;
+                let mut image = match data {
+                    true => ImageNode::from_image(Some(image)),
+                    false => ImageNode::from_image_with_path(Some(image), src),
+                };
                 image.object_fit = fit(&values);
                 image.object_position = paint.object_position;
                 Some(Box::new(image))
@@ -1878,10 +1889,7 @@ impl Builder {
                 }
                 // Decoded once for the compile and every import that shares
                 // the compiled director's sources.
-                let key = match src.starts_with("data:") {
-                    false => director_core::video_wrapper::file_key(&self.assets.media_path(src)?),
-                    true => director_core::video_wrapper::bytes_key(src.as_bytes()),
-                };
+                let key = self.media_key(src)?;
                 let sources = self.director.assets.video_sources.clone();
                 let samples = sources.audio_samples(&key, media_start, 48000, || -> Result<Vec<f32>, CompileError> {
                     let mut samples = match self.beats.take_decoded(src) {

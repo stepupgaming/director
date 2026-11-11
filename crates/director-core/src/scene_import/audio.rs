@@ -5,8 +5,7 @@ use crate::audio::{load_audio_bytes, AudioMixer, AudioTrack};
 use crate::audio_effects::{
     AudioEffect, AudioEffectChain, BiquadEQ, BiquadType, Compressor, Delay, EffectParamAnimation, Reverb,
 };
-use crate::video_wrapper::{bytes_key, file_key};
-use director_scene::{AssetSource, AudioMix};
+use director_scene::AudioMix;
 
 /// Rebuild `mix` into `mixer`, keeping each track at its slot.
 pub(super) fn import_audio(mix: &AudioMix, mixer: &mut AudioMixer, cx: &ImportContext) -> Result<(), ImportError> {
@@ -79,13 +78,7 @@ fn content_key(id: &str, cx: &ImportContext) -> Result<String, ImportError> {
         id: id.to_string(),
         reason: "missing from the asset table".to_string(),
     })?;
-    let key = match &record.source {
-        AssetSource::Path { path } => match cx.assets.loader.media_path(path) {
-            Some(file) => file_key(&file),
-            None => bytes_key(&cx.asset_bytes(id)?),
-        },
-        AssetSource::Embedded { base64 } => bytes_key(base64.as_bytes()),
-    };
+    let key = cx.content_key(id)?;
     Ok(if record.media_type == "audio/x-f32le" { format!("f32le|{key}") } else { key })
 }
 

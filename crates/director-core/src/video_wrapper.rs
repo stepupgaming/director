@@ -1278,6 +1278,8 @@ pub struct FrameSources {
     started: Arc<AtomicU64>,
     audio: Arc<Mutex<HashMap<AudioKey, Weak<Vec<f32>>>>>,
     audio_decoded: Arc<AtomicU64>,
+    images: Arc<Mutex<HashMap<String, skia_safe::Image>>>,
+    images_decoded: Arc<AtomicU64>,
 }
 
 /// Content key, skipped source seconds as bits, and sample rate of decoded audio.
@@ -1293,7 +1295,7 @@ fn file_stamp(path: &Path) -> Option<FileStamp> {
     Some((metadata.len(), metadata.modified().ok()?))
 }
 
-/// Names the content of a media file for [`FrameSources::audio_samples`]:
+/// Names the content of a media file for [`FrameSources::audio_samples`] and [`FrameSources::image`]:
 /// its resolved path, size and modification time.
 pub fn file_key(path: &Path) -> String {
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -1304,6 +1306,14 @@ pub fn file_key(path: &Path) -> String {
         }
         None => format!("file|{}", resolved.display()),
     }
+}
+
+/// The `file|<path>` part of a stamped [`file_key`], so a new stamp of a
+/// file replaces the old one.
+fn file_identity(key: &str) -> Option<&str> {
+    let mut fields = key.rsplitn(3, '|');
+    let (_, _, path) = (fields.next()?, fields.next()?, fields.next()?);
+    (key.starts_with("file|") && path.contains('|')).then_some(path)
 }
 
 /// Names bytes without a file for [`FrameSources::audio_samples`] by their
@@ -1369,6 +1379,32 @@ impl FrameSources {
     /// Audio assets this registry has decoded.
     pub fn audio_decoded(&self) -> u64 {
         self.audio_decoded.load(Ordering::Relaxed)
+    }
+
+    /// The image under content `key` ([`file_key`] or [`bytes_key`]),
+    /// decoded by `decode` on first use, so every import and compile that
+    /// shares this registry paints one decoded copy. An image stays while
+    /// the registry lives; a new stamp of the same file replaces it.
+    pub fn image<E>(
+        &self,
+        key: &str,
+        decode: impl FnOnce() -> std::result::Result<skia_safe::Image, E>,
+    ) -> std::result::Result<skia_safe::Image, E> {
+        let mut images = self.images.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(image) = images.get(key) {
+            return Ok(image.clone());
+        }
+        let image = decode()?;
+        self.images_decoded.fetch_add(1, Ordering::Relaxed);
+        let file = file_identity(key);
+        images.retain(|held, _| file.is_none() || file_identity(held) != file);
+        images.insert(key.to_string(), image.clone());
+        Ok(image)
+    }
+
+    /// Images this registry has decoded.
+    pub fn images_decoded(&self) -> u64 {
+        self.images_decoded.load(Ordering::Relaxed)
     }
 }
 
@@ -1745,6 +1781,29 @@ mod tests {
             .output()
             .expect("ffprobe must be installed for encoder tests");
         assert_eq!(String::from_utf8_lossy(&probe.stdout).split_whitespace().collect::<Vec<_>>(), ["video", "audio"]);
+    }
+
+    #[test]
+    fn an_image_decodes_once_per_content_and_a_new_stamp_replaces_it() {
+        let pixels = |color| {
+            let mut surface = skia_safe::surfaces::raster_n32_premul((2, 2)).unwrap();
+            surface.canvas().clear(color);
+            surface.image_snapshot()
+        };
+        let sources = FrameSources::default();
+        let first = sources.image("file|C:/a.png|10|1", || Ok::<_, ()>(pixels(skia_safe::Color::RED))).unwrap();
+        let again = sources.image("file|C:/a.png|10|1", || -> Result<_, ()> { panic!("decoded twice") }).unwrap();
+        assert_eq!(first.unique_id(), again.unique_id());
+        sources.image("file|C:/b.png|10|1", || Ok::<_, ()>(pixels(skia_safe::Color::BLUE))).unwrap();
+        sources.image("bytes|4|00ff", || Ok::<_, ()>(pixels(skia_safe::Color::GREEN))).unwrap();
+        let edited = sources.image("file|C:/a.png|12|2", || Ok::<_, ()>(pixels(skia_safe::Color::BLACK))).unwrap();
+        assert_ne!(edited.unique_id(), first.unique_id());
+        assert_eq!(sources.images_decoded(), 4);
+        let held = sources.images.lock().unwrap();
+        let mut keys: Vec<_> = held.keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["bytes|4|00ff", "file|C:/a.png|12|2", "file|C:/b.png|10|1"], "the edit replaces the old stamp");
+        assert_eq!(super::file_identity("file|C:/a.png"), None, "an unstamped key keeps its entry");
     }
 
     #[test]

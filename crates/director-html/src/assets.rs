@@ -14,6 +14,8 @@ pub(crate) struct AssetStore {
     bytes: Mutex<BTreeMap<String, Arc<Vec<u8>>>>,
     media: Mutex<Option<tempfile::TempDir>>,
     dependencies: Mutex<BTreeSet<PathBuf>>,
+    /// Decoded media the compile and the imports of its document share.
+    pub sources: director_core::video_wrapper::FrameSources,
 }
 
 pub(crate) struct AssetSnapshot {
@@ -29,6 +31,7 @@ impl AssetStore {
             bytes: Mutex::new(BTreeMap::new()),
             media: Mutex::new(None),
             dependencies: Mutex::new(BTreeSet::new()),
+            sources: Default::default(),
         }
     }
 
@@ -61,6 +64,7 @@ impl AssetStore {
             bytes: Mutex::new(bytes),
             media: Mutex::new(None),
             dependencies: Mutex::new(BTreeSet::new()),
+            sources: Default::default(),
         })
     }
 

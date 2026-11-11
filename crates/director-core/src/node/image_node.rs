@@ -3,7 +3,7 @@ use crate::element::Element;
 use crate::errors::RenderError;
 use crate::node::calculate_object_fit_rect_at;
 use crate::types::{ObjectFit, ObjectPosition};
-use skia_safe::{Canvas, ClipOp, Color4f, Data, Image, Paint, Rect, RRect};
+use skia_safe::{Canvas, ClipOp, Color4f, Image, Paint, Rect, RRect};
 use std::any::Any;
 use taffy::style::Style;
 
@@ -23,8 +23,7 @@ pub struct ImageNode {
 
 impl ImageNode {
     pub fn new(data: Vec<u8>) -> Self {
-        crate::counters::count(crate::counters::Counter::image_decodes);
-        let image = Image::from_encoded(Data::new_copy(&data));
+        let image = crate::systems::assets::decode_image(&data);
         Self {
             image,
             opacity: Animated::new(1.0),

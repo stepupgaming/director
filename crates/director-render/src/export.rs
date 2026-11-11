@@ -380,6 +380,7 @@ pub fn export_director_with(
     Renderer::new(Arc::new(document?), director.assets.loader.clone())
         .with_registry(registry)
         .with_render_mode(director.render_mode)
+        .with_frame_sources(director.assets.video_sources.clone())
         .export_options(path, options, gpu)?;
     Ok(())
 }
