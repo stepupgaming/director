@@ -12,7 +12,7 @@ use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::hash::Hash;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufWriter, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -869,6 +869,10 @@ pub fn decode_sessions_started() -> u64 {
     crate::counters::snapshot().decode_sessions
 }
 
+/// Frames the reader thread of a decode session holds ahead of its requests,
+/// so the pipe keeps moving while the requesters paint.
+const READ_AHEAD: usize = 4;
+
 /// A persistent `ffmpeg` decode pipe for one video source.
 ///
 /// Export renders in timeline order, so the common case is a sequential read
@@ -877,7 +881,11 @@ pub fn decode_sessions_started() -> u64 {
 /// session at the new position.
 struct DecodeSession {
     child: std::process::Child,
-    reader: BufReader<std::process::ChildStdout>,
+    /// Frames its reader thread has read, in order. Closed at the stream's end.
+    frames: Option<Receiver<std::io::Result<Vec<u8>>>>,
+    /// Buffers handed back for the reader's next frames.
+    spare: Sender<Vec<u8>>,
+    reader: Option<thread::JoinHandle<()>>,
     /// Source frame index the session's first frame carries.
     start_index: u64,
     /// Source frame index the next `read_frame` call will return.
@@ -885,7 +893,7 @@ struct DecodeSession {
 }
 
 impl DecodeSession {
-    fn start(path: &Path, seek_time: f64, start_index: u64) -> Result<Self> {
+    fn start(path: &Path, seek_time: f64, start_index: u64, frame_len: usize) -> Result<Self> {
         let mut child = FFmpegDriver::command()
             .arg("-ss")
             .arg(seek_time.max(0.0).to_string())
@@ -906,33 +914,65 @@ impl DecodeSession {
             let _ = child.wait();
             return Err(anyhow::anyhow!("ffmpeg decoder stdout unavailable"));
         };
+        let (frame_tx, frames) = bounded(READ_AHEAD);
+        let (spare, spare_rx) = unbounded::<Vec<u8>>();
+        let mut pipe = stdout;
+        let reader = thread::spawn(move || loop {
+            let mut buffer = spare_rx.try_recv().unwrap_or_else(|_| vec![0; frame_len]);
+            let read = match pipe.read_exact(&mut buffer) {
+                Ok(()) => {
+                    crate::counters::count(crate::counters::Counter::frames_decoded);
+                    crate::counters::add(crate::counters::Counter::decoded_bytes, buffer.len() as u64);
+                    Ok(buffer)
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => Err(e),
+            };
+            let failed = read.is_err();
+            if frame_tx.send(read).is_err() || failed {
+                break;
+            }
+        });
         Ok(Self {
             child,
-            reader: BufReader::new(stdout),
+            frames: Some(frames),
+            spare,
+            reader: Some(reader),
             start_index,
             next_index: start_index,
         })
     }
 
-    /// The next frame read into `buffer`, or `None` once the stream has ended.
-    fn read_frame(&mut self, mut buffer: Vec<u8>) -> Result<Option<Vec<u8>>> {
-        match self.reader.read_exact(&mut buffer) {
-            Ok(()) => {
+    /// The next frame, or `None` once the stream has ended. `buffer` goes
+    /// back to the reader for a later frame.
+    fn read_frame(&mut self, buffer: Vec<u8>) -> Result<Option<Vec<u8>>> {
+        let _ = self.spare.send(buffer);
+        match self.frames.as_ref().map(Receiver::recv) {
+            Some(Ok(Ok(frame))) => {
                 self.next_index += 1;
-                crate::counters::count(crate::counters::Counter::frames_decoded);
-                crate::counters::add(crate::counters::Counter::decoded_bytes, buffer.len() as u64);
-                Ok(Some(buffer))
+                Ok(Some(frame))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
-            Err(e) => Err(e).with_context(|| format!("ffmpeg decode pipe failed at source frame {}", self.next_index)),
+            Some(Ok(Err(e))) => {
+                Err(e).with_context(|| format!("ffmpeg decode pipe failed at source frame {}", self.next_index))
+            }
+            _ => Ok(None),
         }
     }
 }
 
 impl Drop for DecodeSession {
     fn drop(&mut self) {
+        // Frames read ahead that nobody took. Closing the channel frees a
+        // reader waiting to hand one over.
+        if let Some(frames) = self.frames.take() {
+            let unread = frames.try_iter().filter(Result::is_ok).count();
+            crate::counters::add(crate::counters::Counter::frames_discarded, unread as u64);
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
     }
 }
 
@@ -1016,7 +1056,7 @@ impl FrameSource {
     fn start_session(&self, index: u64) -> Result<DecodeSession> {
         // Seek to the exact frame-grid time, not the raw request time.
         let seek = crate::timeline::frame_to_time(index, self.fps);
-        let session = DecodeSession::start(&self.path, seek, index)?;
+        let session = DecodeSession::start(&self.path, seek, index, self.frame_len)?;
         self.started.fetch_add(1, Ordering::Relaxed);
         Ok(session)
     }
@@ -1870,7 +1910,7 @@ mod tests {
     fn decode_session_drop_stops_a_live_child() {
         let (_dir, src) = video_fixture("30");
         let session =
-            DecodeSession::start(&src, 0.0, 0).expect("decode session");
+            DecodeSession::start(&src, 0.0, 0, (TEST_WIDTH * TEST_HEIGHT * 4) as usize).expect("decode session");
         let pid = session.child.id();
         assert!(process_exists(pid), "session must own a live FFmpeg child");
         drop(session);
