@@ -9,11 +9,17 @@
 //! checks every frame the same way and checks that nothing paints outside the
 //! band. A frame that fails ends the attempt and the caller exports again,
 //! over the whole frame for a band miss and through the full paint otherwise.
+//!
+//! When the only sound is the base video's own audio, playing unchanged in
+//! step with its frames, FFmpeg takes that audio from the base video too: it
+//! copies AAC from the start of the source and encodes anything else, and the
+//! engine neither mixes nor pipes audio.
 
 use crate::{Frame, FrameSession, RenderError, Renderer};
 use director_core::passthrough::Punch;
 use director_core::timeline::{audio_samples_per_video_frame, frame_to_time};
-use director_core::video_wrapper::{Encoder, EncoderSettings, Underlay};
+use director_core::video_wrapper::{Encoder, EncoderSettings, Underlay, UnderlayAudio};
+use director_scene::{AssetSource, NodeBody};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
@@ -152,6 +158,37 @@ impl Renderer {
         Ok(Ok(Base { first, band, paint, session: Mutex::new(Some(session)) }))
     }
 
+    /// How the base video's audio reaches the output when it is the whole
+    /// mix: one track of the base video's file at unity gain and center pan,
+    /// without effects, loop or nested compositions, starting at the source
+    /// time under the first frame and playing through the last.
+    fn base_audio(&self, base: &Base, times: &[f64]) -> Option<UnderlayAudio> {
+        let document = &self.document;
+        let codec = base.first.audio.as_deref()?;
+        let [track] = document.audio.tracks.as_slice() else { return None };
+        if document.nodes.iter().any(|node| matches!(node.body, NodeBody::Composition(_))) {
+            return None;
+        }
+        let constant = |channel: &director_scene::Channel, value: f32| channel.keyframes.iter().all(|key| key.value == value);
+        if !constant(&track.volume, 1.0) || !constant(&track.pan, 0.5) || !track.effects.is_empty() || !track.param_animations.is_empty() || track.loop_audio {
+            return None;
+        }
+        let asset = document.assets.iter().find(|asset| asset.id == track.asset)?;
+        let AssetSource::Path { path } = &asset.source else { return None };
+        let file = self.loader.media_path(path)?;
+        if std::fs::canonicalize(file).ok()? != std::fs::canonicalize(&base.first.path).ok()? {
+            return None;
+        }
+        let (first, last) = (*times.first()?, *times.last()? + 1.0 / document.fps.max(1e-6));
+        let seek = frame_to_time(base.first.index, base.first.fps);
+        let in_step = (track.source_start + first - track.start_time - seek).abs() < 1e-3;
+        let through = track.duration.is_none_or(|duration| track.start_time + duration >= last - 1e-3);
+        if first < track.start_time - 1e-3 || !in_step || !through {
+            return None;
+        }
+        Some(if codec == "aac" && base.first.index == 0 { UnderlayAudio::Copy } else { UnderlayAudio::Encode })
+    }
+
     /// Export the frames at `times` over `base` with `settings` for the whole
     /// output. Anything but [`Outcome::Done`] leaves nothing at `path`.
     pub(crate) fn export_over(
@@ -168,6 +205,7 @@ impl Renderer {
         // pool holds the workers that keep ahead of the encoder, two at least.
         let enough = ((base.paint * PAINT_RATE).ceil() as usize).max(2);
         let workers = options.workers.unwrap_or_else(|| self.pool_for(times.len()).workers().min(enough)).max(1);
+        let audio = self.base_audio(base, times);
         let settings = EncoderSettings {
             width: width as usize,
             height: base.band.1,
@@ -179,6 +217,7 @@ impl Renderer {
             seek: frame_to_time(base.first.index, base.first.fps),
             offset: (0, base.band.0),
             frames: times.len(),
+            audio,
         }));
         let (full_tx, full_rx) = mpsc::channel::<Option<(usize, Frame)>>();
         let (empty_tx, empty_rx) = mpsc::channel::<Frame>();
@@ -193,14 +232,15 @@ impl Renderer {
             let (failed, broken) = (&failed, &broken);
             let progress = options.progress.clone();
             let writer = scope.spawn(move || -> anyhow::Result<()> {
-                let silent = self.document.audio.tracks.is_empty();
-                let mut encoder = if silent {
-                    Encoder::video_only(path, settings)?
-                } else {
+                // The engine mixes the sound unless there is none or FFmpeg takes it from the base.
+                let mixed = !self.document.audio.tracks.is_empty() && audio.is_none();
+                let mut encoder = if mixed {
                     Encoder::with_audio_input(path, settings)?
+                } else {
+                    Encoder::video_only(path, settings)?
                 };
                 let written = (|| {
-                    if !silent {
+                    if mixed {
                         let mut audio = self.import()?;
                         let block = audio_samples_per_video_frame(audio.audio_mixer.sample_rate, fps, 1);
                         encoder.send_audio(times.iter().flat_map(|&time| audio.mix_audio(block, time)).collect())?;

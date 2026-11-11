@@ -20,6 +20,8 @@ pub struct Punch {
     /// Probed source frames per second.
     pub fps: f64,
     pub color: crate::video_wrapper::SourceColor,
+    /// Codec of the source's first audio stream.
+    pub audio: Option<std::sync::Arc<str>>,
 }
 
 struct Frame {

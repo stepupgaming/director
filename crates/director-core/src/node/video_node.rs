@@ -225,6 +225,7 @@ impl VideoNode {
             index: crate::timeline::video_source_frame_index(seek_time.max(0.0), self.source_fps),
             fps: self.source_fps,
             color,
+            audio: decoder.audio(),
         });
         true
     }

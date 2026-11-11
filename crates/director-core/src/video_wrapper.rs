@@ -130,6 +130,17 @@ pub struct Underlay {
     pub offset: (usize, usize),
     /// Output frames to write.
     pub frames: usize,
+    /// The source's own audio as the output's sound, from `seek` on.
+    pub audio: Option<UnderlayAudio>,
+}
+
+/// How an underlay's first audio stream reaches the output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnderlayAudio {
+    /// Packets as they are, for AAC from the start of the source.
+    Copy,
+    /// Encoded with the output's audio codec.
+    Encode,
 }
 
 /// Software x264 preset and CRF. Draft is ultrafast / 30. The default is slow / 18.
@@ -693,7 +704,15 @@ impl Encoder {
                 .arg(dest);
             AudioSink::Input(input)
         } else if mode == AudioMode::Silent {
-            cmd.arg("-map").arg(video_map).arg(dest);
+            cmd.arg("-map").arg(video_map);
+            if let Some((underlay, audio)) = underlay.and_then(|underlay| Some((underlay, underlay.audio?))) {
+                cmd.arg("-map").arg("1:a:0").arg("-t").arg((underlay.frames as f64 / settings.fps).to_string());
+                match audio {
+                    UnderlayAudio::Copy => cmd.arg("-c:a").arg("copy"),
+                    UnderlayAudio::Encode => cmd.arg("-c:a").arg(audio_codec).arg("-b:a").arg(AUDIO_BITRATE),
+                };
+            }
+            cmd.arg(dest);
             AudioSink::Silent
         } else {
             cmd.arg("-map").arg(video_map).arg(&video_temp_path);
@@ -1245,6 +1264,7 @@ pub struct SharedSource {
     height: u32,
     fps: f64,
     color: Option<SourceColor>,
+    audio: Option<Arc<str>>,
     frames: Mutex<FrameSource>,
 }
 
@@ -1256,6 +1276,7 @@ impl SharedSource {
             height: probed.height,
             fps: probed.fps,
             color: probed.color,
+            audio: probed.audio.clone(),
             frames: Mutex::new(FrameSource::new(path, &probed, started)?),
         })
     }
@@ -1497,7 +1518,7 @@ impl Drop for ThreadedDecoder {
 ///
 /// The frame rate drives `video_seek_time` quantization in `VideoNode`, so a
 /// 24/25/29.97/60 fps source must not be sampled on an assumed 30 fps grid.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct VideoProbe {
     pub width: u32,
     pub height: u32,
@@ -1506,6 +1527,8 @@ pub struct VideoProbe {
     pub fps: f64,
     /// Set for a source an encoder takes as decoded.
     pub color: Option<SourceColor>,
+    /// Codec of the first audio stream, such as `aac`.
+    pub audio: Option<Arc<str>>,
 }
 
 /// Matrix and range of an 8-bit 4:2:0 source without alpha, whose frames an
@@ -1586,9 +1609,9 @@ pub fn grid_rate(nominal: Option<f64>, average: Option<f64>) -> Option<f64> {
 /// Probes size, color and frame rate through one ffprobe run.
 pub fn probe_video(path: &Path) -> Result<VideoProbe> {
     let output = ffprobe()
-        .args(["-v", "error", "-select_streams", "v:0", "-show_entries"])
-        .arg("stream=width,height,pix_fmt,color_range,color_space,r_frame_rate,avg_frame_rate")
-        .args(["-of", "default=noprint_wrappers=1"])
+        .args(["-v", "error", "-show_entries"])
+        .arg("stream=codec_type,codec_name,width,height,pix_fmt,color_range,color_space,r_frame_rate,avg_frame_rate")
+        .args(["-of", "default"])
         .arg(path)
         .output()?;
     let probed = parse_probe(&String::from_utf8_lossy(&output.stdout))
@@ -1600,21 +1623,29 @@ pub fn probe_video(path: &Path) -> Result<VideoProbe> {
     Ok(probed)
 }
 
-/// Reads ffprobe's `key=value` lines of a video stream. `fps` is NaN when
-/// the stream reports no usable rate. Keys it does not ask for, such as side
-/// data, are ignored.
+/// Reads ffprobe's `key=value` lines of the first video stream and the codec
+/// of the first audio stream, from `[STREAM]` sections or from the lines of
+/// one video stream. `fps` is NaN when the stream reports no usable rate.
+/// Keys it does not ask for, such as side data, are ignored.
 pub fn parse_probe(out: &str) -> Option<VideoProbe> {
-    let field = |key: &str| out.lines().find_map(|line| line.trim().strip_prefix(key)?.strip_prefix('=')).map(str::trim);
+    let lookup = |section: &str, key: &str| -> Option<String> {
+        section.lines().find_map(|line| line.trim().strip_prefix(key)?.strip_prefix('=')).map(|value| value.trim().to_string())
+    };
+    let sections: Vec<&str> = out.split("[STREAM]").filter(|section| !section.trim().is_empty()).collect();
+    let typed = |kind: &str| sections.iter().copied().find(|section| lookup(section, "codec_type").as_deref() == Some(kind));
+    let video = typed("video").or_else(|| sections.first().copied().filter(|section| lookup(section, "codec_type").is_none()))?;
+    let audio = typed("audio").and_then(|section| lookup(section, "codec_name")).map(Arc::from);
+    let field = |key: &str| lookup(video, key);
     let width = field("width")?.parse().ok()?;
     let height = field("height")?.parse().ok()?;
-    let rate = |key| field(key).and_then(parse_frame_rate);
+    let rate = |key| field(key).as_deref().and_then(parse_frame_rate);
     let fps = grid_rate(rate("r_frame_rate"), rate("avg_frame_rate")).unwrap_or(f64::NAN);
     let color = source_color(
-        field("pix_fmt").unwrap_or(""),
-        field("color_range").unwrap_or(""),
-        field("color_space").unwrap_or(""),
+        field("pix_fmt").as_deref().unwrap_or(""),
+        field("color_range").as_deref().unwrap_or(""),
+        field("color_space").as_deref().unwrap_or(""),
     );
-    Some(VideoProbe { width, height, fps, color })
+    Some(VideoProbe { width, height, fps, color, audio })
 }
 
 pub fn probe(path: &Path) -> Result<(u32, u32)> {
@@ -1668,6 +1699,11 @@ impl SyncDecoder {
     /// Set for a source an encoder takes as decoded.
     pub fn color(&self) -> Option<SourceColor> {
         self.source.color
+    }
+
+    /// Codec of the source's first audio stream.
+    pub fn audio(&self) -> Option<Arc<str>> {
+        self.source.audio.clone()
     }
 
     /// The frame at `time`, or the last frame once `time` is past the end.
@@ -1837,6 +1873,14 @@ mod tests {
         assert!(rgb.fps.is_nan() && rgb.color.is_none(), "no rate and no color an encoder takes as decoded");
         assert!(parse_probe("height=48\n").is_none());
         assert!(parse_probe("").is_none());
+        assert!(probed.audio.is_none() && rgb.audio.is_none());
+        let streams = "[STREAM]\r\ncodec_name=aac\r\ncodec_type=audio\r\nr_frame_rate=0/0\r\n[/STREAM]\r\n\
+            [STREAM]\r\ncodec_name=h264\r\ncodec_type=video\r\nwidth=128\r\nheight=96\r\npix_fmt=yuv420p\r\nr_frame_rate=30/1\r\navg_frame_rate=30/1\r\n[/STREAM]\r\n\
+            [STREAM]\r\ncodec_name=opus\r\ncodec_type=audio\r\n[/STREAM]\r\n";
+        let probed = parse_probe(streams).unwrap();
+        assert_eq!((probed.width, probed.height, probed.fps), (128, 96, 30.0), "the video stream after an audio stream");
+        assert_eq!(probed.audio.as_deref(), Some("aac"), "the first audio stream");
+        assert!(parse_probe("[STREAM]\ncodec_type=audio\ncodec_name=aac\n[/STREAM]\n").is_none(), "no video stream");
     }
 
     #[test]

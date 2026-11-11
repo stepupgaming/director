@@ -191,3 +191,72 @@ fn scenes_outside_the_passthrough_shape_paint_in_full() {
         assert!(exports.over == exports.full, "{name} exports the same frames either way");
     }
 }
+
+/// Decoded 16-bit stereo samples of the first audio stream of `path`.
+fn samples(path: &Path) -> Vec<i16> {
+    let output = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(path)
+        .args(["-map", "0:a:0", "-f", "s16le", "-ac", "2", "-ar", "48000", "-"])
+        .output()
+        .expect("FFmpeg runs");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    output.stdout.as_chunks::<2>().0.iter().map(|pair| i16::from_le_bytes(*pair)).collect()
+}
+
+fn audio_codec(path: &Path) -> String {
+    let output = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .expect("FFprobe runs");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[test]
+fn the_base_videos_own_audio_goes_from_ffmpeg_input_to_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path();
+    clips(dir);
+    // The same clip with stereo PCM audio.
+    let result = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(dir.join("clip.mp4"))
+        .args(["-c:v", "copy", "-c:a", "pcm_s16le", "-ac", "2"])
+        .arg(dir.join("clip.mov"))
+        .output()
+        .expect("FFmpeg runs");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let own = |src: &str, extra: &str| {
+        format!("{}<audio src='{src}' data-start='0'{extra}></audio><div class='caption'></div>", VIDEO.replace("clip.mp4", src))
+    };
+    // Name, body, source, and the level against the source of a track
+    // encoded again. AAC from the start of the source keeps its packets.
+    let cases = [
+        ("AAC from the start of the source", own("clip.mp4", ""), "clip.mp4", None),
+        ("PCM", own("clip.mov", ""), "clip.mov", Some(1.0)),
+        ("a quieter track the engine mixes", own("clip.mov", " data-volume='0.5'"), "clip.mov", Some(0.5)),
+    ];
+    let options = ExportOptions { workers: Some(2), ..ExportOptions::new(EncoderMode::Software) };
+    for (name, body, source, level) in cases {
+        let renderer = build(dir, &body, SIZE);
+        let out = dir.join("audio.mp4");
+        renderer.export_options(&out, &options, None).unwrap();
+        assert_eq!(renderer.frame_sources().sessions_started(), 0, "{name}: the engine decodes no video frame");
+        assert_eq!(audio_codec(&out), "aac", "{name}");
+        let (exported, source) = (samples(&out), samples(&dir.join(source)));
+        // Three seconds of stereo, within one AAC frame.
+        assert!(exported.len().abs_diff(3 * 48000 * 2) <= 1024 * 2, "{name}: {} samples", exported.len());
+        let Some(level) = level else {
+            assert!(source.starts_with(&exported), "{name}: the copied packets decode to the source's samples");
+            continue;
+        };
+        let dot = |a: &[i16], b: &[i16]| a.iter().zip(b).map(|(a, b)| *a as f64 * *b as f64).sum::<f64>();
+        let n = exported.len().min(source.len());
+        let (a, b) = (&exported[..n], &source[..n]);
+        let step = dot(a, b) / (dot(a, a) * dot(b, b)).sqrt();
+        assert!(step > 0.99, "{name}: the output stays in step with the source, correlation {step}");
+        let ratio = (dot(a, a) / dot(b, b)).sqrt();
+        assert!((ratio - level).abs() < 0.02, "{name}: level {ratio} of the source");
+    }
+}
