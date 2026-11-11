@@ -666,7 +666,7 @@ pub(crate) fn probe(
     let entries = builder.probe.take().unwrap_or_default();
     let director = &mut builder.director;
     director.push_scene_root(root_id, builder.options.duration);
-    director.update(0.0, None);
+    director.update_motion(0.0);
     director_core::systems::layout::LayoutEngine::default().compute_layout(
         &mut director.scene,
         director.width,
@@ -2828,6 +2828,9 @@ impl Element for LoopedVideo {
     }
     fn update(&mut self, time: f64) -> bool {
         self.node.update(looped_media_time(time, self.duration))
+    }
+    fn update_motion(&mut self, time: f64) -> bool {
+        self.node.update_motion(looped_media_time(time, self.duration))
     }
     fn render(
         &self,

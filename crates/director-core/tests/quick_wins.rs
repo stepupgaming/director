@@ -131,7 +131,7 @@ fn set_layout_style_updates_box_text_effect_shape_and_composition() {
 
 fn track(samples: Vec<f32>, loop_audio: bool, duration: Option<f64>) -> AudioTrack {
     AudioTrack {
-        samples,
+        samples: samples.into(),
         volume: Animated::new(1.0),
         pan: Animated::new(0.0),
         effects: AudioEffectChain::new(),

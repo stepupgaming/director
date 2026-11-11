@@ -132,8 +132,8 @@ pub fn peak_rss_bytes() -> u64 {
         fn GetCurrentProcess() -> isize;
         fn K32GetProcessMemoryInfo(process: isize, counters: *mut ProcessMemoryCounters, size: u32) -> i32;
     }
-    let mut counters = ProcessMemoryCounters::default();
-    counters.cb = std::mem::size_of::<ProcessMemoryCounters>() as u32;
+    let mut counters =
+        ProcessMemoryCounters { cb: std::mem::size_of::<ProcessMemoryCounters>() as u32, ..Default::default() };
     // SAFETY: the struct matches PROCESS_MEMORY_COUNTERS and `cb` holds its size.
     let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
     if ok != 0 {

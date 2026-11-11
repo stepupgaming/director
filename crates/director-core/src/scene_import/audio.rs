@@ -59,8 +59,18 @@ pub(super) fn import_audio(mix: &AudioMix, mixer: &mut AudioMixer, cx: &ImportCo
 }
 
 /// Interleaved stereo samples: decoded f32 bytes, or a media file decoded at
-/// `sample_rate` with `source_start` seconds skipped.
-fn samples(id: &str, source_start: f64, sample_rate: u32, cx: &ImportContext) -> Result<Vec<f32>, ImportError> {
+/// `sample_rate` with `source_start` seconds skipped. Imports of one renderer
+/// share them.
+fn samples(
+    id: &str,
+    source_start: f64,
+    sample_rate: u32,
+    cx: &ImportContext,
+) -> Result<std::sync::Arc<Vec<f32>>, ImportError> {
+    cx.assets.video_sources.audio_samples(id, source_start, sample_rate, || decode(id, source_start, sample_rate, cx))
+}
+
+fn decode(id: &str, source_start: f64, sample_rate: u32, cx: &ImportContext) -> Result<Vec<f32>, ImportError> {
     let record = cx.document.asset(id).ok_or_else(|| ImportError::Asset {
         id: id.to_string(),
         reason: "missing from the asset table".to_string(),

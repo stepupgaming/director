@@ -207,7 +207,7 @@ fn captured_audio_is_one_track_across_samples() {
         .flatten()
         .collect();
     assert_eq!(tracks.len(), 1);
-    assert_eq!(tracks[0].samples, expected);
+    assert_eq!(*tracks[0].samples, expected);
     assert_eq!(tracks[0].start_time, 0.0);
     assert_eq!(tracks[0].duration, Some(1.0));
     assert!(tracks[0].loop_audio);

@@ -334,6 +334,132 @@ impl HtmlElement {
         content
     }
 }
+impl HtmlElement {
+    /// `update`, decoding the frame of a painted video when `media_frames` is set.
+    fn update_state(&mut self, time: f64, media_frames: bool) -> bool {
+        self.time = time;
+        let old_style = self.style.clone();
+        self.style = self.base_style.clone();
+        self.paint = self.base_paint.clone();
+        let mut parts = None;
+        for animation in &self.animations {
+            animation.apply(time, &mut self.style, &mut self.paint, &mut parts);
+        }
+        if let Some(parts) = parts {
+            self.paint.transform = parts.compose();
+        }
+        if self.animations.iter().any(|a| a.properties().any(|p| crate::animation::is_filter(p) || crate::animation::is_grade(p))) {
+            self.paint.filter = crate::style::paint_filter(&self.paint);
+        }
+        let mut relayout = false;
+        if let Some(content) = &mut self.content {
+            if let Some(text) = content
+                .as_any_mut()
+                .downcast_mut::<director_core::node::TextNode>()
+            {
+                let recolor = text.default_color.current_value != self.paint.color;
+                if recolor {
+                    text.default_color = director_core::animation::Animated::new(self.paint.color);
+                }
+                let text_size =
+                    |p: &PaintStyle| (p.font_size, p.letter_spacing, p.line_height, p.word_spacing, p.span_variations());
+                let (base, size) = (text_size(&self.base_paint), text_size(&self.paint));
+                let sized = (size != base).then(|| size.clone());
+                if self.paint.text != self.shown_text || sized != self.shown_size {
+                    let own = self.own_spans.get_or_insert_with(|| text.spans.clone());
+                    text.spans = match &self.paint.text {
+                        Some(shown) => crate::compiler::text_spans(shown, &self.paint),
+                        // Spans at the element's own size, spacings and line height
+                        // inherit the animated ones; spans that set their own keep them.
+                        None => own
+                            .iter()
+                            .cloned()
+                            .map(|mut span| {
+                                if span.font_size == Some(base.0) {
+                                    span.font_size = Some(size.0);
+                                }
+                                if span.letter_spacing == Some(base.1) {
+                                    span.letter_spacing = Some(size.1);
+                                }
+                                if span.line_height == base.2 {
+                                    span.line_height = size.2;
+                                }
+                                if span.word_spacing == Some(base.3) {
+                                    span.word_spacing = Some(size.3);
+                                }
+                                if span.font_variations == base.4 {
+                                    span.font_variations = size.4.clone();
+                                }
+                                span
+                            })
+                            .collect(),
+                    };
+                    self.shown_text = self.paint.text.clone();
+                    self.shown_size = sized;
+                    relayout = true;
+                }
+                let stroke = (self.paint.text_stroke_width, self.paint.text_stroke_color);
+                let base_stroke = (self.base_paint.text_stroke_width, self.base_paint.text_stroke_color);
+                let restroke = stroke != self.shown_stroke.unwrap_or(base_stroke);
+                if restroke {
+                    self.shown_stroke = Some(stroke);
+                }
+                if recolor || relayout || restroke {
+                    crate::compiler::prepare_paragraph(text, &self.paint);
+                    self.held_boxes = None;
+                }
+                // Text shadows paint from the node at draw time.
+                let same = |a: &TextShadow, b: &TextShadow| a.color == b.color && a.blur == b.blur && a.offset == b.offset;
+                let shadows = &self.paint.text_shadows;
+                if text.shadows.len() != shadows.len() || text.shadows.iter().zip(shadows).any(|(a, b)| !same(a, b)) {
+                    text.shadows = shadows.clone();
+                }
+            }
+            let media = |t: f64| self.media_start + (t - self.start).max(0.0) * self.playback_rate;
+            if let Some(model) = content.as_any_mut().downcast_mut::<director_3d::ModelNode>() {
+                model.view = self.paint.camera;
+                // The model's shutter sweeps its orbit to where the camera
+                // channels stand at the close.
+                if model.shutter > 0.0 {
+                    let close = time + model.shutter;
+                    let (mut style, mut paint, mut parts) = (self.base_style.clone(), self.base_paint.clone(), None);
+                    for animation in &self.animations {
+                        if animation.properties().any(crate::animation::is_camera) {
+                            animation.apply(close, &mut style, &mut paint, &mut parts);
+                        }
+                    }
+                    model.close = Some((media(close), paint.camera));
+                }
+            }
+            // A video that paints nothing now decodes nothing: `render` skips
+            // it, and the next frame it shows seeks to its own time.
+            let painted = !self.hidden
+                && self.paint.visible
+                && self.paint.opacity > 0.0
+                && time >= self.start
+                && time < self.end;
+            if (painted && media_frames) || !matches!(content.kind(), "video" | "html_video") {
+                content.update(media(time));
+            }
+        }
+        // An animated atomic box publishes its live margin box for its text line.
+        if let Some(InlineLink::Box(flow, slot, sizing)) = self.inline.clone() {
+            if !self.animations.is_empty() {
+                if relayout || self.atomic_text.is_none() {
+                    self.atomic_text = Some(self.inline_text_metrics());
+                }
+                let placeholder = self.place_atomic(sizing, self.atomic_text.flatten());
+                let mut sizes = flow.sizes.lock().unwrap();
+                if sizes.len() <= slot {
+                    sizes.resize(slot + 1, None);
+                }
+                sizes[slot] = Some(placeholder);
+            }
+        }
+        relayout || self.style != old_style
+    }
+}
+
 impl Element for HtmlElement {
     fn kind(&self) -> &'static str {
         "html"
@@ -516,126 +642,10 @@ impl Element for HtmlElement {
         Some((x + margin_px(self.style.margin.left), y + margin_px(self.style.margin.top)))
     }
     fn update(&mut self, time: f64) -> bool {
-        self.time = time;
-        let old_style = self.style.clone();
-        self.style = self.base_style.clone();
-        self.paint = self.base_paint.clone();
-        let mut parts = None;
-        for animation in &self.animations {
-            animation.apply(time, &mut self.style, &mut self.paint, &mut parts);
-        }
-        if let Some(parts) = parts {
-            self.paint.transform = parts.compose();
-        }
-        if self.animations.iter().any(|a| a.properties().any(|p| crate::animation::is_filter(p) || crate::animation::is_grade(p))) {
-            self.paint.filter = crate::style::paint_filter(&self.paint);
-        }
-        let mut relayout = false;
-        if let Some(content) = &mut self.content {
-            if let Some(text) = content
-                .as_any_mut()
-                .downcast_mut::<director_core::node::TextNode>()
-            {
-                let recolor = text.default_color.current_value != self.paint.color;
-                if recolor {
-                    text.default_color = director_core::animation::Animated::new(self.paint.color);
-                }
-                let text_size =
-                    |p: &PaintStyle| (p.font_size, p.letter_spacing, p.line_height, p.word_spacing, p.span_variations());
-                let (base, size) = (text_size(&self.base_paint), text_size(&self.paint));
-                let sized = (size != base).then(|| size.clone());
-                if self.paint.text != self.shown_text || sized != self.shown_size {
-                    let own = self.own_spans.get_or_insert_with(|| text.spans.clone());
-                    text.spans = match &self.paint.text {
-                        Some(shown) => crate::compiler::text_spans(shown, &self.paint),
-                        // Spans at the element's own size, spacings and line height
-                        // inherit the animated ones; spans that set their own keep them.
-                        None => own
-                            .iter()
-                            .cloned()
-                            .map(|mut span| {
-                                if span.font_size == Some(base.0) {
-                                    span.font_size = Some(size.0);
-                                }
-                                if span.letter_spacing == Some(base.1) {
-                                    span.letter_spacing = Some(size.1);
-                                }
-                                if span.line_height == base.2 {
-                                    span.line_height = size.2;
-                                }
-                                if span.word_spacing == Some(base.3) {
-                                    span.word_spacing = Some(size.3);
-                                }
-                                if span.font_variations == base.4 {
-                                    span.font_variations = size.4.clone();
-                                }
-                                span
-                            })
-                            .collect(),
-                    };
-                    self.shown_text = self.paint.text.clone();
-                    self.shown_size = sized;
-                    relayout = true;
-                }
-                let stroke = (self.paint.text_stroke_width, self.paint.text_stroke_color);
-                let base_stroke = (self.base_paint.text_stroke_width, self.base_paint.text_stroke_color);
-                let restroke = stroke != self.shown_stroke.unwrap_or(base_stroke);
-                if restroke {
-                    self.shown_stroke = Some(stroke);
-                }
-                if recolor || relayout || restroke {
-                    crate::compiler::prepare_paragraph(text, &self.paint);
-                    self.held_boxes = None;
-                }
-                // Text shadows paint from the node at draw time.
-                let same = |a: &TextShadow, b: &TextShadow| a.color == b.color && a.blur == b.blur && a.offset == b.offset;
-                let shadows = &self.paint.text_shadows;
-                if text.shadows.len() != shadows.len() || text.shadows.iter().zip(shadows).any(|(a, b)| !same(a, b)) {
-                    text.shadows = shadows.clone();
-                }
-            }
-            let media = |t: f64| self.media_start + (t - self.start).max(0.0) * self.playback_rate;
-            if let Some(model) = content.as_any_mut().downcast_mut::<director_3d::ModelNode>() {
-                model.view = self.paint.camera;
-                // The model's shutter sweeps its orbit to where the camera
-                // channels stand at the close.
-                if model.shutter > 0.0 {
-                    let close = time + model.shutter;
-                    let (mut style, mut paint, mut parts) = (self.base_style.clone(), self.base_paint.clone(), None);
-                    for animation in &self.animations {
-                        if animation.properties().any(crate::animation::is_camera) {
-                            animation.apply(close, &mut style, &mut paint, &mut parts);
-                        }
-                    }
-                    model.close = Some((media(close), paint.camera));
-                }
-            }
-            // A video that paints nothing now decodes nothing: `render` skips
-            // it, and the next frame it shows seeks to its own time.
-            let painted = !self.hidden
-                && self.paint.visible
-                && self.paint.opacity > 0.0
-                && time >= self.start
-                && time < self.end;
-            if painted || !matches!(content.kind(), "video" | "html_video") {
-                content.update(media(time));
-            }
-        }
-        // An animated atomic box publishes its live margin box for its text line.
-        if let Some(InlineLink::Box(flow, slot, sizing)) = self.inline.clone() {
-            if !self.animations.is_empty() {
-                if relayout || self.atomic_text.is_none() {
-                    self.atomic_text = Some(self.inline_text_metrics());
-                }
-                let placeholder = self.place_atomic(sizing, self.atomic_text.flatten());
-                let mut sizes = flow.sizes.lock().unwrap();
-                if sizes.len() <= slot {
-                    sizes.resize(slot + 1, None);
-                }
-                sizes[slot] = Some(placeholder);
-            }
-        }
-        relayout || self.style != old_style
+        self.update_state(time, true)
+    }
+    fn update_motion(&mut self, time: f64) -> bool {
+        self.update_state(time, false)
     }
     fn pre_layout(&mut self) -> bool {
         let Some(InlineLink::Text(flow)) = &self.inline else {

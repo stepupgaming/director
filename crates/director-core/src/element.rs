@@ -143,6 +143,13 @@ pub trait Element: std::fmt::Debug + ElementClone {
     /// * `true` if the element's visual appearance changed (requiring a repaint).
     fn update(&mut self, time: f64) -> bool;
 
+    /// `update` for a pass that reads motion and paints nothing, such as style
+    /// policy scoring. An element skips the work only painting needs, such as
+    /// decoding a video frame.
+    fn update_motion(&mut self, time: f64) -> bool {
+        self.update(time)
+    }
+
     /// Runs after every node's `update` and before layout, one node at a time,
     /// so an element can read what other nodes published while they updated in
     /// parallel. Returns `true` when its layout must be measured again. HTML

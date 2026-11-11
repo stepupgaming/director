@@ -448,7 +448,7 @@ impl Director {
     /// Adds a global audio track that plays independently of scenes.
     pub fn add_global_audio(&mut self, samples: Vec<f32>) -> usize {
         let track = AudioTrack {
-            samples,
+            samples: samples.into(),
             volume: crate::animation::Animated::new(1.0),
             pan: crate::animation::Animated::new(0.5),
             effects: crate::audio_effects::AudioEffectChain::new(),
@@ -569,7 +569,7 @@ impl Director {
     /// Adds an audio track synchronized to a specific scene's start time.
     pub fn add_scene_audio(&mut self, samples: Vec<f32>, start_time: f64, duration: f64) -> usize {
         let track = AudioTrack {
-            samples,
+            samples: samples.into(),
             volume: crate::animation::Animated::new(1.0),
             pan: crate::animation::Animated::new(0.5),
             effects: crate::audio_effects::AudioEffectChain::new(),
@@ -681,6 +681,16 @@ impl Director {
     /// required for correct rendering (see [`Director::expand_dirty_set`]).
     #[instrument(level = "debug", skip(self), fields(time = global_time))]
     pub fn update(&mut self, global_time: f64, dirty: Option<&std::collections::HashSet<NodeId>>) {
+        self.update_pass(global_time, dirty, false);
+    }
+
+    /// `update` for a pass that reads motion and paints nothing: every active
+    /// node runs `Element::update_motion`, so no video frame decodes.
+    pub fn update_motion(&mut self, global_time: f64) {
+        self.update_pass(global_time, None, true);
+    }
+
+    fn update_pass(&mut self, global_time: f64, dirty: Option<&std::collections::HashSet<NodeId>>, motion: bool) {
         // Pass 1: Mark active nodes and set local time
         let active_roots = self.collect_active_roots(global_time);
 
@@ -727,7 +737,8 @@ impl Director {
                         return;
                     }
                 }
-                if node.element.update(node.local_time) {
+                let changed = if motion { node.element.update_motion(node.local_time) } else { node.element.update(node.local_time) };
+                if changed {
                     node.dirty_style = true;
                 }
                 node.update_generation = node.update_generation.wrapping_add(1);

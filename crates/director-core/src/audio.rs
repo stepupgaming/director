@@ -32,7 +32,7 @@ use symphonia::core::probe::Hint;
 #[derive(Clone, Debug)]
 pub struct AudioTrack {
     /// Interleaved stereo samples (L, R, L, R...). Normalized -1.0 to 1.0.
-    pub samples: Vec<f32>,
+    pub samples: Arc<Vec<f32>>,
     /// Volume multiplier (animated).
     pub volume: Animated<f32>,
     /// Stereo pan 0..1 (0=full left, 0.5=center, 1=full right). Animated.
@@ -648,7 +648,7 @@ mod tests {
     fn test_mixing_logic() {
         let mut mixer = AudioMixer::new(48000);
         let track = AudioTrack {
-            samples: vec![0.5; 48000 * 2],
+            samples: vec![0.5; 48000 * 2].into(),
             volume: Animated::new(1.0),
             pan: Animated::new(0.5),
             effects: AudioEffectChain::new(),

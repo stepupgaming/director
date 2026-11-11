@@ -698,6 +698,9 @@ impl Element for SharedVideo {
     fn animate_property(&mut self, _: &str, _: f32, _: f32, _: f64, _: &str) -> Result<(), String> {
         Err("captured timelines are immutable".into())
     }
+    fn update_motion(&mut self, _time: f64) -> bool {
+        false
+    }
     fn update(&mut self, time: f64) -> bool {
         let mut node = self.node.lock().unwrap();
         node.object_fit = self.object_fit;

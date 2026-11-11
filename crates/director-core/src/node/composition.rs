@@ -89,6 +89,15 @@ impl Element for CompositionNode {
         self.style = style;
     }
 
+    fn update_motion(&mut self, time: f64) -> bool {
+        let mut d = match self.internal_director.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        d.update_motion(time - self.start_offset);
+        true
+    }
+
     fn update(&mut self, time: f64) -> bool {
         let comp_time = time - self.start_offset;
         let mut d = match self.internal_director.lock() {

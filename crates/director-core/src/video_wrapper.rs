@@ -839,10 +839,15 @@ pub enum VideoResponse {
     Error(String),
 }
 
-/// Frames cached per decode cursor of a source. Covers freeze frames, the
-/// motion-blur sub-samples that re-request nearby timestamps and export
-/// workers that ask for neighbouring frames out of order.
-const MAX_CACHED_FRAMES: usize = 8;
+/// Fewest frames cached per decode cursor of a source. Covers freeze frames
+/// and the motion-blur sub-samples that re-request nearby timestamps.
+const MIN_CACHED_FRAMES: usize = 8;
+/// Most frames cached per decode cursor. Export workers ask for neighbouring
+/// frames out of order, and a request behind the cache restarts a decoder.
+const MAX_CACHED_FRAMES: usize = 32;
+/// Bytes the cache of one cursor may hold between those bounds: 32 frames at
+/// 1080p and 8 at 4K.
+const CACHE_BYTES: usize = 256 << 20;
 /// Sequential reads farther ahead than this restart the decode pipe instead
 /// of discarding intermediate frames one by one.
 const MAX_SKIP_AHEAD: u64 = 60;
@@ -853,6 +858,11 @@ const MAX_CURSORS: usize = 6;
 const IDLE_REQUESTS: u64 = 240;
 /// Spare frame buffers a source keeps for the next reads.
 const SPARE_BUFFERS: usize = 4;
+
+/// Frames one cursor of a source with `frame_len` byte frames caches.
+fn cache_frames(frame_len: usize) -> usize {
+    (CACHE_BYTES / frame_len).clamp(MIN_CACHED_FRAMES, MAX_CACHED_FRAMES)
+}
 
 /// FFmpeg decode sessions this process has started, for waste reports.
 pub fn decode_sessions_started() -> u64 {
@@ -938,7 +948,7 @@ struct Cursor {
 }
 
 /// The frames of one source by index: up to [`MAX_CURSORS`] decode pipes at
-/// different positions, a cache of [`MAX_CACHED_FRAMES`] frames per cursor
+/// different positions, a cache of `cached` frames per cursor
 /// and the stream's end once a read runs past it. A request reads from the
 /// nearest cursor at or up to [`MAX_SKIP_AHEAD`] frames before it, or opens
 /// a cursor at its frame, closing the least recently used one when all are
@@ -951,6 +961,8 @@ struct FrameSource {
     cursors: Vec<Cursor>,
     /// Requests served, the clock of `Cursor::used`.
     requests: u64,
+    /// Frames the cache holds per cursor, from [`CACHE_BYTES`].
+    cached: usize,
     cache: HashMap<u64, Arc<Vec<u8>>>,
     order: VecDeque<u64>,
     /// Buffers of evicted or skipped frames, reused by the next reads.
@@ -975,6 +987,7 @@ impl FrameSource {
             frame_len,
             cursors: Vec::new(),
             requests: 0,
+            cached: cache_frames(frame_len),
             cache: HashMap::new(),
             order: VecDeque::new(),
             spare: Vec::new(),
@@ -1024,7 +1037,7 @@ impl FrameSource {
         }
         self.cache.insert(index, frame);
         self.order.push_back(index);
-        while self.order.len() > MAX_CACHED_FRAMES * self.cursors.len().max(1) {
+        while self.order.len() > self.cached * self.cursors.len().max(1) {
             let Some(old) = self.order.pop_front() else { break };
             if let Some(frame) = self.cache.remove(&old).and_then(|frame| Arc::try_unwrap(frame).ok()) {
                 self.recycle(frame);
@@ -1077,7 +1090,7 @@ impl FrameSource {
                 }
                 // A skipped frame just before the target may be the next
                 // request of a worker running behind; farther ones go back.
-                Ok(Some(bytes)) if index - read < MAX_CACHED_FRAMES as u64 && !self.cache.contains_key(&read) => {
+                Ok(Some(bytes)) if index - read < self.cached as u64 && !self.cache.contains_key(&read) => {
                     self.cache_insert(read, Arc::new(bytes));
                 }
                 Ok(Some(bytes)) => {
@@ -1157,7 +1170,12 @@ impl SharedSource {
 pub struct FrameSources {
     sources: Arc<Mutex<HashMap<PathBuf, Weak<SharedSource>>>>,
     started: Arc<AtomicU64>,
+    audio: Arc<Mutex<HashMap<AudioKey, Weak<Vec<f32>>>>>,
+    audio_decoded: Arc<AtomicU64>,
 }
+
+/// Asset id, skipped source seconds as bits, and sample rate of decoded audio.
+type AudioKey = (String, u64, u32);
 
 impl FrameSources {
     /// The open source of `path`, probed on first use.
@@ -1182,6 +1200,34 @@ impl FrameSources {
     /// FFmpeg decode sessions the sources of this registry have started.
     pub fn sessions_started(&self) -> u64 {
         self.started.load(Ordering::Relaxed)
+    }
+
+    /// Decoded samples of audio asset `id` of the one document this registry
+    /// serves, with `source_start` seconds skipped at `sample_rate`. `decode`
+    /// runs for the first import and again once every track holding the
+    /// samples is gone; imports that arrive meanwhile wait for it.
+    pub fn audio_samples<E>(
+        &self,
+        id: &str,
+        source_start: f64,
+        sample_rate: u32,
+        decode: impl FnOnce() -> std::result::Result<Vec<f32>, E>,
+    ) -> std::result::Result<Arc<Vec<f32>>, E> {
+        let key = (id.to_string(), source_start.to_bits(), sample_rate);
+        let mut audio = self.audio.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(samples) = audio.get(&key).and_then(Weak::upgrade) {
+            return Ok(samples);
+        }
+        let samples = Arc::new(decode()?);
+        self.audio_decoded.fetch_add(1, Ordering::Relaxed);
+        audio.retain(|_, samples| samples.strong_count() > 0);
+        audio.insert(key, Arc::downgrade(&samples));
+        Ok(samples)
+    }
+
+    /// Audio assets this registry has decoded.
+    pub fn audio_decoded(&self) -> u64 {
+        self.audio_decoded.load(Ordering::Relaxed)
     }
 }
 
@@ -1465,7 +1511,7 @@ impl VideoLoader {
 mod tests {
     use super::{
         libavcodec_version, parse_frame_rate, parse_video_size, DecodeSession, FFmpegDriver, FrameSources,
-        RenderMode, SyncDecoder, ThreadedDecoder, VideoResponse, IDLE_REQUESTS, MAX_CACHED_FRAMES, MAX_CURSORS,
+        RenderMode, SyncDecoder, ThreadedDecoder, VideoResponse, cache_frames, IDLE_REQUESTS, MAX_CACHED_FRAMES, MAX_CURSORS, MIN_CACHED_FRAMES,
         MAX_SKIP_AHEAD,
     };
     use std::sync::atomic::Ordering;
@@ -1673,24 +1719,26 @@ mod tests {
     fn check_sync_decoder(rate: &str, fps: f64) {
         let (_dir, src) = video_fixture(rate);
         let mut decoder = SyncDecoder::new(src).expect("decoder");
+        // The fixture's small frames would cache the most; test eviction at the least.
+        decoder.source.frames().cached = MIN_CACHED_FRAMES;
         assert!((decoder.source_fps() - fps).abs() < 1e-6);
         assert_decoded_frame(&mut decoder, 0);
         let first = pids(&decoder);
         assert_eq!(first.len(), 1);
-        for index in 1..=MAX_CACHED_FRAMES as u64 {
+        for index in 1..=MIN_CACHED_FRAMES as u64 {
             assert_decoded_frame(&mut decoder, index);
             assert_eq!(pids(&decoder), first, "sequential decode must reuse the child process");
         }
         {
             let source = decoder.source.frames();
-            assert_eq!(source.cache.len(), MAX_CACHED_FRAMES);
+            assert_eq!(source.cache.len(), MIN_CACHED_FRAMES);
             assert!(!source.cache.contains_key(&0), "the oldest frame must leave the cache");
         }
         let next = |decoder: &SyncDecoder| {
             decoder.source.frames().cursors.iter().map(|cursor| cursor.session.next_index).collect::<Vec<_>>()
         };
         let before = next(&decoder);
-        assert_decoded_frame(&mut decoder, MAX_CACHED_FRAMES as u64);
+        assert_decoded_frame(&mut decoder, MIN_CACHED_FRAMES as u64);
         assert_eq!(next(&decoder), before, "cache hit must not consume the pipe");
 
         // An uncached backward seek opens a second cursor and keeps the first.
@@ -1700,7 +1748,7 @@ mod tests {
         assert!(both.contains(&first[0]), "backward seek must keep the first cursor");
 
         // A small forward skip reads on from the nearest cursor behind it.
-        let near = MAX_CACHED_FRAMES as u64 + 4;
+        let near = MIN_CACHED_FRAMES as u64 + 4;
         assert_decoded_frame(&mut decoder, near);
         assert_eq!(pids(&decoder), both, "small forward skip must reuse a pipe");
         let far = near + MAX_SKIP_AHEAD + 10;
@@ -1714,6 +1762,14 @@ mod tests {
         for pid in three {
             assert_process_exited(pid);
         }
+    }
+
+    #[test]
+    fn the_frame_cache_of_a_cursor_follows_its_byte_budget() {
+        assert_eq!(cache_frames(64 * 64 * 4), MAX_CACHED_FRAMES);
+        assert_eq!(cache_frames(1920 * 1080 * 4), 32);
+        assert_eq!(cache_frames(2560 * 1440 * 4), 18);
+        assert_eq!(cache_frames(3840 * 2160 * 4), MIN_CACHED_FRAMES);
     }
 
     #[test]

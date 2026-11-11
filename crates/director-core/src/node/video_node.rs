@@ -185,6 +185,12 @@ impl Element for VideoNode {
         self.opacity.current_value = opacity;
     }
 
+    fn update_motion(&mut self, time: f64) -> bool {
+        self.opacity.update(time);
+        self.border_radius.update(time);
+        false
+    }
+
     fn update(&mut self, time: f64) -> bool {
         self.opacity.update(time);
         self.border_radius.update(time);

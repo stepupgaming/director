@@ -24,7 +24,7 @@ fn clip(dir: &Path) {
 }
 
 /// Seven elements of `clip.mkv`. Four paint the source at the timeline time
-/// and one paints it a second behind. The fully transparent and the hidden
+/// and one paints it 1.5 seconds behind, farther than a cursor caches. The fully transparent and the hidden
 /// element would play 1.5 seconds ahead, but they paint nothing.
 fn build(dir: &Path) -> Renderer {
     let html = "<style>body{margin:0}video{position:absolute;width:32px;height:32px}</style>
@@ -34,7 +34,7 @@ fn build(dir: &Path) -> Renderer {
         <video muted src='clip.mkv' data-start='0' data-duration='1.5' data-media-start='1.5' style='left:96px;top:0;opacity:0'></video>
         <video muted src='clip.mkv' data-start='0' data-duration='1.5' data-media-start='1.5' style='left:0;top:32px;visibility:hidden'></video>
         <video muted src='clip.mkv' data-start='2' data-duration='1' data-media-start='2' style='left:32px;top:32px'></video>
-        <video muted src='clip.mkv' data-start='1' data-duration='2' style='left:64px;top:32px'></video>";
+        <video muted src='clip.mkv' data-start='1.5' data-duration='1.5' style='left:64px;top:32px'></video>";
     let options = CompileOptions {
         width: 128,
         height: 64,
@@ -43,6 +43,8 @@ fn build(dir: &Path) -> Renderer {
         ..Default::default()
     };
     let compiled = compile(html, options).unwrap();
+    // Compiling scores the style policy over the timeline, which reads motion only.
+    assert_eq!(compiled.director.assets.video_sources.sessions_started(), 0, "compiling decodes no frame");
     let mut registry = ImportRegistry::core();
     register_import(&mut registry);
     Renderer::new(Arc::new(export_scene(&compiled.director).unwrap()), compiled.director.assets.loader.clone())
@@ -80,7 +82,10 @@ fn export_workers_share_their_decoders() {
         let path = temp.path().join(format!("out{workers}.mp4"));
         renderer.export_with(&path, EncoderMode::Software, Some(workers)).unwrap();
         let started = renderer.frame_sources().sessions_started();
-        assert!(started <= 4, "{workers} workers started {started} decoders for two positions");
+        // Workers ask for their first frames in any order, and a request
+        // behind a cursor opens another, so each position starts at most one
+        // decoder per worker.
+        assert!(started <= 2 * workers as u64, "{workers} workers started {started} decoders for two positions");
         assert_eq!(renderer.frame_sources().open_sources(), 0, "export must close its sources");
         let output = std::process::Command::new("ffmpeg")
             .args(["-hide_banner", "-loglevel", "error", "-i"])
@@ -92,4 +97,32 @@ fn export_workers_share_their_decoders() {
         String::from_utf8(output.stdout).unwrap()
     };
     assert_eq!(framemd5(4), framemd5(1));
+}
+
+#[test]
+fn export_workers_and_the_writer_decode_an_audio_track_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let result = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
+        .args(["sine=frequency=440:sample_rate=48000:duration=1"])
+        .arg(temp.path().join("tone.wav"))
+        .output()
+        .expect("FFmpeg must be installed for native media tests");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let html = "<style>body{margin:0;background:#246}</style><audio src='tone.wav' data-start='0'></audio>";
+    let options = CompileOptions {
+        width: 64,
+        height: 64,
+        duration: 1.0,
+        base_dir: temp.path().into(),
+        ..Default::default()
+    };
+    let compiled = compile(html, options).unwrap();
+    let document = export_scene(&compiled.director).unwrap();
+    assert_eq!(document.audio.tracks.len(), 1);
+    let mut registry = ImportRegistry::core();
+    register_import(&mut registry);
+    let renderer = Renderer::new(Arc::new(document), compiled.director.assets.loader.clone()).with_registry(registry);
+    renderer.export_with(&temp.path().join("out.mp4"), EncoderMode::Software, Some(4)).unwrap();
+    assert_eq!(renderer.frame_sources().audio_decoded(), 1, "four workers and the writer share one decode");
 }
