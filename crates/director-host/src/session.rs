@@ -442,6 +442,7 @@ impl Session {
             "sampled_elements": self.sampled.as_ref().map(|sampled| sampled.at(time)),
             "missing_required_fonts": self.missing_fonts,
             "audio_tracks": audio_tracks,
+            "work": director_core::counters::snapshot(),
         }))
     }
 

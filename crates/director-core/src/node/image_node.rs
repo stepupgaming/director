@@ -23,6 +23,7 @@ pub struct ImageNode {
 
 impl ImageNode {
     pub fn new(data: Vec<u8>) -> Self {
+        crate::counters::count(crate::counters::Counter::image_decodes);
         let image = Image::from_encoded(Data::new_copy(&data));
         Self {
             image,

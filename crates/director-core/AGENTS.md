@@ -429,6 +429,12 @@ five 640x360 premultiplied RGBA frames per workload via
 - `add_video` paints picture only and adds no audio track; HTML `<video>` must be `muted`. A clip's own sound plays through `add_audio` on the same path.
 - Unit tests in `src/audio.rs` cover AAC in MP4 after an H.264 track, AC-3 in Matroska through FFmpeg and a silent video; `tests/audio_api.rs` covers `add_audio` on an MP4. They need FFmpeg in PATH.
 
+## Work counters
+
+- `src/counters.rs` holds process-wide counters for waste reports: ffprobe and FFmpeg spawns, video decode sessions, frames decoded, discarded and presented, decoded bytes, document imports, audio and image decodes, paragraphs shaped, surface readbacks and the memory peak. `counters::snapshot()` returns `WorkCounts`; subtract two for the work between them. Its `Display` is the one-line `work:` report.
+- Spawn FFmpeg through `FFmpegDriver::command()` and ffprobe through `video_wrapper::ffprobe()` so the spawn counts. New decode, import, shaping and readback paths call `counters::count`.
+- Tests share one process, so a guarding test asserts a scoped count such as `FrameSources::sessions_started`, or a floor on a snapshot difference.
+
 ## Video decoder lifecycle and verification
 
 - `src/video_wrapper.rs`: `DecodeSession` owns its FFmpeg child and kills/reaps it on drop, including read errors and restarts. Drop the old session before spawning its replacement.

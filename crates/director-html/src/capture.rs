@@ -434,6 +434,7 @@ fn build(
             image.clone()
         } else {
             let bytes = store.read(data)?;
+            director_core::counters::count(director_core::counters::Counter::image_decodes);
             let image = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))
                 .ok_or_else(|| CompileError::Input("invalid captured image".into()))?;
             images.insert(src.clone(), image.clone());

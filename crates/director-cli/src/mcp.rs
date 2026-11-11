@@ -318,6 +318,7 @@ impl Server {
             "revision": session.revision(),
             "duration": session.duration(),
             "bytes": std::fs::metadata(&output).map(|metadata| metadata.len()).ok(),
+            "work": director_core::counters::snapshot(),
         })))
     }
 }

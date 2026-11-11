@@ -35,7 +35,7 @@ impl FFmpegDriver {
     }
 
     fn check() -> Result<()> {
-        let output = Command::new("ffmpeg")
+        let output = Self::command()
             .arg("-version")
             .output()
             .context("Failed to execute 'ffmpeg'. Is it in your PATH?")?;
@@ -55,6 +55,18 @@ impl FFmpegDriver {
     pub fn binary() -> &'static str {
         "ffmpeg"
     }
+
+    /// An FFmpeg command, counted as a spawn.
+    pub fn command() -> Command {
+        crate::counters::count(crate::counters::Counter::ffmpeg_spawns);
+        Command::new(Self::binary())
+    }
+}
+
+/// An ffprobe command, counted as a spawn.
+pub fn ffprobe() -> Command {
+    crate::counters::count(crate::counters::Counter::ffprobe_spawns);
+    Command::new("ffprobe")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -184,7 +196,7 @@ pub fn detect_available_encoders() -> Vec<&'static str> {
 const AUDIO_BITRATE: &str = "256k";
 
 fn test_encoder_available(encoder: &str) -> bool {
-    let output = Command::new(FFmpegDriver::binary())
+    let output = FFmpegDriver::command()
         .arg("-encoders")
         .output();
 
@@ -200,7 +212,7 @@ fn test_encoder_available(encoder: &str) -> bool {
 /// Test if encoder actually works by running a test encode.
 fn test_encoder_works(encoder: &str) -> bool {
     // Try to run ffmpeg with the encoder to verify it actually works
-    let output = Command::new(FFmpegDriver::binary())
+    let output = FFmpegDriver::command()
         .arg("-f")
         .arg("lavfi")
         .arg("-i")
@@ -258,7 +270,7 @@ fn select_best_encoder() -> &'static str {
 
 /// Detect why an encoder failed and return a helpful message.
 pub fn detect_encoder_failure_reason(encoder: &str) -> Option<String> {
-    let output = Command::new(FFmpegDriver::binary())
+    let output = FFmpegDriver::command()
         .arg("-f")
         .arg("lavfi")
         .arg("-i")
@@ -503,7 +515,7 @@ impl Encoder {
         };
         let audio_path = temp_dir.join(format!("director_aud_{}.raw", uuid));
 
-        let mut cmd = Command::new(FFmpegDriver::binary());
+        let mut cmd = FFmpegDriver::command();
         cmd.args(QUIET)
             .arg("-y")
             .arg("-f")
@@ -720,7 +732,7 @@ impl Encoder {
         // 3. Mux
         // ffmpeg -y -i video.mp4 -f f32le -ar 48000 -ac 2 -i audio.raw -c:v copy -c:a aac output.mp4
         tracing::info!("Muxing audio and video...");
-        let mux_status = Command::new(FFmpegDriver::binary())
+        let mux_status = FFmpegDriver::command()
             .args(QUIET)
             .arg("-y")
             .arg("-i")
@@ -781,7 +793,7 @@ impl ProxyManager {
 
         tracing::info!("Generating I-frame proxy for: {:?}", original);
         // Using -g 1 for all-intra (instant seek)
-        let status = Command::new(FFmpegDriver::binary())
+        let status = FFmpegDriver::command()
             .arg("-i")
             .arg(original)
             .arg("-vf")
@@ -842,12 +854,9 @@ const IDLE_REQUESTS: u64 = 240;
 /// Spare frame buffers a source keeps for the next reads.
 const SPARE_BUFFERS: usize = 4;
 
-/// FFmpeg decode sessions started in this process.
-static SESSIONS_STARTED: AtomicU64 = AtomicU64::new(0);
-
 /// FFmpeg decode sessions this process has started, for waste reports.
 pub fn decode_sessions_started() -> u64 {
-    SESSIONS_STARTED.load(Ordering::Relaxed)
+    crate::counters::snapshot().decode_sessions
 }
 
 /// A persistent `ffmpeg` decode pipe for one video source.
@@ -867,7 +876,7 @@ struct DecodeSession {
 
 impl DecodeSession {
     fn start(path: &Path, seek_time: f64, start_index: u64) -> Result<Self> {
-        let mut child = Command::new(FFmpegDriver::binary())
+        let mut child = FFmpegDriver::command()
             .arg("-ss")
             .arg(seek_time.max(0.0).to_string())
             .arg("-i")
@@ -881,7 +890,7 @@ impl DecodeSession {
             .stderr(Stdio::null())
             .spawn()
             .with_context(|| format!("Failed to spawn ffmpeg decoder for {}", path.display()))?;
-        SESSIONS_STARTED.fetch_add(1, Ordering::Relaxed);
+        crate::counters::count(crate::counters::Counter::decode_sessions);
         let Some(stdout) = child.stdout.take() else {
             let _ = child.kill();
             let _ = child.wait();
@@ -900,6 +909,8 @@ impl DecodeSession {
         match self.reader.read_exact(&mut buffer) {
             Ok(()) => {
                 self.next_index += 1;
+                crate::counters::count(crate::counters::Counter::frames_decoded);
+                crate::counters::add(crate::counters::Counter::decoded_bytes, buffer.len() as u64);
                 Ok(Some(buffer))
             }
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
@@ -1069,7 +1080,10 @@ impl FrameSource {
                 Ok(Some(bytes)) if index - read < MAX_CACHED_FRAMES as u64 && !self.cache.contains_key(&read) => {
                     self.cache_insert(read, Arc::new(bytes));
                 }
-                Ok(Some(bytes)) => self.recycle(bytes),
+                Ok(Some(bytes)) => {
+                    crate::counters::count(crate::counters::Counter::frames_discarded);
+                    self.recycle(bytes)
+                }
                 Ok(None) => {
                     let session = self.cursors.swap_remove(slot).session;
                     if session.next_index > session.start_index {
@@ -1173,7 +1187,7 @@ impl FrameSources {
 
 /// The container duration in seconds from ffprobe.
 fn probe_duration(path: &Path) -> Option<f64> {
-    let output = Command::new("ffprobe")
+    let output = ffprobe()
         .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
         .arg(path)
         .output()
@@ -1304,7 +1318,7 @@ pub fn parse_frame_rate(token: &str) -> Option<f64> {
 
 fn probe_frame_rate(path: &Path) -> f64 {
     for entry in ["avg_frame_rate", "r_frame_rate"] {
-        let output = Command::new("ffprobe")
+        let output = ffprobe()
             .arg("-v")
             .arg("error")
             .arg("-select_streams")
@@ -1333,7 +1347,7 @@ fn probe_frame_rate(path: &Path) -> f64 {
 
 /// Probes dimensions and source frame rate via ffprobe.
 pub fn probe_video(path: &Path) -> Result<VideoProbe> {
-    let output = Command::new("ffprobe")
+    let output = ffprobe()
         .arg("-v")
         .arg("error")
         .arg("-select_streams")

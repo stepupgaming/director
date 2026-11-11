@@ -168,6 +168,7 @@ fn export_scaled(
         if let Some(ctx) = gpu_context.as_deref_mut() {
             ctx.flush_and_submit();
         }
+        director_core::counters::count(director_core::counters::Counter::readbacks);
         anyhow::ensure!(surface.read_pixels(&read_info, &mut pixels, row_bytes, (0, 0)), RenderError::Readback);
         encoder.encode(&pixels, time)?;
         if !silent {

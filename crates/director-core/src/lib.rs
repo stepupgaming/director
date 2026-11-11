@@ -60,6 +60,9 @@ pub mod scripting;
 /// Video encoding and wrapping utilities.
 pub mod video_wrapper;
 
+/// Process-wide work counters for waste reports.
+pub mod counters;
+
 /// Audio mixing and processing.
 pub mod audio;
 

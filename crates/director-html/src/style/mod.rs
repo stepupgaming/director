@@ -1559,6 +1559,7 @@ fn decode_background_url(
         value.to_string()
     };
     let bytes = assets.read(&url).map_err(|e| e.to_string())?;
+    director_core::counters::count(director_core::counters::Counter::image_decodes);
     skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))
         .ok_or_else(|| format!("invalid image '{url}'"))
 }

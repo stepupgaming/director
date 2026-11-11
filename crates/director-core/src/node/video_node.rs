@@ -200,6 +200,7 @@ impl Element for VideoNode {
                     decoder.send_request(seek_time);
 
                     if let Some(VideoResponse::Frame(t, data, w, h)) = decoder.get_response() {
+                        crate::counters::count(crate::counters::Counter::frames_presented);
                         let data = Data::new_copy(&data);
                         let info = skia_safe::ImageInfo::new(
                             (w as i32, h as i32),
@@ -221,6 +222,7 @@ impl Element for VideoNode {
                 }
                 VideoLoader::Sync(decoder) => match decoder.get_frame_at(seek_time) {
                     Ok((t, data, w, h)) => {
+                        crate::counters::count(crate::counters::Counter::frames_presented);
                         let data = Data::new_copy(&data);
                         let info = skia_safe::ImageInfo::new(
                             (w as i32, h as i32),

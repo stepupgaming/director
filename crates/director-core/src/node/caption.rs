@@ -1078,6 +1078,7 @@ impl CaptionNode {
                     builder.add_text(&w.text);
                     builder.add_text(" ");
                 }
+                crate::counters::count(crate::counters::Counter::paragraphs_shaped);
                 let mut p = builder.build();
                 p.layout(layout_width);
                 return (p, Vec::new());
@@ -1119,6 +1120,7 @@ impl CaptionNode {
             builder.pop();
         }
 
+        crate::counters::count(crate::counters::Counter::paragraphs_shaped);
         let mut paragraph = builder.build();
         paragraph.layout(layout_width);
         (paragraph, token_char_ranges)
@@ -1726,6 +1728,7 @@ impl CaptionNode {
                     skia_safe::textlayout::FontCollection::new(),
                 );
                 builder.add_text("");
+                crate::counters::count(crate::counters::Counter::paragraphs_shaped);
                 return builder.build();
             }
         };
@@ -1777,6 +1780,7 @@ impl CaptionNode {
             builder.add_text(&text);
             builder.pop();
         }
+        crate::counters::count(crate::counters::Counter::paragraphs_shaped);
         let mut p = builder.build();
         p.layout(layout_width);
         p

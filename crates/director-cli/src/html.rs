@@ -242,6 +242,7 @@ fn execute(command: HtmlCommand) -> Result<(), (i32, String)> {
                 rendering.encoder.codec(),
                 started.elapsed().as_secs_f64() * 1000.0
             );
+            eprintln!("{}", director_core::counters::snapshot());
         }
         drop(compiled);
         println!("{}", output.display());

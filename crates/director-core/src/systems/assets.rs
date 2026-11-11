@@ -103,6 +103,7 @@ impl AssetManager {
 
         // 3. Decode
         let data = Data::new_copy(&bytes);
+        crate::counters::count(crate::counters::Counter::image_decodes);
         if let Some(img) = Image::from_encoded(data) {
             // 4. Cache
             let mut cache = self.image_cache.lock().unwrap();

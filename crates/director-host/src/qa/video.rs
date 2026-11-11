@@ -6,7 +6,7 @@ use director_core::video_wrapper::{parse_frame_rate, FFmpegDriver};
 use serde_json::Value;
 use std::io::{BufReader, Read};
 use std::path::Path;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 
 /// Sample rate the audio stream decodes at.
 pub(super) const AUDIO_RATE: u32 = 48_000;
@@ -31,7 +31,7 @@ pub(super) fn probe(path: &Path) -> Result<Probe, HostError> {
     if !path.is_file() {
         return Err(unreadable("not a file".into()));
     }
-    let output = Command::new("ffprobe")
+    let output = director_core::video_wrapper::ffprobe()
         .args(["-v", "error", "-show_entries", "stream=codec_type,width,height,avg_frame_rate,r_frame_rate:format=duration", "-of", "json"])
         .arg(path)
         .output()
@@ -96,7 +96,7 @@ impl Video {
             Pixels::Luma => "yuv420p",
             Pixels::Rgba => "rgba",
         };
-        let mut child = Command::new(FFmpegDriver::binary())
+        let mut child = FFmpegDriver::command()
             .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
             .arg(path)
             .arg("-vf")
@@ -145,7 +145,7 @@ impl Drop for Video {
 
 /// The first audio stream as interleaved stereo at [`AUDIO_RATE`].
 pub(super) fn audio(path: &Path) -> Result<Vec<f32>, HostError> {
-    let output = Command::new(FFmpegDriver::binary())
+    let output = FFmpegDriver::command()
         .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(path)
         .args(["-map", "0:a:0", "-vn", "-f", "f32le", "-ac", "2", "-ar"])

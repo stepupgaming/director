@@ -95,6 +95,8 @@ pub struct QaReport {
     pub issues: Vec<QaIssue>,
     /// Loudness of the mix, present when the timeline has audio tracks.
     pub audio: Option<QaAudio>,
+    /// Work this process has done so far: spawns, decodes, imports and its memory peak.
+    pub work: director_core::counters::WorkCounts,
 }
 
 /// One finding, merged across the samples where it held.
@@ -528,6 +530,7 @@ fn finish(revision: u64, samples: usize, mut report: Vec<QaIssue>, audio: Option
         samples,
         issues: report,
         audio,
+        work: director_core::counters::snapshot(),
     }
 }
 

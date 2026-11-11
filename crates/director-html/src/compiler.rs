@@ -1143,6 +1143,7 @@ fn build_paragraph_colored(
             }
         }
     }
+    director_core::counters::count(director_core::counters::Counter::paragraphs_shaped);
     builder.build()
 }
 
@@ -1583,6 +1584,7 @@ impl Builder {
                     image.clone()
                 } else {
                     let bytes = self.assets.read(src)?;
+                    director_core::counters::count(director_core::counters::Counter::image_decodes);
                     let image =
                         skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes))
                             .ok_or_else(|| CompileError::Input(format!("invalid image '{src}'")))?;
@@ -2739,7 +2741,7 @@ pub fn fit(values: &Values) -> ObjectFit {
 /// File duration for `<video loop>`. Metadata only; the existing decoder seeks.
 pub(crate) fn media_duration(path: &Path) -> Result<f64, CompileError> {
     let probe = |entries: &[&str]| -> Result<Option<f64>, CompileError> {
-        let output = std::process::Command::new("ffprobe")
+        let output = director_core::video_wrapper::ffprobe()
             .arg("-v")
             .arg("error")
             .args(entries)

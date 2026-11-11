@@ -144,7 +144,7 @@ One row per check, holding the most recent passing count. Replace the row when a
 | director-core release tests | 469, 2 ignored | 2026-11-10 | `cargo test -p director-video-core --release` |
 | visual_suite (render, scene round trip, document render) | 40 | 2026-11-10 | `cargo test -p director-video-core --release --test integration visual_suite::` |
 | html_export | 5 | 2026-10-26 | `cargo test -p director-cli --release --test integration html_export::` |
-| workspace release tests | 1366, 4 ignored | 2026-11-10 | `cargo test --workspace --release` |
+| workspace release tests | 1367, 4 ignored | 2026-11-10 | `cargo test --workspace --release` |
 | crates.io packaging (16 crates, `vendor/skia-safe` as a temporary workspace member so `director-skia-safe` resolves before it is published) | all pack; director-video-core 5.9 MiB (2.4 MiB compressed), director-skia-safe 1.9 MiB (0.5 MiB), director-html 1.3 MiB (0.3 MiB) | 2026-11-06 | `cargo package --workspace --no-verify --allow-dirty` |
 | director-scene | 4 | 2026-11-06 | `cargo test -p director-scene --release` |
 | director-render | 31 | 2026-11-10 | `cargo test -p director-render --release` |

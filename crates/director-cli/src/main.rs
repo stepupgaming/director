@@ -336,6 +336,7 @@ fn cmd_render(args: RenderArgs) {
         eprintln!("{e}");
         std::process::exit(2);
     }
+    eprintln!("{}", director_core::counters::snapshot());
     println!("{}", output.display());
 }
 

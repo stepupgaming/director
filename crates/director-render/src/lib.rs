@@ -325,6 +325,7 @@ fn read_frame(surface: &mut Surface, info: &ImageInfo, transparent: bool, frame:
     } else {
         info.clone()
     };
+    director_core::counters::count(director_core::counters::Counter::readbacks);
     if !surface.read_pixels(&read_info, &mut frame.rgba, width * 4, (0, 0)) {
         return Err(RenderError::Readback);
     }

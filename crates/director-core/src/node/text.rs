@@ -369,6 +369,7 @@ impl TextNode {
                 for span in &self.spans {
                     builder.add_text(&span.text);
                 }
+                crate::counters::count(crate::counters::Counter::paragraphs_shaped);
                 return builder.build();
             }
         };
@@ -476,6 +477,7 @@ impl TextNode {
             builder.pop();
         }
 
+        crate::counters::count(crate::counters::Counter::paragraphs_shaped);
         builder.build()
     }
 

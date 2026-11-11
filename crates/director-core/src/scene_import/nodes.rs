@@ -220,6 +220,7 @@ pub fn object_position(position: doc::ObjectPosition) -> ObjectPosition {
 /// Decode an image asset. A file asset keeps its path on the node.
 pub fn image(id: &str, cx: &ImportContext) -> Result<skia_safe::Image, ImportError> {
     let bytes = cx.asset_bytes(id)?;
+    crate::counters::count(crate::counters::Counter::image_decodes);
     skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&bytes)).ok_or_else(|| ImportError::Asset {
         id: id.to_string(),
         reason: "Skia cannot decode the image".to_string(),

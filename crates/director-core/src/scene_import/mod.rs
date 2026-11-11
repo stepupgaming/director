@@ -233,6 +233,7 @@ fn import_into(
     context: Option<DirectorContext>,
     frames: &FrameSources,
 ) -> Result<Director, ImportError> {
+    crate::counters::count(crate::counters::Counter::document_imports);
     let mut director = Director::new(document.width, document.height, document.fps, loader, render_mode, context);
     director.assets.video_sources = frames.clone();
     director.output_scale_x = document.output_scale_x;

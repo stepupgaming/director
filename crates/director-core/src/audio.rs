@@ -457,6 +457,7 @@ pub fn resample_audio(samples: &[f32], source_rate: u32, target_rate: u32) -> Re
 /// containers in process. Anything else FFmpeg reads (Opus, Vorbis, FLAC,
 /// AC-3, HE-AAC, Matroska, WebM, ...) decodes through the `ffmpeg` binary.
 pub fn load_audio_bytes(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>> {
+    crate::counters::count(crate::counters::Counter::audio_decodes);
     match decode_with_symphonia(data, target_sample_rate) {
         Ok(samples) => Ok(samples),
         Err(native) => decode_with_ffmpeg(data, target_sample_rate)
@@ -542,7 +543,7 @@ fn decode_with_ffmpeg(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>> 
     let mut file = tempfile::NamedTempFile::new().context("temporary audio file")?;
     file.write_all(data).context("temporary audio file")?;
     file.flush().context("temporary audio file")?;
-    let output = std::process::Command::new(crate::video_wrapper::FFmpegDriver::binary())
+    let output = crate::video_wrapper::FFmpegDriver::command()
         .args(["-v", "error", "-nostdin", "-i"])
         .arg(file.path())
         .args(["-map", "0:a:0", "-vn", "-sn", "-dn", "-f", "f32le", "-ac", "2", "-ar"])
