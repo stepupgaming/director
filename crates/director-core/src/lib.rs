@@ -63,6 +63,9 @@ pub mod video_wrapper;
 /// Process-wide work counters for waste reports.
 pub mod counters;
 
+/// Passthrough of a base video that FFmpeg composites under the painted layers.
+pub mod passthrough;
+
 /// Audio mixing and processing.
 pub mod audio;
 

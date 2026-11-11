@@ -98,6 +98,7 @@ pub enum EncoderMode {
     Amf,
 }
 
+#[derive(Clone)]
 pub struct EncoderSettings {
     pub width: usize,
     pub height: usize,
@@ -108,6 +109,27 @@ pub struct EncoderSettings {
     pub alpha: bool,
     /// Software x264 only. Hardware qp and the alpha VP9 path stay put.
     pub draft: bool,
+    /// A video FFmpeg decodes itself and composites under the piped frames.
+    /// `width` and `height` then size the piped frames alone.
+    pub underlay: Option<Underlay>,
+}
+
+/// A source video the encoding FFmpeg process reads as the bottom of every
+/// output frame. Its frames lie on the output grid from `seek` as a video
+/// node shows them, and the last one holds once the source ends. The piped
+/// frames carry straight alpha, convert to the source's matrix and range and
+/// blend over it in YUV, so the samples they leave clear reach the encoder
+/// as decoded and the output keeps the source's color tags.
+#[derive(Clone, Debug)]
+pub struct Underlay {
+    pub path: PathBuf,
+    pub color: SourceColor,
+    /// Seconds into the source of the frame under the first piped frame.
+    pub seek: f64,
+    /// Left and top of the piped frames on the source, in pixels.
+    pub offset: (usize, usize),
+    /// Output frames to write.
+    pub frames: usize,
 }
 
 /// Software x264 preset and CRF. Draft is ultrafast / 30. The default is slow / 18.
@@ -130,6 +152,7 @@ impl EncoderSettings {
             encoder_mode: EncoderMode::Auto,
             alpha: false,
             draft: false,
+            underlay: None,
         }
     }
 
@@ -145,6 +168,11 @@ impl EncoderSettings {
 
     pub fn with_alpha(mut self, alpha: bool) -> Self {
         self.alpha = alpha;
+        self
+    }
+
+    pub fn with_underlay(mut self, underlay: Option<Underlay>) -> Self {
+        self.underlay = underlay;
         self
     }
 
@@ -539,6 +567,12 @@ impl Encoder {
                 .arg("-i")
                 .arg(input.url());
         }
+        // The underlay is the last input, after the piped frames and the audio.
+        let underlay = settings.underlay.as_ref().filter(|_| !settings.alpha);
+        if let Some(underlay) = underlay {
+            cmd.arg("-ss").arg(underlay.seek.max(0.0).to_string()).arg("-i").arg(&underlay.path);
+        }
+        let video_map = if underlay.is_some() { "[v]" } else { "0:v" };
 
         if settings.alpha {
             let codec = "libvpx-vp9";
@@ -578,20 +612,46 @@ impl Encoder {
             // ignores the output flags below, so tag the frames first. FFmpeg
             // before 7.1 converts to limited-range BT.601 whatever the flags
             // say, so the scale filter names the range and matrix.
-            cmd.arg("-vf")
-                .arg("setparams=color_primaries=bt709:color_trc=bt709,scale=out_color_matrix=bt709:out_range=full")
-                .arg("-c:v")
-                .arg(codec)
-                .arg("-pix_fmt")
-                .arg("yuv420p")
-                .arg("-color_range")
-                .arg("pc")
-                .arg("-colorspace")
-                .arg("bt709")
-                .arg("-color_primaries")
-                .arg("bt709")
-                .arg("-color_trc")
-                .arg("bt709");
+            let tagged = "setparams=color_primaries=bt709:color_trc=bt709,scale=out_color_matrix=bt709:out_range=full";
+            cmd.arg("-pix_fmt").arg("yuv420p");
+            match underlay {
+                // Lay the source frames on the output grid as the decoder that
+                // feeds a video node does, and hold the last one past its end.
+                Some(underlay) => {
+                    let range = if underlay.color.full_range { "pc" } else { "tv" };
+                    cmd.arg("-filter_complex")
+                        .arg(format!(
+                            "[{input}:v]fps={fps}:start_time=0,tpad=stop=-1:stop_mode=clone[base];\
+                             [0:v]scale=out_color_matrix={matrix}:out_range={range},format=yuva420p[top];\
+                             [base][top]overlay={x}:{y}:format=yuv420[v]",
+                            input = if mode == AudioMode::Premixed { 2 } else { 1 },
+                            fps = settings.fps,
+                            matrix = underlay.color.matrix.unwrap_or(UNTAGGED_MATRIX),
+                            x = underlay.offset.0,
+                            y = underlay.offset.1,
+                        ))
+                        .arg("-frames:v")
+                        .arg(underlay.frames.to_string())
+                        .arg("-color_range")
+                        .arg(range);
+                    if let Some(matrix) = underlay.color.matrix {
+                        cmd.arg("-colorspace").arg(matrix);
+                    }
+                }
+                None => {
+                    cmd.arg("-vf")
+                        .arg(tagged)
+                        .arg("-color_range")
+                        .arg("pc")
+                        .arg("-colorspace")
+                        .arg("bt709")
+                        .arg("-color_primaries")
+                        .arg("bt709")
+                        .arg("-color_trc")
+                        .arg("bt709");
+                }
+            }
+            cmd.arg("-c:v").arg(codec);
 
             if is_hardware {
                 match codec {
@@ -623,7 +683,7 @@ impl Encoder {
 
         let audio = if let Some(input) = input {
             cmd.arg("-map")
-                .arg("0:v")
+                .arg(video_map)
                 .arg("-map")
                 .arg("1:a")
                 .arg("-c:a")
@@ -633,10 +693,10 @@ impl Encoder {
                 .arg(dest);
             AudioSink::Input(input)
         } else if mode == AudioMode::Silent {
-            cmd.arg("-map").arg("0:v").arg(dest);
+            cmd.arg("-map").arg(video_map).arg(dest);
             AudioSink::Silent
         } else {
-            cmd.arg(&video_temp_path);
+            cmd.arg("-map").arg(video_map).arg(&video_temp_path);
             AudioSink::Streamed(BufWriter::new(File::create(&audio_path)?))
         };
         let video_process = cmd
@@ -1180,6 +1240,7 @@ pub struct SharedSource {
     width: u32,
     height: u32,
     fps: f64,
+    color: Option<SourceColor>,
     frames: Mutex<FrameSource>,
 }
 
@@ -1190,6 +1251,7 @@ impl SharedSource {
             width: probed.width,
             height: probed.height,
             fps: probed.fps,
+            color: probed.color,
             frames: Mutex::new(FrameSource::new(path, &probed, started)?),
         })
     }
@@ -1367,6 +1429,37 @@ pub struct VideoProbe {
     /// Source frames per second. Falls back to 30.0 when ffprobe reports
     /// `0/0` or an unparsable rate.
     pub fps: f64,
+    /// Set for a source an encoder takes as decoded.
+    pub color: Option<SourceColor>,
+}
+
+/// Matrix and range of an 8-bit 4:2:0 source without alpha, whose frames an
+/// H.264 encoder takes as decoded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceColor {
+    /// `None` for an untagged source, which decodes as [`UNTAGGED_MATRIX`].
+    pub matrix: Option<&'static str>,
+    pub full_range: bool,
+}
+
+/// The matrix FFmpeg converts an untagged source to RGB with.
+pub const UNTAGGED_MATRIX: &str = "smpte170m";
+
+/// Reads [`SourceColor`] from ffprobe `pix_fmt`, `color_range` and `color_space`.
+fn source_color(pix_fmt: &str, range: &str, space: &str) -> Option<SourceColor> {
+    let full_range = match pix_fmt {
+        "yuv420p" => range == "pc",
+        "yuvj420p" => true,
+        _ => return None,
+    };
+    let matrix = match space {
+        "bt709" => Some("bt709"),
+        "smpte170m" => Some("smpte170m"),
+        "bt470bg" => Some("bt470bg"),
+        "unknown" | "" => None,
+        _ => return None,
+    };
+    Some(SourceColor { matrix, full_range })
 }
 
 /// Reads `(major, minor)` from the `libavcodec` line of `ffmpeg -version`.
@@ -1439,7 +1532,7 @@ pub fn probe_video(path: &Path) -> Result<VideoProbe> {
         .arg("-select_streams")
         .arg("v:0")
         .arg("-show_entries")
-        .arg("stream=width,height")
+        .arg("stream=width,height,pix_fmt,color_range,color_space")
         .arg("-of")
         .arg("csv=s=x:p=0")
         .arg(path)
@@ -1448,8 +1541,15 @@ pub fn probe_video(path: &Path) -> Result<VideoProbe> {
     let out = String::from_utf8_lossy(&output.stdout);
     let (width, height) =
         parse_video_size(&out).ok_or_else(|| anyhow::anyhow!("Failed to probe video size"))?;
+    // `WxHxpix_fmtxrangexspace`, where only a pixel format name may hold an x
+    // and side data adds an empty last field.
+    let fields: Vec<&str> = out.lines().next().unwrap_or("").trim().trim_end_matches('x').split('x').collect();
+    let color = match fields.as_slice() {
+        [_, _, pix_fmt @ .., range, space] => source_color(&pix_fmt.join("x"), range, space),
+        _ => None,
+    };
     let fps = probe_frame_rate(path);
-    Ok(VideoProbe { width, height, fps })
+    Ok(VideoProbe { width, height, fps, color })
 }
 
 /// Parses ffprobe `stream=width,height` output in `csv=s=x:p=0` form
@@ -1505,8 +1605,18 @@ impl SyncDecoder {
         self.source.fps
     }
 
+    /// Width and height of the source in pixels.
+    pub fn size(&self) -> (u32, u32) {
+        (self.source.width, self.source.height)
+    }
+
+    /// Set for a source an encoder takes as decoded.
+    pub fn color(&self) -> Option<SourceColor> {
+        self.source.color
+    }
+
     /// The frame at `time`, or the last frame once `time` is past the end.
-    pub fn get_frame_at(&mut self, time: f64) -> Result<(f64, Arc<Vec<u8>>, u32, u32)> {
+    pub fn get_frame_at(&self, time: f64) -> Result<(f64, Arc<Vec<u8>>, u32, u32)> {
         let index = crate::timeline::video_source_frame_index(time.max(0.0), self.source.fps);
         let bytes = self.source.frames().frame(index)?;
         Ok((time, bytes, self.source.width, self.source.height))

@@ -15,6 +15,7 @@ mod export;
 mod frame;
 mod live;
 mod paint;
+mod passthrough;
 
 pub use export::{export_director, export_director_with, frame_times, ExportOptions, GpuContexts};
 pub use frame::{paint_root, render_frame, FrameState};

@@ -9,6 +9,7 @@ mod core_nodes;
 mod html_examples;
 mod incremental_render;
 mod motion_blur;
+mod passthrough;
 mod rhai_examples;
 mod shared_video;
 

@@ -5,6 +5,7 @@
 //! the premixed audio track. FFmpeg starts from the document alone, so it
 //! launches while the writer imports and mixes the audio.
 
+use crate::passthrough::Outcome;
 use crate::{set_output_scale, Frame, FrameSession, GpuContext, RenderError, Renderer, TargetSession};
 use director_core::scene_export::export_scene;
 use director_core::scene_import::ImportRegistry;
@@ -45,6 +46,9 @@ pub struct ExportOptions {
     pub cancel: Option<Arc<AtomicBool>>,
     /// Called on the writer thread with `(encoded, total)` frames after each batch.
     pub progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    /// Paint every layer in the engine. Unset, a video that fills every frame
+    /// under the other layers stays inside FFmpeg.
+    pub paint_all: bool,
 }
 
 impl ExportOptions {
@@ -72,8 +76,14 @@ enum PoolSession {
 }
 
 impl PoolSession {
-    fn new(renderer: &Renderer, contexts: Option<&GpuContexts>) -> Result<Self, RenderError> {
-        let Some(contexts) = contexts else { return Ok(Self::Cpu(renderer.session()?)) };
+    fn new(renderer: &Renderer, contexts: Option<&GpuContexts>, sampled: &Mutex<Option<FrameSession>>) -> Result<Self, RenderError> {
+        let Some(contexts) = contexts else {
+            let sampled = sampled.lock().unwrap().take();
+            return Ok(Self::Cpu(match sampled {
+                Some(session) => session,
+                None => renderer.session()?,
+            }));
+        };
         let mut context = contexts().ok_or(RenderError::GpuContext)?;
         Ok(Self::Gpu(TargetSession::new(renderer, Some(&mut context))?, context))
     }
@@ -181,6 +191,24 @@ impl Renderer {
             .with_alpha(self.document.transparent_background)
             .with_draft(options.draft);
         settings.sample_rate = self.document.audio.sample_rate as i32;
+        // A video under every frame stays inside FFmpeg and the layers above
+        // it paint alone. A frame that breaks that plan starts the export again.
+        let base = if options.paint_all { Err(None) } else { self.passthrough_base(&times)? };
+        // The session that looked for a base video paints for the first CPU worker.
+        let mut sampled = None;
+        match base {
+            Err(session) => sampled = session,
+            Ok(mut base) => {
+                loop {
+                    match self.export_over(path, options, settings.clone(), &times, &base)? {
+                        Outcome::Done => return Ok(()),
+                        Outcome::Band if !base.is_whole(height as usize) => base = base.whole(height as usize),
+                        _ => break,
+                    }
+                }
+            }
+        }
+        let sampled = Mutex::new(sampled);
         // `None` reports a failed worker, so the writer stops waiting for its frame.
         let (full_tx, full_rx) = mpsc::channel::<Option<(usize, Frame)>>();
         let (empty_tx, empty_rx) = mpsc::channel::<Frame>();
@@ -195,7 +223,7 @@ impl Renderer {
         // Workers share the free buffers and the index of the next frame to paint.
         let (empty_rx, next) = (Mutex::new(empty_rx), AtomicUsize::new(0));
         std::thread::scope(|scope| {
-            let (times, failed) = (&times, &failed);
+            let (times, failed, sampled) = (&times, &failed, &sampled);
             let progress = options.progress.clone();
             // The writer starts FFmpeg, then imports and mixes the whole track while
             // FFmpeg launches and the first frames paint.
@@ -260,7 +288,7 @@ impl Renderer {
                                     let Some(&time) = times.get(index) else { return Ok(()) };
                                     let session = match &mut session {
                                         Some(session) => session,
-                                        None => session.insert(PoolSession::new(self, contexts.as_ref())?),
+                                        None => session.insert(PoolSession::new(self, contexts.as_ref(), sampled)?),
                                     };
                                     session.render_into(time, &mut frame)?;
                                     if full_tx.send(Some((index, frame))).is_err() {

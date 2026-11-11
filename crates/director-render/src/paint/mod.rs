@@ -414,6 +414,9 @@ impl Painter<'_> {
         let clipped = (need_layer || node.element.opens_layer(opacity))
             && self.clip_layer(node_id, depth, canvas);
         let result = if need_layer {
+            if node.blend_mode != BlendMode::SrcOver {
+                director_core::passthrough::reads_backdrop();
+            }
             let mut paint = Paint::default();
             paint.set_blend_mode(node.blend_mode);
             if let Some(filter) = node.filter.to_image_filter() {

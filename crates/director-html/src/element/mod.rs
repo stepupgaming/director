@@ -871,6 +871,9 @@ impl Element for HtmlElement {
         layer_paint.set_image_filter(self.paint.filter.clone());
         let layered = self.opens_layer(opacity);
         if layered {
+            if self.paint.blend_mode != skia_safe::BlendMode::SrcOver {
+                director_core::passthrough::reads_backdrop();
+            }
             canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&layer_paint));
         }
         let radii = self.paint.corners.map(|(x, y)| {

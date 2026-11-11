@@ -21,6 +21,7 @@
 
 ## Local Contracts
 
+- An element that opens a layer with a blend mode other than source-over calls `director_core::passthrough::reads_backdrop()` first, so an export keeps the video under it in the engine (`director-core/AGENTS.md`, Native video export).
 ### Architecture
 
 - Depend on `director-core`; do not introduce HTML behavior into Rhai or the core dependency-graph compiler.

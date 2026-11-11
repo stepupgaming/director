@@ -207,6 +207,7 @@ impl Element for BoxNode {
         // Track whether we actually created the layer so restore() stays balanced.
         let mut backdrop_layer_saved = false;
         if self.backdrop_blur.current_value > 0.0 {
+            crate::passthrough::reads_backdrop();
             if let Some(backdrop_filter) = skia_safe::image_filters::blur(
                 (
                     self.backdrop_blur.current_value,

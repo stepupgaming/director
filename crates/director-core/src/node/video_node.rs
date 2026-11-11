@@ -35,6 +35,10 @@ pub struct VideoNode {
     /// Original asset path, if loaded from a file or blob path.
     pub source_path: Option<String>,
     current_frame: Mutex<Option<(f64, Image)>>,
+    /// Source time `update` asked for that no paint has decoded yet. An
+    /// export decodes when the frame paints, so a video that paints nothing,
+    /// or one FFmpeg composites as the passthrough base, decodes nothing.
+    pending: Mutex<Option<f64>>,
 
     loader: Option<VideoLoader>,
     pub(crate) render_mode: RenderMode,
@@ -68,6 +72,7 @@ impl Clone for VideoNode {
             border_radius: self.border_radius.clone(),
             source_path: self.source_path.clone(),
             current_frame: Mutex::new(None),
+            pending: Mutex::new(None),
             loader,
             render_mode: self.render_mode,
             source_fps,
@@ -121,6 +126,7 @@ impl VideoNode {
             border_radius: Animated::new(0.0),
             source_path: None,
             current_frame: Mutex::new(None),
+            pending: Mutex::new(None),
             loader,
             render_mode: mode,
             source_fps,
@@ -150,7 +156,77 @@ impl VideoNode {
     /// intended for wrapper nodes such as `ActiveSpeakerCamera` that need to
     /// render the decoded frame with a custom source crop rectangle.
     pub fn get_current_frame(&self) -> Option<(f64, Image)> {
+        self.present();
         self.current_frame.lock().unwrap().clone()
+    }
+
+    /// Decode the frame `update` asked for, once.
+    fn present(&self) {
+        let Some(seek_time) = self.pending.lock().unwrap().take() else { return };
+        let Some(VideoLoader::Sync(decoder)) = &self.loader else { return };
+        match decoder.get_frame_at(seek_time) {
+            Ok((t, data, w, h)) => {
+                crate::counters::count(crate::counters::Counter::frames_presented);
+                let data = Data::new_shared(data);
+                let info = skia_safe::ImageInfo::new(
+                    (w as i32, h as i32),
+                    ColorType::RGBA8888,
+                    AlphaType::Premul,
+                    Some(ColorSpace::new_srgb()),
+                );
+                if let Some(img) = skia_safe::images::raster_from_data(&info, data, (w * 4) as usize) {
+                    *self.current_frame.lock().unwrap() = Some((t, img));
+                } else {
+                    tracing::warn!("Failed to rasterize video frame at {:.3}s from sync decoder ({}x{})", t, w, h);
+                }
+            }
+            Err(e) => error!("Sync Video Error: {}", e),
+        }
+    }
+
+    /// In an overlay frame, stand in for the base video: when this node
+    /// covers the whole output surface, opaque and unscaled, on the base
+    /// layer, clear the surface and report the source frame FFmpeg puts
+    /// there. `false` leaves the node to paint as usual.
+    fn punch(&self, canvas: &Canvas, rect: Rect, opacity: f32) -> bool {
+        let Some((pixels, (width, height))) = crate::passthrough::surface() else { return false };
+        let Some(VideoLoader::Sync(decoder)) = &self.loader else { return false };
+        let Some(seek_time) = *self.pending.lock().unwrap() else { return false };
+        let Some(color) = decoder.color() else { return false };
+        if opacity < 1.0 || self.border_radius.current_value > 0.0 || decoder.size() != (width as u32, height as u32) {
+            return false;
+        }
+        // A layer, a cached raster or a transition surface composites later.
+        if canvas.access_top_layer_pixels().map(|top| top.pixels.as_ptr() as usize) != Some(pixels) {
+            return false;
+        }
+        let whole = skia_safe::IRect::from_wh(width, height);
+        if !canvas.is_clip_rect() || canvas.device_clip_bounds() != Some(whole) {
+            return false;
+        }
+        let matrix = canvas.local_to_device_as_3x3();
+        if !matrix.is_scale_translate() {
+            return false;
+        }
+        let draw = calculate_object_fit_rect_at(width as f32, height as f32, rect, self.object_fit, self.object_position);
+        let (device, _) = matrix.map_rect(draw);
+        let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+        if !(near(device.left, 0.0) && near(device.top, 0.0) && near(device.right, width as f32) && near(device.bottom, height as f32)) {
+            return false;
+        }
+        let (clip, _) = matrix.map_rect(rect);
+        if clip.left > 0.01 || clip.top > 0.01 || clip.right < width as f32 - 0.01 || clip.bottom < height as f32 - 0.01 {
+            return false;
+        }
+        self.pending.lock().unwrap().take();
+        canvas.clear(skia_safe::Color::TRANSPARENT);
+        crate::passthrough::punch(crate::passthrough::Punch {
+            path: self.path.clone(),
+            index: crate::timeline::video_source_frame_index(seek_time.max(0.0), self.source_fps),
+            fps: self.source_fps,
+            color,
+        });
+        true
     }
 }
 
@@ -226,29 +302,8 @@ impl Element for VideoNode {
                         }
                     }
                 }
-                VideoLoader::Sync(decoder) => match decoder.get_frame_at(seek_time) {
-                    Ok((t, data, w, h)) => {
-                        crate::counters::count(crate::counters::Counter::frames_presented);
-                        let data = Data::new_shared(data);
-                        let info = skia_safe::ImageInfo::new(
-                            (w as i32, h as i32),
-                            ColorType::RGBA8888,
-                            AlphaType::Premul,
-                            Some(ColorSpace::new_srgb()),
-                        );
-
-                        if let Some(img) =
-                            skia_safe::images::raster_from_data(&info, data, (w * 4) as usize)
-                        {
-                            *self.current_frame.lock().unwrap() = Some((t, img));
-                        } else {
-                            tracing::warn!("Failed to rasterize video frame at {:.3}s from sync decoder ({}x{})", t, w, h);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Sync Video Error: {}", e);
-                    }
-                },
+                // An export decodes when the frame paints.
+                VideoLoader::Sync(_) => *self.pending.lock().unwrap() = Some(seek_time),
             }
         }
         true
@@ -262,6 +317,11 @@ impl Element for VideoNode {
         draw_children: &mut dyn FnMut(&Canvas),
     ) -> Result<(), RenderError> {
         let op = self.opacity.current_value * parent_opacity;
+        if self.punch(canvas, rect, op) {
+            draw_children(canvas);
+            return Ok(());
+        }
+        self.present();
 
         let current = self.current_frame.lock().unwrap();
         if let Some((_, img)) = current.as_ref() {
