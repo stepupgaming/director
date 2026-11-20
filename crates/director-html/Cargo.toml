@@ -9,6 +9,12 @@ autotests = false
 description = "HTML, CSS and HyperFrames compiler for Director's native renderer"
 exclude = ["tests/", "benches/", "tools/", "!tools/capture.mjs", "!tools/browser.mjs"]
 
+[features]
+default = ["3d"]
+# <model>, splats and 3D text through director-3d (Bevy). Off for builds
+# that skip the 3D engine, such as small Android apps.
+"3d" = ["dep:director-3d"]
+
 [dependencies]
 director-core.workspace = true
 director-scene = { workspace = true }
@@ -28,7 +34,7 @@ wuff = "0.2.9"
 sha2 = "0.10"
 tempfile = "3.23"
 director-dom = { workspace = true }
-director-3d = { workspace = true }
+director-3d = { workspace = true, optional = true }
 director-track = { workspace = true }
 ego-tree = "0.10"
 rayon = "1.10"

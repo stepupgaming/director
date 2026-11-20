@@ -1,0 +1,13 @@
+[package]
+name = "compile-reel"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+director-html = { path = "../../../crates/director-html" }
+director_core = { package = "director-video-core", path = "../../../crates/director-core" }
+
+[patch.crates-io]
+bevy_pbr = { path = "../../../vendor/bevy_pbr" }

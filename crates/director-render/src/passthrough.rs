@@ -117,7 +117,13 @@ impl Renderer {
     pub(crate) fn passthrough_base(&self, times: &[f64]) -> Result<Result<Base, Option<FrameSession>>, RenderError> {
         let document = &self.document;
         let has_video = document.assets.iter().any(|asset| asset.media_type.starts_with("video/"));
-        if times.is_empty() || !has_video || document.transparent_background || document.motion_blur.samples_per_frame > 1 {
+        // An underlay needs the FFmpeg encoder, which Android does not have.
+        if cfg!(target_os = "android")
+            || times.is_empty()
+            || !has_video
+            || document.transparent_background
+            || document.motion_blur.samples_per_frame > 1
+        {
             return Ok(Err(None));
         }
         let mut session = self.session()?;

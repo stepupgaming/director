@@ -60,6 +60,10 @@ pub mod scripting;
 /// Video encoding and wrapping utilities.
 pub mod video_wrapper;
 
+/// MediaCodec decode, probe and encode in place of FFmpeg on Android.
+#[cfg(target_os = "android")]
+pub mod android_media;
+
 /// Process-wide work counters for waste reports.
 pub mod counters;
 

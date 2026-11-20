@@ -531,6 +531,19 @@ fn decode_with_symphonia(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32
 /// Decodes the first audio stream through the `ffmpeg` binary as stereo f32
 /// at `target_sample_rate`. The bytes go to a temporary file because MP4s
 /// with the index at the end cannot be read from a pipe.
+/// On Android, MediaExtractor and MediaCodec stand in for the binary.
+#[cfg(target_os = "android")]
+fn decode_with_ffmpeg(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>> {
+    use std::io::Write;
+
+    let mut file = tempfile::NamedTempFile::new().context("temporary audio file")?;
+    file.write_all(data).context("temporary audio file")?;
+    file.flush().context("temporary audio file")?;
+    let (samples, rate) = crate::android_media::decode_audio(file.path())?;
+    resample_audio(&samples, rate, target_sample_rate)
+}
+
+#[cfg(not(target_os = "android"))]
 fn decode_with_ffmpeg(data: &[u8], target_sample_rate: u32) -> Result<Vec<f32>> {
     use std::io::Write;
 

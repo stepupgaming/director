@@ -32,6 +32,7 @@ pub fn register_import(registry: &mut ImportRegistry) {
     registry.register("html_video", crate::capture::decode_video);
     registry.register("html_capture", crate::capture::decode_capture);
     registry.register("svg_smil", crate::smil::decode);
+    #[cfg(feature = "3d")]
     director_3d::register_import(registry);
 }
 
@@ -74,6 +75,7 @@ fn decode_html(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn El
         height: body.metrics.height,
         font_size: body.metrics.font_size,
     };
+    #[cfg(feature = "3d")]
     if let Some(model) = content.as_ref().and_then(|c| c.as_any().downcast_ref::<director_3d::ModelNode>()) {
         paint.camera = model.base;
     }

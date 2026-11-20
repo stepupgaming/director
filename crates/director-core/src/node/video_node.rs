@@ -41,6 +41,9 @@ pub struct VideoNode {
     pending: Mutex<Option<f64>>,
 
     loader: Option<VideoLoader>,
+    /// Why the source could not open or its last frame failed to decode. An
+    /// export fails with it rather than painting a placeholder.
+    failure: Mutex<Option<String>>,
     pub(crate) render_mode: RenderMode,
     /// Probed source frame rate. Drives `video_seek_time` quantization so
     /// 24/25/29.97/60 fps inputs are not sampled on an assumed 30 fps grid.
@@ -74,6 +77,7 @@ impl Clone for VideoNode {
             current_frame: Mutex::new(None),
             pending: Mutex::new(None),
             loader,
+            failure: Mutex::new(self.failure.lock().unwrap().clone()),
             render_mode: self.render_mode,
             source_fps,
             temp_file: self.temp_file.clone(),
@@ -109,10 +113,12 @@ impl VideoNode {
             }
         };
 
+        let mut failure = None;
         let loader = match open(path.clone()) {
             Ok(l) => Some(l),
             Err(e) => {
                 error!("Failed to create VideoLoader for {:?}: {}", path, e);
+                failure = Some(format!("{e:#}"));
                 None
             }
         };
@@ -128,6 +134,7 @@ impl VideoNode {
             current_frame: Mutex::new(None),
             pending: Mutex::new(None),
             loader,
+            failure: Mutex::new(failure),
             render_mode: mode,
             source_fps,
             temp_file,
@@ -180,7 +187,10 @@ impl VideoNode {
                     tracing::warn!("Failed to rasterize video frame at {:.3}s from sync decoder ({}x{})", t, w, h);
                 }
             }
-            Err(e) => error!("Sync Video Error: {}", e),
+            Err(e) => {
+                error!("Sync Video Error: {}", e);
+                *self.failure.lock().unwrap() = Some(format!("{e:#}"));
+            }
         }
     }
 
@@ -345,7 +355,10 @@ impl Element for VideoNode {
             canvas.clip_rect(rect, ClipOp::Intersect, true);
             canvas.draw_image_rect(img, None, draw_rect, &paint);
             canvas.restore();
+        } else if let (RenderMode::Export, Some(failure)) = (self.render_mode, self.failure.lock().unwrap().clone()) {
+            return Err(RenderError::Anyhow(anyhow::anyhow!("video {} did not decode: {failure}", self.path.display())));
         } else {
+            // Preview: the first frame has not arrived yet.
             let mut p = Paint::new(Color4f::new(0.0, 0.0, 1.0, 1.0), None);
             p.set_alpha_f(op);
             canvas.draw_rect(rect, &p);

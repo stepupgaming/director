@@ -416,6 +416,7 @@ impl HtmlElement {
                 }
             }
             let media = |t: f64| self.media_start + (t - self.start).max(0.0) * self.playback_rate;
+            #[cfg(feature = "3d")]
             if let Some(model) = content.as_any_mut().downcast_mut::<director_3d::ModelNode>() {
                 model.view = self.paint.camera;
                 // The model's shutter sweeps its orbit to where the camera

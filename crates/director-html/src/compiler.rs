@@ -1706,6 +1706,7 @@ impl Builder {
                 };
                 Some(video)
             }
+            #[cfg(feature = "3d")]
             "model" => {
                 let attr = |name: &str| el.value().attr_text(name);
                 let input = |e: String| CompileError::Input(format!("{context}: {e}"));
@@ -1871,6 +1872,12 @@ impl Builder {
                     layout.size.height = taffy::prelude::length(150.0_f32);
                 }
                 Some(Box::new(model))
+            }
+            #[cfg(not(feature = "3d"))]
+            "model" => {
+                return Err(CompileError::Input(format!(
+                    "{context}: <model> needs Director built with the `3d` feature"
+                )))
             }
             "audio" => {
                 let src = el
@@ -2757,6 +2764,14 @@ pub fn fit(values: &Values) -> ObjectFit {
 }
 
 /// File duration for `<video loop>`. Metadata only; the existing decoder seeks.
+#[cfg(target_os = "android")]
+pub(crate) fn media_duration(path: &Path) -> Result<f64, CompileError> {
+    director_core::video_wrapper::probe_duration(path)
+        .ok_or_else(|| CompileError::Input(format!("no duration in {}", path.display())))
+}
+
+/// File duration for `<video loop>`. Metadata only; the existing decoder seeks.
+#[cfg(not(target_os = "android"))]
 pub(crate) fn media_duration(path: &Path) -> Result<f64, CompileError> {
     let probe = |entries: &[&str]| -> Result<Option<f64>, CompileError> {
         let output = director_core::video_wrapper::ffprobe()
@@ -2882,6 +2897,7 @@ pub fn compile_file(
     compile(&source, options)
 }
 
+#[cfg(feature = "3d")]
 /// Solves the cameras of the footage at `plate` for a `<model track>`:
 /// `track-fov` fixes the lens in degrees, and without it the solve refines
 /// its lens from 40 degrees. `track-distortion` fixes the radial distortion
@@ -2966,12 +2982,15 @@ fn solve_track(
     Ok((track, probe, sun))
 }
 
+#[cfg(feature = "3d")]
 /// A plate's solved cameras, its light probe as a Radiance file and its sun.
 type SolvedTrack = (director_scene::ModelTrack, Option<Vec<u8>>, Option<director_track::Sun>);
 
+#[cfg(feature = "3d")]
 /// The width in texels of the light probe `track-light` stitches.
 const PROBE_WIDTH: usize = 512;
 
+#[cfg(feature = "3d")]
 /// The sun `track-sun` read from the plate as a shadow-casting sun light.
 /// The plate's linear light renders back at its own value with `unity` lux
 /// per unit of irradiance, so a white card facing the light reads on the
@@ -2995,6 +3014,7 @@ fn sun_light(direction: [f64; 3], irradiance: [f64; 3], unity: f64) -> director_
     }
 }
 
+#[cfg(feature = "3d")]
 /// The `<splat>` children of a `<model>`: Gaussian splat `.ply` files read
 /// through the compile asset store and placed in the scene's metres.
 fn model_splats(model: ElementRef<'_>, assets: &AssetStore, context: &str) -> Result<Vec<director_3d::Splat>, CompileError> {
@@ -3032,6 +3052,7 @@ fn model_splats(model: ElementRef<'_>, assets: &AssetStore, context: &str) -> Re
     Ok(splats)
 }
 
+#[cfg(feature = "3d")]
 /// The `<text3d>` children of a `<model>`: lines of extruded type in the
 /// scene's metres, from a font file or a family the page or Director knows.
 fn model_texts(
@@ -3142,6 +3163,7 @@ fn model_texts(
     Ok(texts)
 }
 
+#[cfg(feature = "3d")]
 /// A `<model>`'s lens effects from its `vignette`, `chromatic-aberration`
 /// and `lens-distortion` attributes, `None` without any.
 fn model_optics(el: ElementRef<'_>) -> Result<Option<director_scene::ModelOptics>, String> {
@@ -3165,6 +3187,7 @@ fn model_optics(el: ElementRef<'_>) -> Result<Option<director_scene::ModelOptics
     Ok((optics != director_scene::ModelOptics::default()).then_some(optics))
 }
 
+#[cfg(feature = "3d")]
 /// The `<fog>` child of a `<model>`.
 fn model_fog(model: ElementRef<'_>) -> Result<Option<director_scene::ModelFog>, String> {
     let mut fogs = model.children().filter_map(ElementRef::wrap).filter(|el| el.value().name() == "fog");
@@ -3194,6 +3217,7 @@ fn model_fog(model: ElementRef<'_>) -> Result<Option<director_scene::ModelFog>, 
     Ok(Some(director_scene::ModelFog { color: [color.r, color.g, color.b], visibility, density }))
 }
 
+#[cfg(feature = "3d")]
 /// The `<sky>` child of a `<model>`: the sky's options and the sun's lux
 /// above the atmosphere.
 fn model_sky(model: ElementRef<'_>) -> Result<Option<(director_3d::SkyOptions, f64)>, String> {
@@ -3227,9 +3251,11 @@ fn model_sky(model: ElementRef<'_>) -> Result<Option<(director_3d::SkyOptions, f
     Ok(Some((director_3d::SkyOptions { elevation, azimuth, haze, ground }, lux)))
 }
 
+#[cfg(feature = "3d")]
 /// The width in texels of the probe a `<sky>` renders.
 const SKY_WIDTH: usize = 1024;
 
+#[cfg(feature = "3d")]
 /// A `<sky>` as a Radiance probe in radiance per lux of sunlight above the
 /// atmosphere, and its sun as a shadow-casting light while it is up.
 fn sky_probe(options: &director_3d::SkyOptions, lux: f64) -> (Vec<u8>, Option<director_scene::ModelLight>) {
@@ -3240,6 +3266,7 @@ fn sky_probe(options: &director_3d::SkyOptions, lux: f64) -> (Vec<u8>, Option<di
     (probe.hdr(), lit.then(|| sun_light(sky.sun, sky.irradiance, lux)))
 }
 
+#[cfg(feature = "3d")]
 /// The `<light>` children of a `<model>`.
 fn model_lights(model: ElementRef<'_>) -> Result<Vec<director_scene::ModelLight>, String> {
     use director_scene::{ModelLight, ModelLightKind};

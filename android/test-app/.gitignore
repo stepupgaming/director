@@ -1,0 +1,8 @@
+target/
+compile-reel/target/
+out*/
+pkg/stage/
+pkg/*.apk
+pkg/*.idsig
+pkg/test.keystore
+pkg/ks.pass

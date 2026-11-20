@@ -5,6 +5,9 @@
 //!
 //! ## Licensing
 //! MIT/Apache compliant (No linking).
+// The FFmpeg encoder, its audio feed and the ffprobe parsers stay for the
+// desktop; Android swaps in `android_media` beneath the same functions.
+#![cfg_attr(target_os = "android", allow(dead_code, unreachable_code, unused_imports))]
 
 use anyhow::{Context, Result};
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
@@ -30,6 +33,10 @@ pub struct FFmpegDriver;
 impl FFmpegDriver {
     /// Checks once per process that `ffmpeg` runs, and warns below 7.1.
     pub fn ensure_available() -> Result<()> {
+        // Android decodes and encodes through MediaCodec, not the binary.
+        if cfg!(target_os = "android") {
+            return Ok(());
+        }
         static CHECKED: OnceLock<std::result::Result<(), String>> = OnceLock::new();
         CHECKED.get_or_init(|| Self::check().map_err(|error| format!("{error:#}"))).clone().map_err(anyhow::Error::msg)
     }
@@ -494,6 +501,10 @@ impl AudioInput {
 /// Encodes video via pipe. Audio is either streamed to a temp file and muxed
 /// after encoding ([`Encoder::new`]) or premixed and encoded in the same
 /// FFmpeg process ([`Encoder::with_audio`], [`Encoder::with_audio_input`]).
+#[cfg(target_os = "android")]
+pub use crate::android_media::Encoder;
+
+#[cfg(not(target_os = "android"))]
 #[allow(dead_code)]
 pub struct Encoder {
     video_process: std::process::Child,
@@ -507,6 +518,7 @@ pub struct Encoder {
     audio_codec: &'static str,
 }
 
+#[cfg(not(target_os = "android"))]
 impl Encoder {
     /// Stream audio per frame with [`Encoder::encode_audio`]; `finish` muxes it in a second pass.
     pub fn new(dest: &Path, settings: EncoderSettings) -> Result<Self> {
@@ -853,6 +865,10 @@ pub struct ProxyManager;
 
 impl ProxyManager {
     pub fn get_or_create_proxy(original: &Path) -> PathBuf {
+        // No FFmpeg to transcode with; MediaCodec seeks the original.
+        if cfg!(target_os = "android") {
+            return original.to_path_buf();
+        }
         let hash = match std::fs::metadata(original) {
             Ok(m) => calculate_hash(
                 &original.to_string_lossy(),
@@ -959,7 +975,11 @@ const READ_AHEAD: usize = 4;
 /// instead of one per frame. Random seeks (timeline jumps, scrubbing) open a
 /// session at the new position.
 struct DecodeSession {
+    #[cfg(not(target_os = "android"))]
     child: std::process::Child,
+    /// Tells the MediaCodec decode thread to stop.
+    #[cfg(target_os = "android")]
+    stop: Arc<AtomicBool>,
     /// Frames its reader thread has read, in order. Closed at the stream's end.
     frames: Option<Receiver<std::io::Result<Vec<u8>>>>,
     /// Buffers handed back for the reader's next frames.
@@ -974,7 +994,34 @@ struct DecodeSession {
 impl DecodeSession {
     /// Frames from `seek_time` on a grid of `fps` frames a second, each the
     /// source frame FFmpeg's `fps` filter shows at that time.
-    fn start(path: &Path, seek_time: f64, fps: f64, start_index: u64, frame_len: usize) -> Result<Self> {
+    #[cfg(target_os = "android")]
+    fn start(path: &Path, seek_time: f64, fps: f64, start_index: u64, size: (u32, u32)) -> Result<Self> {
+        crate::counters::count(crate::counters::Counter::decode_sessions);
+        let (frame_tx, frames) = bounded(READ_AHEAD);
+        let (spare, spare_rx) = unbounded::<Vec<u8>>();
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader = crate::android_media::spawn_decode(
+            path.to_path_buf(),
+            seek_time.max(0.0),
+            fps,
+            size,
+            frame_tx,
+            spare_rx,
+            stop.clone(),
+        );
+        Ok(Self {
+            stop,
+            frames: Some(frames),
+            spare,
+            reader: Some(reader),
+            start_index,
+            next_index: start_index,
+        })
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn start(path: &Path, seek_time: f64, fps: f64, start_index: u64, size: (u32, u32)) -> Result<Self> {
+        let frame_len = size.0 as usize * size.1 as usize * 4;
         let mut child = FFmpegDriver::command()
             .arg("-ss")
             .arg(seek_time.max(0.0).to_string())
@@ -1051,8 +1098,13 @@ impl Drop for DecodeSession {
             let unread = frames.try_iter().filter(Result::is_ok).count();
             crate::counters::add(crate::counters::Counter::frames_discarded, unread as u64);
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        #[cfg(target_os = "android")]
+        self.stop.store(true, Ordering::Relaxed);
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
@@ -1080,6 +1132,7 @@ struct Cursor {
 struct FrameSource {
     path: PathBuf,
     fps: f64,
+    size: (u32, u32),
     frame_len: usize,
     cursors: Vec<Cursor>,
     /// Requests served, the clock of `Cursor::used`.
@@ -1107,6 +1160,7 @@ impl FrameSource {
         Ok(Self {
             path,
             fps: probed.fps,
+            size: (probed.width, probed.height),
             frame_len,
             cursors: Vec::new(),
             requests: 0,
@@ -1139,7 +1193,7 @@ impl FrameSource {
     fn start_session(&self, index: u64) -> Result<DecodeSession> {
         // Seek to the exact frame-grid time, not the raw request time.
         let seek = crate::timeline::frame_to_time(index, self.fps);
-        let session = DecodeSession::start(&self.path, seek, self.fps, index, self.frame_len)?;
+        let session = DecodeSession::start(&self.path, seek, self.fps, index, self.size)?;
         self.started.fetch_add(1, Ordering::Relaxed);
         Ok(session)
     }
@@ -1430,7 +1484,11 @@ impl FrameSources {
 }
 
 /// The container duration in seconds from ffprobe.
-fn probe_duration(path: &Path) -> Option<f64> {
+pub fn probe_duration(path: &Path) -> Option<f64> {
+    #[cfg(target_os = "android")]
+    {
+        return crate::android_media::duration(path);
+    }
     let output = ffprobe()
         .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
         .arg(path)
@@ -1608,6 +1666,10 @@ pub fn grid_rate(nominal: Option<f64>, average: Option<f64>) -> Option<f64> {
 
 /// Probes size, color and frame rate through one ffprobe run.
 pub fn probe_video(path: &Path) -> Result<VideoProbe> {
+    #[cfg(target_os = "android")]
+    {
+        return crate::android_media::probe(path);
+    }
     let output = ffprobe()
         .args(["-v", "error", "-show_entries"])
         .arg("stream=codec_type,codec_name,width,height,pix_fmt,color_range,color_space,r_frame_rate,avg_frame_rate")
@@ -2176,7 +2238,7 @@ mod tests {
     fn decode_session_drop_stops_a_live_child() {
         let (_dir, src) = video_fixture("30");
         let session =
-            DecodeSession::start(&src, 0.0, 30.0, 0, (TEST_WIDTH * TEST_HEIGHT * 4) as usize).expect("decode session");
+            DecodeSession::start(&src, 0.0, 30.0, 0, (TEST_WIDTH, TEST_HEIGHT)).expect("decode session");
         let pid = session.child.id();
         assert!(process_exists(pid), "session must own a live FFmpeg child");
         drop(session);
