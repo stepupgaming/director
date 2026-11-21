@@ -69,6 +69,27 @@ impl Model {
         }
     }
 
+    /// Director's public mirror of `repo` at `revision`: every file byte-identical, plus a
+    /// `MIRROR.md` naming the source commit. Downloads come from here.
+    pub fn mirror(self) -> &'static str {
+        match self {
+            Model::Bark => "babybirdprd/Underdog-Bark-3.0",
+            Model::BarkPlus => "babybirdprd/Underdog-Bark-3.0-Plus",
+            Model::BarkClean => "babybirdprd/Underdog-Bark-3.0-Clean",
+            Model::BarkPro => "babybirdprd/Underdog-Bark-3.0-Pro",
+        }
+    }
+
+    /// The mirror commit that holds the copy of `revision` (2026-11-21).
+    pub fn mirror_revision(self) -> &'static str {
+        match self {
+            Model::Bark => "4e12cb4f034b4995896081c473e453df72066ba5",
+            Model::BarkPlus => "014cba3618ad5fb1ba5fba6652a1f4654186d129",
+            Model::BarkClean => "17b869423c2e952b43a7c9c15f887e5a98ed2605",
+            Model::BarkPro => "5dfb18638d332c5acf6bc2246e1517a795241afe",
+        }
+    }
+
     pub fn file(self) -> ModelFile {
         match self {
             Model::Bark => ModelFile {
@@ -109,8 +130,13 @@ impl Model {
         }
     }
 
-    /// The download URL at the pinned revision.
+    /// The download URL: the mirror at its pinned commit.
     pub fn url(self) -> String {
+        format!("https://huggingface.co/{}/resolve/{}/{}", self.mirror(), self.mirror_revision(), self.file().name)
+    }
+
+    /// The same file at the source repository's pinned revision.
+    pub fn source_url(self) -> String {
         format!("https://huggingface.co/{}/resolve/{}/{}", self.repo(), self.revision(), self.file().name)
     }
 

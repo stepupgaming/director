@@ -39,8 +39,16 @@ fn model_ids_round_trip_and_unknown_names_fail() {
 fn urls_pin_the_revision() {
     assert_eq!(
         Model::Bark.url(),
+        "https://huggingface.co/babybirdprd/Underdog-Bark-3.0/resolve/4e12cb4f034b4995896081c473e453df72066ba5/model.bark"
+    );
+    assert_eq!(
+        Model::Bark.source_url(),
         "https://huggingface.co/ConwayResearch/Underdog-Bark-3.0/resolve/85db2ad18ab41e534a222ee253c29191d77ed919/model.bark"
     );
+    for m in Model::ALL {
+        assert_eq!(m.mirror().split_once('/').unwrap().1, m.repo().split_once('/').unwrap().1);
+        assert_eq!(m.mirror_revision().len(), 40);
+    }
     assert!(Model::BarkPro.url().ends_with("/model.safetensors"));
 }
 

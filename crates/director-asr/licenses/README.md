@@ -1,6 +1,6 @@
 # Third-party licenses for speech to text
 
-Director ships no model weights. `director-engine asr fetch` downloads them from Hugging Face at the revisions pinned in `src/store.rs`, and these terms apply to the downloaded files.
+Director ships no model weights. `director-engine asr fetch` downloads them from Director's Hugging Face mirrors at the revisions pinned in `src/store.rs`, and these terms apply to the downloaded files.
 
 | Component | Used as | License | Files |
 | --- | --- | --- | --- |
@@ -21,6 +21,17 @@ Conway Research released the four models under CC BY 4.0 on 2026-10-15. On 2026-
 | [Underdog Bark 3.0 Plus](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Plus/tree/d4fab2f8b95681e5ad3cfb4e8c5f4e0c009b3deb) | `d4fab2f8b95681e5ad3cfb4e8c5f4e0c009b3deb` | `model.bark`, 179524845, `fdd9f1052e4fdead07d71e8cd2138813eb0c209fd6ff8b1b6f47737e1e501857` | `28a7d4234146b0f01c11e0c6b72dfa29028a4758` |
 | [Underdog Bark 3.0 Clean](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Clean/tree/6d34ed8639b2b9a33e764acf06748519bbb950cf) | `6d34ed8639b2b9a33e764acf06748519bbb950cf` | `model.bark`, 179458613, `b67ca90d94b79a36af4616f1cb3f241884925de7aa9f3e673a8d5c6c4cfd3436` | `73775471a9410b75ceb2401e837861dac12bd76d` |
 | [Underdog Bark 3.0 Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro/tree/4b5c51e04aa8d16dda9ecdff71bc29f7360149e4) | `4b5c51e04aa8d16dda9ecdff71bc29f7360149e4` | `model.safetensors`, 1254196636, `6f84b33e63ebd1851e910e8b2fe299d29f5e0efc6f57e84d92d2f79af464e0e5` | `d87f288a9a0b0cdb92228057e168ce575b300a6b` |
+
+### Mirrors
+
+On 2026-11-21 Director copied each pinned revision in full to a public mirror, adding only `MIRROR.md`. The weight hashes match the table above.
+
+| Model | Mirror | Mirror commit |
+| --- | --- | --- |
+| Underdog Bark 3.0 | [babybirdprd/Underdog-Bark-3.0](https://huggingface.co/babybirdprd/Underdog-Bark-3.0/tree/4e12cb4f034b4995896081c473e453df72066ba5) | `4e12cb4f034b4995896081c473e453df72066ba5` |
+| Underdog Bark 3.0 Plus | [babybirdprd/Underdog-Bark-3.0-Plus](https://huggingface.co/babybirdprd/Underdog-Bark-3.0-Plus/tree/014cba3618ad5fb1ba5fba6652a1f4654186d129) | `014cba3618ad5fb1ba5fba6652a1f4654186d129` |
+| Underdog Bark 3.0 Clean | [babybirdprd/Underdog-Bark-3.0-Clean](https://huggingface.co/babybirdprd/Underdog-Bark-3.0-Clean/tree/17b869423c2e952b43a7c9c15f887e5a98ed2605) | `17b869423c2e952b43a7c9c15f887e5a98ed2605` |
+| Underdog Bark 3.0 Pro | [babybirdprd/Underdog-Bark-3.0-Pro](https://huggingface.co/babybirdprd/Underdog-Bark-3.0-Pro/tree/5dfb18638d332c5acf6bc2246e1517a795241afe) | `5dfb18638d332c5acf6bc2246e1517a795241afe` |
 
 Section 2(a)(1) of CC BY 4.0 grants the license as "irrevocable". Attribution for redistribution: the NOTICE of each model names Conway Research, NVIDIA and Moondream.
 
