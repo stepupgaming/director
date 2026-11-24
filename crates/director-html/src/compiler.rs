@@ -1713,17 +1713,19 @@ impl Builder {
                 let splats = model_splats(el, &self.assets, &context)?;
                 let texts = model_texts(el, &self.assets, &self.director.assets.font_collection).map_err(input)?;
                 let particles = model_particles(el, &self.assets).map_err(input)?;
+                let physics = model_physics(el).map_err(input)?;
+                let shapes = physics.as_ref().map(director_3d::physics_shape_names).unwrap_or_default();
                 let asset = match attr("src") {
                     Some(src) => {
                         let path = (!src.starts_with("data:")).then(|| src.to_string());
                         director_3d::Asset::new(self.assets.read(src)?, "glb", path)
                     }
-                    None if !splats.is_empty() || !texts.is_empty() || !particles.is_empty() => {
+                    None if !splats.is_empty() || !texts.is_empty() || !particles.is_empty() || physics.is_some() => {
                         director_3d::Asset::empty_scene()
                     }
                     None => {
                         return Err(CompileError::Input(format!(
-                            "{context}: model without src, <splat>, <text3d> or <particles> children"
+                            "{context}: model without src, <splat>, <text3d>, <particles> or <physics> children"
                         )))
                     }
                 };
@@ -1748,7 +1750,7 @@ impl Builder {
                     attr("shadow-catcher").map(|v| v.split_whitespace().map(str::to_string).collect()).unwrap_or_default();
                 if !catchers.is_empty() {
                     let names = director_3d::node_names(&model.model.bytes).map_err(input)?;
-                    if let Some(missing) = catchers.iter().find(|c| !names.contains(c)) {
+                    if let Some(missing) = catchers.iter().find(|c| !names.contains(c) && !shapes.contains(c)) {
                         return Err(input(format!("shadow-catcher '{missing}' names no node in the model")));
                     }
                 }
@@ -1866,6 +1868,11 @@ impl Builder {
                     return Err(input("data-motion-blur on the composition already blurs the model, so it cannot take shutter".into()));
                 }
                 model.shutter = shutter / 360.0 / self.director.fps;
+                if let Some(spec) = physics {
+                    let baked = director_3d::Physics::new(&model.model.bytes, model.model.hash, spec, model.info.duration, model.looped)
+                        .map_err(input)?;
+                    model.physics = Some(std::sync::Arc::new(baked));
+                }
                 model.base = paint.camera;
                 model.view = paint.camera;
                 if let Some(plate) = attr("track") {
@@ -3070,6 +3077,169 @@ fn model_splats(model: ElementRef<'_>, assets: &AssetStore, context: &str) -> Re
 }
 
 #[cfg(feature = "3d")]
+/// The `<physics>` child of a `<model>`: a baked rigid-body simulation of
+/// its `<rigid>` bodies and `<spawner>` copies, read from every descendant
+/// so unclosed tags work.
+fn model_physics(model: ElementRef<'_>) -> Result<Option<director_scene::ModelPhysics>, String> {
+    use director_scene::{BodyKind, BodyShape, ColliderKind, ModelPhysics, PhysicsBody, PhysicsSpawner, SpawnEmitter};
+    let mut found = model.children().filter_map(ElementRef::wrap).filter(|el| el.value().name() == "physics");
+    let Some(physics) = found.next() else { return Ok(None) };
+    if found.next().is_some() {
+        return Err("a model takes one <physics>; put every body in it".into());
+    }
+    let p = BodyAttrs { el: physics, what: "physics" };
+    let (number, triple) = (|n: &str| p.number(n), |n: &str| p.triple(n));
+    let d = ModelPhysics::default();
+    let mut spec = ModelPhysics {
+        gravity: triple("gravity")?.unwrap_or(d.gravity),
+        start: number("start")?.unwrap_or(d.start),
+        duration: number("duration")?.unwrap_or(d.duration),
+        rate: number("rate")?.unwrap_or(d.rate),
+        seed: match number("seed")? {
+            None => d.seed,
+            Some(n) if n.fract() == 0.0 && (0.0..=u32::MAX as f32).contains(&n) => n as u32,
+            Some(_) => return Err("physics seed must be a whole number from 0".into()),
+        },
+        ..d
+    };
+    let body = |el: ElementRef<'_>, what: &'static str| -> Result<PhysicsBody, String> {
+        let b = BodyAttrs { el, what };
+        let (attr, number, triple) = (|n: &str| b.attr(n), |n: &str| b.number(n), |n: &str| b.triple(n));
+        let d = PhysicsBody::default();
+        let shape = match attr("shape") {
+            None => None,
+            Some("box") => Some(BodyShape::Box),
+            Some("sphere") => Some(BodyShape::Sphere),
+            Some("cylinder") => Some(BodyShape::Cylinder),
+            Some(other) => return Err(format!("{what} shape '{other}' must be box, sphere or cylinder")),
+        };
+        // One size for every axis, across and tall, or x y z.
+        let size = match attr("size") {
+            None => d.size,
+            Some(v) => {
+                let parts: Vec<f32> = v.split_whitespace().filter_map(|n| n.trim_end_matches('m').parse().ok()).collect();
+                match (&parts[..], parts.len() == v.split_whitespace().count()) {
+                    (&[a], true) => [a; 3],
+                    (&[a, b], true) => [a, b, a],
+                    (&[x, y, z], true) => [x, y, z],
+                    _ => return Err(format!("{what} size '{v}' must be one, two or three numbers of metres")),
+                }
+            }
+        };
+        let color = match attr("color") {
+            None => d.color,
+            Some(c) => {
+                let c = crate::style::color(c, director_core::types::Color::WHITE).map_err(|e| format!("{what} {e}"))?;
+                [c.r, c.g, c.b]
+            }
+        };
+        let kind = match attr("type").unwrap_or("dynamic") {
+            "dynamic" => BodyKind::Dynamic,
+            "static" => BodyKind::Static,
+            "kinematic" => BodyKind::Kinematic,
+            other => return Err(format!("{what} type '{other}' must be dynamic, static or kinematic")),
+        };
+        let collider = match attr("collider").unwrap_or("auto") {
+            "auto" => ColliderKind::Auto,
+            "hull" => ColliderKind::Hull,
+            "box" => ColliderKind::Box,
+            "sphere" => ColliderKind::Sphere,
+            "capsule" => ColliderKind::Capsule,
+            "trimesh" => ColliderKind::Trimesh,
+            other => return Err(format!("{what} collider '{other}' must be auto, hull, box, sphere, capsule or trimesh")),
+        };
+        Ok(PhysicsBody {
+            node: attr("node").map(str::to_string),
+            shape,
+            name: attr("name").map(str::to_string),
+            size,
+            position: triple("position")?.unwrap_or(d.position),
+            rotation: triple("rotation")?.unwrap_or(d.rotation),
+            color,
+            metallic: number("metallic")?.unwrap_or(d.metallic),
+            roughness: number("roughness")?.unwrap_or(d.roughness),
+            kind,
+            collider,
+            density: number("density")?.unwrap_or(d.density),
+            mass: number("mass")?,
+            friction: number("friction")?.unwrap_or(d.friction),
+            restitution: number("restitution")?.unwrap_or(d.restitution),
+            velocity: triple("velocity")?.unwrap_or(d.velocity),
+            spin: triple("spin")?.unwrap_or(d.spin),
+            linear_damping: number("linear-damping")?.unwrap_or(d.linear_damping),
+            angular_damping: number("angular-damping")?.unwrap_or(d.angular_damping),
+            rolling_resistance: number("rolling-resistance")?.unwrap_or(d.rolling_resistance),
+        })
+    };
+    for el in physics.descendants().skip(1).filter_map(ElementRef::wrap) {
+        match el.value().name() {
+            "rigid" => spec.bodies.push(body(el, "rigid")?),
+            "spawner" => {
+                let b = BodyAttrs { el, what: "spawner" };
+                let (attr, number, triple) = (|n: &str| b.attr(n), |n: &str| b.number(n), |n: &str| b.triple(n));
+                let d = PhysicsSpawner::default();
+                let count = match number("count")? {
+                    None => d.count,
+                    Some(n) if n.fract() == 0.0 && (1.0..=director_3d::MAX_BODIES as f32).contains(&n) => n as u32,
+                    Some(_) => return Err(format!("spawner count must be a whole number from 1 to {}", director_3d::MAX_BODIES)),
+                };
+                let emitter = match attr("emitter").unwrap_or("point") {
+                    "point" => SpawnEmitter::Point,
+                    "sphere" => SpawnEmitter::Sphere,
+                    "box" => SpawnEmitter::Box,
+                    other => return Err(format!("spawner emitter '{other}' must be point, sphere or box")),
+                };
+                spec.spawners.push(PhysicsSpawner {
+                    body: body(el, "spawner")?,
+                    count,
+                    start: number("start")?.unwrap_or(spec.start),
+                    duration: number("duration")?.unwrap_or(d.duration),
+                    emitter,
+                    radius: number("radius")?.unwrap_or(d.radius),
+                    extent: triple("extent")?.unwrap_or(d.extent),
+                    velocity_jitter: number("velocity-jitter")?.unwrap_or(d.velocity_jitter),
+                    spin_jitter: number("spin-jitter")?.unwrap_or(d.spin_jitter),
+                    tilt: number("tilt")?.unwrap_or(d.tilt),
+                    scale_jitter: number("scale-jitter")?.unwrap_or(d.scale_jitter),
+                });
+            }
+            "physics" => return Err("<physics> cannot hold another <physics>".into()),
+            _ => {}
+        }
+    }
+    Ok(Some(spec))
+}
+
+/// Reads the attributes of a physics element, naming it in errors.
+struct BodyAttrs<'a> {
+    el: ElementRef<'a>,
+    what: &'static str,
+}
+
+impl<'a> BodyAttrs<'a> {
+    fn attr(&self, name: &str) -> Option<&'a str> {
+        self.el.value().attr_text(name).map(str::trim)
+    }
+
+    fn number(&self, name: &str) -> Result<Option<f32>, String> {
+        let Some(v) = self.attr(name) else { return Ok(None) };
+        let n = v.strip_suffix("deg").or(v.strip_suffix("kg")).unwrap_or(v).trim_end_matches(['s', 'm']);
+        match n.parse::<f32>() {
+            Ok(n) if n.is_finite() => Ok(Some(n)),
+            _ => Err(format!("{} {name} '{v}' must be a number", self.what)),
+        }
+    }
+
+    fn triple(&self, name: &str) -> Result<Option<[f32; 3]>, String> {
+        let Some(v) = self.attr(name) else { return Ok(None) };
+        let parts: Vec<f32> = v.split_whitespace().filter_map(|n| n.parse().ok()).filter(|n: &f32| n.is_finite()).collect();
+        match (&parts[..], v.split_whitespace().count() == 3) {
+            (&[x, y, z], true) => Ok(Some([x, y, z])),
+            _ => Err(format!("{} {name} '{v}' must be three numbers: x y z", self.what)),
+        }
+    }
+}
+
 /// The `<particles>` children of a `<model>`: closed-form emitters in the
 /// scene's metres and the element's seconds.
 fn model_particles(model: ElementRef<'_>, assets: &AssetStore) -> Result<Vec<director_3d::Particles>, String> {

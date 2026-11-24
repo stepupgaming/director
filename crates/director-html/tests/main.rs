@@ -44,6 +44,7 @@ mod optics;
 mod padded_text;
 mod paint_gaps;
 mod particles;
+mod physics;
 mod project;
 mod reel;
 mod reflection;

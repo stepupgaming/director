@@ -13,6 +13,7 @@ pub mod entity;
 pub mod html;
 pub mod layout;
 pub mod model;
+pub mod physics;
 pub mod timeline;
 
 pub use audio::{AudioEffect, AudioMix, AudioParamAnimation, AudioTrack};
@@ -27,6 +28,7 @@ pub use model::{
     ModelBody, ModelFog, ModelLight, ModelLightKind, ModelOptics, ModelParticles, ModelSplat, ModelText, ModelTrack, ModelTrackFrame,
     ModelView, ParticleEmitter,
 };
+pub use physics::{BodyKind, BodyShape, ColliderKind, ModelPhysics, PhysicsBody, PhysicsSpawner, SpawnEmitter};
 pub use timeline::{Clip, Timeline, Track, Transition};
 
 use schemars::JsonSchema;

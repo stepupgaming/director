@@ -125,6 +125,8 @@ pub struct Shot {
     pub sweep: Option<Sweep>,
     /// Particle emitters, computed afresh at each sample's element time.
     pub particles: Arc<Vec<crate::particles::Particles>>,
+    /// Baked rigid bodies, posed at each sample's element time.
+    pub physics: Option<Arc<crate::physics::Physics>>,
     /// Element seconds of the frame, before the clips loop or hold, which
     /// the particles run on.
     pub element_time: f64,
@@ -518,6 +520,8 @@ struct Stage {
     /// The spawned particle emitters and the hash of the set they came from.
     particles: Vec<crate::particles::Spawned>,
     emitting: u64,
+    /// The baked bodies' entities and the bake they play.
+    bodies: Option<(crate::physics::Spawned, Arc<crate::physics::Bake>)>,
     /// Each mesh entity and its copy in Solari's vertex layout, built on the
     /// stage's first Hero shot.
     traced: Option<Vec<hero::TracedMesh>>,
@@ -565,7 +569,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
         stage,
         shot.clips,
         shot.time.to_bits(),
-        lights_hash(&shot.lights) ^ particle_bits(shot).rotate_left(17),
+        lights_hash(&shot.lights) ^ particle_bits(shot).rotate_left(17) ^ physics_bits(shot).rotate_left(41),
         [
             shot.view.yaw.to_bits(),
             shot.view.pitch.to_bits(),
@@ -606,6 +610,17 @@ fn particle_bits(shot: &Shot) -> u64 {
     crate::particles::particles_hash(&shot.particles).hash(&mut hasher);
     shot.element_time.to_bits().hash(&mut hasher);
     hasher.finish()
+}
+
+/// The bits of a shot's bodies for frame cache keys: the bake's hash and,
+/// while bodies move, the element time.
+fn physics_bits(shot: &Shot) -> u64 {
+    shot.physics.as_ref().map_or(0, |p| p.bake.hash ^ p.bake.time_bits(shot.element_time).rotate_left(5))
+}
+
+/// The stage key bits of a shot's bodies.
+fn bodies_hash(shot: &Shot) -> u64 {
+    shot.physics.as_ref().map_or(0, |p| p.hash().rotate_left(23))
 }
 
 struct Studio {
@@ -1060,6 +1075,9 @@ impl Studio {
                 sweep.clip[0] + (sweep.clip[1] - sweep.clip[0]) * s
             });
             crate::particles::set_time(self.apps.main.world_mut(), &self.stages[&key].particles, element);
+            if let Some((bodies, bake)) = &self.stages[&key].bodies {
+                crate::physics::place(self.apps.main.world_mut(), bodies, bake, element);
+            }
             // The model's shutter moves the clips and the orbit to this
             // sample's time. Path traced skins and morph targets pose on
             // the CPU, so they take a pose and a rebuild first, through
@@ -1239,7 +1257,7 @@ impl Studio {
             shot.environment.as_ref().map(|e| e.hash),
             splats_hash(&shot.splats),
             catchers_hash(&shot.catchers),
-            texts_hash(&shot.texts),
+            texts_hash(&shot.texts) ^ bodies_hash(shot),
         );
         if self.stages.contains_key(&key) {
             return Ok(key);
@@ -1305,6 +1323,22 @@ impl Studio {
         if !loaded {
             return Err("glTF scene never finished loading".into());
         }
+        // Baked bodies join before the shadow catchers, which may name them,
+        // posed where the simulation starts so the bounds never depend on
+        // the first shot's time.
+        let bodies = match &shot.physics {
+            Some(physics) => match crate::physics::spawn(self.apps.main.world_mut(), root, physics) {
+                Ok(spawned) => {
+                    crate::physics::place(self.apps.main.world_mut(), &spawned, &physics.bake, physics.bake.start);
+                    Some((spawned, physics.bake.clone()))
+                }
+                Err(e) => {
+                    self.apps.main.world_mut().despawn(root);
+                    return Err(e);
+                }
+            },
+            None => None,
+        };
         let caught = match catch_shadows(self.apps.main.world_mut(), root, &shot.catchers) {
             Ok(caught) => caught,
             Err(e) => {
@@ -1403,6 +1437,10 @@ impl Studio {
             let (Some(aabb), Some(global)) = (world.get::<Aabb>(entity), world.get::<GlobalTransform>(entity)) else {
                 continue;
             };
+            // Unborn copies and hidden spawner templates shrink to nothing.
+            if global.scale().min_element() <= 0.0 {
+                continue;
+            }
             let (c, h) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
             for i in 0..8 {
                 let corner = c + h * Vec3::new(sign(i & 1), sign(i & 2), sign(i & 4));
@@ -1510,6 +1548,7 @@ impl Studio {
                 lit: lights_hash(&[]),
                 particles: Vec::new(),
                 emitting: 0,
+                bodies,
                 traced: None,
                 tracing: false,
                 emitters: Vec::new(),

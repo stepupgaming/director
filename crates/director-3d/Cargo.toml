@@ -25,6 +25,12 @@ lyon_tessellation = "1.0.23"
 # Gaussian splats: PLY and gcloud files, spherical harmonics to degree 3, and the GPU radix sort,
 # which orders every view each frame so a frame depends only on its camera.
 bevy_gaussian_splatting = { version = "=9.0.0", default-features = false, features = ["io_flexbuffers", "io_ply", "planar", "buffer_storage", "sh3", "sort_radix"] }
+# Baked rigid-body physics: one deterministic simulation per shot, stored as
+# transform tracks, so frames stay seek-safe.
+rapier3d = { version = "0.36.1", features = ["enhanced-determinism"] }
+# Reads the meshes, rest poses and clips of physics bodies on the CPU, at the
+# version bevy_gltf already builds.
+gltf = { version = "1.4.1", default-features = false, features = ["names", "utils"] }
 # Same features as director-cli, so both build one copy of ash and wgpu-hal.
 ash = { version = "0.38", features = ["loaded"] }
 

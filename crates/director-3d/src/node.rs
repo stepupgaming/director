@@ -251,6 +251,8 @@ pub struct ModelNode {
     pub texts: Arc<Vec<Text3d>>,
     /// Particle emitters, closed-form in the element time.
     pub particles: Arc<Vec<Particles>>,
+    /// Baked rigid bodies, posed from their tracks at the element time.
+    pub physics: Option<Arc<crate::physics::Physics>>,
     /// Cameras solved from footage, one per footage frame, which film the
     /// model in place of the file's camera.
     pub track: Option<Arc<ModelTrack>>,
@@ -298,6 +300,7 @@ impl ModelNode {
             reflection: 0.0,
             texts: Arc::new(Vec::new()),
             particles: Arc::new(Vec::new()),
+            physics: None,
             track: None,
             fog: None,
             optics: None,
@@ -325,7 +328,8 @@ impl ModelNode {
         let (close, view) = self.close.unwrap_or((self.time + self.shutter, self.view));
         let clips = self.info.clips > 0 && self.clip_time(self.time) != self.clip_time(close);
         let particles = crate::particles::alive(&self.particles, self.time, close);
-        (clips || particles || view != self.view).then_some(Sweep {
+        let bodies = self.physics.as_ref().is_some_and(|p| p.bake.moves_between(self.time, close));
+        (clips || particles || bodies || view != self.view).then_some(Sweep {
             clip: [self.time, close],
             duration: self.info.duration,
             looped: self.looped,
@@ -363,6 +367,15 @@ impl ModelNode {
             .then_some(self.time.to_bits())
             .hash(&mut hasher);
         hasher.finish()
+    }
+
+    /// The bits of the bodies for the frame key: the bake's hash and the
+    /// element time while any body moves across the shutter.
+    fn physics_bits(&self, sweep: Option<Sweep>) -> u64 {
+        let Some(physics) = &self.physics else { return 0 };
+        let close = sweep.map_or(self.time, |s| s.clip[1]);
+        let bake = &physics.bake;
+        bake.hash ^ (bake.time_bits(self.time) ^ bake.time_bits(close).rotate_left(32)).rotate_left(7)
     }
 
     fn body(&self, cx: &mut ExportContext) -> ModelBody {
@@ -419,6 +432,10 @@ impl ModelNode {
                     ..p.spec.clone()
                 })
                 .collect(),
+            physics: self.physics.as_ref().map(|p| director_scene::ModelPhysics {
+                bake: Some(format!("{:016x}", p.hash())),
+                ..p.spec.clone()
+            }),
             fog: self.fog,
             optics: self.optics,
             occlusion: self.occlusion,
@@ -449,6 +466,7 @@ impl Clone for ModelNode {
             reflection: self.reflection,
             texts: self.texts.clone(),
             particles: self.particles.clone(),
+            physics: self.physics.clone(),
             track: self.track.clone(),
             fog: self.fog,
             optics: self.optics,
@@ -473,6 +491,7 @@ impl std::fmt::Debug for ModelNode {
             .field("reflection", &self.reflection)
             .field("texts", &self.texts)
             .field("particles", &self.particles)
+            .field("physics", &self.physics.as_ref().map(|p| p.hash()))
             .field("track", &self.track.as_ref().map(|t| t.frames.len()))
             .field("fog", &self.fog)
             .field("optics", &self.optics)
@@ -513,14 +532,15 @@ impl Element for ModelNode {
     }
 
     fn varies_with_time(&self) -> bool {
-        self.info.clips > 0 || self.track.is_some() || !self.particles.is_empty()
+        self.info.clips > 0 || self.track.is_some() || !self.particles.is_empty() || self.physics.is_some()
     }
 
     fn moves_between(&self, t0: f64, t1: f64) -> bool {
         let clips = self.info.clips > 0 && self.clip_time(t0) != self.clip_time(t1);
         let camera = self.track.as_ref().is_some_and(|track| track_frame(track, t0) != track_frame(track, t1));
         let particles = crate::particles::alive(&self.particles, t0, t1);
-        clips || camera || particles
+        let bodies = self.physics.as_ref().is_some_and(|p| p.bake.moves_between(t0, t1));
+        clips || camera || particles || bodies
     }
 
     fn render(
@@ -560,7 +580,7 @@ impl Element for ModelNode {
             lights_hash(&self.lights),
             splats_hash(&self.splats),
             catchers_hash(&self.shadow_catchers),
-            texts_hash(&self.texts) ^ self.particle_bits(sweep).rotate_left(29),
+            texts_hash(&self.texts) ^ self.particle_bits(sweep).rotate_left(29) ^ self.physics_bits(sweep).rotate_left(43),
             width,
             height,
             [
@@ -626,6 +646,7 @@ impl Element for ModelNode {
             screen_reflections: self.screen_reflections,
             sweep,
             particles: self.particles.clone(),
+            physics: self.physics.clone(),
             element_time: self.time,
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
@@ -855,6 +876,11 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
         particles.push(Particles { spec: ModelParticles { sprite: None, ..spec.clone() }, sprite });
     }
     node.particles = Arc::new(particles);
+    if let Some(spec) = &body.physics {
+        let physics = crate::physics::Physics::new(&node.model.bytes, node.model.hash, spec.clone(), node.info.duration, node.looped)
+            .map_err(ImportError::Invalid)?;
+        node.physics = Some(Arc::new(physics));
+    }
     Ok(Box::new(node))
 }
 

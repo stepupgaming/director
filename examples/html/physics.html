@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; }
+  #main { background: radial-gradient(circle at 50% 38%, #163a26 0%, #07140d 55%, #030805 100%); }
+  model { position: absolute; left: 0; top: 0; display: block; width: 1080px; height: 1920px; }
+  @keyframes push { from { --camera-distance: 1.05; --camera-yaw: -10deg; } to { --camera-distance: 0.9; --camera-yaw: 6deg; } }
+  #coins { --camera-pitch: 14deg; animation: push 6s ease-out forwards; }
+  .caption { position: absolute; left: 0; width: 1080px; text-align: center; font-family: Inter; color: #f3ead2; }
+  #kicker { top: 250px; font-size: 54px; font-weight: 600; letter-spacing: 6px; opacity: 0; animation: show 0.6s ease-out 0.2s forwards; }
+  #line { top: 1640px; font-size: 64px; font-weight: 700; opacity: 0; animation: show 0.6s ease-out 3.2s forwards; }
+  #line span { color: #ffcc4d; }
+  @keyframes show { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+<div id="main" data-composition-id="main" data-width="1080" data-height="1920" data-duration="6" data-fps="30" data-no-timeline>
+  <!-- Coins pour into a railed tray beside the stat: a baked rigid-body pile with
+       varied spin, a bounce on landing, contact shadows from the sun and the
+       model's own shutter blurring the fast ones. -->
+  <model id="coins" environment-intensity="700" shutter="180">
+    <text3d size="0.36" depth="0.08" position="0 1.45 -0.5" color="#ffd45a" side-color="#a8741a" metallic="1" roughness="0.25"
+      font-weight="800">$48,210</text3d>
+    <light type="sun" intensity="4000" position="2.5 6 3" target="0 0 0"></light>
+    <light type="point" color="#ffb347" intensity="400000" position="-1.5 1.2 1.5"></light>
+    <physics duration="5.8" seed="7">
+      <rigid shape="box" name="Table" type="static" size="3.2 0.2 2.2" position="0 -0.1 0" color="#081d12" roughness="0.5"
+        friction="0.7"></rigid>
+      <rigid shape="box" name="RailBack" type="static" size="3.2 0.08 0.04" position="0 0.04 -1.08" color="#a8741a" metallic="1" roughness="0.35"></rigid>
+      <rigid shape="box" name="RailFront" type="static" size="3.2 0.08 0.04" position="0 0.04 1.08" color="#a8741a" metallic="1" roughness="0.35"></rigid>
+      <rigid shape="box" name="RailLeft" type="static" size="0.04 0.08 2.2" position="-1.58 0.04 0" color="#a8741a" metallic="1" roughness="0.35"></rigid>
+      <rigid shape="box" name="RailRight" type="static" size="0.04 0.08 2.2" position="1.58 0.04 0" color="#a8741a" metallic="1" roughness="0.35"></rigid>
+      <spawner shape="cylinder" name="Coin" size="0.15 0.02" color="#f5c542" metallic="1" roughness="0.28"
+        count="220" start="0.3" duration="3.2" emitter="box" position="0 2.4 0.1" extent="0.35 0.4 0.3"
+        velocity-jitter="0.15" spin-jitter="900" scale-jitter="0.1" restitution="0.25" friction="0.5"></spawner>
+    </physics>
+  </model>
+  <div id="kicker" class="caption">THIS MONTH</div>
+  <div id="line" class="caption">earned while you <span>slept</span></div>
+</div>
+</body>
+</html>

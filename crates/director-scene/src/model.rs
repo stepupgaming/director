@@ -84,6 +84,9 @@ pub struct ModelBody {
     /// Particle emitters in the scene's metres.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub particles: Vec<ModelParticles>,
+    /// Baked rigid-body physics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physics: Option<crate::ModelPhysics>,
 }
 
 /// Where a `ModelParticles` emitter births its particles.
