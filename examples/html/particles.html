@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; }
+  #main { background: #050307; }
+  model { position: absolute; left: 0; top: 0; display: block; width: 1080px; height: 1920px; }
+  @keyframes drift { from { --camera-yaw: -14deg; --camera-distance: 1.25; } to { --camera-yaw: 14deg; --camera-distance: 1.1; } }
+  @keyframes rise { from { --camera-pitch: -4deg; --camera-distance: 1.2; } to { --camera-pitch: 6deg; --camera-distance: 1.05; } }
+  #embers { animation: drift 3.5s ease-in-out forwards; }
+  #dust { animation: rise 3.5s ease-in-out forwards; }
+</style>
+</head>
+<body>
+<div id="main" data-composition-id="main" data-width="1080" data-height="1920" data-duration="7" data-fps="30" data-no-timeline>
+  <!-- Embers: a bed of sparks under the type rises on a warm wind, glowing
+       past their cards through the bloom. -->
+  <model id="embers" class="clip" data-start="0" data-duration="3.5" background environment-intensity="40" samples="4">
+    <text3d size="0.9" depth="0.25" bevel="0.02" color="#2a1a14" side-color="#ff5a1f" roughness="0.35">EMBERS</text3d>
+    <light type="point" color="#ff6a20" intensity="3000000" position="0 -1.6 1.4"></light>
+    <light type="sun" intensity="600" position="2 4 6" target="0 0 0"></light>
+    <particles emitter="box" position="0 -1.4 0.2" extent="3.6 0.2 1.2" rate="160" lifetime="2.6" lifetime-jitter="0.4"
+      direction="0 1 0" speed="0.9" spread="25" gravity="0 0.35 0" drag="0.4" turbulence="0.35" turbulence-scale="0.8"
+      size="0.05" size-end="0.015" size-jitter="0.5" color="#ffc070" color-end="#ff3010" fade-in="0.15" fade-out="0.8"
+      emissive="18" seed="11" start="-2"></particles>
+    <particles burst="40" position="0 -1.2 0.3" lifetime="1.4" speed="2.4" spread="50" gravity="0 -3 0" drag="0.6"
+      size="0.025" color="#fff0c0" color-end="#ff7020" fade-in="0" fade-out="0.6" emissive="30" seed="4" start="0.4"></particles>
+  </model>
+  <!-- Dust: motes drift through a sunlit fog volume, lit by the sun's
+       shafts between two pillars of type. -->
+  <model id="dust" class="clip" data-start="3.5" data-duration="3.5" background environment-intensity="300" samples="4">
+    <text3d size="0.9" depth="0.3" color="#b8b0a4" roughness="0.8">DUST</text3d>
+    <light type="sun" intensity="9000" position="-3 5 -4" target="0 0 1"></light>
+    <fog color="#c8b89a" density="0.12" visibility="30"></fog>
+    <particles emitter="sphere" radius="2.4" rate="90" lifetime="3.5" lifetime-jitter="0.2" speed="0.04" spread="180"
+      gravity="0 -0.02 0" turbulence="0.25" turbulence-scale="1.5" size="0.04" size-jitter="0.6" color="#fff4e0"
+      opacity="0.85" fade-in="0.6" fade-out="0.9" emissive="4" seed="21" start="-3"></particles>
+  </model>
+</div>
+</body>
+</html>

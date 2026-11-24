@@ -1712,21 +1712,38 @@ impl Builder {
                 let input = |e: String| CompileError::Input(format!("{context}: {e}"));
                 let splats = model_splats(el, &self.assets, &context)?;
                 let texts = model_texts(el, &self.assets, &self.director.assets.font_collection).map_err(input)?;
+                let particles = model_particles(el, &self.assets).map_err(input)?;
                 let asset = match attr("src") {
                     Some(src) => {
                         let path = (!src.starts_with("data:")).then(|| src.to_string());
                         director_3d::Asset::new(self.assets.read(src)?, "glb", path)
                     }
-                    None if !splats.is_empty() || !texts.is_empty() => director_3d::Asset::empty_scene(),
+                    None if !splats.is_empty() || !texts.is_empty() || !particles.is_empty() => {
+                        director_3d::Asset::empty_scene()
+                    }
                     None => {
                         return Err(CompileError::Input(format!(
-                            "{context}: model without src, <splat> or <text3d> children"
+                            "{context}: model without src, <splat>, <text3d> or <particles> children"
                         )))
                     }
                 };
                 let mut model = director_3d::ModelNode::new(asset).map_err(input)?;
                 model.splats = std::sync::Arc::new(splats);
                 model.texts = std::sync::Arc::new(texts);
+                let named: Vec<&str> = particles
+                    .iter()
+                    .flat_map(|p| {
+                        let mesh = p.spec.mesh.as_deref().filter(|m| !matches!(*m, "card" | "cube" | "tetra"));
+                        p.spec.node.as_deref().into_iter().chain(mesh)
+                    })
+                    .collect();
+                if !named.is_empty() {
+                    let names = director_3d::node_names(&model.model.bytes).map_err(input)?;
+                    if let Some(missing) = named.iter().find(|n| !names.iter().any(|m| m == *n)) {
+                        return Err(input(format!("particles node or mesh '{missing}' names no node in the model")));
+                    }
+                }
+                model.particles = std::sync::Arc::new(particles);
                 let catchers: Vec<String> =
                     attr("shadow-catcher").map(|v| v.split_whitespace().map(str::to_string).collect()).unwrap_or_default();
                 if !catchers.is_empty() {
@@ -3050,6 +3067,105 @@ fn model_splats(model: ElementRef<'_>, assets: &AssetStore, context: &str) -> Re
         });
     }
     Ok(splats)
+}
+
+#[cfg(feature = "3d")]
+/// The `<particles>` children of a `<model>`: closed-form emitters in the
+/// scene's metres and the element's seconds.
+fn model_particles(model: ElementRef<'_>, assets: &AssetStore) -> Result<Vec<director_3d::Particles>, String> {
+    use director_scene::{ModelParticles, ParticleEmitter};
+    let mut out = Vec::new();
+    for el in model.children().filter_map(ElementRef::wrap).filter(|el| el.value().name() == "particles") {
+        let attr = |name: &str| el.value().attr_text(name).map(str::trim);
+        let number = |name: &str| -> Result<Option<f32>, String> {
+            let Some(v) = attr(name) else { return Ok(None) };
+            match v.trim_end_matches(['s', 'm']).parse::<f32>() {
+                Ok(n) if n.is_finite() => Ok(Some(n)),
+                _ => Err(format!("particles {name} '{v}' must be a number")),
+            }
+        };
+        let triple = |name: &str| -> Result<Option<[f32; 3]>, String> {
+            let Some(v) = attr(name) else { return Ok(None) };
+            let parts: Vec<f32> = v.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+            match parts[..] {
+                [x, y, z] if parts.iter().all(|n| n.is_finite()) && v.split_whitespace().count() == 3 => Ok(Some([x, y, z])),
+                _ => Err(format!("particles {name} '{v}' must be three numbers: x y z")),
+            }
+        };
+        let color = |name: &str| -> Result<Option<[f32; 3]>, String> {
+            let Some(c) = attr(name) else { return Ok(None) };
+            let c = crate::style::color(c, director_core::types::Color::WHITE).map_err(|e| format!("particles {e}"))?;
+            Ok(Some([c.r, c.g, c.b]))
+        };
+        let d = ModelParticles::default();
+        let emitter = match attr("emitter").unwrap_or("point") {
+            "point" => ParticleEmitter::Point,
+            "sphere" => ParticleEmitter::Sphere,
+            "box" => ParticleEmitter::Box,
+            "surface" => ParticleEmitter::Surface,
+            other => return Err(format!("particles emitter '{other}' must be point, sphere, box or surface")),
+        };
+        let burst = match number("burst")? {
+            None => 0,
+            Some(n) if n.fract() == 0.0 && n >= 0.0 => n as u32,
+            Some(_) => return Err("particles burst must be a whole number of particles".into()),
+        };
+        let seed = match number("seed")? {
+            None => d.seed,
+            Some(n) if n.fract() == 0.0 && (0.0..=u32::MAX as f32).contains(&n) => n as u32,
+            Some(_) => return Err("particles seed must be a whole number from 0".into()),
+        };
+        // A burst alone births every particle at once, so it takes no rate.
+        let rate = number("rate")?.unwrap_or(if burst > 0 { 0.0 } else { d.rate });
+        let spec = ModelParticles {
+            emitter,
+            position: triple("position")?.unwrap_or(d.position),
+            radius: number("radius")?.unwrap_or(d.radius),
+            extent: triple("extent")?.unwrap_or(d.extent),
+            node: attr("node").map(str::to_string),
+            rate,
+            burst,
+            lifetime: number("lifetime")?.unwrap_or(d.lifetime),
+            lifetime_jitter: number("lifetime-jitter")?.unwrap_or(d.lifetime_jitter),
+            start: number("start")?.unwrap_or(d.start),
+            stop: number("stop")?,
+            seed,
+            direction: triple("direction")?,
+            speed: number("speed")?.unwrap_or(d.speed),
+            speed_jitter: number("speed-jitter")?.unwrap_or(d.speed_jitter),
+            spread: number("spread")?.unwrap_or(d.spread),
+            gravity: triple("gravity")?.unwrap_or(d.gravity),
+            drag: number("drag")?.unwrap_or(d.drag),
+            turbulence: number("turbulence")?.unwrap_or(d.turbulence),
+            turbulence_scale: number("turbulence-scale")?.unwrap_or(d.turbulence_scale),
+            size: number("size")?.unwrap_or(d.size),
+            size_end: number("size-end")?,
+            size_jitter: number("size-jitter")?.unwrap_or(d.size_jitter),
+            spin: number("spin")?.unwrap_or(d.spin),
+            color: color("color")?.unwrap_or(d.color),
+            color_end: color("color-end")?,
+            opacity: number("opacity")?.unwrap_or(d.opacity),
+            fade_in: number("fade-in")?.unwrap_or(d.fade_in),
+            fade_out: number("fade-out")?.unwrap_or(d.fade_out),
+            emissive: number("emissive")?.unwrap_or(d.emissive),
+            sprite: None,
+            mesh: attr("mesh").map(str::to_string),
+        };
+        let sprite = match attr("src") {
+            Some(src) => {
+                if spec.mesh.is_some() {
+                    return Err("particles take a sprite src or a mesh, not both".into());
+                }
+                let path = (!src.starts_with("data:")).then(|| src.to_string());
+                let bytes = assets.read(src).map_err(|e| format!("particles src: {e}"))?;
+                Some(director_3d::Asset::sprite(bytes, path)?)
+            }
+            None => None,
+        };
+        director_3d::check_particles(&spec)?;
+        out.push(director_3d::Particles { spec, sprite });
+    }
+    Ok(out)
 }
 
 #[cfg(feature = "3d")]

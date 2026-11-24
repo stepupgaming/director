@@ -43,6 +43,7 @@ mod object_position_css;
 mod optics;
 mod padded_text;
 mod paint_gaps;
+mod particles;
 mod project;
 mod reel;
 mod reflection;

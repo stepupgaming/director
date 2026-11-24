@@ -9,12 +9,13 @@ use director_core::scene_export::{ElementExport, ExportContext, ExportError};
 use director_core::scene_import::{ImportContext, ImportError, ImportRegistry};
 use director_core::{Element, RenderError};
 use bevy::math::{Quat, Vec3};
-use director_scene::{Channel, ModelBody, ModelFog, ModelLight, ModelOptics, ModelSplat, ModelText, ModelTrack, ModelView, NodeBody, NodeRecord};
+use director_scene::{Channel, ModelBody, ModelFog, ModelLight, ModelOptics, ModelParticles, ModelSplat, ModelText, ModelTrack, ModelView, NodeBody, NodeRecord};
 use skia_safe::gpu::{backend_textures, vk as sk_vk, DirectContext, SurfaceOrigin};
 use skia_safe::{images, AlphaType, Canvas, Color4f, ColorSpace, ColorType, Data, Image, ImageInfo, Paint, Rect};
 use taffy::Style;
 
 use crate::glb::{inspect, GlbInfo};
+use crate::particles::Particles;
 use crate::studio::{self, camera_bits, Shot, ShotCamera, Sweep};
 use crate::text::{texts_hash, Text3d};
 
@@ -74,6 +75,23 @@ impl Asset {
         Ok(Self::new(bytes, ext, path))
     }
 
+    /// A particle sprite: a PNG, JPEG, WebP or GIF image.
+    pub fn sprite(bytes: Vec<u8>, path: Option<String>) -> Result<Self, String> {
+        let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+            "png"
+        } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+            "jpg"
+        } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+            "webp"
+        } else if bytes.starts_with(b"GIF8") {
+            "gif"
+        } else {
+            return Err("particles src must be a PNG, JPEG, WebP or GIF image".into());
+        };
+        crate::particles::decode_sprite(&bytes)?;
+        Ok(Self::new(bytes, ext, path))
+    }
+
     /// The scene of a model made only of splats or type: one empty node.
     pub fn empty_scene() -> Self {
         Self::new(crate::glb::empty(), "glb", None)
@@ -87,6 +105,10 @@ impl Asset {
             "ttf" => "font/ttf",
             "otf" => "font/otf",
             "ttc" => "font/collection",
+            "png" => "image/png",
+            "jpg" => "image/jpeg",
+            "webp" => "image/webp",
+            "gif" => "image/gif",
             _ => "image/x-exr",
         }
     }
@@ -227,6 +249,8 @@ pub struct ModelNode {
     pub reflection: f32,
     /// Lines of extruded type beside the file's meshes.
     pub texts: Arc<Vec<Text3d>>,
+    /// Particle emitters, closed-form in the element time.
+    pub particles: Arc<Vec<Particles>>,
     /// Cameras solved from footage, one per footage frame, which film the
     /// model in place of the file's camera.
     pub track: Option<Arc<ModelTrack>>,
@@ -273,6 +297,7 @@ impl ModelNode {
             shadow_catchers: Arc::new(Vec::new()),
             reflection: 0.0,
             texts: Arc::new(Vec::new()),
+            particles: Arc::new(Vec::new()),
             track: None,
             fog: None,
             optics: None,
@@ -299,7 +324,8 @@ impl ModelNode {
         }
         let (close, view) = self.close.unwrap_or((self.time + self.shutter, self.view));
         let clips = self.info.clips > 0 && self.clip_time(self.time) != self.clip_time(close);
-        (clips || view != self.view).then_some(Sweep {
+        let particles = crate::particles::alive(&self.particles, self.time, close);
+        (clips || particles || view != self.view).then_some(Sweep {
             clip: [self.time, close],
             duration: self.info.duration,
             looped: self.looped,
@@ -322,6 +348,21 @@ impl ModelNode {
         let frame = track_frame(track, t)? as f64;
         let half = track.shutter as f64 / 720.0;
         Some([track_pose(track, frame - half), track_pose(track, frame + half)])
+    }
+
+    /// The bits of the particles for the frame key: their hash and, while
+    /// any live across the shutter, the element time.
+    fn particle_bits(&self, sweep: Option<Sweep>) -> u64 {
+        if self.particles.is_empty() {
+            return 0;
+        }
+        let close = sweep.map_or(self.time, |s| s.clip[1]);
+        let mut hasher = std::hash::DefaultHasher::new();
+        crate::particles::particles_hash(&self.particles).hash(&mut hasher);
+        crate::particles::alive(&self.particles, self.time, close)
+            .then_some(self.time.to_bits())
+            .hash(&mut hasher);
+        hasher.finish()
     }
 
     fn body(&self, cx: &mut ExportContext) -> ModelBody {
@@ -370,6 +411,14 @@ impl ModelNode {
                 })
                 .collect(),
             track: self.track.as_deref().cloned(),
+            particles: self
+                .particles
+                .iter()
+                .map(|p| ModelParticles {
+                    sprite: p.sprite.as_ref().map(|s| s.export(cx, "sprite")),
+                    ..p.spec.clone()
+                })
+                .collect(),
             fog: self.fog,
             optics: self.optics,
             occlusion: self.occlusion,
@@ -399,6 +448,7 @@ impl Clone for ModelNode {
             shadow_catchers: self.shadow_catchers.clone(),
             reflection: self.reflection,
             texts: self.texts.clone(),
+            particles: self.particles.clone(),
             track: self.track.clone(),
             fog: self.fog,
             optics: self.optics,
@@ -422,6 +472,7 @@ impl std::fmt::Debug for ModelNode {
             .field("shadow_catchers", &self.shadow_catchers)
             .field("reflection", &self.reflection)
             .field("texts", &self.texts)
+            .field("particles", &self.particles)
             .field("track", &self.track.as_ref().map(|t| t.frames.len()))
             .field("fog", &self.fog)
             .field("optics", &self.optics)
@@ -462,13 +513,14 @@ impl Element for ModelNode {
     }
 
     fn varies_with_time(&self) -> bool {
-        self.info.clips > 0 || self.track.is_some()
+        self.info.clips > 0 || self.track.is_some() || !self.particles.is_empty()
     }
 
     fn moves_between(&self, t0: f64, t1: f64) -> bool {
         let clips = self.info.clips > 0 && self.clip_time(t0) != self.clip_time(t1);
         let camera = self.track.as_ref().is_some_and(|track| track_frame(track, t0) != track_frame(track, t1));
-        clips || camera
+        let particles = crate::particles::alive(&self.particles, t0, t1);
+        clips || camera || particles
     }
 
     fn render(
@@ -508,7 +560,7 @@ impl Element for ModelNode {
             lights_hash(&self.lights),
             splats_hash(&self.splats),
             catchers_hash(&self.shadow_catchers),
-            texts_hash(&self.texts),
+            texts_hash(&self.texts) ^ self.particle_bits(sweep).rotate_left(29),
             width,
             height,
             [
@@ -573,6 +625,8 @@ impl Element for ModelNode {
             occlusion: self.occlusion,
             screen_reflections: self.screen_reflections,
             sweep,
+            particles: self.particles.clone(),
+            element_time: self.time,
         };
         let paint = Paint::new(Color4f::new(1.0, 1.0, 1.0, opacity), None);
         let sampling = skia_safe::SamplingOptions::new(skia_safe::FilterMode::Linear, skia_safe::MipmapMode::None);
@@ -788,6 +842,19 @@ pub fn decode(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Ele
         });
     }
     node.texts = Arc::new(texts);
+    let mut particles = Vec::with_capacity(body.particles.len());
+    for spec in &body.particles {
+        crate::particles::check(spec).map_err(ImportError::Invalid)?;
+        let sprite = match &spec.sprite {
+            Some(id) => {
+                let (bytes, path) = asset(cx, id)?;
+                Some(Asset::sprite(bytes, path).map_err(|reason| ImportError::Asset { id: id.clone(), reason })?)
+            }
+            None => None,
+        };
+        particles.push(Particles { spec: ModelParticles { sprite: None, ..spec.clone() }, sprite });
+    }
+    node.particles = Arc::new(particles);
     Ok(Box::new(node))
 }
 

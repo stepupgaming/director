@@ -81,6 +81,144 @@ pub struct ModelBody {
     /// so the model blurs at the cost of its samples. 0 keeps it sharp.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub shutter: f32,
+    /// Particle emitters in the scene's metres.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub particles: Vec<ModelParticles>,
+}
+
+/// Where a `ModelParticles` emitter births its particles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ParticleEmitter {
+    /// One point at `position`.
+    #[default]
+    Point,
+    /// Uniformly inside a ball of `radius` around `position`.
+    Sphere,
+    /// Uniformly inside a box of size `extent` centred on `position`.
+    Box,
+    /// Uniformly over the surface of the glTF node `node`, by area.
+    Surface,
+}
+
+/// A particle emitter: every particle's state is a pure function of the
+/// seed, its index and the element time, so any frame renders alone.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ModelParticles {
+    pub emitter: ParticleEmitter,
+    /// Metres along X, Y and Z: the emitter's centre.
+    pub position: [f32; 3],
+    /// A sphere emitter's radius in metres.
+    pub radius: f32,
+    /// A box emitter's size in metres.
+    pub extent: [f32; 3],
+    /// The glTF node whose meshes a surface emitter births on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    /// Particles born per second from `start` to `stop`. 0 with a burst.
+    pub rate: f32,
+    /// Particles born together at `start`. 0 with a rate.
+    pub burst: u32,
+    /// Seconds each particle lives.
+    pub lifetime: f32,
+    /// The share of the lifetime a particle may lose at random, 0 to 1.
+    pub lifetime_jitter: f32,
+    /// Element seconds of the first birth.
+    pub start: f32,
+    /// Element seconds after which no particle is born. `None` emits on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<f32>,
+    /// Picks every random choice.
+    pub seed: u32,
+    /// The axis particles leave along. `None` leaves a surface emitter
+    /// along its normals and any other along +Y.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direction: Option<[f32; 3]>,
+    /// Metres per second at birth.
+    pub speed: f32,
+    /// The share of the speed that varies at random, 0 to 1.
+    pub speed_jitter: f32,
+    /// Degrees from `direction` a particle may leave at, 0 to 180.
+    pub spread: f32,
+    /// Acceleration in metres per second squared.
+    pub gravity: [f32; 3],
+    /// Air drag per second: velocity relaxes toward `gravity / drag`.
+    pub drag: f32,
+    /// Metres a particle wanders through curl noise.
+    pub turbulence: f32,
+    /// Metres across one swirl of the noise.
+    pub turbulence_scale: f32,
+    /// Metres across a particle at birth.
+    pub size: f32,
+    /// Metres across at death. `None` keeps `size`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_end: Option<f32>,
+    /// The share of the size that varies at random, 0 to 1.
+    pub size_jitter: f32,
+    /// Degrees per second each particle turns.
+    pub spin: f32,
+    /// sRGB colour at birth, each channel 0 to 1.
+    pub color: [f32; 3],
+    /// sRGB colour at death. `None` keeps `color`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_end: Option<[f32; 3]>,
+    /// Peak opacity, 0 to 1.
+    pub opacity: f32,
+    /// Seconds a particle takes to fade in after birth.
+    pub fade_in: f32,
+    /// Seconds a particle takes to fade out before death.
+    pub fade_out: f32,
+    /// Light a particle emits as a multiple of its colour, rendered at that
+    /// value before the tone curve, so above about 1 it blooms.
+    pub emissive: f32,
+    /// An image each particle shows on a camera-facing card. `None` shows a
+    /// soft disc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sprite: Option<AssetId>,
+    /// A mesh each particle draws in place of a card: `card`, `cube`,
+    /// `tetra`, or a glTF node name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+}
+
+impl Default for ModelParticles {
+    fn default() -> Self {
+        Self {
+            emitter: ParticleEmitter::Point,
+            position: [0.0; 3],
+            radius: 0.5,
+            extent: [1.0; 3],
+            node: None,
+            rate: 50.0,
+            burst: 0,
+            lifetime: 2.0,
+            lifetime_jitter: 0.3,
+            start: 0.0,
+            stop: None,
+            seed: 1,
+            direction: None,
+            speed: 1.0,
+            speed_jitter: 0.3,
+            spread: 20.0,
+            gravity: [0.0; 3],
+            drag: 0.0,
+            turbulence: 0.0,
+            turbulence_scale: 1.0,
+            size: 0.05,
+            size_end: None,
+            size_jitter: 0.3,
+            spin: 0.0,
+            color: [1.0; 3],
+            color_end: None,
+            opacity: 1.0,
+            fade_in: 0.1,
+            fade_out: 0.5,
+            emissive: 0.0,
+            sprite: None,
+            mesh: None,
+        }
+    }
 }
 
 /// Lens effects over a model's frame, applied in linear light before the

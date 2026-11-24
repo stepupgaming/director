@@ -7,6 +7,7 @@
 //! the CPU or stays on the GPU as a Vulkan image ready for sampling. A shot
 //! sets every input it depends on, so shots render the same in any order.
 
+use std::hash::{Hash, Hasher};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
@@ -122,6 +123,11 @@ pub struct Shot {
     /// The model's own shutter: the samples sweep the clips and the orbit
     /// from `time` and `view` to its close, so the model blurs.
     pub sweep: Option<Sweep>,
+    /// Particle emitters, computed afresh at each sample's element time.
+    pub particles: Arc<Vec<crate::particles::Particles>>,
+    /// Element seconds of the frame, before the clips loop or hold, which
+    /// the particles run on.
+    pub element_time: f64,
 }
 
 /// A shutter that opens at a shot's clip time and orbit.
@@ -509,6 +515,9 @@ struct Stage {
     /// The added lights and the hash of the set they came from.
     lights: Vec<lights::Placed>,
     lit: u64,
+    /// The spawned particle emitters and the hash of the set they came from.
+    particles: Vec<crate::particles::Spawned>,
+    emitting: u64,
     /// Each mesh entity and its copy in Solari's vertex layout, built on the
     /// stage's first Hero shot.
     traced: Option<Vec<hero::TracedMesh>>,
@@ -556,7 +565,7 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
         stage,
         shot.clips,
         shot.time.to_bits(),
-        lights_hash(&shot.lights),
+        lights_hash(&shot.lights) ^ particle_bits(shot).rotate_left(17),
         [
             shot.view.yaw.to_bits(),
             shot.view.pitch.to_bits(),
@@ -585,6 +594,18 @@ fn shot_key(stage: StageKey, shot: &Shot) -> ShotKey {
         shot.shutter.map_or([[0; 8]; 2], |s| s.map(|c| camera_bits(Some(c)))),
         sweep_bits(shot.sweep),
     )
+}
+
+/// The bits of a shot's particles for frame cache keys: their hash and,
+/// while they live, the element time.
+fn particle_bits(shot: &Shot) -> u64 {
+    if shot.particles.is_empty() {
+        return 0;
+    }
+    let mut hasher = std::hash::DefaultHasher::new();
+    crate::particles::particles_hash(&shot.particles).hash(&mut hasher);
+    shot.element_time.to_bits().hash(&mut hasher);
+    hasher.finish()
 }
 
 struct Studio {
@@ -641,6 +662,7 @@ impl Studio {
             hero::HeroPlugin,
             crate::display::DisplayPlugin,
             crate::catcher::CatcherPlugin,
+            crate::particles::ParticlesPlugin,
         ));
         app.init_resource::<Orbit>();
         app.add_systems(PostUpdate, orbit.after(AnimationSystems).before(TransformSystems::Propagate).before(bevy::camera::CameraUpdateSystems));
@@ -947,6 +969,13 @@ impl Studio {
             stage.lit = lit;
         }
         lights::place(world, &stage.lights, None);
+        let emitting = crate::particles::particles_hash(&shot.particles);
+        let reemitted = stage.emitting != emitting;
+        if reemitted {
+            crate::particles::despawn(world, std::mem::take(&mut stage.particles));
+            stage.particles = crate::particles::spawn(world, stage.root, &shot.particles, shot.element_time)?;
+            stage.emitting = emitting;
+        }
         // The fog volume scatters every sun, the file's and the added ones.
         let suns: Vec<Entity> = world.query_filtered::<Entity, With<DirectionalLight>>().iter(world).collect();
         for sun in suns {
@@ -991,7 +1020,7 @@ impl Studio {
         // so does a new light set, so either takes two extra frames.
         // Materials that switch renderer bind a frame late, like a new
         // light set.
-        if warm && (self.shown != Some(key) || respawned || switched) {
+        if warm && (self.shown != Some(key) || respawned || reemitted || switched) {
             self.step();
             self.step();
         }
@@ -1024,6 +1053,13 @@ impl Studio {
         }
         let mut start = traced.count();
         for sample in 0..samples {
+            // Particles take this sample's element time, swept with the
+            // shutter.
+            let element = shot.sweep.filter(|_| samples > 1).map_or(shot.element_time, |sweep| {
+                let s = (sample as f64 + 0.5) / samples as f64;
+                sweep.clip[0] + (sweep.clip[1] - sweep.clip[0]) * s
+            });
+            crate::particles::set_time(self.apps.main.world_mut(), &self.stages[&key].particles, element);
             // The model's shutter moves the clips and the orbit to this
             // sample's time. Path traced skins and morph targets pose on
             // the CPU, so they take a pose and a rebuild first, through
@@ -1472,6 +1508,8 @@ impl Studio {
                 morphs,
                 lights: Vec::new(),
                 lit: lights_hash(&[]),
+                particles: Vec::new(),
+                emitting: 0,
                 traced: None,
                 tracing: false,
                 emitters: Vec::new(),
@@ -1790,7 +1828,7 @@ fn film_mirror(
 }
 
 /// The world transform of `entity` from the local transforms up to `root`.
-fn world_transform(world: &World, entity: Entity, root: Entity) -> Transform {
+pub(crate) fn world_transform(world: &World, entity: Entity, root: Entity) -> Transform {
     let mut out = Transform::IDENTITY;
     let mut at = Some(entity);
     while let Some(e) = at {
@@ -1952,7 +1990,7 @@ fn render_deferred(world: &mut World, root: Entity, mirror: Option<Entity>, defe
     switched
 }
 
-fn descendants(world: &World, root: Entity) -> Vec<Entity> {
+pub(crate) fn descendants(world: &World, root: Entity) -> Vec<Entity> {
     let mut out = Vec::new();
     let mut stack = vec![root];
     while let Some(entity) = stack.pop() {
