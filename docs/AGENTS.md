@@ -8,6 +8,7 @@
 - `plans/` - engineering plans: completed core hardening, motion/recipes, native projects/runtime, superseded native fidelity, the active native platform overhaul, and the transcription and competitive-gaps spec.
 - `contributing/` - development and documentation workflow.
 - `archive/` - superseded or deferred docs (not current contracts).
+- `assets/` - images the root `README.md` embeds: `director-mark.svg` (the logo mark) and `agent-session.gif` (a 900 px loop cut from the video `examples/mcp-demo/make_video.py` builds from its recorded session). Keep each file under 8 MB.
 
 ## Local Contracts
 
@@ -34,3 +35,4 @@
 - `plans/` - Plan index (00), completed plans 01–08, superseded plan 09, the active plan 10 (native platform overhaul), which is the current-state and handoff document, and spec plan 11 (transcription engine and competitive gaps).
 - `contributing/` - Development and documentation workflow.
 - `archive/` - Historical audit and deferred product docs.
+- `assets/` - README logo and demo GIF.
