@@ -80,6 +80,23 @@ director-engine breakdown --schema
 
 `breakdown` decodes the video through `ffmpeg` and writes `breakdown.json` (`director-breakdown/1`): the source's size, rotation, fps and frame count, each shot's start, end, frames, incoming transition (`cut`, `fade`, `dissolve`, `flash`) and motion-graphics beats, and the provenance scan (encoder, camera tags, AIGC labels and hints such as `platform` or `generator`). Without `-o` the document prints on stdout. It runs locally and needs no model.
 
+## Captions
+
+```bash
+# Every caption style key with its kind, range, default and doc
+director-engine captions keys
+director-engine captions keys --format markdown > docs/reference/captions.md
+
+# The built-in looks and the keys each sets, at a 1920 px frame
+director-engine captions presets
+
+# Render presets on the same timed words into one PNG
+director-engine captions sheet -o looks.png
+director-engine captions sheet -o two.png --preset karaoke,pop --time 0.65 --keys 'emphasis_words: ["$600"], emphasis_color: "#FF5A5A"'
+```
+
+`sheet` times the `--text` words 0.3 s apart, captions them with each preset plus the `--keys` Rhai map entries, paints `--time` (default: the fourth word) at `--width` x `--height`, and lays the frames out three to a row at `--scale`. Bad arguments or a script error exit 1; a paint or write failure exits 2.
+
 ## Speech to text
 
 Speech to text is an opt-in cargo feature, so builds that never transcribe skip ONNX Runtime (about 24 MB of the binary and a `DirectML.dll` import on Windows). Without it, `asr` exits 1 with the build command.

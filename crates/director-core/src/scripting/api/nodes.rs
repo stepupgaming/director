@@ -17,8 +17,9 @@
 use crate::animation::Animated;
 use crate::compiler::DependencyInput;
 use crate::element::TextFit;
+use crate::node::caption_keys::{apply_caption_entries, caption_key, caption_placement, CaptionValue};
 use crate::node::smart_caption::SmartCaptionConfig;
-use crate::node::{ActiveSpeakerCamera, ActiveSpeakerCameraConfig, BoxNode, BoxShadow, CaptionLine, CaptionNode, CaptionPosition, CaptionWord, CompositionNode, ContinuityGroup, EffectNode, Framing, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType, SmartCaptionNode, TextNode, VectorNode, VideoNode, VideoSource};
+use crate::node::{ActiveSpeakerCamera, ActiveSpeakerCameraConfig, BoxNode, BoxShadow, CaptionLine, CaptionNode, CaptionWord, CompositionNode, ContinuityGroup, EffectNode, Framing, ImageNode, LottieNode, PathCommand, ShapeNode, ShapeType, SmartCaptionNode, TextNode, VectorNode, VideoNode, VideoSource};
 use crate::types::NodeId;
 use crate::semantic::SemanticManifest;
 use crate::types::FilterConfig;
@@ -1812,7 +1813,7 @@ fn rhai_timed_words(items: rhai::Array, prop: &str) -> Result<Vec<crate::node::c
 /// read by extension, else by content), `source` (SRT or WebVTT text) or a
 /// `content` array of cues.
 fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Result<Vec<CaptionLine>, Box<rhai::EvalAltResult>> {
-    use crate::node::caption::{cues_from_words, parse_srt, parse_transcript_words, parse_vtt};
+    use crate::node::caption::{cues_from_words, parse_srt, parse_vtt};
     let rules = caption_cue_rules(props);
 
     if let Some(media) = props.get("media").and_then(|v| v.clone().into_string().ok()) {
@@ -1846,25 +1847,8 @@ fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Resu
             .load_blob(&file_path)
             .map_err(|e| format!("add_caption: cannot read caption file {file_path:?}: {e}"))?;
         let content = String::from_utf8_lossy(&blob);
-        let body = content.trim_start_matches('\u{feff}').trim_start();
-        let ext = std::path::Path::new(&file_path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase);
-        let lines = match ext.as_deref() {
-            Some("json") => cues_from_words(&parse_transcript_words(&content).map_err(|e| format!("add_caption: {file_path:?}: {e}"))?, &rules),
-            Some("vtt") => parse_vtt(&content),
-            Some("srt") => parse_srt(&content),
-            _ if body.starts_with('[') || body.starts_with('{') => {
-                cues_from_words(&parse_transcript_words(&content).map_err(|e| format!("add_caption: {file_path:?}: {e}"))?, &rules)
-            }
-            _ if body.starts_with("WEBVTT") => parse_vtt(&content),
-            _ => parse_srt(&content),
-        };
-        if lines.is_empty() {
-            return Err(format!("add_caption: no caption cues in {file_path:?}").into());
-        }
-        return Ok(lines);
+        return Ok(crate::node::caption::caption_lines_from_file(&file_path, &content, &rules)
+            .map_err(|e| format!("add_caption: {e}"))?);
     }
 
     if let Some(source) = props.get("source").and_then(|v| v.clone().into_string().ok()) {
@@ -1922,53 +1906,9 @@ fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Resu
     Err("add_caption: give the cues with one of media, words, file, source or content".into())
 }
 
-/// Caption style keys `apply_caption_props` reads.
-pub const CAPTION_STYLE_KEYS: &[&str] = &[
-    "font_size",
-    "font_family",
-    "font_weight",
-    "weight",
-    "uppercase",
-    "color",
-    "highlight_color",
-    "spoken_color",
-    "future_opacity",
-    "active_opacity",
-    "spoken_opacity",
-    "color_transition_duration",
-    "caption_position",
-    "top_margin",
-    "bottom_margin",
-    "left_margin",
-    "right_margin",
-    "safe_area",
-    "safe_area_preset",
-    "layout_width_fraction",
-    "line_spacing",
-    "text_direction",
-    "stroke_enabled",
-    "stroke_width",
-    "stroke_color",
-    "text_shadow_enabled",
-    "text_shadow_color",
-    "text_shadow_blur",
-    "text_shadow_offset_x",
-    "text_shadow_offset_y",
-    "glow_enabled",
-    "glow_blur",
-    "pill_enabled",
-    "pill_color",
-    "pill_padding_h",
-    "pill_padding_v",
-    "pill_radius",
-    "active_pop_scale",
-    "active_pop_duration",
-    "auto_phrase_break",
-    "max_words_per_line",
-    "phrase_line_mode",
-    "line_reveal_offset_1",
-    "line_reveal_duration_1",
-];
+/// Caption keys besides the style table: a look to start from and the
+/// placement track.
+pub const CAPTION_EXTRA_KEYS: &[&str] = &["preset", "positions"];
 
 /// Caption input keys `parse_caption_lines` reads.
 pub const CAPTION_INPUT_KEYS: &[&str] = &[
@@ -2022,7 +1962,6 @@ const CAPTION_KEY_HINTS: &[(&str, &str)] = &[
     ("bottom", "place captions with caption_position and bottom_margin"),
     ("background_color", "use pill_enabled and pill_color"),
     ("background_padding", "use pill_padding_h and pill_padding_v"),
-    ("size", "use font_size"),
     ("width", "captions span their parent's width; narrow the text column with layout_width_fraction"),
     ("max_width", "narrow the text column with layout_width_fraction"),
     ("height", "captions take the height of their lines"),
@@ -2033,7 +1972,8 @@ const CAPTION_KEY_HINTS: &[(&str, &str)] = &[
 fn caption_keys(smart: bool) -> Vec<&'static str> {
     let mut keys = Vec::new();
     keys.extend_from_slice(CAPTION_INPUT_KEYS);
-    keys.extend_from_slice(CAPTION_STYLE_KEYS);
+    keys.extend(crate::node::caption_keys::caption_key_names());
+    keys.extend_from_slice(CAPTION_EXTRA_KEYS);
     keys.extend_from_slice(CAPTION_NODE_KEYS);
     if smart {
         keys.extend_from_slice(SMART_CAPTION_KEYS);
@@ -2061,226 +2001,77 @@ fn caption_node_from_props(
     check_caption_keys(props, kind, smart)?;
     let lines = parse_caption_lines(d, props)?;
     let mut caption_node = CaptionNode::new(lines, d.assets.font_collection.clone());
-    apply_caption_props(&mut caption_node, props).map_err(|e| format!("{kind}: {e}"))?;
+    apply_caption_props(&mut caption_node, props, d.height as f32).map_err(|e| format!("{kind}: {e}"))?;
+    // Measured line breaks need the column width before the first layout.
+    let width = caption_node.box_width_in(d.width as f32);
+    caption_node.set_box_width(Some(width));
     Ok(caption_node)
 }
 
-fn prop_number(props: &rhai::Map, key: &str) -> Result<Option<f64>, String> {
-    match props.get(key) {
-        None => Ok(None),
-        Some(v) => rhai_number(v)
-            .filter(|n| n.is_finite())
-            .map(Some)
-            .ok_or_else(|| format!("{key} must be a number, got {}", v.type_name())),
+/// A Rhai value as a caption key value.
+fn caption_value(key: &str, v: &rhai::Dynamic) -> Result<CaptionValue, String> {
+    if let Some(n) = rhai_number(v) {
+        return Ok(CaptionValue::Number(n));
     }
+    if let Ok(b) = v.as_bool() {
+        return Ok(CaptionValue::Bool(b));
+    }
+    if v.is_string() {
+        return Ok(CaptionValue::Text(v.clone().into_string().unwrap_or_default()));
+    }
+    if let Some(items) = v.clone().try_cast::<rhai::Array>() {
+        return items
+            .into_iter()
+            .map(|w| w.into_string().map_err(|t| format!("{key} must be a list of strings, got a {t} in it")))
+            .collect::<Result<Vec<_>, _>>()
+            .map(CaptionValue::List);
+    }
+    Err(format!("{key} takes a number, true or false, a string or a list, got {}", v.type_name()))
 }
 
-fn prop_f32(props: &rhai::Map, key: &str) -> Result<Option<f32>, String> {
-    Ok(prop_number(props, key)?.map(|n| n as f32))
-}
-
-fn prop_bool(props: &rhai::Map, key: &str) -> Result<Option<bool>, String> {
-    match props.get(key) {
-        None => Ok(None),
-        Some(v) => v
-            .as_bool()
-            .map(Some)
-            .map_err(|t| format!("{key} must be true or false, got {t}")),
-    }
-}
-
-fn prop_string(props: &rhai::Map, key: &str) -> Result<Option<String>, String> {
-    match props.get(key) {
-        None => Ok(None),
-        Some(v) => v
-            .clone()
-            .into_string()
-            .map(Some)
-            .map_err(|t| format!("{key} must be a string, got {t}")),
-    }
-}
-
-fn prop_color(props: &rhai::Map, key: &str) -> Result<Option<crate::types::Color>, String> {
-    match prop_string(props, key)? {
-        None => Ok(None),
-        Some(s) => parse_hex_color(&s)
-            .map(Some)
-            .ok_or_else(|| format!("{key} must be a hex colour such as \"#FFD400\" or \"#00000099\", got {s:?}")),
-    }
-}
-
-/// Apply caption style properties from a Rhai map. Every value is checked:
-/// a wrong type or an unknown name fails with the key.
-fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) -> Result<(), String> {
-    use crate::node::caption::PhraseLineMode;
-    let s = &mut node.style;
-
-    if let Some(v) = prop_f32(props, "font_size")? {
-        if v <= 0.0 {
-            return Err(format!("font_size must be above 0, got {v}"));
-        }
-        s.font_size = v;
-    }
-    if let Some(v) = prop_string(props, "font_family")? {
-        s.font_family = v;
-    }
-    for key in ["font_weight", "weight"] {
-        if let Some(v) = props.get(key) {
-            s.font_weight = super::super::utils::parse_font_weight(v)
-                .ok_or_else(|| format!("{key} must be 100 to 900 or a name such as \"bold\", got {v}"))?;
+/// Apply the caption style keys of a Rhai map through the shared key table:
+/// `preset` first, then every style key, then the `positions` track. Every
+/// value is checked and a wrong one fails with the key.
+fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map, frame_height: f32) -> Result<(), String> {
+    let preset = match props.get("preset") {
+        None => None,
+        Some(v) => Some(v.clone().into_string().map_err(|t| format!("preset must be a string, got {t}"))?),
+    };
+    let mut entries = Vec::new();
+    for (key, value) in props {
+        if caption_key(key).is_some() {
+            entries.push((key.as_str(), caption_value(key, value)?));
         }
     }
-    if let Some(v) = prop_bool(props, "uppercase")? {
-        s.uppercase = v;
-    }
-    if let Some(c) = prop_color(props, "color")? {
-        s.color = c;
-    }
-    if let Some(c) = prop_color(props, "highlight_color")? {
-        s.highlight_color = c;
-    }
-    if let Some(c) = prop_color(props, "spoken_color")? {
-        s.spoken_color = c;
-    }
-    if let Some(v) = prop_f32(props, "future_opacity")? {
-        s.future_opacity = v.clamp(0.0, 1.0);
-    }
-    if let Some(v) = prop_f32(props, "active_opacity")? {
-        s.active_opacity = v.clamp(0.0, 1.0);
-    }
-    if let Some(v) = prop_f32(props, "spoken_opacity")? {
-        s.spoken_color_opacity = v.clamp(0.0, 1.0);
-    }
-    if let Some(v) = prop_number(props, "color_transition_duration")? {
-        s.color_transition_duration = v.max(0.0);
-    }
-    if let Some(v) = prop_f32(props, "top_margin")? {
-        s.top_margin = v;
-    }
-    if let Some(v) = prop_f32(props, "bottom_margin")? {
-        s.bottom_margin = v;
-    }
-    if let Some(v) = prop_f32(props, "left_margin")? {
-        s.left_margin = v;
-    }
-    if let Some(v) = prop_f32(props, "right_margin")? {
-        s.right_margin = v;
-    }
-    for key in ["safe_area", "safe_area_preset"] {
-        if let Some(p) = prop_string(props, key)? {
-            if crate::node::caption::safe_zone(&p).is_none() {
-                return Err(format!("{key}: unknown platform {p:?}; valid: {}", crate::node::caption::safe_area_presets().join(", ")));
-            }
-            s.safe_area_preset = Some(p);
-        }
-    }
-    if let Some(v) = prop_f32(props, "layout_width_fraction")? {
-        if !(0.05..=1.0).contains(&v) {
-            return Err(format!("layout_width_fraction must be between 0.05 and 1, got {v}"));
-        }
-        s.layout_width_fraction = v;
-    }
-    if let Some(v) = prop_f32(props, "line_spacing")? {
-        s.line_spacing = v;
-    }
-    if let Some(d) = prop_string(props, "text_direction")? {
-        s.text_direction = match d.as_str() {
-            "auto" | "ltr" | "rtl" => crate::text_direction::parse_text_direction_mode(&d),
-            _ => return Err(format!("text_direction must be auto, ltr or rtl, got {d:?}")),
-        };
-    }
-    if let Some(v) = prop_bool(props, "stroke_enabled")? {
-        s.stroke_enabled = v;
-    }
-    if let Some(v) = prop_f32(props, "stroke_width")? {
-        s.stroke_width = v.max(0.0);
-    }
-    if let Some(c) = prop_color(props, "stroke_color")? {
-        s.stroke_color = c;
-    }
-    if let Some(v) = prop_bool(props, "text_shadow_enabled")? {
-        s.text_shadow_enabled = v;
-    }
-    if let Some(c) = prop_color(props, "text_shadow_color")? {
-        s.text_shadow_color = c;
-    }
-    if let Some(v) = prop_f32(props, "text_shadow_blur")? {
-        s.text_shadow_blur = v.max(0.0);
-    }
-    if let Some(v) = prop_f32(props, "text_shadow_offset_x")? {
-        s.text_shadow_offset_x = v;
-    }
-    if let Some(v) = prop_f32(props, "text_shadow_offset_y")? {
-        s.text_shadow_offset_y = v;
-    }
-    if let Some(v) = prop_bool(props, "glow_enabled")? {
-        s.glow_enabled = v;
-    }
-    if let Some(v) = prop_f32(props, "glow_blur")? {
-        s.glow_blur = v.max(0.0);
-    }
-    if let Some(v) = prop_bool(props, "pill_enabled")? {
-        s.pill_enabled = v;
-    }
-    if let Some(c) = prop_color(props, "pill_color")? {
-        s.pill_color = c;
-    }
-    if let Some(v) = prop_f32(props, "pill_padding_h")? {
-        s.pill_padding_h = v.max(0.0);
-    }
-    if let Some(v) = prop_f32(props, "pill_padding_v")? {
-        s.pill_padding_v = v.max(0.0);
-    }
-    if let Some(v) = prop_f32(props, "pill_radius")? {
-        s.pill_radius = v.max(0.0);
-    }
-    if let Some(v) = prop_f32(props, "active_pop_scale")? {
-        if !(1.0..=1.10).contains(&v) {
-            return Err(format!("active_pop_scale must be between 1.0 and 1.10, got {v}"));
-        }
-        s.active_pop_scale = v;
-    }
-    if let Some(v) = prop_number(props, "active_pop_duration")? {
-        if !(0.05..=0.15).contains(&v) {
-            return Err(format!("active_pop_duration must be between 0.05 and 0.15 seconds, got {v}"));
-        }
-        s.active_pop_duration = v;
-    }
-    if let Some(v) = prop_bool(props, "auto_phrase_break")? {
-        s.auto_phrase_break = v;
-    }
-    if let Some(v) = prop_number(props, "max_words_per_line")? {
-        if v < 1.0 || v.fract() != 0.0 {
-            return Err(format!("max_words_per_line must be a whole number of at least 1, got {v}"));
-        }
-        s.max_words_per_line = v as usize;
-    }
-    if let Some(m) = prop_string(props, "phrase_line_mode")? {
-        s.phrase_line_mode = match m.as_str() {
-            "replace" => PhraseLineMode::Replace,
-            "stack" => PhraseLineMode::Stack,
-            _ => return Err(format!("phrase_line_mode must be replace or stack, got {m:?}")),
-        };
-    }
-    if let Some(v) = prop_f32(props, "line_reveal_offset_1")? {
-        if s.line_reveal_offsets.len() >= 2 {
-            s.line_reveal_offsets[1] = v.clamp(0.0, 1.0);
-        }
-    }
-    if let Some(v) = prop_f32(props, "line_reveal_duration_1")? {
-        if s.line_reveal_durations.len() >= 2 {
-            s.line_reveal_durations[1] = v.max(0.0);
-        }
-    }
-    if let Some(p) = prop_string(props, "caption_position")? {
-        let position = CaptionPosition::try_from_str(&p).map_err(|_| {
-            format!("caption_position must be bottom, top, center, left, right, top_left, top_right, bottom_left, bottom_right, free(y) or free_xy(x, y), got {p:?}")
-        })?;
-        node.set_position(position);
-    }
-    // Rebuild the Taffy style now that every prop (margins included) is set,
-    // so the layout rect reflects the chosen position.
+    let mut style = node.style.clone();
+    apply_caption_entries(&mut style, preset.as_deref(), &entries, frame_height)?;
+    node.style = style;
     node.rebuild_layout_style();
+
+    if let Some(v) = props.get("positions") {
+        let items = v
+            .clone()
+            .try_cast::<rhai::Array>()
+            .ok_or_else(|| format!("positions must be a list of maps with at, got {}", v.type_name()))?;
+        let mut track = Vec::with_capacity(items.len());
+        for (i, item) in items.into_iter().enumerate() {
+            let map = item
+                .try_cast::<rhai::Map>()
+                .ok_or_else(|| format!("positions[{i}] must be a map such as #{{ at: 2.0, caption_position: \"top\" }}"))?;
+            let at = map
+                .get("at")
+                .and_then(rhai_number)
+                .ok_or_else(|| format!("positions[{i}] needs at, a time in seconds"))?;
+            let mut keys = Vec::new();
+            for (key, value) in &map {
+                if key.as_str() != "at" {
+                    keys.push((key.as_str(), caption_value(key, value)?));
+                }
+            }
+            track.push(caption_placement(&node.style, at, &keys).map_err(|e| format!("{e} (positions[{i}])"))?);
+        }
+        node.set_positions(track);
+    }
     node.after_style_changed();
     Ok(())
 }

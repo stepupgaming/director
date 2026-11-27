@@ -226,11 +226,37 @@ pub enum PhraseLineMode {
     Stack,
 }
 
+/// How a cue splits into display lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineBreak {
+    /// Lines hold as many words as fit the measured column, at most
+    /// `max_words_per_line`, balanced, with no article, preposition or
+    /// conjunction left at a line end.
+    #[default]
+    Width,
+    /// Fixed chunks of `max_words_per_line` words.
+    Words,
+}
+
+/// Where the caption block sits from a time on: an anchor with its margins.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CaptionPlacement {
+    /// Seconds on the caption's timeline from which this placement holds.
+    pub at: f64,
+    pub position: CaptionPosition,
+    pub top_margin: f32,
+    pub bottom_margin: f32,
+    pub left_margin: f32,
+    pub right_margin: f32,
+}
+
 /// Caption styling. Defaults target a clean, TikTok/Reels look:
 /// white text, warm yellow active word, restrained shadow only.
 /// Uniform font_size across all token states → glyph metrics never
 /// vary → no neighbor shifting when state changes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CaptionStyle {
     pub font_size: f32,
     pub color: Color,            // future words (default white)
@@ -311,6 +337,17 @@ pub struct CaptionStyle {
 
     /// Render all words uppercase (layout-stable; applied at shape time).
     pub uppercase: bool,
+
+    /// How cues split into display lines.
+    pub line_break: LineBreak,
+    /// Display lines shown together in `Replace` mode: a page of up to this
+    /// many lines replaces the previous page.
+    pub max_lines: usize,
+    /// Colour of the emphasis words while they are not active.
+    pub emphasis_color: Option<Color>,
+    /// Words painted in `emphasis_color`, matched without case or edge
+    /// punctuation.
+    pub emphasis_words: Vec<String>,
 }
 
 impl Default for CaptionStyle {
@@ -370,6 +407,11 @@ impl Default for CaptionStyle {
             safe_area_preset: None,
 
             uppercase: false,
+
+            line_break: LineBreak::Width,
+            max_lines: 1,
+            emphasis_color: None,
+            emphasis_words: Vec::new(),
         }
     }
 }
@@ -435,6 +477,14 @@ pub struct CaptionNode {
     pub opacity: Animated<f32>,
     pub font_collection: Arc<Mutex<FontCollection>>,
     pub style_cache: Style,
+    /// Placements in time order; the style's own placement holds before the
+    /// first one.
+    positions: Vec<CaptionPlacement>,
+    /// The style's placement while `positions` moves it.
+    base_placement: Option<CaptionPlacement>,
+    /// Width of the caption's layout box that width line breaks measure
+    /// against. Unknown until set or laid out.
+    box_width: Option<f32>,
     cached_time: Mutex<f64>,
     block_layout: Mutex<Option<BlockLayout>>,
 }
@@ -447,6 +497,9 @@ impl Clone for CaptionNode {
             opacity: self.opacity.clone(),
             font_collection: self.font_collection.clone(),
             style_cache: self.style_cache.clone(),
+            positions: self.positions.clone(),
+            base_placement: self.base_placement.clone(),
+            box_width: self.box_width,
             cached_time: Mutex::new(0.0),
             block_layout: Mutex::new(None),
         }
@@ -463,20 +516,130 @@ impl fmt::Debug for CaptionNode {
 }
 
 impl CaptionNode {
-    pub fn new(mut lines: Vec<CaptionLine>, font_collection: Arc<Mutex<FontCollection>>) -> Self {
-        let style = CaptionStyle::default();
-        refresh_caption_lines(&mut lines, &style);
+    pub fn new(lines: Vec<CaptionLine>, font_collection: Arc<Mutex<FontCollection>>) -> Self {
         let mut node = Self {
             lines,
-            style,
+            style: CaptionStyle::default(),
             opacity: Animated::new(1.0),
             font_collection,
             style_cache: Style::default(),
+            positions: Vec::new(),
+            base_placement: None,
+            box_width: None,
             cached_time: Mutex::new(0.0),
             block_layout: Mutex::new(None),
         };
+        node.refresh_lines();
         node.rebuild_layout_style();
         node
+    }
+
+    /// The placements `positions` switches between, in time order.
+    pub fn positions(&self) -> &[CaptionPlacement] {
+        &self.positions
+    }
+
+    /// Move the caption over time: each placement holds from its `at` until
+    /// the next, and the style's current placement holds before the first.
+    pub fn set_positions(&mut self, mut positions: Vec<CaptionPlacement>) {
+        positions.sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
+        let base = self.base_placement.take().unwrap_or_else(|| self.placement(f64::NEG_INFINITY));
+        self.apply_placement(&base);
+        self.base_placement = (!positions.is_empty()).then_some(base);
+        self.positions = positions;
+    }
+
+    /// The style's own placement, before any `positions` key.
+    pub fn base_style(&self) -> CaptionStyle {
+        let mut style = self.style.clone();
+        if let Some(base) = &self.base_placement {
+            style.position = base.position.clone();
+            style.top_margin = base.top_margin;
+            style.bottom_margin = base.bottom_margin;
+            style.left_margin = base.left_margin;
+            style.right_margin = base.right_margin;
+        }
+        style
+    }
+
+    /// The current placement of the style, holding from `at`.
+    pub fn placement(&self, at: f64) -> CaptionPlacement {
+        CaptionPlacement {
+            at,
+            position: self.style.position.clone(),
+            top_margin: self.style.top_margin,
+            bottom_margin: self.style.bottom_margin,
+            left_margin: self.style.left_margin,
+            right_margin: self.style.right_margin,
+        }
+    }
+
+    fn apply_placement(&mut self, p: &CaptionPlacement) {
+        let s = &self.style;
+        if s.position == p.position
+            && s.top_margin == p.top_margin
+            && s.bottom_margin == p.bottom_margin
+            && s.left_margin == p.left_margin
+            && s.right_margin == p.right_margin
+        {
+            return;
+        }
+        // The parent stays, so the box keeps its parent width less the new
+        // side insets.
+        let (old_left, old_right) = side_insets(&self.style);
+        self.style.position = p.position.clone();
+        self.style.top_margin = p.top_margin;
+        self.style.bottom_margin = p.bottom_margin;
+        self.style.left_margin = p.left_margin;
+        self.style.right_margin = p.right_margin;
+        self.rebuild_layout_style();
+        let (left, right) = side_insets(&self.style);
+        self.set_box_width(self.box_width.map(|w| w + old_left + old_right - left - right));
+        if let Ok(mut guard) = self.block_layout.lock() {
+            *guard = None;
+        }
+    }
+
+    /// Width of the caption's layout box, once known.
+    pub fn box_width(&self) -> Option<f32> {
+        self.box_width
+    }
+
+    /// The box width under the base placement: what [`Self::base_style`] lays
+    /// out to in the same parent.
+    pub fn base_box_width(&self) -> Option<f32> {
+        let (left, right) = side_insets(&self.style);
+        let (base_left, base_right) = side_insets(&self.base_style());
+        self.box_width.map(|w| w + left + right - base_left - base_right)
+    }
+
+    /// Set the layout box width that width line breaks measure against. The
+    /// caption lays out to its box on every frame and breaks its lines again
+    /// when the width changes.
+    pub fn set_box_width(&mut self, width: Option<f32>) {
+        let same = match (self.box_width, width) {
+            (Some(a), Some(b)) => (a - b).abs() < 0.5,
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        self.box_width = width;
+        if self.style.line_break == LineBreak::Width && self.style.auto_phrase_break {
+            self.refresh_lines();
+            if let Ok(mut guard) = self.block_layout.lock() {
+                *guard = None;
+            }
+        }
+        self.sync_centred_height();
+    }
+
+    /// The box width a caption gets in a parent `parent_width` wide: the
+    /// parent less the side margin of its anchor.
+    pub fn box_width_in(&self, parent_width: f32) -> f32 {
+        let (left, right) = side_insets(&self.style);
+        (parent_width - left - right).max(1.0)
     }
 
     pub fn active_lines(&self, time_sec: f64) -> Vec<&CaptionLine> {
@@ -517,19 +680,14 @@ impl CaptionNode {
             bottom: LengthPercentageAuto::auto(),
         };
         s.align_self = None;
+        s.margin.top = LengthPercentageAuto::length(0.0);
+        s.margin.bottom = LengthPercentageAuto::length(0.0);
+        s.size.height = taffy::style::Dimension::auto();
 
         // The block spans its parent's width less the side margin of its
         // anchor, so lines align inside the frame without a width key.
         let len = LengthPercentageAuto::length;
-        let (left, right) = match &style.position {
-            CaptionPosition::TopLeft | CaptionPosition::BottomLeft | CaptionPosition::Left => {
-                (style.left_margin, 0.0)
-            }
-            CaptionPosition::TopRight | CaptionPosition::BottomRight | CaptionPosition::Right => {
-                (0.0, style.right_margin)
-            }
-            _ => (0.0, 0.0),
-        };
+        let (left, right) = side_insets(style);
         s.inset.left = len(left);
         s.inset.right = len(right);
         s.size.width = taffy::style::Dimension::auto();
@@ -542,7 +700,12 @@ impl CaptionNode {
                 s.inset.bottom = len(style.bottom_margin);
             }
             CaptionPosition::Left | CaptionPosition::Right | CaptionPosition::Center => {
-                s.align_self = Some(taffy::style::AlignItems::Center);
+                // Auto margins centre a box of the block's height between
+                // zero insets, in block and flex parents alike.
+                s.inset.top = len(0.0);
+                s.inset.bottom = len(0.0);
+                s.margin.top = LengthPercentageAuto::auto();
+                s.margin.bottom = LengthPercentageAuto::auto();
             }
             CaptionPosition::Free(_) | CaptionPosition::FreeXY { .. } => {
                 // Free/FreeXY positions are resolved at render time from the
@@ -557,14 +720,80 @@ impl CaptionNode {
                 };
             }
         }
+        self.sync_centred_height();
+    }
+
+    /// Centred anchors (left, right, center) hold the block's height in the
+    /// layout style, so their auto margins centre the box on its parent. Without
+    /// a box width yet the box fills the parent and render centres the block.
+    fn sync_centred_height(&mut self) {
+        let centred = matches!(self.style.position, CaptionPosition::Left | CaptionPosition::Right | CaptionPosition::Center);
+        let height = self.box_width.filter(|_| centred).map(|w| {
+            let layout = self.build_block_layout((w * self.style.layout_width_fraction).max(20.0));
+            let height = layout.total_height;
+            if let Ok(mut guard) = self.block_layout.lock() {
+                *guard = Some(layout);
+            }
+            height
+        });
+        self.style_cache.size.height =
+            height.map(taffy::style::Dimension::length).unwrap_or_else(taffy::style::Dimension::auto);
     }
 
     /// Re-apply phrase breaks and drop cached layout after style / line edits.
-    pub(crate) fn after_style_changed(&mut self) {
-        refresh_caption_lines(&mut self.lines, &self.style);
+    pub fn after_style_changed(&mut self) {
+        self.refresh_lines();
         if let Ok(mut guard) = self.block_layout.lock() {
             *guard = None;
         }
+        self.sync_centred_height();
+    }
+
+    /// Break every cue into display lines by the style: measured and
+    /// balanced for `LineBreak::Width`, fixed word chunks for `Words`.
+    fn refresh_lines(&mut self) {
+        if self.style.line_break == LineBreak::Words || !self.style.auto_phrase_break {
+            refresh_caption_lines(&mut self.lines, &self.style);
+            return;
+        }
+        let style = self.style.resolved();
+        let max_width = match self.box_width {
+            Some(w) => (w * style.layout_width_fraction).max(20.0) - 2.0 * style.outline(),
+            None => f32::INFINITY,
+        };
+        let shown_together = match style.phrase_line_mode {
+            PhraseLineMode::Stack => usize::MAX,
+            PhraseLineMode::Replace => style.max_lines.max(1),
+        };
+        let mut lines = std::mem::take(&mut self.lines);
+        refresh_caption_lines_by(&mut lines, &style, &mut |line: &CaptionLine| {
+            let (widths, space) = self.word_widths(&style, line);
+            let weak: Vec<bool> = line.words.iter().map(|w| is_weak_word(&w.text)).collect();
+            balanced_breaks(&widths, space, max_width, style.max_words_per_line, shown_together, &weak)
+        });
+        self.lines = lines;
+    }
+
+    /// Each word's shaped width and the width of a space between words.
+    fn word_widths(&self, style: &CaptionStyle, line: &CaptionLine) -> (Vec<f32>, f32) {
+        let words: Vec<&CaptionWord> = line.words.iter().collect();
+        let (paragraph, ranges) = self.build_measure_paragraph(style, &words, 1.0e6);
+        let widths: Vec<f32> = ranges
+            .iter()
+            .map(|&(a, b)| {
+                paragraph
+                    .get_rects_for_range(a..b, RectHeightStyle::Tight, RectWidthStyle::Tight)
+                    .iter()
+                    .map(|r| r.rect.width())
+                    .sum()
+            })
+            .collect();
+        let space = if widths.len() > 1 {
+            ((paragraph.longest_line() - widths.iter().sum::<f32>()) / (widths.len() - 1) as f32).max(0.0)
+        } else {
+            0.0
+        };
+        (widths, space)
     }
 
     // ── Easings (smooth, no overshoot) ────────────────────────────
@@ -904,8 +1133,11 @@ impl CaptionNode {
         for c in &cues {
             let total_dl_height: f32 = if style.phrase_line_mode == PhraseLineMode::Replace {
                 c.display_lines
-                    .iter()
-                    .map(|dl| dl.line_height)
+                    .chunks(style.max_lines.max(1))
+                    .map(|page| {
+                        page.iter().map(|dl| dl.line_height).sum::<f32>()
+                            + page.len().saturating_sub(1) as f32 * style.line_spacing
+                    })
                     .fold(0.0f32, f32::max)
             } else {
                 c.display_lines
@@ -1045,10 +1277,11 @@ impl CaptionNode {
     /// Compute the top y-coordinate of the caption block for the given
     /// position, layout rect, and block layout.
     ///
-    /// For anchors that are encoded into the Taffy style (Top, Bottom, corners,
-    /// Left, Right, Center), Taffy has already positioned the layout rect at the
-    /// render location, so we just use `rect.top`. For Free/FreeXY the position
-    /// is resolved at render time within the supplied rect.
+    /// For Top, Bottom and the corners, Taffy has already positioned the
+    /// layout rect at the render location, so we just use `rect.top`. Left,
+    /// Right and Center fill the parent's height and centre the block in it.
+    /// For Free/FreeXY the position is resolved at render time within the
+    /// supplied rect.
     fn compute_cue_block_top_y(
         layout_style: &CaptionStyle,
         rect: Rect,
@@ -1062,10 +1295,10 @@ impl CaptionNode {
             | CaptionPosition::TopLeft
             | CaptionPosition::TopRight
             | CaptionPosition::BottomLeft
-            | CaptionPosition::BottomRight
-            | CaptionPosition::Left
-            | CaptionPosition::Right
-            | CaptionPosition::Center => rect.top,
+            | CaptionPosition::BottomRight => rect.top,
+            CaptionPosition::Left | CaptionPosition::Right | CaptionPosition::Center => {
+                rect.top + ((rect.height() - layout.total_height) / 2.0).max(0.0)
+            }
             CaptionPosition::Free(y) => {
                 // `y` is a normalized [0, 1] offset relative to the layout rect.
                 let t = y.clamp(0.0, 1.0);
@@ -1097,6 +1330,193 @@ impl CaptionNode {
 }
 
 // ── Style helpers ─────────────────────────────────────────────────
+
+/// Left and right Taffy insets of a caption box: the side margin of its
+/// anchor's side.
+fn side_insets(style: &CaptionStyle) -> (f32, f32) {
+    match &style.position {
+        CaptionPosition::TopLeft | CaptionPosition::BottomLeft | CaptionPosition::Left => (style.left_margin, 0.0),
+        CaptionPosition::TopRight | CaptionPosition::BottomRight | CaptionPosition::Right => {
+            (0.0, style.right_margin)
+        }
+        _ => (0.0, 0.0),
+    }
+}
+
+/// A word as emphasis matching sees it: lowercase, edge punctuation removed,
+/// so `"$600"`, `600` and `600,` match.
+pub fn emphasis_key(word: &str) -> String {
+    word.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()
+}
+
+/// Whether `word` is one of `style.emphasis_words`.
+pub fn is_emphasis_word(style: &CaptionStyle, word: &str) -> bool {
+    if style.emphasis_words.is_empty() {
+        return false;
+    }
+    let key = emphasis_key(word);
+    !key.is_empty() && style.emphasis_words.iter().any(|w| emphasis_key(w) == key)
+}
+
+/// English articles, prepositions, conjunctions and possessives that read
+/// badly at the end of a caption line.
+const WEAK_WORDS: &[&str] = &[
+    "a", "an", "the", "of", "to", "in", "on", "at", "for", "with", "by", "from", "into", "onto", "over", "under",
+    "about", "as", "than", "and", "or", "but", "nor", "so", "if", "my", "your", "our", "their", "his", "her", "its",
+    "this", "these", "those", "is", "are", "was", "were",
+];
+
+/// Whether a line should not end on `word`.
+pub fn is_weak_word(word: &str) -> bool {
+    let key = emphasis_key(word);
+    // A word that ends a clause carries its own pause.
+    let clause_end = word.trim_end().ends_with([',', '.', ';', ':', '!', '?']);
+    !clause_end && WEAK_WORDS.contains(&key.as_str())
+}
+
+/// Display line of each word: the fewest lines that fit `max_width` with at
+/// most `max_words` words each (one more when that keeps a weak word off a
+/// line end), then the split among those with the most even
+/// widths, no weak word ending a line, and a lower line at least as wide as
+/// the one above it when both show together (`shown_together` lines per page).
+/// A word wider than `max_width` takes a line of its own.
+pub fn balanced_breaks(
+    widths: &[f32],
+    space: f32,
+    max_width: f32,
+    max_words: usize,
+    shown_together: usize,
+    weak: &[bool],
+) -> Vec<usize> {
+    let n = widths.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let max_words = max_words.max(1);
+    let mut prefix = vec![0.0f32; n + 1];
+    for i in 0..n {
+        prefix[i + 1] = prefix[i] + widths[i];
+    }
+    let line_w = |i: usize, j: usize| prefix[j] - prefix[i] + space * (j - i - 1) as f32;
+    let fits = |i: usize, j: usize| j - i <= max_words && (j - i == 1 || line_w(i, j) <= max_width + 0.5);
+
+    // Fewest lines.
+    let mut fewest = vec![usize::MAX; n + 1];
+    fewest[0] = 0;
+    for j in 1..=n {
+        for i in j.saturating_sub(max_words)..j {
+            if fewest[i] != usize::MAX && fits(i, j) {
+                fewest[j] = fewest[j].min(fewest[i] + 1);
+            }
+        }
+    }
+    let k = fewest[n];
+    let greedy = || {
+        let mut out = Vec::with_capacity(n);
+        let (mut line, mut start) = (0usize, 0usize);
+        for j in 0..n {
+            if j > start && !fits(start, j + 1) {
+                line += 1;
+                start = j;
+            }
+            out.push(line);
+        }
+        out
+    };
+    if k <= 1 || n > 64 {
+        return if k <= 1 { vec![0; n] } else { greedy() };
+    }
+
+    let fewest_lines = solve_breaks(k, &line_w, &fits, n, prefix[n], space, shown_together, weak);
+    let weak_ends = |lines: &[usize]| (1..n).filter(|&j| lines[j] != lines[j - 1] && weak[j - 1]).count();
+    match fewest_lines {
+        // One more line is worth it when it keeps a weak word off a line end.
+        Some(lines) if weak_ends(&lines) > 0 && k < n => {
+            match solve_breaks(k + 1, &line_w, &fits, n, prefix[n], space, shown_together, weak) {
+                Some(more) if weak_ends(&more) < weak_ends(&lines) => more,
+                _ => lines,
+            }
+        }
+        Some(lines) => lines,
+        None => greedy(),
+    }
+}
+
+/// The lowest-cost split of `n` words into exactly `k` lines, if one fits.
+#[allow(clippy::too_many_arguments)]
+fn solve_breaks(
+    k: usize,
+    line_w: &dyn Fn(usize, usize) -> f32,
+    fits: &dyn Fn(usize, usize) -> bool,
+    n: usize,
+    total: f32,
+    space: f32,
+    shown_together: usize,
+    weak: &[bool],
+) -> Option<Vec<usize>> {
+    let mean = ((total + space * (n - k) as f32) / k as f32).max(1.0);
+    let line_cost = |i: usize, j: usize| {
+        let d = (line_w(i, j) - mean) / mean;
+        d * d + if j < n && weak[j - 1] { 0.5 } else { 0.0 }
+    };
+    let pair_cost = |top: (usize, usize), bottom: (usize, usize), top_line: usize| {
+        if shown_together > 1 && top_line / shown_together == (top_line + 1) / shown_together {
+            let over = line_w(top.0, top.1) - line_w(bottom.0, bottom.1);
+            if over > 0.0 {
+                return 0.15 * over / mean;
+            }
+        }
+        0.0
+    };
+
+    // best[l][j][s]: lowest cost of words 0..j in l + 1 lines, the last
+    // starting at s.
+    let inf = f32::INFINITY;
+    let mut best = vec![vec![vec![inf; n]; n + 1]; k];
+    let mut from = vec![vec![vec![usize::MAX; n]; n + 1]; k];
+    for (j, first) in best[0].iter_mut().enumerate().skip(1) {
+        if fits(0, j) {
+            first[0] = line_cost(0, j);
+        }
+    }
+    for l in 1..k {
+        for s in 1..n {
+            for j in (s + 1)..=n {
+                if !fits(s, j) {
+                    continue;
+                }
+                let here = line_cost(s, j);
+                for ps in 0..s {
+                    let prev = best[l - 1][s][ps];
+                    if prev == inf {
+                        continue;
+                    }
+                    let c = prev + here + pair_cost((ps, s), (s, j), l - 1);
+                    if c < best[l][j][s] {
+                        best[l][j][s] = c;
+                        from[l][j][s] = ps;
+                    }
+                }
+            }
+        }
+    }
+    let mut s = (0..n)
+        .filter(|&s| best[k - 1][n][s] < inf)
+        .min_by(|&a, &b| best[k - 1][n][a].total_cmp(&best[k - 1][n][b]))?;
+    let mut out = vec![0; n];
+    let mut j = n;
+    for l in (0..k).rev() {
+        for slot in out.iter_mut().take(j).skip(s) {
+            *slot = l;
+        }
+        if l > 0 {
+            let ps = from[l][j][s];
+            j = s;
+            s = ps;
+        }
+    }
+    Some(out)
+}
 
 fn lerp_color(a: Color, b: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
@@ -1179,7 +1599,15 @@ impl Element for CaptionNode {
         if let Ok(mut t) = self.cached_time.lock() {
             *t = time;
         }
+        if let Some(base) = &self.base_placement {
+            let target = self.positions.iter().rev().find(|p| p.at <= time).unwrap_or(base).clone();
+            self.apply_placement(&target);
+        }
         true
+    }
+
+    fn post_layout(&mut self, rect: Rect) {
+        self.set_box_width(Some(rect.width()));
     }
 
     fn render(
@@ -1281,7 +1709,18 @@ impl Element for CaptionNode {
                 None
             };
 
+            // Replace mode shows the page of the current line: up to
+            // `max_lines` lines, bottom-aligned in the block.
+            let page_len = layout_style.max_lines.max(1);
+            let current_page = current_display_line.map(|dl| dl / page_len);
             let mut line_y_cursor: f32 = cue_block_top_y;
+            if let Some(page) = current_page {
+                let page_lines = cue_layout.display_lines.iter().skip(page * page_len).take(page_len);
+                let page_count = page_lines.clone().count();
+                let page_h: f32 = page_lines.map(|dl| dl.line_height).sum::<f32>()
+                    + page_count.saturating_sub(1) as f32 * layout_style.line_spacing;
+                line_y_cursor = cue_block_top_y + layout.total_height - page_h;
+            }
 
             // Active token info, if any, for THIS cue.
             let active_in_this_cue: Option<&TokenLayout> = match global_active {
@@ -1294,7 +1733,7 @@ impl Element for CaptionNode {
             };
 
             for (line_idx_idx, display_line) in cue_layout.display_lines.iter().enumerate() {
-                if phrase_replace && Some(line_idx_idx) != current_display_line {
+                if phrase_replace && Some(line_idx_idx / page_len) != current_page {
                     continue;
                 }
 
@@ -1305,15 +1744,8 @@ impl Element for CaptionNode {
                     &layout_style,
                 );
                 if reveal <= 0.0 {
-                    if !phrase_replace {
-                        line_y_cursor += display_line.line_height + self.style.line_spacing;
-                    }
+                    line_y_cursor += display_line.line_height + layout_style.line_spacing;
                     continue;
-                }
-
-                if phrase_replace {
-                    line_y_cursor =
-                        cue_block_top_y + layout.total_height - display_line.line_height;
                 }
 
                 // ── Position each DISPLAY LINE horizontally based on the
@@ -1388,9 +1820,7 @@ impl Element for CaptionNode {
                     canvas.restore();
                 }
 
-                if !phrase_replace {
-                    line_y_cursor += display_line.line_height + layout_style.line_spacing;
-                }
+                line_y_cursor += display_line.line_height + layout_style.line_spacing;
             }
         }
 
@@ -1442,10 +1872,13 @@ impl CaptionNode {
                     PopPass::ExceptActive => is_active,
                     PopPass::ActiveOnly => !is_active,
                 };
+                let emphasis = self.style.emphasis_color.filter(|_| is_emphasis_word(&self.style, &word.text));
                 let (color, opacity) = if is_active {
                     (self.style.highlight_color, self.style.active_opacity)
                 } else if frame.time >= word.end_sec {
-                    (self.style.spoken_color, self.style.spoken_color_opacity)
+                    (emphasis.unwrap_or(self.style.spoken_color), self.style.spoken_color_opacity)
+                } else if let Some(c) = emphasis {
+                    (c, self.style.future_opacity)
                 } else if frame.time < word.start_sec {
                     (self.compute_word_color(word, frame.time, false), self.style.future_opacity)
                 } else {
@@ -1696,6 +2129,13 @@ pub fn line_reveal_factor(
     time: f64,
     style: &CaptionStyle,
 ) -> f32 {
+    // A page of lines in `Replace` mode appears together with its first line.
+    let display_line_idx = if style.phrase_line_mode == PhraseLineMode::Replace {
+        let page = style.max_lines.max(1);
+        display_line_idx / page * page
+    } else {
+        display_line_idx
+    };
     let duration = style
         .line_reveal_durations
         .get(display_line_idx)
@@ -1831,12 +2271,30 @@ pub fn retime_words_by_display_line(line: &mut CaptionLine, style: &CaptionStyle
 /// cues keep their word times; estimated cues re-split each display line's
 /// window evenly.
 pub fn refresh_caption_lines(lines: &mut [CaptionLine], style: &CaptionStyle) {
+    let max_words = style.max_words_per_line;
+    refresh_caption_lines_by(lines, style, &mut |line: &CaptionLine| {
+        (0..line.words.len()).map(|i| i / max_words.max(1)).collect()
+    });
+}
+
+/// `refresh_caption_lines` with `breaks` giving each word's display line.
+pub fn refresh_caption_lines_by(
+    lines: &mut [CaptionLine],
+    style: &CaptionStyle,
+    breaks: &mut dyn FnMut(&CaptionLine) -> Vec<usize>,
+) {
     for line in lines.iter_mut() {
         if line.text.contains('\n') {
             continue;
         }
         if style.auto_phrase_break {
-            apply_phrase_break(line, style.max_words_per_line);
+            if line.words.is_empty() {
+                continue;
+            }
+            let assigned = breaks(line);
+            for (w, dl) in line.words.iter_mut().zip(assigned) {
+                w.display_line_idx = dl;
+            }
             if !line.measured {
                 retime_words_by_display_line(line, style);
             }
@@ -1868,8 +2326,9 @@ pub fn active_word_at(lines: &[CaptionLine], time: f64) -> Option<(usize, usize)
 }
 
 /// Groups measured words into cues by `rules`, in start order. Words with no
-/// text are dropped. Every cue is measured and spans its first word's start
-/// to its last word's end.
+/// text are dropped. A cue cut for length (not at a pause) hands its trailing
+/// weak words ([`is_weak_word`]) to the next cue. Every cue is measured and
+/// spans its first word's start to its last word's end.
 pub fn cues_from_words(words: &[TimedWord], rules: &CueRules) -> Vec<CaptionLine> {
     let mut words: Vec<&TimedWord> = words.iter().filter(|w| !w.text.trim().is_empty()).collect();
     words.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
@@ -1878,19 +2337,32 @@ pub fn cues_from_words(words: &[TimedWord], rules: &CueRules) -> Vec<CaptionLine
     let mut previous_end = f64::NEG_INFINITY;
     for word in words {
         let text = word.text.trim();
+        let mut carried = Vec::new();
         if open {
-            let cue = out.last().expect("an open cue exists");
+            let cue = out.last_mut().expect("an open cue exists");
+            let paused = word.start - previous_end >= rules.max_gap;
             let fits = cue.text.chars().count() + 1 + text.chars().count() <= rules.max_chars
                 && word.end - cue.start_sec <= rules.max_duration
-                && word.start - previous_end < rules.max_gap;
+                && !paused;
             open = fits;
+            // A cue cut for length hands its trailing articles and
+            // prepositions to the next cue, so no cue ends on "to the".
+            if !fits && !paused {
+                let weak_tail = cue.words.iter().rev().take_while(|w| is_weak_word(&w.text)).count();
+                if weak_tail < cue.words.len() {
+                    carried = cue.words.split_off(cue.words.len() - weak_tail);
+                    cue.text = cue.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+                    cue.end_sec = cue.words.iter().map(|w| w.end_sec).fold(cue.start_sec, f64::max);
+                }
+            }
         }
         if !open {
+            let start = carried.first().map_or(word.start, |w| w.start_sec);
             out.push(CaptionLine {
-                text: String::new(),
-                words: Vec::new(),
-                start_sec: word.start,
-                end_sec: word.end,
+                text: carried.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "),
+                end_sec: carried.iter().map(|w| w.end_sec).fold(word.end, f64::max),
+                words: carried,
+                start_sec: start,
                 measured: true,
             });
             open = true;
@@ -1913,6 +2385,32 @@ pub fn cues_from_words(words: &[TimedWord], rules: &CueRules) -> Vec<CaptionLine
         }
     }
     out
+}
+
+/// The cues of a caption file named `name`: a word-timed JSON transcript
+/// grouped by `rules`, WebVTT or SRT, chosen by extension and then by
+/// content. A file with no cues fails.
+pub fn caption_lines_from_file(name: &str, content: &str, rules: &CueRules) -> Result<Vec<CaptionLine>, String> {
+    let body = content.trim_start_matches('\u{feff}').trim_start();
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    let json = |content: &str| -> Result<Vec<CaptionLine>, String> {
+        Ok(cues_from_words(&parse_transcript_words(content).map_err(|e| format!("{name:?}: {e}"))?, rules))
+    };
+    let lines = match ext.as_deref() {
+        Some("json") => json(content)?,
+        Some("vtt") => parse_vtt(content),
+        Some("srt") => parse_srt(content),
+        _ if body.starts_with('[') || body.starts_with('{') => json(content)?,
+        _ if body.starts_with("WEBVTT") => parse_vtt(content),
+        _ => parse_srt(content),
+    };
+    if lines.is_empty() {
+        return Err(format!("no caption cues in {name:?}"));
+    }
+    Ok(lines)
 }
 
 /// Reads a word-timed transcript: a JSON array of `{text, start, end}` words
@@ -2906,6 +3404,20 @@ mod tests {
         let tight = CueRules { max_gap: 0.3, ..CueRules::default() };
         let texts: Vec<String> = cues_from_words(&spoken(), &tight).into_iter().map(|l| l.text).collect();
         assert_eq!(texts, ["Root beer", "is the best", "drink ever made"]);
+    }
+
+    #[test]
+    fn a_cue_cut_for_length_carries_its_weak_tail() {
+        let words: Vec<TimedWord> = "worth six hundred billion to the whole market"
+            .split(' ')
+            .enumerate()
+            .map(|(i, w)| tw(w, i as f64 * 0.3, i as f64 * 0.3 + 0.3))
+            .collect();
+        let rules = CueRules { max_chars: 30, ..CueRules::default() };
+        let lines = cues_from_words(&words, &rules);
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["worth six hundred billion", "to the whole market"]);
+        assert_eq!((lines[0].end_sec, lines[1].start_sec), (1.2, 1.2));
     }
 
     #[test]

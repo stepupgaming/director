@@ -9,6 +9,7 @@ mod background_tiles;
 mod box_edges;
 mod calc_len;
 mod capture;
+mod captions;
 mod compiler;
 mod compose;
 mod computed;

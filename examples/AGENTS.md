@@ -9,7 +9,7 @@
 - `recipes/` owns L3 full-arc composition scripts (props in, finished show out).
 - `html/` owns native HTML/CSS/HyperFrames compiler reference compositions.
 - `tests/` owns test scripts, visual comparison helpers, and reference media.
-- `assets/` owns the small committed fixtures every example uses: `tone.wav` (2 s 220 Hz beep, mono 24 kHz), `clip.mp4` (2 s 640x360 `testsrc2`), `photo_a.jpg` (`testsrc2` still), `photo_b.jpg` (`gradients` still) and `star.svg`. Regenerate with ffmpeg `lavfi` sources; keep each file under 100 KB.
+- `assets/` owns the small committed fixtures every example uses: `tone.wav` (2 s 220 Hz beep, mono 24 kHz), `clip.mp4` (2 s 640x360 `testsrc2`), `photo_a.jpg` (`testsrc2` still), `photo_b.jpg` (`gradients` still), `star.svg` and `captions.json` (a 28-word timed transcript for `html/captions.html`). Regenerate with ffmpeg `lavfi` sources; keep each file under 100 KB.
 
 ## Local Contracts
 

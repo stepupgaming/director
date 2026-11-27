@@ -1373,8 +1373,9 @@ fn caption_props_to_json(node: &CaptionNode) -> JsonMap<String, JsonValue> {
     );
     p.insert(
         "style".into(),
-        serde_json::to_value(&node.style).unwrap_or_default(),
+        serde_json::to_value(node.base_style()).unwrap_or_default(),
     );
+    p.insert("positions".into(), serde_json::to_value(node.positions()).unwrap_or_default());
     p.insert("opacity".into(), JsonValue::from(node.opacity.current_value));
     p
 }
@@ -1382,7 +1383,8 @@ fn caption_props_to_json(node: &CaptionNode) -> JsonMap<String, JsonValue> {
 fn smart_caption_props_to_json(node: &SmartCaptionNode) -> JsonMap<String, JsonValue> {
     let mut p = JsonMap::new();
     p.insert("lines".into(), serde_json::to_value(&node.inner.lines).unwrap_or_default());
-    p.insert("style".into(), serde_json::to_value(&node.inner.style).unwrap_or_default());
+    p.insert("style".into(), serde_json::to_value(node.inner.base_style()).unwrap_or_default());
+    p.insert("positions".into(), serde_json::to_value(node.inner.positions()).unwrap_or_default());
     p.insert("trajectory".into(), serde_json::to_value(&node.trajectory).unwrap_or_default());
     p.insert("canvas_w".into(), JsonValue::from(node.canvas_w));
     p.insert("canvas_h".into(), JsonValue::from(node.canvas_h));
@@ -1410,7 +1412,11 @@ fn rebuild_caption_node_from_props(
     let mut node = CaptionNode::new(lines, font_collection);
     if let Some(style) = style {
         node.style = style;
+        node.rebuild_layout_style();
         node.after_style_changed();
+    }
+    if let Some(positions) = props.get("positions").and_then(|v| serde_json::from_value(v.clone()).ok()) {
+        node.set_positions(positions);
     }
     if let Some(opacity) = props.get("opacity").and_then(|v| v.as_f64()) {
         node.opacity.current_value = opacity as f32;

@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html, body { margin:0; background:#0b1020; }
+  #stage { position:relative; width:100%; height:100%; overflow:hidden; background:radial-gradient(circle at 50% 35%,#1e3a8a 0%,#0b1020 70%); }
+  #card { position:absolute; left:140px; top:520px; width:800px; height:520px; border-radius:40px; background:linear-gradient(140deg,#22c55e,#0ea5e9); }
+</style></head><body>
+<div id="stage" data-composition-id="captions" data-width="1080" data-height="1920" data-fps="30" data-duration="12" data-no-timeline>
+  <div id="card"></div>
+  <captions id="cc" src="../assets/captions.json" preset="pop" size="0.05" emphasis-words="billion, quarter" emphasis-color="#FFD60A" caption-position="bottom" safe-area="tiktok">
+    <position at="4.2" caption-position="center"></position>
+    <position at="7.6" caption-position="top"></position>
+  </captions>
+</div>
+</body></html>

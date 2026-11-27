@@ -11,7 +11,28 @@ use serde::{Deserialize, Serialize};
 pub struct CaptionBody {
     /// Cues in source order.
     pub lines: Vec<CaptionLine>,
+    /// The style before any placement key applies.
     pub style: CaptionStyle,
+    /// Placement keys over time, in time order. From each key's `at` the
+    /// caption takes its anchor and margins; before the first it takes the style's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub positions: Vec<CaptionPlacement>,
+    /// Width of the caption box under the style's placement, which width line
+    /// breaks measure against. Absent until the caption has laid out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub box_width: Option<f32>,
+}
+
+/// Anchor and margins from one time on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CaptionPlacement {
+    /// Seconds into the caption's scene.
+    pub at: f64,
+    pub position: CaptionPosition,
+    pub top_margin: f32,
+    pub bottom_margin: f32,
+    pub left_margin: f32,
+    pub right_margin: f32,
 }
 
 /// One timed caption cue.
@@ -65,6 +86,17 @@ pub enum PhraseLineMode {
     Replace,
     /// All revealed display lines stack vertically.
     Stack,
+}
+
+/// How cues split into display lines.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LineBreak {
+    /// Measured: lines fit the text column, balanced, with no weak word at a line end.
+    #[default]
+    Width,
+    /// Fixed chunks of `max_words_per_line`.
+    Words,
 }
 
 /// Caption typography, colors, motion and legibility settings.
@@ -125,6 +157,21 @@ pub struct CaptionStyle {
     /// Platform preset such as `tiktok` or `youtube_shorts`.
     pub safe_area_preset: Option<String>,
     pub uppercase: bool,
+    #[serde(default)]
+    pub line_break: LineBreak,
+    /// Display lines shown together in replace mode.
+    #[serde(default = "one")]
+    pub max_lines: usize,
+    /// Colour of the emphasis words while they are not active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emphasis_color: Option<Rgba>,
+    /// Words painted in the emphasis colour, matched without case or edge punctuation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub emphasis_words: Vec<String>,
+}
+
+fn one() -> usize {
+    1
 }
 
 /// Captions placed around semantic entities.

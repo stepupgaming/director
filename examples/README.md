@@ -54,44 +54,11 @@ Captions span their parent's width and sit by `caption_position`. Keys outside t
 | `bottom_margin` / `top_margin` / `left_margin` / `right_margin` | float | Frame pixels between the caption and that edge. |
 | `safe_area` / `safe_area_preset` | string | Platform margins: `tiktok`, `youtube_shorts`, `instagram_reel` and the other `DesignSystem` presets. |
 | `layout_width_fraction` | float | Text column width as a fraction of the caption width, 0.05 to 1. |
+| `positions` | array | Placement track: maps with `at` (seconds) and any placement keys, each holding until the next. |
 
 #### Caption styling
 
-| Prop | Type | Description |
-|------|------|-------------|
-| `font_size` | float | Font size in frame pixels. |
-| `color` | string | Hex color, e.g. `"#FFFFFF"`. |
-| `highlight_color` | string | Hex color for highlighted words. |
-| `spoken_color` | string | Hex color for spoken words. |
-| `text_direction` | string | `"ltr"`, `"rtl"`, or `"auto"`. |
-| `font_family` | string | Font family name. |
-| `font_weight` / `weight` | string/number | e.g. `"bold"` or `700`. |
-| `stroke_enabled` | bool | Enable text stroke. |
-| `stroke_width` | float | Outline width in pixels outside the glyph, drawn as a round-join stroke. |
-| `stroke_color` | string | Hex stroke color. |
-| `glow_enabled` | bool | Enable glow effect. |
-| `glow_blur` | float | Glow blur radius. |
-| `line_spacing` | float | Pixels between display lines. |
-| `color_transition_duration` | float | Duration of color transitions. |
-| `future_opacity` | float | Opacity of future words. |
-| `spoken_opacity` | float | Opacity of spoken words. |
-| `active_opacity` | float | Opacity of the active word. |
-| `text_shadow_enabled` | bool | Enable text shadow. |
-| `text_shadow_color` | string | Shadow color. |
-| `text_shadow_blur` | float | Shadow blur. |
-| `text_shadow_offset_x` | float | Shadow X offset. |
-| `text_shadow_offset_y` | float | Shadow Y offset. |
-| `active_pop_scale` | float | Pop scale for the active word, 1.0 to 1.10. |
-| `active_pop_duration` | float | Pop duration, 0.05 to 0.15 s. |
-| `pill_enabled` | bool | Draw a pill behind the caption. |
-| `pill_color` | string | Hex pill color. |
-| `pill_padding_h` | float | Horizontal pill padding. |
-| `pill_padding_v` | float | Vertical pill padding. |
-| `pill_radius` | float | Pill corner radius. |
-| `auto_phrase_break` | bool | Automatically break lines at phrase boundaries. |
-| `max_words_per_line` | int | Maximum words per line. |
-| `phrase_line_mode` | string | `"stack"` or `"replace"`. |
-| `uppercase` | bool | Render text in uppercase. |
+Every style key, with its type, range, default and doc, lives in the generated [caption reference](../docs/reference/captions.md) (`director-engine captions keys`). `preset` starts from a built-in look (`bold-outline`, `karaoke`, `pill`, `pop`, `subtitle`, `boxed`) and explicit keys override it. `size` sets the font size as a fraction of the frame height. `positions: [#{ at, caption_position, bottom_margin, ... }]` moves the caption at those times. `director-engine captions sheet -o looks.png` renders every preset on the same words. In HTML, `<captions src="words.json" preset="pop" highlight-color="#22C55E">` takes the same keys in kebab case with `<position at>` children ([`html/captions.html`](html/captions.html)).
 
 #### Smart solver tuning (simple props API)
 

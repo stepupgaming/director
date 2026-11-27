@@ -3,6 +3,7 @@ mod asr;
 mod audio_report;
 mod batch;
 mod breakdown;
+mod captions;
 mod check;
 mod editor;
 mod gpu;
@@ -127,6 +128,8 @@ enum Commands {
     Skills(skills::SkillsArgs),
     /// Measure a reference video's shots, transitions and container provenance as breakdown.json
     Breakdown(breakdown::BreakdownArgs),
+    /// Caption keys, presets and a sample sheet of every preset
+    Captions(captions::CaptionsArgs),
     /// Speech to text with the Bark 3.0 models: list, fetch and transcribe to JSON, SRT, VTT or text
     #[cfg(feature = "asr")]
     Asr(asr::AsrArgs),
@@ -571,6 +574,12 @@ fn main() {
         }
         Some(Commands::Breakdown(args)) => {
             let code = breakdown::run(args);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Some(Commands::Captions(args)) => {
+            let code = captions::run(args);
             if code != 0 {
                 std::process::exit(code);
             }

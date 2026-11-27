@@ -1290,11 +1290,41 @@ impl Builder {
                 .any(|key| self.timeline.contains_key(key))
     }
 
+    /// A `<captions>` element as a core caption node under the composition
+    /// root, placed against the frame like a fixed box.
+    fn captions(&mut self, el: ElementRef<'_>, composition_start: f64) -> Result<NodeId, CompileError> {
+        let assets = self.assets.clone();
+        let css = &self.css;
+        let node = crate::captions::captions_node(
+            el,
+            &crate::captions::CaptionsInput {
+                read: &|src| assets.read(src),
+                has_css: &|name| css.has_local_property(el, name),
+                fonts: self.director.assets.font_collection.clone(),
+                width: self.options.width as f32,
+                height: self.options.height as f32,
+                start: composition_start,
+            },
+        )?;
+        let id = self.director.scene.add_node(Box::new(node));
+        self.fixed.insert(id);
+        self.nodes += 1;
+        if let Some(name) = el.value().attr_text("id") {
+            if self.ids.insert(name.into(), id).is_some() {
+                return Err(CompileError::Input(format!("duplicate HTML id '{name}'")));
+            }
+        }
+        Ok(id)
+    }
+
     /// How a text block lays out `child`, whose cascaded values are `values`.
     fn level(&self, child: ElementRef<'_>, values: &ComputedStyle) -> Level {
         let tag = child.value().name();
         if tag == "br" {
             return Level::Inline;
+        }
+        if tag == "captions" {
+            return Level::Positioned;
         }
         let animated = || if self.animated(child) { Level::Atomic } else { Level::Inline };
         let positioned = matches!(values.get("position").map(|p| p.trim()), Some("absolute" | "fixed"));
@@ -1389,6 +1419,9 @@ impl Builder {
             ));
         }
         let tag = el.value().name();
+        if tag == "captions" {
+            return self.captions(el, composition_start);
+        }
         let context = label(el);
         let mut values = match cascaded {
             Some(values) => values,

@@ -417,6 +417,10 @@ impl Element for SmartCaptionNode {
         self.inner.update(time)
     }
 
+    fn post_layout(&mut self, rect: Rect) {
+        self.inner.post_layout(rect);
+    }
+
     fn render(
         &self,
         canvas: &Canvas,

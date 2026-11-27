@@ -33,7 +33,8 @@ reflows when a second line enters; exactly one global active word.
 * `cues_from_words(words, CueRules)` groups words into measured cues with
   the `director-asr` cue rules: 42 chars, 5 s, a 0.8 s pause, sentence end.
   Rhai keys `max_cue_chars`, `max_cue_duration`, `max_cue_gap`,
-  `break_on_sentence`.
+  `break_on_sentence`. A cue cut for length hands its trailing weak words
+  (`is_weak_word`) to the next cue, so no cue ends on "to the".
 * `parse_vtt` reads inline `<HH:MM:SS.mmm>` word timestamps as measured
   word starts (each word ends at the next start or the cue end), cues with
   or without ids, cue settings, CRLF and a BOM. `parse_srt` stays an
@@ -51,7 +52,8 @@ reflows when a second line enters; exactly one global active word.
 * `CaptionStyle` — visible defaults and motion configuration. Defaults:
   bold Poppins (700), a 2 px black outline, a per-line pill
   (`#0000009E`), drop shadow + active-word glow, auto phrase break
-  (4 words/line). Every size is frame pixels.
+  (width breaks, at most 4 words/line, one line shown). Every size is
+  frame pixels.
 * `CaptionStyle::resolved()` applies the platform `safe_area_preset`
   margins at their native 1080x1920 size before layout. `outline()` is the
   visible outline width, 0 when the stroke is off.
@@ -59,7 +61,19 @@ reflows when a second line enters; exactly one global active word.
   both side insets, so the box spans its parent less the side margin
   (`left_margin` for left anchors, `right_margin` for right ones). Top
   anchors set the top inset, bottom anchors the bottom inset, and
-  `compute_line_left_x` aligns each line inside that box.
+  `compute_line_left_x` aligns each line inside that box. Center, left and
+  right anchors set zero top and bottom insets with auto margins and hold
+  the block's measured height (`sync_centred_height`), so the box centres
+  on block and flex parents alike and its rect stays the caption block for
+  QA bounds. `post_layout`
+  stores the box width (`box_width`, set from the parent width at creation)
+  that width breaks measure against.
+* Placement track: `set_positions(Vec<CaptionPlacement>)` holds each
+  placement (`at`, position, four margins) from its `at` until the next;
+  the style's own placement holds before the first. `update` switches
+  position and margins and relays out. `base_style()` and
+  `base_box_width()` give the style and width under the style's own
+  placement, which scene export and project save write beside `positions`.
 * `compute_slot_assignments()` — overlap bookkeeping (legacy slot ids).
   Render uses a single shared anchor; overlapping cues replace in place.
 * `CaptionNode::measure` — content height from `build_block_layout`
@@ -136,7 +150,14 @@ active word" invariant. Test: `test_no_dual_yellow_at_word_boundary`.
 ## Two-line reserve + phrase auto-break
 
 Cues can contain `\n` (multi-line SRT text) or wrap their words into
-display lines via `auto_phrase_break` + `max_words_per_line` (default 4).
+display lines via `auto_phrase_break`. `line_break: "width"` (default)
+measures each word with the caption's own paragraph and runs
+`balanced_breaks`: the fewest lines that fit the text column with at most
+`max_words_per_line` words, one more line when that keeps a weak word off
+a line end, then the most even split with no weak line end and a lower
+line at least as wide as the line above when both show. `line_break:
+"words"` keeps fixed `max_words_per_line` chunks. `max_lines` (default 1)
+pages that many lines together in Replace mode.
 Phrase-broken display lines default to **`phrase_line_mode: Replace`**
 (Opus/TikTok): one line at a time in the same bottom anchor; the next
 phrase chunk replaces the previous instead of stacking. Set
@@ -190,42 +211,35 @@ height for the QA checks.
 
 ## Rhai props
 
-`add_caption` and `add_smart_caption` read one strict key set,
-`CAPTION_INPUT_KEYS`, `CAPTION_STYLE_KEYS` and `CAPTION_NODE_KEYS` in
-`scripting/api/nodes.rs` (smart captions add `SMART_CAPTION_KEYS`), through
-`caption_node_from_props`. Numbers take ints or floats, every value is type
-checked, colours take `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA`, and an
-unknown key fails with the valid list. `CAPTION_KEY_HINTS` names the
-replacement for removed keys (`align`, `pill_adaptive`, `auto_adapt_shadow`,
-`scale_with_canvas`, `reference_canvas_height`) and for CSS layout keys
-(`position`, `left`, `width`, `background_color` and the rest). Out-of-range
-values fail with the range.
+`src/node/caption_keys.rs` owns every caption style key in one table,
+`CAPTION_KEYS` (name, aliases, kind and range, group, default, doc).
+`set_caption_key` is the only setter: Rhai, presets and the HTML
+`<captions>` element (`caption_value_from_text` parses its attribute
+text) go through it,
+and it rejects a wrong type or an
+out-of-range value with the range. `add_caption` and `add_smart_caption`
+read the input keys (`media` with `model`, `graphs`; `words`, `file`,
+`source`, `content`; cue rules), the table, `preset`, `positions` and the
+node keys (`z_index`, `filter_*`) through `caption_node_from_props`
+(smart captions add `SMART_CAPTION_KEYS`). An unknown key fails with the
+valid list, and `CAPTION_KEY_HINTS` names the replacement for removed keys
+(`align`, `pill_adaptive`, `auto_adapt_shadow`, `scale_with_canvas`,
+`reference_canvas_height`) and CSS layout keys (`position`, `left`,
+`width`, `background_color` and the rest).
 
-* `font_size`, `color`, `highlight_color`, `spoken_color`
-* `caption_position`, `bottom_margin`, `top_margin`, `left_margin`,
-  `right_margin`, `layout_width_fraction` (0.05 to 1)
-* `text_direction` — `"auto"` (default, first-strong detect), `"ltr"`, or `"rtl"`
-* `line_spacing`, `font_family`, `font_weight` / `weight` (default 700)
-* `stroke_enabled`, `stroke_width`, `stroke_color` (default on, 2 px black)
-* `pill_enabled`, `pill_color`, `pill_padding_h`, `pill_padding_v`,
-  `pill_radius`
-* `auto_phrase_break`, `max_words_per_line`, `phrase_line_mode`
-* `safe_area` / `safe_area_preset`, `uppercase`
-* Input: `media` (+ `model`, `graphs`), `words`, `file`, `source`,
-  `content`; cue rules `max_cue_chars`, `max_cue_duration`, `max_cue_gap`,
-  `break_on_sentence`
-* `color_transition_duration` (default 0, entry ramp only)
-* `future_opacity` (0.92), `spoken_opacity` (mapped to
-  `spoken_color_opacity`, default 0.55), `active_opacity` (1.0)
-* `glow_enabled`, `glow_blur` (default 4.0 px) — subtle glow only on
-  active word
-* `active_pop_scale` (1.04, 1.0 to 1.10), `active_pop_duration`
-  (0.08 s, 0.05 to 0.15)
-* `line_reveal_offset_1` (0.45), `line_reveal_duration_1` (0.20)
-* `text_shadow_enabled`, `text_shadow_color`, `text_shadow_blur`,
-  `text_shadow_offset_x`, `text_shadow_offset_y`
-* Node: `z_index`, `filter_blur`, `filter_brightness`, `filter_contrast`,
-  `filter_saturation`, `filter_hue_rotate`
+* `preset` applies a `CAPTION_PRESETS` look first (`bold-outline`,
+  `karaoke`, `pill`, `pop`, `subtitle`, `boxed`), written for a 1920 px
+  frame and scaled to the frame height; explicit keys override it.
+* `size` sets `font_size` as a fraction of the frame height; giving both
+  fails.
+* `positions: [#{ at, caption_position, *_margin }]` sets the placement
+  track. Each entry needs `at` (seconds, at least 0) and takes placement
+  keys only.
+* `emphasis_words` (a list, matched without case or edge punctuation)
+  paint in `emphasis_color` while not active.
+* `caption_reference_markdown()` renders the table and presets as the
+  generated reference page `docs/reference/captions.md`
+  (`director-engine captions keys --format markdown`).
 
 ## Tests
 
@@ -245,8 +259,12 @@ values fail with the range.
 * Phrase auto-break — `test_phrase_auto_break_splits_long_cue`
 * Phrase-break word retiming — `test_phrase_break_retimes_per_display_line`
 * Safe-area margins — `test_safe_area_preset_sets_frame_margins`
-* Strict keys, removed-key hints, hex alpha, phrase break off and smart
-  caption entity import — `tests/caption_keys.rs`
+* Key table defaults, setters and presets — `node::caption_keys::tests`
+* Strict keys, removed-key hints, hex alpha, phrase break off, smart
+  caption entity import, balanced and weak-word width breaks, presets,
+  emphasis lists, `max_lines` paging and the placement track through
+  export — `tests/caption_keys.rs`
+* Weak-tail cue carry — `a_cue_cut_for_length_carries_its_weak_tail`
 * Legibility score — `test_legibility_score_high_contrast`
 * `max_overlapping_lines` — `test_max_overlapping_lines*`
 * RTL / bidi — `test_caption_rtl_word_order`; typography `text_auto_detects_arabic_rtl`

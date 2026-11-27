@@ -4,7 +4,9 @@ use super::nodes::mismatch;
 use super::{animated, color, ImportContext, ImportError};
 use crate::element::Element;
 use crate::entity::EntityId;
-use crate::node::caption::{CaptionLine, CaptionNode, CaptionPosition, CaptionStyle, CaptionWord, PhraseLineMode};
+use crate::node::caption::{
+    CaptionLine, CaptionNode, CaptionPlacement, CaptionPosition, CaptionStyle, CaptionWord, LineBreak, PhraseLineMode,
+};
 use crate::node::smart_caption::SmartCaptionConfig;
 use crate::node::SmartCaptionNode;
 use crate::semantic::{Anchor, CaptionTrajectory, SemanticManifest, SolverConfig, TrajectorySample};
@@ -35,8 +37,22 @@ pub fn caption_node(body: &ds::CaptionBody, opacity: &Channel, cx: &ImportContex
     node.lines = body.lines.iter().map(caption_line).collect();
     node.style = caption_style(&body.style);
     node.opacity = animated(opacity)?;
-    node.after_style_changed();
     node.rebuild_layout_style();
+    node.set_box_width(body.box_width);
+    node.after_style_changed();
+    node.set_positions(
+        body.positions
+            .iter()
+            .map(|p| CaptionPlacement {
+                at: p.at,
+                position: caption_position(p.position),
+                top_margin: p.top_margin,
+                bottom_margin: p.bottom_margin,
+                left_margin: p.left_margin,
+                right_margin: p.right_margin,
+            })
+            .collect(),
+    );
     Ok(node)
 }
 
@@ -131,6 +147,13 @@ fn caption_style(style: &ds::CaptionStyle) -> CaptionStyle {
         },
         safe_area_preset: style.safe_area_preset.clone(),
         uppercase: style.uppercase,
+        line_break: match style.line_break {
+            ds::LineBreak::Width => LineBreak::Width,
+            ds::LineBreak::Words => LineBreak::Words,
+        },
+        max_lines: style.max_lines,
+        emphasis_color: style.emphasis_color.map(color),
+        emphasis_words: style.emphasis_words.clone(),
     }
 }
 

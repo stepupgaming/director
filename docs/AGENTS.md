@@ -8,6 +8,7 @@
 - `plans/` - engineering plans: completed core hardening, motion/recipes, native projects/runtime, superseded native fidelity, the active native platform overhaul, and the transcription and competitive-gaps spec.
 - `contributing/` - development and documentation workflow.
 - `archive/` - superseded or deferred docs (not current contracts).
+- `reference/` - generated reference pages. `captions.md` is the output of `director-engine captions keys --format markdown`; regenerate it when `caption_keys.rs` changes and never edit it by hand.
 - `assets/` - images the root `README.md` embeds: `director-mark.svg` (the logo mark) and `agent-session.gif` (a 900 px loop cut from the video `examples/mcp-demo/make_video.py` builds from its recorded session), plus `social-preview.png`, the 1280x640 card uploaded under the GitHub repo's Settings > Social preview. Keep each file under 8 MB.
 
 ## Local Contracts
@@ -36,3 +37,4 @@
 - `contributing/` - Development and documentation workflow.
 - `archive/` - Historical audit and deferred product docs.
 - `assets/` - README logo, demo GIF and the GitHub social preview card.
+- `reference/` - Generated reference pages (caption keys and presets).

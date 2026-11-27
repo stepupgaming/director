@@ -48,7 +48,13 @@ Adds word-highlight captions (also a node method). Each word's highlight starts 
 - `source`: SRT or WebVTT text.
 - `content`: `[#{ text, start, end, words: [#{ text, start, end }] }]`. Cues without `words` split evenly.
 
-`media`, `words` and JSON group words into cues by `max_cue_chars` (42), `max_cue_duration` (5.0 s), `max_cue_gap` (0.8 s) and `break_on_sentence` (true). `auto_phrase_break` with `max_words_per_line` splits cues into display lines and keeps measured word times. Style keys include `font_size`, `font_family`, `uppercase`, `color`, `highlight_color`, `spoken_color`, `color_transition_duration` (seconds of highlight lead-in, default 0), `pill_enabled`, `pill_color`, `stroke_width` (outline px outside the glyph), `caption_position` and the `*_margin` keys. Captions span their parent's width and take no layout keys. An unknown or removed key fails the script and names the valid keys or the replacement; numbers take ints or floats and colours take `#RRGGBB` or `#RRGGBBAA`. `examples/README.md` lists every key.
+`media`, `words` and JSON group words into cues by `max_cue_chars` (42), `max_cue_duration` (5.0 s), `max_cue_gap` (0.8 s) and `break_on_sentence` (true); a cue cut for length never ends on a weak word such as "to" or "the".
+
+Style: start from `preset` (`bold-outline`, `karaoke`, `pill`, `pop`, `subtitle`, `boxed`) and override keys on top. `size` is the font size as a fraction of frame height (0.035 is 67 px at 1920). Lines break by measured width (`line_break: "width"`, at most `max_words_per_line` words, balanced, no line ending on a weak word); `max_lines: 2` shows two lines at a time. `emphasis_words: ["$600"]` with `emphasis_color` marks key words. `positions: [#{ at: 4.0, caption_position: "top" }]` moves the caption over time. Captions span their parent's width and take no layout keys. An unknown, removed or out-of-range key fails the script and names the valid keys, the replacement or the range. `docs/reference/captions.md` (`director-engine captions keys`) lists every key; `director-engine captions sheet -o looks.png` renders the presets.
+
+```rhai
+root.add_caption(#{ file: "words.json", preset: "bold-outline", size: 0.04, emphasis_words: ["billion"], emphasis_color: "#FF5A5A" });
+```
 
 Video to captions:
 ```rhai

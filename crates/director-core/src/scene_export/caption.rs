@@ -2,7 +2,7 @@
 
 use super::{channel, rgba, ElementExport, ExportContext, ExportError};
 use crate::node::active_speaker_camera::CameraTrajectory;
-use crate::node::caption::{CaptionPosition, CaptionStyle, PhraseLineMode};
+use crate::node::caption::{CaptionPosition, CaptionStyle, LineBreak, PhraseLineMode};
 use crate::node::{ActiveSpeakerCamera, CaptionNode, ContinuityGroup, Framing, SmartCaptionNode};
 use crate::node::smart_caption::SmartCaptionConfig;
 use crate::semantic::{Anchor, CaptionTrajectory, SemanticManifest, SolverConfig};
@@ -75,7 +75,20 @@ fn caption_fields(node: &CaptionNode) -> ds::CaptionBody {
                 measured: line.measured,
             })
             .collect(),
-        style: caption_style(&node.style),
+        style: caption_style(&node.base_style()),
+        positions: node
+            .positions()
+            .iter()
+            .map(|p| ds::CaptionPlacement {
+                at: p.at,
+                position: caption_position(&p.position),
+                top_margin: p.top_margin,
+                bottom_margin: p.bottom_margin,
+                left_margin: p.left_margin,
+                right_margin: p.right_margin,
+            })
+            .collect(),
+        box_width: node.base_box_width(),
     }
 }
 
@@ -130,6 +143,13 @@ fn caption_style(style: &CaptionStyle) -> ds::CaptionStyle {
         },
         safe_area_preset: style.safe_area_preset.clone(),
         uppercase: style.uppercase,
+        line_break: match style.line_break {
+            LineBreak::Width => ds::LineBreak::Width,
+            LineBreak::Words => ds::LineBreak::Words,
+        },
+        max_lines: style.max_lines,
+        emphasis_color: style.emphasis_color.map(rgba),
+        emphasis_words: style.emphasis_words.clone(),
     }
 }
 

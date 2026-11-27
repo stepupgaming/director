@@ -3,7 +3,7 @@
 //! list or their replacement, and a caption without cues fails. Smart caption
 //! entity refs and the entity tracks survive scene export and import.
 
-use director_core::node::caption::{CaptionLine, CaptionNode, CaptionStyle};
+use director_core::node::caption::{balanced_breaks, is_weak_word, CaptionLine, CaptionNode, CaptionPosition, CaptionStyle};
 use director_core::node::SmartCaptionNode;
 use director_core::scene_export::export_scene;
 use director_core::scene_import::{import_scene, ImportRegistry};
@@ -90,7 +90,12 @@ fn a_wrong_type_or_name_fails() {
         ("caption_position: \"middle\"", "caption_position must be"),
         ("phrase_line_mode: \"stacked\"", "phrase_line_mode must be"),
         ("safe_area: \"snapchat_story\"", "tiktok"),
-        ("active_pop_scale: 1.5", "1.10"),
+        ("active_pop_scale: 1.5", "1.1"),
+        ("preset: \"neon\"", "bold-outline"),
+        ("size: 0.05, font_size: 40", "size or font_size"),
+        ("max_lines: 0", "max_lines must be a whole number"),
+        ("positions: [#{ caption_position: \"top\" }]", "needs at"),
+        ("positions: [#{ at: 1.0, font_size: 40 }]", "not a placement key"),
     ] {
         let err = fails(&format!("{CUE}, {props}"));
         assert!(err.contains(needle), "{props}: {err}");
@@ -155,4 +160,135 @@ fn smart_caption_entity_refs_survive_scene_import() {
     assert_eq!(node.entity_refs.len(), 1);
     assert!(imported.entities.contains(node.entity_refs[0]));
     assert_eq!(export_scene(&imported).unwrap(), document);
+}
+
+fn caption_node(d: &Director) -> &CaptionNode {
+    d.scene
+        .nodes
+        .iter()
+        .flatten()
+        .find_map(|sn| sn.element.as_any().downcast_ref::<CaptionNode>())
+        .expect("a caption node")
+}
+
+/// Display lines of the first cue, as word lists.
+fn display_lines(line: &CaptionLine) -> Vec<Vec<String>> {
+    let mut out: Vec<Vec<String>> = Vec::new();
+    for w in &line.words {
+        if out.len() <= w.display_line_idx {
+            out.resize(w.display_line_idx + 1, Vec::new());
+        }
+        out[w.display_line_idx].push(w.text.clone());
+    }
+    out
+}
+
+#[test]
+fn balanced_breaks_take_the_fewest_even_lines() {
+    let widths = [100.0; 6];
+    let weak = [false; 6];
+    // Three words fit 320 px of a 350 px column, so two lines of three.
+    assert_eq!(balanced_breaks(&widths, 10.0, 350.0, 4, 1, &weak), vec![0, 0, 0, 1, 1, 1]);
+    // A weak third word moves to the second line.
+    let weak = [false, false, true, false, false, false];
+    let lines = balanced_breaks(&widths, 10.0, 450.0, 4, 1, &weak);
+    assert_eq!(lines.iter().filter(|&&l| l == 0).count(), 2, "{lines:?}");
+    // One word wider than the column takes a line of its own.
+    assert_eq!(balanced_breaks(&[500.0, 50.0], 10.0, 300.0, 4, 1, &[false; 2]), vec![0, 1]);
+    assert!(is_weak_word("the") && !is_weak_word("the,") && !is_weak_word("billion"));
+}
+
+#[test]
+fn width_breaks_fit_the_measured_column() {
+    let d = run(&format!("{CUE}, font_size: 140, max_words_per_line: 8")).unwrap();
+    let d = d.lock().unwrap();
+    let node = caption_node(&d);
+    assert!(node.box_width().is_some());
+    let lines = display_lines(&node.lines[0]);
+    assert!(lines.len() >= 3, "140 px words cannot fit eight to a 1080 px frame: {lines:?}");
+    // The same keys with fixed word chunks keep eight words on a line.
+    drop(d);
+    let d = run(&format!("{CUE}, font_size: 140, max_words_per_line: 8, line_break: \"words\"")).unwrap();
+    let lines = display_lines(&caption_node(&d.lock().unwrap()).lines[0]);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+}
+
+#[test]
+fn no_line_ends_on_a_weak_word() {
+    let source = r#"source: "1\n00:00:00,000 --> 00:00:04,000\nThe company is now worth six hundred billion dollars to the whole market""#;
+    let d = run(&format!("{source}, preset: \"bold-outline\"")).unwrap();
+    let lines = display_lines(&caption_node(&d.lock().unwrap()).lines[0]);
+    for line in &lines[..lines.len() - 1] {
+        assert!(!is_weak_word(line.last().unwrap()), "{lines:?}");
+    }
+}
+
+#[test]
+fn presets_scale_and_keys_override_them() {
+    let d = run(&format!("{CUE}, preset: \"bold-outline\", highlight_color: \"#00FFFF\"")).unwrap();
+    let (_, style) = caption(&d.lock().unwrap());
+    assert!(style.uppercase && !style.pill_enabled);
+    assert_eq!(style.font_size, 84.0);
+    assert_eq!(style.highlight_color.g, 1.0);
+    assert_eq!(style.highlight_color.r, 0.0);
+    let d = run(&format!("{CUE}, size: 0.05")).unwrap();
+    assert!((caption(&d.lock().unwrap()).1.font_size - 96.0).abs() < 1e-3);
+}
+
+#[test]
+fn emphasis_words_take_a_list() {
+    let d = run(&format!("{CUE}, emphasis_words: [\"three\", \"SEVEN!\"], emphasis_color: \"#FF0000\"")).unwrap();
+    let (_, style) = caption(&d.lock().unwrap());
+    assert_eq!(style.emphasis_words, vec!["three", "SEVEN!"]);
+    assert!(director_core::node::caption::is_emphasis_word(&style, "Seven"));
+    assert!(!director_core::node::caption::is_emphasis_word(&style, "four"));
+}
+
+#[test]
+fn max_lines_pages_two_lines_together() {
+    let d = run(&format!("{CUE}, max_words_per_line: 2, max_lines: 2, line_break: \"words\"")).unwrap();
+    let mut d = d.lock().unwrap();
+    let mut surface = skia_safe::surfaces::raster_n32_premul((1080, 1920)).unwrap();
+    director_render::render_frame(&mut d, 0.1, &mut surface).unwrap();
+    let one_page = caption_rect(&d).height();
+    drop(d);
+    let d = run(&format!("{CUE}, max_words_per_line: 2, line_break: \"words\"")).unwrap();
+    let mut d = d.lock().unwrap();
+    director_render::render_frame(&mut d, 0.1, &mut surface).unwrap();
+    let one_line = caption_rect(&d).height();
+    assert!(one_page > one_line * 1.5, "{one_page} {one_line}");
+}
+
+#[test]
+fn the_placement_track_moves_the_caption_and_survives_export() {
+    let d = run(&format!(
+        "{CUE}, positions: [#{{ at: 2.0, caption_position: \"top\", top_margin: 200 }}]"
+    ))
+    .unwrap();
+    let mut d = d.lock().unwrap();
+    let mut surface = skia_safe::surfaces::raster_n32_premul((1080, 1920)).unwrap();
+    director_render::render_frame(&mut d, 0.5, &mut surface).unwrap();
+    assert_eq!(caption_node(&d).style.position, CaptionPosition::Bottom);
+    director_render::render_frame(&mut d, 2.5, &mut surface).unwrap();
+    assert_eq!(caption_node(&d).style.position, CaptionPosition::Top);
+    assert_eq!(caption_node(&d).style.top_margin, 200.0);
+    assert_eq!(caption_node(&d).base_style().position, CaptionPosition::Bottom);
+
+    let document = export_scene(&d).unwrap();
+    let imported =
+        import_scene(&document, Arc::new(DefaultAssetLoader), &ImportRegistry::core(), RenderMode::Export).unwrap();
+    let node = caption_node(&imported);
+    assert_eq!(node.positions().len(), 1);
+    assert_eq!(node.style.position, CaptionPosition::Bottom);
+    assert_eq!(export_scene(&imported).unwrap(), document);
+}
+
+fn caption_rect(d: &Director) -> skia_safe::Rect {
+    d.scene
+        .nodes
+        .iter()
+        .flatten()
+        .find(|sn| sn.element.as_any().is::<CaptionNode>())
+        .expect("a caption node")
+        .layout_rect
 }
