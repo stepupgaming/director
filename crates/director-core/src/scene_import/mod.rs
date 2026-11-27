@@ -277,6 +277,7 @@ fn import_into(
         })
         .collect::<Result<Vec<_>, ImportError>>()?;
     director.assets.register_font_faces(faces).map_err(ImportError::Invalid)?;
+    import_entities(&document.entities, &mut director.entities)?;
     audio::import_audio(&document.audio, &mut director.audio_mixer, &cx)?;
     let ids = import_graph(&document.nodes, &mut director.scene, &mut cx)?;
     timeline::import_timeline(&mut director, &document.timeline, &ids)?;
@@ -330,12 +331,32 @@ pub fn import_graph(
     Ok(ids)
 }
 
-fn import_element(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
-    if !record.entity_refs.is_empty() {
-        return Err(ImportError::Unsupported {
-            kind: "entity_refs".to_string(),
-        });
+/// Rebuild the entity tracks a document carries, keeping their ids.
+fn import_entities(
+    entities: &[director_scene::Entity],
+    registry: &mut crate::entity::EntityRegistry,
+) -> Result<(), ImportError> {
+    use crate::entity::{BoundingBox, EntityKind, EntityTrack};
+    for entity in entities {
+        let id = uuid::Uuid::parse_str(&entity.id)
+            .map_err(|e| ImportError::Invalid(format!("entity id {:?}: {e}", entity.id)))?;
+        let kind = match entity.kind {
+            director_scene::EntityKind::Face => EntityKind::Face,
+            director_scene::EntityKind::Speaker => EntityKind::Speaker,
+            director_scene::EntityKind::Object => EntityKind::Object,
+            director_scene::EntityKind::CaptionPhrase => EntityKind::CaptionPhrase,
+        };
+        let mut track = EntityTrack::new(id, kind, entity.label.clone());
+        for sample in &entity.samples {
+            let b = sample.bbox;
+            track.add_sample(sample.time, BoundingBox::new(b.x, b.y, b.width, b.height), sample.confidence);
+        }
+        registry.add_track(track);
     }
+    Ok(())
+}
+
+fn import_element(record: &NodeRecord, cx: &mut ImportContext) -> Result<Box<dyn Element>, ImportError> {
     let decoder = cx.registry.decoder(&record.kind).ok_or_else(|| ImportError::Unsupported {
         kind: record.kind.clone(),
     })?;
@@ -364,6 +385,7 @@ struct NodeState {
     path_animation: Option<PathAnimationState>,
     path_morph: Option<PathMorphState>,
     audio_bindings: Vec<crate::scene::AudioBinding>,
+    entity_refs: Vec<uuid::Uuid>,
 }
 
 impl NodeState {
@@ -377,6 +399,7 @@ impl NodeState {
         node.path_animation = self.path_animation;
         node.path_morph = self.path_morph;
         node.audio_bindings = self.audio_bindings;
+        node.entity_refs = self.entity_refs;
     }
 }
 
@@ -393,7 +416,15 @@ fn node_state(record: &NodeRecord, ids: &HashMap<(u32, u32), NodeId>) -> Result<
     transform.pivot_x = t.pivot_x;
     transform.pivot_y = t.pivot_y;
     let f = &record.filter;
+    let entity_refs = record
+        .entity_refs
+        .iter()
+        .map(|id| {
+            uuid::Uuid::parse_str(id).map_err(|e| ImportError::Invalid(format!("entity ref {id:?}: {e}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(NodeState {
+        entity_refs,
         transform,
         z_index: record.z_index,
         blend_mode: blend_mode(&record.blend_mode)?,

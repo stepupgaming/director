@@ -49,11 +49,17 @@ reflows when a second line enters; exactly one global active word.
 * `active_word_at(lines, time)` returns the word the renderer highlights:
   the newest visible cue, then `find_global_active`.
 * `CaptionStyle` — visible defaults and motion configuration. Defaults:
-  bold Poppins (700), black stroke outline, per-line pill background,
-  drop shadow + active-word glow, auto phrase break (4 words/line),
-  resolution scaling from 1920 px reference height.
-* `CaptionStyle::resolved_for_canvas(h)` — applies `scale_with_canvas`,
-  platform `safe_area_preset`, and dimensional scaling before layout.
+  bold Poppins (700), a 2 px black outline, a per-line pill
+  (`#0000009E`), drop shadow + active-word glow, auto phrase break
+  (4 words/line). Every size is frame pixels.
+* `CaptionStyle::resolved()` applies the platform `safe_area_preset`
+  margins at their native 1080x1920 size before layout. `outline()` is the
+  visible outline width, 0 when the stroke is off.
+* Placement: `rebuild_layout_style` makes the caption absolute and sets
+  both side insets, so the box spans its parent less the side margin
+  (`left_margin` for left anchors, `right_margin` for right ones). Top
+  anchors set the top inset, bottom anchors the bottom inset, and
+  `compute_line_left_x` aligns each line inside that box.
 * `compute_slot_assignments()` — overlap bookkeeping (legacy slot ids).
   Render uses a single shared anchor; overlapping cues replace in place.
 * `CaptionNode::measure` — content height from `build_block_layout`
@@ -64,8 +70,14 @@ reflows when a second line enters; exactly one global active word.
   laid out with **uniform `font_size`**. Every TextStyle run on a single
   paragraph shares the same font size, so glyph metrics never vary
   across active / future / spoken states.
-* Per-display-line **pill** — rounded `RRect` drawn behind text (before
-  glyphs). `pill_adaptive` inverts fill on light/dark backgrounds.
+* Per-display-line **pill** — rounded `RRect` in `pill_color` drawn
+  behind text (before glyphs).
+* Coats: each display line paints as up to four paragraphs over the same
+  shaped text, in order Shadow (offset, blurred, filled and stroked at the
+  outline width), Glow (active word only, blurred), Stroke (a round-join
+  stroke `2 * outline()` wide, so `outline()` px show outside the glyph)
+  and Fill. Words of one opacity paint all their coats inside one
+  `save_layer_alpha_f`, so the stroke never shows through a faded fill.
 * `find_global_active()` — exactly one `(line_idx, word_idx)` pair
   at any time, picking the latest `start_sec`. Uses original `lines`
   indices, not visible-cue subset indices.
@@ -75,8 +87,8 @@ reflows when a second line enters; exactly one global active word.
 Each word paints with `compute_word_color(word, time, is_active)`,
 producing exactly one of:
 
-* **Active**: `highlight_color`. Renders with `text_shadow_color` and a
-  subtle `textShadow` glow at `glow_blur_radius` (default 4 px).
+* **Active**: `highlight_color`, plus the Glow coat at `glow_blur`
+  (default 4 px).
 * **Past**: `spoken_color` with `spoken_color_opacity` multiplier.
   Snapped instantly at `word.end_sec` (no transition phase — see
   "Boundary handling" below).
@@ -104,8 +116,8 @@ touches the next word. The renderer must always paint the rest of
 the line in the base pass, or every other word flashes off on each
 word change. The base paragraph is not re-laid; the scale affects
 only the active word's overlay. Scale returns to
-`active_pop_duration` (0.08 s default) via `ease_out_quad`. Maximum
-`active_pop_scale` is clamped to 1.10 (TikTok/Reels-appropriate).
+`active_pop_duration` (0.08 s default) via `ease_out_quad`. Rhai
+rejects an `active_pop_scale` above 1.10 (TikTok/Reels-appropriate).
 
 **No continuous scale wobble. No kinetic lift. No ease_out_back
 overshoot. No per-word pulse.** Motion is limited to:
@@ -140,9 +152,9 @@ phrase chunk replaces the previous instead of stacking. Set
   Line 0 shows at `cue.start_sec`; each later line finishes its reveal
   ramp at its first word's start.
 
-Dimensional scaling uses `reference_canvas_height` (1920) when
-`scale_with_canvas` is true — not the caption node's tight layout box
-height (which would shrink fonts).
+`auto_phrase_break: false` keeps each single-line cue on display line 0:
+`refresh_caption_lines` resets the display lines of measured cues and
+re-times estimated cues evenly across the whole cue.
 
 ## Overlapping cues
 
@@ -159,35 +171,46 @@ With `phrase_line_mode: Stack`, display lines within one cue stack
 vertically. With `Replace` (default), only the active phrase line
 shows. Cue display lines never reflow mid-cue.
 
-## Drop shadow + auto-adapt + pills
+## Drop shadow + pills
 
-* All words carry a light drop shadow (offset `text_shadow_offset_x/y`,
-  default `(0, 2)`) for any-background legibility.
-* `auto_adapt_shadow` (default true) calls `Canvas::peek_pixels()` to
-  sample bg luminance under the caption rect (`lum > 0.55` → black
-  shadow; `lum < 0.40` → white shadow; mid → config-defaulted).
-* `pill_enabled` (default true) draws a rounded rect behind each
-  display line. `pill_adaptive` picks dark/light fill from bg luma.
+* All words carry a drop shadow in `text_shadow_color` (offset
+  `text_shadow_offset_x/y`, default `(0, 2)`) for any-background
+  legibility.
+* `pill_enabled` (default true) draws a rounded rect in `pill_color`
+  behind each display line. Colours come from the author; nothing samples
+  the background.
 
 ## Platform safe areas
 
-`safe_area` / `safe_area_preset` applies scaled margins from
+`safe_area` / `safe_area_preset` sets the top and bottom margins from
 `DesignSystem.safe_areas` (`tiktok`, `youtube_shorts`, `instagram_reel`,
-etc.). Values scale from 1920 px reference height via
-`scaled_safe_zone()`.
+etc.) at their native 1080x1920 size; `safe_area_presets()` lists the
+names. `scaled_safe_zone(preset, h)` scales a zone to another frame
+height for the QA checks.
 
 ## Rhai props
 
+`add_caption` and `add_smart_caption` read one strict key set,
+`CAPTION_INPUT_KEYS`, `CAPTION_STYLE_KEYS` and `CAPTION_NODE_KEYS` in
+`scripting/api/nodes.rs` (smart captions add `SMART_CAPTION_KEYS`), through
+`caption_node_from_props`. Numbers take ints or floats, every value is type
+checked, colours take `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA`, and an
+unknown key fails with the valid list. `CAPTION_KEY_HINTS` names the
+replacement for removed keys (`align`, `pill_adaptive`, `auto_adapt_shadow`,
+`scale_with_canvas`, `reference_canvas_height`) and for CSS layout keys
+(`position`, `left`, `width`, `background_color` and the rest). Out-of-range
+values fail with the range.
+
 * `font_size`, `color`, `highlight_color`, `spoken_color`
-* `bottom_margin`, `top_margin`, `caption_position`, `align`
+* `caption_position`, `bottom_margin`, `top_margin`, `left_margin`,
+  `right_margin`, `layout_width_fraction` (0.05 to 1)
 * `text_direction` — `"auto"` (default, first-strong detect), `"ltr"`, or `"rtl"`
 * `line_spacing`, `font_family`, `font_weight` / `weight` (default 700)
 * `stroke_enabled`, `stroke_width`, `stroke_color` (default on, 2 px black)
-* `pill_enabled`, `pill_color`, `pill_adaptive`, `pill_padding_h`,
-  `pill_padding_v`, `pill_radius`
-* `auto_phrase_break`, `max_words_per_line`
-* `safe_area` / `safe_area_preset`, `scale_with_canvas`,
-  `reference_canvas_height`, `uppercase`
+* `pill_enabled`, `pill_color`, `pill_padding_h`, `pill_padding_v`,
+  `pill_radius`
+* `auto_phrase_break`, `max_words_per_line`, `phrase_line_mode`
+* `safe_area` / `safe_area_preset`, `uppercase`
 * Input: `media` (+ `model`, `graphs`), `words`, `file`, `source`,
   `content`; cue rules `max_cue_chars`, `max_cue_duration`, `max_cue_gap`,
   `break_on_sentence`
@@ -196,12 +219,13 @@ etc.). Values scale from 1920 px reference height via
   `spoken_color_opacity`, default 0.55), `active_opacity` (1.0)
 * `glow_enabled`, `glow_blur` (default 4.0 px) — subtle glow only on
   active word
-* `active_pop_scale` (1.04, clamped to ≤ 1.10), `active_pop_duration`
-  (0.08 s)
+* `active_pop_scale` (1.04, 1.0 to 1.10), `active_pop_duration`
+  (0.08 s, 0.05 to 0.15)
 * `line_reveal_offset_1` (0.45), `line_reveal_duration_1` (0.20)
 * `text_shadow_enabled`, `text_shadow_color`, `text_shadow_blur`,
   `text_shadow_offset_x`, `text_shadow_offset_y`
-* `auto_adapt_shadow`
+* Node: `z_index`, `filter_blur`, `filter_brightness`, `filter_contrast`,
+  `filter_saturation`, `filter_hue_rotate`
 
 ## Tests
 
@@ -220,7 +244,9 @@ etc.). Values scale from 1920 px reference height via
   `test_word_display_assigns_line_idx`
 * Phrase auto-break — `test_phrase_auto_break_splits_long_cue`
 * Phrase-break word retiming — `test_phrase_break_retimes_per_display_line`
-* Safe-area scaling — `test_safe_area_preset_scales_bottom_margin`
+* Safe-area margins — `test_safe_area_preset_sets_frame_margins`
+* Strict keys, removed-key hints, hex alpha, phrase break off and smart
+  caption entity import — `tests/caption_keys.rs`
 * Legibility score — `test_legibility_score_high_contrast`
 * `max_overlapping_lines` — `test_max_overlapping_lines*`
 * RTL / bidi — `test_caption_rtl_word_order`; typography `text_auto_detects_arabic_rtl`
@@ -584,7 +610,7 @@ five 640x360 premultiplied RGBA frames per workload via
 - `AudioTrack::source_start` is the seconds of `source_path` skipped before the first decoded sample. A path asset exports it as `source_start`; embedded samples are already trimmed and export 0.
 - Values the document cannot hold fail with `ExportError::Unrepresentable`, such as unresolved `calc()` lengths and text with a prebuilt stroke paragraph.
 - Effects and transitions export under their primary `api_catalog` names.
-- `src/scene_import/` is the inverse: `import_scene(document, loader, registry, render_mode)` rebuilds a live `Director`, and `import_scene_with` adds the `FrameSources` its video reads, so sessions of one document share decoders. An `ImportRegistry` maps a record `kind` to a `Decoder`; `ImportRegistry::core()` covers box, text, image, video, vector, shape, composition, effect, caption, smart caption, Lottie and spectrum visualizer, and frontends add their kinds through `register`. A kind with no decoder, an unknown audio effect kind and entity refs return `ImportError::Unsupported` (`is_unsupported` looks through node wrappers); malformed data returns `Invalid` or `Asset`.
+- `src/scene_import/` is the inverse: `import_scene(document, loader, registry, render_mode)` rebuilds a live `Director`, and `import_scene_with` adds the `FrameSources` its video reads, so sessions of one document share decoders. An `ImportRegistry` maps a record `kind` to a `Decoder`; `ImportRegistry::core()` covers box, text, image, video, vector, shape, composition, effect, caption, smart caption, Lottie and spectrum visualizer, and frontends add their kinds through `register`. Node `entity_refs` and the document's entity tracks import with their ids. A kind with no decoder and an unknown audio effect kind return `ImportError::Unsupported` (`is_unsupported` looks through node wrappers); malformed data returns `Invalid` or `Asset`.
 - Nodes import in arena order with ids remapped by `(index, generation)`. Parent links come from `children` lists, and a recorded parent outside them (a mask under its owner) is restored. `import_layout` restores every element's Taffy style. Compositions import their nested document through `ImportContext::nested`, sharing the parent fonts. `ImportContext::element` decodes a body nested inside another element.
 - `import_graph(records, scene, cx)` adds records with their node state and parent links to any `SceneGraph` and returns the `NodeIds` map that `resolve` reads; `import_scene` uses it for the root graph and frontends use it for nested graphs such as captures. `ImportContext::shared(key, make)` memoizes a value for one import, such as a shared video decoder.
 - `audio.rs` rebuilds the mixer at the document sample rate with each track at its slot, empty slots kept. A path asset decodes through the loader with `source_start` seconds skipped; an `audio/x-f32le` asset holds the samples. Effects rebuild by kind (reverb, delay, eq with its filter, compressor) from their named parameters. Node audio bindings import with the node state.

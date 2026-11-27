@@ -29,15 +29,12 @@ let caption = root.add_caption(#{
 This caption overlaps the face.`,
     font_size: 48.0,
     color: "#FFFFFF",
-    background_color: "#000000AA",
+    pill_enabled: true,
+    pill_color: "#000000AA",
     caption_position: "top",
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: "100%",
-    align: "center",
     top_margin: 20.0,
-    background_padding: 12.0
+    pill_padding_h: 12.0,
+    pill_padding_v: 6.0
 });
 
 // Build a render manifest at the middle of the scene.

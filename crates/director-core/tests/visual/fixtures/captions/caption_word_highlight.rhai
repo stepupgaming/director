@@ -22,7 +22,6 @@ root.add_caption(#{
     stroke_width: 2.5,
     stroke_color: "#000000",
     pill_enabled: true,
-    pill_adaptive: true,
     auto_phrase_break: true,
     max_words_per_line: 4,
     caption_position: "bottom",
@@ -35,11 +34,6 @@ root.add_caption(#{
     line_reveal_duration_1: 0.20,
     glow_enabled: true,
     glow_blur: 4.0,
-    auto_adapt_shadow: true,
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    width: "100%",
 });
 
 movie

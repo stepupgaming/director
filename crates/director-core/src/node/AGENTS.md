@@ -24,6 +24,7 @@ build/tests fail. Plan 10 phase 2 collapses this into one effect table.
 ### Caption layout
 
 - `caption.rs` measures content height only. Anchor margins belong to Taffy insets, not the measured caption box.
+- The caption box always sets both side insets and an auto width, so it spans its parent less the side margin. `compute_line_left_x` aligns lines inside that box and adds no margin of its own.
 - Measurement and rendering both compute paragraph width as `max(rect_width * layout_width_fraction, 20)` so narrow boxes preserve the same wrapping and height.
 - Regression checks: `cargo test -p director-video-core --lib node::caption::tests`, including margin/inset separation and narrow measure/render equivalence.
 

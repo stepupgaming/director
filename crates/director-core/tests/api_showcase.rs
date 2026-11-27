@@ -354,9 +354,8 @@ let captions = scene.add_caption(#{
     source: "1\n00:00:00,000 --> 00:00:03,000\nHello from Director\n\n2\n00:00:03,000 --> 00:00:05,000\nCaption test!",
     font_size: 42,
     color: "#FFFFFF",
-    background_color: "#000000AA",
-    caption_position: "bottom",
-    align: "center"
+    pill_color: "#000000AA",
+    caption_position: "bottom"
 });
 movie
 "##;
@@ -529,7 +528,6 @@ fn caption_word_ink(after_start: f64) -> (usize, usize) {
     caption.style.text_shadow_enabled = false;
     caption.style.pill_enabled = false;
     caption.style.glow_enabled = false;
-    caption.style.auto_adapt_shadow = false;
     caption.style.active_pop_scale = 1.10;
     caption.style.active_pop_duration = 0.5;
     caption.style.position = CaptionPosition::Free(0.5);
@@ -613,7 +611,6 @@ fn caption_pop_keeps_a_space_to_the_next_word() {
     caption.style.text_shadow_enabled = false;
     caption.style.pill_enabled = false;
     caption.style.glow_enabled = false;
-    caption.style.auto_adapt_shadow = false;
     caption.style.active_pop_scale = 1.10;
     caption.style.active_pop_duration = 0.5;
     caption.style.position = CaptionPosition::Free(0.5);

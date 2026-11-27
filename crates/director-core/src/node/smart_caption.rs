@@ -115,8 +115,7 @@ impl SmartCaptionNode {
     /// Assumes a 1080x1920 canvas. If the trajectory was solved with different
     /// dimensions, use [`SmartCaptionNode::new_with_canvas`] instead.
     pub fn new(inner: CaptionNode, trajectory: CaptionTrajectory) -> Self {
-        let canvas_h = inner.style.reference_canvas_height;
-        Self::new_with_canvas(inner, trajectory, 1080.0, canvas_h)
+        Self::new_with_canvas(inner, trajectory, 1080.0, 1920.0)
     }
 
     /// Create a new smart caption with explicit canvas dimensions.

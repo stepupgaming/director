@@ -893,11 +893,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
-            let font_collection = d.assets.font_collection.clone();
-            let lines = parse_caption_lines(&d, &props)?;
-            let mut caption_node = CaptionNode::new(lines, font_collection);
-            parse_layout_style(&props, &mut caption_node.style_cache);
-            apply_caption_props(&mut caption_node, &props);
+            let caption_node = caption_node_from_props(&d, &props, "add_caption", false)?;
 
             let id = d.scene.add_node(Box::new(caption_node));
             if let Some(n) = d.scene.get_node_mut(id) {
@@ -928,11 +924,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          props: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
-            let font_collection = d.assets.font_collection.clone();
-            let lines = parse_caption_lines(&d, &props)?;
-            let mut caption_node = CaptionNode::new(lines, font_collection);
-            parse_layout_style(&props, &mut caption_node.style_cache);
-            apply_caption_props(&mut caption_node, &props);
+            let caption_node = caption_node_from_props(&d, &props, "add_caption", false)?;
 
             let id = d.scene.add_node(Box::new(caption_node));
             if let Some(n) = d.scene.get_node_mut(id) {
@@ -965,11 +957,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = parent.lock_director()?;
             parent.ensure_alive(&d)?;
-            let font_collection = d.assets.font_collection.clone();
-            let lines = parse_caption_lines(&d, &props)?;
-            let mut caption_node = CaptionNode::new(lines, font_collection);
-            parse_layout_style(&props, &mut caption_node.style_cache);
-            apply_caption_props(&mut caption_node, &props);
+            let caption_node = caption_node_from_props(&d, &props, "add_smart_caption", true)?;
 
             let (trajectory, entity_refs) = build_smart_caption_trajectory(&mut d, &caption_node, &props)?;
             let smart_node = SmartCaptionNode::new(caption_node, trajectory);
@@ -1007,11 +995,7 @@ pub fn register(engine: &mut Engine, _loader: Arc<dyn AssetLoader>) {
          props: rhai::Map|
          -> Result<NodeHandle, Box<rhai::EvalAltResult>> {
             let mut d = scene.lock_director()?;
-            let font_collection = d.assets.font_collection.clone();
-            let lines = parse_caption_lines(&d, &props)?;
-            let mut caption_node = CaptionNode::new(lines, font_collection);
-            parse_layout_style(&props, &mut caption_node.style_cache);
-            apply_caption_props(&mut caption_node, &props);
+            let caption_node = caption_node_from_props(&d, &props, "add_smart_caption", true)?;
 
             let (trajectory, entity_refs) = build_smart_caption_trajectory(&mut d, &caption_node, &props)?;
             let smart_node = SmartCaptionNode::new(caption_node, trajectory);
@@ -1935,188 +1919,370 @@ fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Resu
         return Ok(lines);
     }
 
-    Ok(Vec::new())
+    Err("add_caption: give the cues with one of media, words, file, source or content".into())
 }
 
-/// Apply caption style properties from a Rhai map.
-fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) {
-    if let Some(s) = props.get("font_size").and_then(|v| v.as_float().ok()) {
-        node.style.font_size = s as f32;
+/// Caption style keys `apply_caption_props` reads.
+pub const CAPTION_STYLE_KEYS: &[&str] = &[
+    "font_size",
+    "font_family",
+    "font_weight",
+    "weight",
+    "uppercase",
+    "color",
+    "highlight_color",
+    "spoken_color",
+    "future_opacity",
+    "active_opacity",
+    "spoken_opacity",
+    "color_transition_duration",
+    "caption_position",
+    "top_margin",
+    "bottom_margin",
+    "left_margin",
+    "right_margin",
+    "safe_area",
+    "safe_area_preset",
+    "layout_width_fraction",
+    "line_spacing",
+    "text_direction",
+    "stroke_enabled",
+    "stroke_width",
+    "stroke_color",
+    "text_shadow_enabled",
+    "text_shadow_color",
+    "text_shadow_blur",
+    "text_shadow_offset_x",
+    "text_shadow_offset_y",
+    "glow_enabled",
+    "glow_blur",
+    "pill_enabled",
+    "pill_color",
+    "pill_padding_h",
+    "pill_padding_v",
+    "pill_radius",
+    "active_pop_scale",
+    "active_pop_duration",
+    "auto_phrase_break",
+    "max_words_per_line",
+    "phrase_line_mode",
+    "line_reveal_offset_1",
+    "line_reveal_duration_1",
+];
+
+/// Caption input keys `parse_caption_lines` reads.
+pub const CAPTION_INPUT_KEYS: &[&str] = &[
+    "media",
+    "model",
+    "graphs",
+    "words",
+    "file",
+    "source",
+    "content",
+    "max_cue_chars",
+    "max_cue_duration",
+    "max_cue_gap",
+    "break_on_sentence",
+];
+
+/// Node keys every caption accepts besides its style and input.
+pub const CAPTION_NODE_KEYS: &[&str] = &[
+    "z_index",
+    "filter_blur",
+    "filter_brightness",
+    "filter_contrast",
+    "filter_saturation",
+    "filter_hue_rotate",
+];
+
+/// Smart caption solver keys `build_smart_caption_trajectory` reads.
+pub const SMART_CAPTION_KEYS: &[&str] = &[
+    "entity_refs",
+    "start_time",
+    "end_time",
+    "clearance",
+    "smoothing_window",
+    "motion_penalty",
+    "overlap_penalty",
+    "safe_zone_penalty",
+    "sample_rate",
+];
+
+/// Keys a caption once read or that belong to other nodes, with what to use.
+const CAPTION_KEY_HINTS: &[(&str, &str)] = &[
+    ("align", "line alignment follows caption_position (bottom_left, center, top_right, ...)"),
+    ("auto_adapt_shadow", "set text_shadow_color"),
+    ("pill_adaptive", "set pill_color"),
+    ("scale_with_canvas", "sizes are frame pixels; size font_size for the frame"),
+    ("reference_canvas_height", "sizes are frame pixels; size font_size for the frame"),
+    ("position", "place captions with caption_position and the *_margin keys"),
+    ("left", "place captions with caption_position and left_margin"),
+    ("right", "place captions with caption_position and right_margin"),
+    ("top", "place captions with caption_position and top_margin"),
+    ("bottom", "place captions with caption_position and bottom_margin"),
+    ("background_color", "use pill_enabled and pill_color"),
+    ("background_padding", "use pill_padding_h and pill_padding_v"),
+    ("size", "use font_size"),
+    ("width", "captions span their parent's width; narrow the text column with layout_width_fraction"),
+    ("max_width", "narrow the text column with layout_width_fraction"),
+    ("height", "captions take the height of their lines"),
+    ("text", "give cues with content, source, file, words or media"),
+];
+
+/// Every key a caption accepts; `smart` adds the solver keys.
+fn caption_keys(smart: bool) -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    keys.extend_from_slice(CAPTION_INPUT_KEYS);
+    keys.extend_from_slice(CAPTION_STYLE_KEYS);
+    keys.extend_from_slice(CAPTION_NODE_KEYS);
+    if smart {
+        keys.extend_from_slice(SMART_CAPTION_KEYS);
     }
-    if let Some(c) = props.get("color").and_then(|v| v.clone().into_string().ok()) {
-        if let Some(col) = parse_hex_color(&c) {
-            node.style.color = col;
+    keys
+}
+
+/// Fail on a key the caption does not read, naming its replacement when it has one.
+fn check_caption_keys(props: &rhai::Map, kind: &str, smart: bool) -> Result<(), String> {
+    for (key, hint) in CAPTION_KEY_HINTS {
+        if props.contains_key(*key) {
+            return Err(format!("{kind}: '{key}' is not a caption key: {hint}"));
         }
     }
-    if let Some(c) = props.get("highlight_color").and_then(|v| v.clone().into_string().ok()) {
-        if let Some(col) = parse_hex_color(&c) {
-            node.style.highlight_color = col;
+    reject_unknown_keys(props, &caption_keys(smart), kind)
+}
+
+/// Validate the keys, read the cues and build the caption node `kind` describes.
+fn caption_node_from_props(
+    d: &crate::director::Director,
+    props: &rhai::Map,
+    kind: &str,
+    smart: bool,
+) -> Result<CaptionNode, Box<rhai::EvalAltResult>> {
+    check_caption_keys(props, kind, smart)?;
+    let lines = parse_caption_lines(d, props)?;
+    let mut caption_node = CaptionNode::new(lines, d.assets.font_collection.clone());
+    apply_caption_props(&mut caption_node, props).map_err(|e| format!("{kind}: {e}"))?;
+    Ok(caption_node)
+}
+
+fn prop_number(props: &rhai::Map, key: &str) -> Result<Option<f64>, String> {
+    match props.get(key) {
+        None => Ok(None),
+        Some(v) => rhai_number(v)
+            .filter(|n| n.is_finite())
+            .map(Some)
+            .ok_or_else(|| format!("{key} must be a number, got {}", v.type_name())),
+    }
+}
+
+fn prop_f32(props: &rhai::Map, key: &str) -> Result<Option<f32>, String> {
+    Ok(prop_number(props, key)?.map(|n| n as f32))
+}
+
+fn prop_bool(props: &rhai::Map, key: &str) -> Result<Option<bool>, String> {
+    match props.get(key) {
+        None => Ok(None),
+        Some(v) => v
+            .as_bool()
+            .map(Some)
+            .map_err(|t| format!("{key} must be true or false, got {t}")),
+    }
+}
+
+fn prop_string(props: &rhai::Map, key: &str) -> Result<Option<String>, String> {
+    match props.get(key) {
+        None => Ok(None),
+        Some(v) => v
+            .clone()
+            .into_string()
+            .map(Some)
+            .map_err(|t| format!("{key} must be a string, got {t}")),
+    }
+}
+
+fn prop_color(props: &rhai::Map, key: &str) -> Result<Option<crate::types::Color>, String> {
+    match prop_string(props, key)? {
+        None => Ok(None),
+        Some(s) => parse_hex_color(&s)
+            .map(Some)
+            .ok_or_else(|| format!("{key} must be a hex colour such as \"#FFD400\" or \"#00000099\", got {s:?}")),
+    }
+}
+
+/// Apply caption style properties from a Rhai map. Every value is checked:
+/// a wrong type or an unknown name fails with the key.
+fn apply_caption_props(node: &mut CaptionNode, props: &rhai::Map) -> Result<(), String> {
+    use crate::node::caption::PhraseLineMode;
+    let s = &mut node.style;
+
+    if let Some(v) = prop_f32(props, "font_size")? {
+        if v <= 0.0 {
+            return Err(format!("font_size must be above 0, got {v}"));
+        }
+        s.font_size = v;
+    }
+    if let Some(v) = prop_string(props, "font_family")? {
+        s.font_family = v;
+    }
+    for key in ["font_weight", "weight"] {
+        if let Some(v) = props.get(key) {
+            s.font_weight = super::super::utils::parse_font_weight(v)
+                .ok_or_else(|| format!("{key} must be 100 to 900 or a name such as \"bold\", got {v}"))?;
         }
     }
-    if let Some(c) = props.get("spoken_color").and_then(|v| v.clone().into_string().ok()) {
-        if let Some(col) = parse_hex_color(&c) {
-            node.style.spoken_color = col;
+    if let Some(v) = prop_bool(props, "uppercase")? {
+        s.uppercase = v;
+    }
+    if let Some(c) = prop_color(props, "color")? {
+        s.color = c;
+    }
+    if let Some(c) = prop_color(props, "highlight_color")? {
+        s.highlight_color = c;
+    }
+    if let Some(c) = prop_color(props, "spoken_color")? {
+        s.spoken_color = c;
+    }
+    if let Some(v) = prop_f32(props, "future_opacity")? {
+        s.future_opacity = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = prop_f32(props, "active_opacity")? {
+        s.active_opacity = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = prop_f32(props, "spoken_opacity")? {
+        s.spoken_color_opacity = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = prop_number(props, "color_transition_duration")? {
+        s.color_transition_duration = v.max(0.0);
+    }
+    if let Some(v) = prop_f32(props, "top_margin")? {
+        s.top_margin = v;
+    }
+    if let Some(v) = prop_f32(props, "bottom_margin")? {
+        s.bottom_margin = v;
+    }
+    if let Some(v) = prop_f32(props, "left_margin")? {
+        s.left_margin = v;
+    }
+    if let Some(v) = prop_f32(props, "right_margin")? {
+        s.right_margin = v;
+    }
+    for key in ["safe_area", "safe_area_preset"] {
+        if let Some(p) = prop_string(props, key)? {
+            if crate::node::caption::safe_zone(&p).is_none() {
+                return Err(format!("{key}: unknown platform {p:?}; valid: {}", crate::node::caption::safe_area_presets().join(", ")));
+            }
+            s.safe_area_preset = Some(p);
         }
     }
-    if let Some(p) = props.get("caption_position").and_then(|v| v.clone().into_string().ok()) {
-        let position = CaptionPosition::from_str(&p);
+    if let Some(v) = prop_f32(props, "layout_width_fraction")? {
+        if !(0.05..=1.0).contains(&v) {
+            return Err(format!("layout_width_fraction must be between 0.05 and 1, got {v}"));
+        }
+        s.layout_width_fraction = v;
+    }
+    if let Some(v) = prop_f32(props, "line_spacing")? {
+        s.line_spacing = v;
+    }
+    if let Some(d) = prop_string(props, "text_direction")? {
+        s.text_direction = match d.as_str() {
+            "auto" | "ltr" | "rtl" => crate::text_direction::parse_text_direction_mode(&d),
+            _ => return Err(format!("text_direction must be auto, ltr or rtl, got {d:?}")),
+        };
+    }
+    if let Some(v) = prop_bool(props, "stroke_enabled")? {
+        s.stroke_enabled = v;
+    }
+    if let Some(v) = prop_f32(props, "stroke_width")? {
+        s.stroke_width = v.max(0.0);
+    }
+    if let Some(c) = prop_color(props, "stroke_color")? {
+        s.stroke_color = c;
+    }
+    if let Some(v) = prop_bool(props, "text_shadow_enabled")? {
+        s.text_shadow_enabled = v;
+    }
+    if let Some(c) = prop_color(props, "text_shadow_color")? {
+        s.text_shadow_color = c;
+    }
+    if let Some(v) = prop_f32(props, "text_shadow_blur")? {
+        s.text_shadow_blur = v.max(0.0);
+    }
+    if let Some(v) = prop_f32(props, "text_shadow_offset_x")? {
+        s.text_shadow_offset_x = v;
+    }
+    if let Some(v) = prop_f32(props, "text_shadow_offset_y")? {
+        s.text_shadow_offset_y = v;
+    }
+    if let Some(v) = prop_bool(props, "glow_enabled")? {
+        s.glow_enabled = v;
+    }
+    if let Some(v) = prop_f32(props, "glow_blur")? {
+        s.glow_blur = v.max(0.0);
+    }
+    if let Some(v) = prop_bool(props, "pill_enabled")? {
+        s.pill_enabled = v;
+    }
+    if let Some(c) = prop_color(props, "pill_color")? {
+        s.pill_color = c;
+    }
+    if let Some(v) = prop_f32(props, "pill_padding_h")? {
+        s.pill_padding_h = v.max(0.0);
+    }
+    if let Some(v) = prop_f32(props, "pill_padding_v")? {
+        s.pill_padding_v = v.max(0.0);
+    }
+    if let Some(v) = prop_f32(props, "pill_radius")? {
+        s.pill_radius = v.max(0.0);
+    }
+    if let Some(v) = prop_f32(props, "active_pop_scale")? {
+        if !(1.0..=1.10).contains(&v) {
+            return Err(format!("active_pop_scale must be between 1.0 and 1.10, got {v}"));
+        }
+        s.active_pop_scale = v;
+    }
+    if let Some(v) = prop_number(props, "active_pop_duration")? {
+        if !(0.05..=0.15).contains(&v) {
+            return Err(format!("active_pop_duration must be between 0.05 and 0.15 seconds, got {v}"));
+        }
+        s.active_pop_duration = v;
+    }
+    if let Some(v) = prop_bool(props, "auto_phrase_break")? {
+        s.auto_phrase_break = v;
+    }
+    if let Some(v) = prop_number(props, "max_words_per_line")? {
+        if v < 1.0 || v.fract() != 0.0 {
+            return Err(format!("max_words_per_line must be a whole number of at least 1, got {v}"));
+        }
+        s.max_words_per_line = v as usize;
+    }
+    if let Some(m) = prop_string(props, "phrase_line_mode")? {
+        s.phrase_line_mode = match m.as_str() {
+            "replace" => PhraseLineMode::Replace,
+            "stack" => PhraseLineMode::Stack,
+            _ => return Err(format!("phrase_line_mode must be replace or stack, got {m:?}")),
+        };
+    }
+    if let Some(v) = prop_f32(props, "line_reveal_offset_1")? {
+        if s.line_reveal_offsets.len() >= 2 {
+            s.line_reveal_offsets[1] = v.clamp(0.0, 1.0);
+        }
+    }
+    if let Some(v) = prop_f32(props, "line_reveal_duration_1")? {
+        if s.line_reveal_durations.len() >= 2 {
+            s.line_reveal_durations[1] = v.max(0.0);
+        }
+    }
+    if let Some(p) = prop_string(props, "caption_position")? {
+        let position = CaptionPosition::try_from_str(&p).map_err(|_| {
+            format!("caption_position must be bottom, top, center, left, right, top_left, top_right, bottom_left, bottom_right, free(y) or free_xy(x, y), got {p:?}")
+        })?;
         node.set_position(position);
     }
-    if let Some(a) = props.get("align").and_then(|v| v.clone().into_string().ok()) {
-        node.style.text_align = match a.as_str() {
-            "center" => skia_safe::textlayout::TextAlign::Center,
-            "right" => skia_safe::textlayout::TextAlign::Right,
-            "left" => skia_safe::textlayout::TextAlign::Left,
-            _ => skia_safe::textlayout::TextAlign::Center,
-        };
-    }
-    if let Some(d) = props
-        .get("text_direction")
-        .and_then(|v| v.clone().into_string().ok())
-    {
-        node.style.text_direction = crate::text_direction::parse_text_direction_mode(&d);
-    }
-    if let Some(m) = props.get("bottom_margin").and_then(|v| v.as_float().ok()) {
-        node.style.bottom_margin = m as f32;
-    }
-    if let Some(m) = props.get("top_margin").and_then(|v| v.as_float().ok()) {
-        node.style.top_margin = m as f32;
-    }
-    if let Some(f) = props.get("font_family").and_then(|v| v.clone().into_string().ok()) {
-        node.style.font_family = f;
-    }
-    if let Some(w) = props
-        .get("font_weight")
-        .or_else(|| props.get("weight"))
-        .and_then(super::super::utils::parse_font_weight)
-    {
-        node.style.font_weight = w;
-    }
-    if let Some(v) = props.get("stroke_enabled").and_then(|v| v.as_bool().ok()) {
-        node.style.stroke_enabled = v;
-    }
-    if let Some(v) = props.get("stroke_width").and_then(|v| v.as_float().ok()) {
-        node.style.stroke_width = v as f32;
-    }
-    if let Some(c) = props.get("stroke_color").and_then(|v| v.clone().into_string().ok()) {
-        if let Some(col) = parse_hex_color(&c) {
-            node.style.stroke_color = col;
-        }
-    }
-    if let Some(v) = props.get("glow_enabled").and_then(|v| v.as_bool().ok()) {
-        node.style.glow_enabled = v;
-    }
-    if let Some(v) = props.get("glow_blur").and_then(|v| v.as_float().ok()) {
-        node.style.glow_blur = v as f32;
-    }
-    if let Some(s) = props.get("line_spacing").and_then(|v| v.as_float().ok()) {
-        node.style.line_spacing = s as f32;
-    }
-    if let Some(d) = props.get("color_transition_duration").and_then(|v| v.as_float().ok()) {
-        node.style.color_transition_duration = d;
-    }
-    if let Some(o) = props.get("future_opacity").and_then(|v| v.as_float().ok()) {
-        node.style.future_opacity = o as f32;
-    }
-    if let Some(o) = props.get("spoken_opacity").and_then(|v| v.as_float().ok()) {
-        node.style.spoken_color_opacity = o as f32;
-    }
-    if let Some(o) = props.get("active_opacity").and_then(|v| v.as_float().ok()) {
-        node.style.active_opacity = o as f32;
-    }
-    if let Some(v) = props.get("text_shadow_enabled").and_then(|v| v.as_bool().ok()) {
-        node.style.text_shadow_enabled = v;
-    }
-    if let Some(c) = props.get("text_shadow_color").and_then(|v| v.clone().into_string().ok()) {
-        if let Some(col) = parse_hex_color(&c) {
-            node.style.text_shadow_color = col;
-        }
-    }
-    if let Some(v) = props.get("text_shadow_blur").and_then(|v| v.as_float().ok()) {
-        node.style.text_shadow_blur = v as f32;
-    }
-    if let Some(v) = props.get("text_shadow_offset_x").and_then(|v| v.as_float().ok()) {
-        node.style.text_shadow_offset_x = v as f32;
-    }
-    if let Some(v) = props.get("text_shadow_offset_y").and_then(|v| v.as_float().ok()) {
-        node.style.text_shadow_offset_y = v as f32;
-    }
-    if let Some(v) = props.get("active_pop_scale").and_then(|v| v.as_float().ok()) {
-        node.style.active_pop_scale = (v as f32).clamp(1.0, 1.10);
-    }
-    if let Some(d) = props.get("active_pop_duration").and_then(|v| v.as_float().ok()) {
-        node.style.active_pop_duration = d.clamp(0.05, 0.15);
-    }
-    if let Some(v) = props.get("line_reveal_offset_1").and_then(|v| v.as_float().ok()) {
-        let f = v as f32;
-        if node.style.line_reveal_offsets.len() >= 2 {
-            node.style.line_reveal_offsets[1] = f;
-        }
-    }
-    if let Some(v) = props.get("line_reveal_duration_1").and_then(|v| v.as_float().ok()) {
-        let d = v as f32;
-        if node.style.line_reveal_durations.len() >= 2 {
-            node.style.line_reveal_durations[1] = d;
-        }
-    }
-    if let Some(v) = props.get("auto_adapt_shadow").and_then(|v| v.as_bool().ok()) {
-        node.style.auto_adapt_shadow = v;
-    }
-    if let Some(v) = props.get("pill_enabled").and_then(|v| v.as_bool().ok()) {
-        node.style.pill_enabled = v;
-    }
-    if let Some(c) = props.get("pill_color").and_then(|v| v.clone().into_string().ok()) {
-        if let Some(col) = parse_hex_color(&c) {
-            node.style.pill_color = col;
-        }
-    }
-    if let Some(v) = props.get("pill_adaptive").and_then(|v| v.as_bool().ok()) {
-        node.style.pill_adaptive = v;
-    }
-    if let Some(v) = props.get("pill_padding_h").and_then(|v| v.as_float().ok()) {
-        node.style.pill_padding_h = v as f32;
-    }
-    if let Some(v) = props.get("pill_padding_v").and_then(|v| v.as_float().ok()) {
-        node.style.pill_padding_v = v as f32;
-    }
-    if let Some(v) = props.get("pill_radius").and_then(|v| v.as_float().ok()) {
-        node.style.pill_radius = v as f32;
-    }
-    if let Some(v) = props.get("auto_phrase_break").and_then(|v| v.as_bool().ok()) {
-        node.style.auto_phrase_break = v;
-    }
-    if let Some(v) = props.get("max_words_per_line").and_then(|v| v.as_int().ok()) {
-        node.style.max_words_per_line = (v as usize).max(1);
-    }
-    if let Some(m) = props
-        .get("phrase_line_mode")
-        .and_then(|v| v.clone().into_string().ok())
-    {
-        node.style.phrase_line_mode = match m.to_ascii_lowercase().as_str() {
-            "stack" => crate::node::caption::PhraseLineMode::Stack,
-            _ => crate::node::caption::PhraseLineMode::Replace,
-        };
-    }
-    if let Some(p) = props
-        .get("safe_area")
-        .or_else(|| props.get("safe_area_preset"))
-        .and_then(|v| v.clone().into_string().ok())
-    {
-        node.style.safe_area_preset = Some(p);
-    }
-    if let Some(v) = props.get("scale_with_canvas").and_then(|v| v.as_bool().ok()) {
-        node.style.scale_with_canvas = v;
-    }
-    if let Some(v) = props.get("reference_canvas_height").and_then(|v| v.as_float().ok()) {
-        node.style.reference_canvas_height = v as f32;
-    }
-    if let Some(v) = props.get("uppercase").and_then(|v| v.as_bool().ok()) {
-        node.style.uppercase = v;
-    }
-    // Rebuild the Taffy style now that all caption props (including margins)
-    // have been applied so the layout rect reflects the chosen position.
+    // Rebuild the Taffy style now that every prop (margins included) is set,
+    // so the layout rect reflects the chosen position.
     node.rebuild_layout_style();
     node.after_style_changed();
+    Ok(())
 }
 
 fn box_prop_keys() -> Vec<&'static str> {
@@ -2347,11 +2513,8 @@ fn add_smart_caption_from_manifest(
     props: &rhai::Map,
     force_continuous: bool,
 ) -> Result<NodeId, Box<rhai::EvalAltResult>> {
-    let font_collection = d.assets.font_collection.clone();
-    let lines = parse_caption_lines(d, props)?;
-    let mut caption_node = CaptionNode::new(lines, font_collection);
-    parse_layout_style(props, &mut caption_node.style_cache);
-    apply_caption_props(&mut caption_node, props);
+    let kind = if force_continuous { "add_smart_caption_continuous" } else { "add_smart_caption" };
+    let caption_node = caption_node_from_props(d, props, kind, false)?;
 
     let smart_node = if force_continuous || config.continuous {
         SmartCaptionNode::from_manifest_continuous(caption_node, &d.entities, manifest, config)
@@ -2394,7 +2557,7 @@ fn build_smart_caption_trajectory(
 
     let start_time = props
         .get("start_time")
-        .and_then(|v| v.as_float().ok())
+        .and_then(rhai_number)
         .unwrap_or_else(|| {
             caption_node
                 .lines
@@ -2404,7 +2567,7 @@ fn build_smart_caption_trajectory(
         });
     let end_time = props
         .get("end_time")
-        .and_then(|v| v.as_float().ok())
+        .and_then(rhai_number)
         .unwrap_or_else(|| {
             caption_node
                 .lines
@@ -2414,19 +2577,19 @@ fn build_smart_caption_trajectory(
         });
 
     let mut solver = SolverConfig::default();
-    if let Some(v) = props.get("clearance").and_then(|v| v.as_float().ok()) {
+    if let Some(v) = props.get("clearance").and_then(rhai_number) {
         solver.clearance = v as f32;
     }
     if let Some(v) = props.get("smoothing_window").and_then(|v| v.as_int().ok()) {
         solver.smoothing_window = v as usize;
     }
-    if let Some(v) = props.get("motion_penalty").and_then(|v| v.as_float().ok()) {
+    if let Some(v) = props.get("motion_penalty").and_then(rhai_number) {
         solver.motion_penalty = v as f32;
     }
-    if let Some(v) = props.get("overlap_penalty").and_then(|v| v.as_float().ok()) {
+    if let Some(v) = props.get("overlap_penalty").and_then(rhai_number) {
         solver.overlap_penalty = v as f32;
     }
-    if let Some(v) = props.get("safe_zone_penalty").and_then(|v| v.as_float().ok()) {
+    if let Some(v) = props.get("safe_zone_penalty").and_then(rhai_number) {
         solver.safe_zone_penalty = v as f32;
     }
 
@@ -2447,7 +2610,7 @@ fn build_smart_caption_trajectory(
     let safe_right = caption_node.style.right_margin;
     let sample_rate = props
         .get("sample_rate")
-        .and_then(|v| v.as_float().ok())
+        .and_then(rhai_number)
         .unwrap_or(10.0);
 
     let params = SolverParams {

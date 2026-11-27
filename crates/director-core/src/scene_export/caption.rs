@@ -8,8 +8,7 @@ use crate::node::smart_caption::SmartCaptionConfig;
 use crate::semantic::{Anchor, CaptionTrajectory, SemanticManifest, SolverConfig};
 use crate::text_direction::TextDirectionMode;
 use director_scene::caption as ds;
-use director_scene::{NodeBody, TextAlign, TextDirection};
-use skia_safe::textlayout::TextAlign as SkTextAlign;
+use director_scene::{NodeBody, TextDirection};
 
 pub(crate) fn caption_body(
     node: &CaptionNode,
@@ -87,14 +86,6 @@ fn caption_style(style: &CaptionStyle) -> ds::CaptionStyle {
         highlight_color: rgba(style.highlight_color),
         spoken_color: rgba(style.spoken_color),
         position: caption_position(&style.position),
-        text_align: match style.text_align {
-            SkTextAlign::Left => TextAlign::Left,
-            SkTextAlign::Right => TextAlign::Right,
-            SkTextAlign::Center => TextAlign::Center,
-            SkTextAlign::Justify => TextAlign::Justify,
-            SkTextAlign::Start => TextAlign::Start,
-            SkTextAlign::End => TextAlign::End,
-        },
         left_margin: style.left_margin,
         right_margin: style.right_margin,
         text_direction: match style.text_direction {
@@ -119,7 +110,6 @@ fn caption_style(style: &CaptionStyle) -> ds::CaptionStyle {
         text_shadow_offset_x: style.text_shadow_offset_x,
         text_shadow_offset_y: style.text_shadow_offset_y,
         text_shadow_blur: style.text_shadow_blur,
-        auto_adapt_shadow: style.auto_adapt_shadow,
         stroke_enabled: style.stroke_enabled,
         stroke_width: style.stroke_width,
         stroke_color: rgba(style.stroke_color),
@@ -129,7 +119,6 @@ fn caption_style(style: &CaptionStyle) -> ds::CaptionStyle {
         line_reveal_durations: style.line_reveal_durations.clone(),
         pill_enabled: style.pill_enabled,
         pill_color: rgba(style.pill_color),
-        pill_adaptive: style.pill_adaptive,
         pill_padding_h: style.pill_padding_h,
         pill_padding_v: style.pill_padding_v,
         pill_radius: style.pill_radius,
@@ -140,8 +129,6 @@ fn caption_style(style: &CaptionStyle) -> ds::CaptionStyle {
             PhraseLineMode::Stack => ds::PhraseLineMode::Stack,
         },
         safe_area_preset: style.safe_area_preset.clone(),
-        scale_with_canvas: style.scale_with_canvas,
-        reference_canvas_height: style.reference_canvas_height,
         uppercase: style.uppercase,
     }
 }

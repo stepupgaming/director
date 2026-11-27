@@ -20,7 +20,6 @@ root.add_caption(#{
     spoken_color: "#D8D8D8",
     safe_area: "tiktok",
     pill_enabled: true,
-    pill_adaptive: true,
     stroke_enabled: true,
     stroke_width: 2.5,
     glow_enabled: true,
@@ -30,10 +29,6 @@ root.add_caption(#{
     line_spacing: 18,
     color_transition_duration: 0.10,
     active_pop_scale: 1.04,
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    width: "100%",
 });
 
 movie

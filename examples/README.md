@@ -34,44 +34,44 @@ Reference scripts demonstrating the Rhai API. All examples are validated by the 
 
 Creates a `SmartCaptionNode`. The solver chooses the caption anchor (top, bottom, left, right, or continuous x/y) based on the position of tracked entities, so `caption_position` is ignored.
 
-#### Content sources (provide one of)
+#### Content sources (provide one of; a caption without cues fails)
 
 | Prop | Type | Description |
 |------|------|-------------|
-| `file` | string | Path to an SRT subtitle file. |
-| `source` | string | Raw SRT subtitle string. |
+| `media` | string | Audio or video file transcribed with Bark (`--features asr`); `model` and `graphs` pick the model. |
+| `words` | array or string | Word-timed transcript: `asr transcribe --format json` output or `[{ text, start, end }]`. |
+| `file` | string | Path to a `.json` transcript, `.vtt` or `.srt` file. |
+| `source` | string | Raw SRT or WebVTT text. |
 | `content` | array | Inline caption lines. Each item is a map with `text`, `start`, `end`, and optional `words` (array of `{ word, start, end }`). |
 
-#### Layout & sizing
+#### Placement
 
-All standard layout props parsed by `parse_layout_style` are supported: `width`, `height`, `max_width`, `max_height`, `position`, `left`, `right`, `top`, `bottom`, `flex_direction`, `align_items`, `justify_content`, `flex_grow`, `flex_shrink`, `padding`, `margin`, `gap`, `display`, `grid_template_columns`, `grid_template_rows`, `grid_row`, `grid_column`, `aspect_ratio`.
+Captions span their parent's width and sit by `caption_position`. Keys outside the tables in this section fail the script with the valid list, and the CSS layout keys (`position`, `left`, `width` and the rest) fail with the caption key that replaces them. Numbers take ints or floats; colours take `#RGB`, `#RGBA`, `#RRGGBB` or `#RRGGBBAA`.
 
 | Prop | Type | Description |
 |------|------|-------------|
-| `position` | string | `"relative"` or `"absolute"`. Use `"absolute"` with `left`/`right`/`top`/`bottom` to fill the canvas. |
-| `width` | string/number | e.g. `"100%"` or `1080`. |
-| `height` | string/number | e.g. `"100%"` or `1920`. |
+| `caption_position` | string | `bottom` (default), `top`, `center`, `left`, `right`, `top_left`, `top_right`, `bottom_left`, `bottom_right`. Line alignment follows it. |
+| `bottom_margin` / `top_margin` / `left_margin` / `right_margin` | float | Frame pixels between the caption and that edge. |
+| `safe_area` / `safe_area_preset` | string | Platform margins: `tiktok`, `youtube_shorts`, `instagram_reel` and the other `DesignSystem` presets. |
+| `layout_width_fraction` | float | Text column width as a fraction of the caption width, 0.05 to 1. |
 
 #### Caption styling
 
 | Prop | Type | Description |
 |------|------|-------------|
-| `font_size` | float | Base font size. |
+| `font_size` | float | Font size in frame pixels. |
 | `color` | string | Hex color, e.g. `"#FFFFFF"`. |
 | `highlight_color` | string | Hex color for highlighted words. |
 | `spoken_color` | string | Hex color for spoken words. |
-| `align` | string | `"left"`, `"center"`, or `"right"`. |
 | `text_direction` | string | `"ltr"`, `"rtl"`, or `"auto"`. |
-| `bottom_margin` | float | Bottom safe-zone margin. |
-| `top_margin` | float | Top safe-zone margin. |
 | `font_family` | string | Font family name. |
 | `font_weight` / `weight` | string/number | e.g. `"bold"` or `700`. |
 | `stroke_enabled` | bool | Enable text stroke. |
-| `stroke_width` | float | Stroke width. |
+| `stroke_width` | float | Outline width in pixels outside the glyph, drawn as a round-join stroke. |
 | `stroke_color` | string | Hex stroke color. |
 | `glow_enabled` | bool | Enable glow effect. |
 | `glow_blur` | float | Glow blur radius. |
-| `line_spacing` | float | Line spacing multiplier. |
+| `line_spacing` | float | Pixels between display lines. |
 | `color_transition_duration` | float | Duration of color transitions. |
 | `future_opacity` | float | Opacity of future words. |
 | `spoken_opacity` | float | Opacity of spoken words. |
@@ -81,21 +81,16 @@ All standard layout props parsed by `parse_layout_style` are supported: `width`,
 | `text_shadow_blur` | float | Shadow blur. |
 | `text_shadow_offset_x` | float | Shadow X offset. |
 | `text_shadow_offset_y` | float | Shadow Y offset. |
-| `active_pop_scale` | float | Pop scale for active word (clamped 1.0–1.10). |
-| `active_pop_duration` | float | Pop duration (clamped 0.05–0.15 s). |
-| `auto_adapt_shadow` | bool | Auto-adapt shadow color. |
+| `active_pop_scale` | float | Pop scale for the active word, 1.0 to 1.10. |
+| `active_pop_duration` | float | Pop duration, 0.05 to 0.15 s. |
 | `pill_enabled` | bool | Draw a pill behind the caption. |
 | `pill_color` | string | Hex pill color. |
-| `pill_adaptive` | bool | Adapt pill color automatically. |
 | `pill_padding_h` | float | Horizontal pill padding. |
 | `pill_padding_v` | float | Vertical pill padding. |
 | `pill_radius` | float | Pill corner radius. |
 | `auto_phrase_break` | bool | Automatically break lines at phrase boundaries. |
 | `max_words_per_line` | int | Maximum words per line. |
 | `phrase_line_mode` | string | `"stack"` or `"replace"`. |
-| `safe_area` / `safe_area_preset` | string | Safe-area preset name. |
-| `scale_with_canvas` | bool | Scale font size with canvas height. |
-| `reference_canvas_height` | float | Canvas height used for scaling. |
 | `uppercase` | bool | Render text in uppercase. |
 
 #### Smart solver tuning (simple props API)

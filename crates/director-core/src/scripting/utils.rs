@@ -174,30 +174,34 @@ pub fn apply_effect_to_node(d: &mut Director, node_id: NodeId, effect: EffectTyp
     effect_id
 }
 
-/// Helper to parse hex strings like "#RRGGBB" or "#RGB"
+/// Parse `#RRGGBB`, `#RRGGBBAA`, `#RGB` or `#RGBA`.
 pub fn parse_hex_color(hex: &str) -> Option<Color> {
     let hex = hex.trim_start_matches('#');
+    let alpha = match hex.len() {
+        8 => u8::from_str_radix(hex.get(6..8)?, 16).ok()? as f32 / 255.0,
+        4 => u8::from_str_radix(hex.get(3..4)?, 16).ok()? as f32 * 17.0 / 255.0,
+        _ => 1.0,
+    };
     let (r, g, b) = match hex.len() {
-        6 => {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        6 | 8 => {
+            let r = u8::from_str_radix(hex.get(0..2)?, 16).ok()?;
+            let g = u8::from_str_radix(hex.get(2..4)?, 16).ok()?;
+            let b = u8::from_str_radix(hex.get(4..6)?, 16).ok()?;
             (r, g, b)
         }
-        3 => {
-            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
-            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
-            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+        3 | 4 => {
+            let r = u8::from_str_radix(hex.get(0..1)?, 16).ok()?;
+            let g = u8::from_str_radix(hex.get(1..2)?, 16).ok()?;
+            let b = u8::from_str_radix(hex.get(2..3)?, 16).ok()?;
             (r * 17, g * 17, b * 17)
         }
         _ => return None,
     };
-
     Some(Color::new(
         r as f32 / 255.0,
         g as f32 / 255.0,
         b as f32 / 255.0,
-        1.0,
+        alpha,
     ))
 }
 

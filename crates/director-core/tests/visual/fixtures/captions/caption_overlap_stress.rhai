@@ -16,13 +16,8 @@ root.add_caption(#{
     font_weight: 700,
     safe_area: "youtube_shorts",
     pill_enabled: true,
-    pill_adaptive: true,
     highlight_color: "#FFD60A",
     caption_position: "bottom",
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    width: "100%",
 });
 
 movie

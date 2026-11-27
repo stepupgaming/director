@@ -38,15 +38,12 @@ This is a caption demo.
 SRT subtitles with style!`,
     font_size: 48.0,
     color: "#FFFFFF",
-    background_color: "#000000AA",
+    pill_enabled: true,
+    pill_color: "#000000AA",
     caption_position: "bottom",
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    width: "100%",
-    align: "center",
     bottom_margin: 80.0,
-    background_padding: 12.0
+    pill_padding_h: 12.0,
+    pill_padding_v: 6.0
 });
 
 movie

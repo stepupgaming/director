@@ -48,7 +48,7 @@ Adds word-highlight captions (also a node method). Each word's highlight starts 
 - `source`: SRT or WebVTT text.
 - `content`: `[#{ text, start, end, words: [#{ text, start, end }] }]`. Cues without `words` split evenly.
 
-`media`, `words` and JSON group words into cues by `max_cue_chars` (42), `max_cue_duration` (5.0 s), `max_cue_gap` (0.8 s) and `break_on_sentence` (true). `auto_phrase_break` with `max_words_per_line` splits cues into display lines and keeps measured word times. Style keys include `font_size`, `font_family`, `uppercase`, `color`, `highlight_color`, `spoken_color`, `color_transition_duration` (seconds of highlight lead-in, default 0), `pill_enabled` and `caption_position`.
+`media`, `words` and JSON group words into cues by `max_cue_chars` (42), `max_cue_duration` (5.0 s), `max_cue_gap` (0.8 s) and `break_on_sentence` (true). `auto_phrase_break` with `max_words_per_line` splits cues into display lines and keeps measured word times. Style keys include `font_size`, `font_family`, `uppercase`, `color`, `highlight_color`, `spoken_color`, `color_transition_duration` (seconds of highlight lead-in, default 0), `pill_enabled`, `pill_color`, `stroke_width` (outline px outside the glyph), `caption_position` and the `*_margin` keys. Captions span their parent's width and take no layout keys. An unknown or removed key fails the script and names the valid keys or the replacement; numbers take ints or floats and colours take `#RRGGBB` or `#RRGGBBAA`. `examples/README.md` lists every key.
 
 Video to captions:
 ```rhai

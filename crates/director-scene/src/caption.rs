@@ -1,6 +1,6 @@
 //! Caption, smart caption and active speaker camera bodies.
 
-use crate::body::{MediaBody, TextAlign, TextDirection};
+use crate::body::{MediaBody, TextDirection};
 use crate::channel::Rgba;
 use crate::entity::EntityId;
 use schemars::JsonSchema;
@@ -78,7 +78,6 @@ pub struct CaptionStyle {
     /// Color of past words.
     pub spoken_color: Rgba,
     pub position: CaptionPosition,
-    pub text_align: TextAlign,
     /// Margin used by the left anchors.
     pub left_margin: f32,
     /// Margin used by the right anchors.
@@ -106,7 +105,6 @@ pub struct CaptionStyle {
     pub text_shadow_offset_x: f32,
     pub text_shadow_offset_y: f32,
     pub text_shadow_blur: f32,
-    pub auto_adapt_shadow: bool,
     pub stroke_enabled: bool,
     pub stroke_width: f32,
     pub stroke_color: Rgba,
@@ -118,7 +116,6 @@ pub struct CaptionStyle {
     pub line_reveal_durations: Vec<f32>,
     pub pill_enabled: bool,
     pub pill_color: Rgba,
-    pub pill_adaptive: bool,
     pub pill_padding_h: f32,
     pub pill_padding_v: f32,
     pub pill_radius: f32,
@@ -127,8 +124,6 @@ pub struct CaptionStyle {
     pub phrase_line_mode: PhraseLineMode,
     /// Platform preset such as `tiktok` or `youtube_shorts`.
     pub safe_area_preset: Option<String>,
-    pub scale_with_canvas: bool,
-    pub reference_canvas_height: f32,
     pub uppercase: bool,
 }
 

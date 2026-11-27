@@ -1,6 +1,6 @@
 //! Caption and smart caption elements from their bodies.
 
-use super::nodes::{mismatch, text_align};
+use super::nodes::mismatch;
 use super::{animated, color, ImportContext, ImportError};
 use crate::element::Element;
 use crate::entity::EntityId;
@@ -87,7 +87,6 @@ fn caption_style(style: &ds::CaptionStyle) -> CaptionStyle {
         highlight_color: color(style.highlight_color),
         spoken_color: color(style.spoken_color),
         position: caption_position(style.position),
-        text_align: text_align(style.text_align),
         left_margin: style.left_margin,
         right_margin: style.right_margin,
         text_direction: match style.text_direction {
@@ -112,7 +111,6 @@ fn caption_style(style: &ds::CaptionStyle) -> CaptionStyle {
         text_shadow_offset_x: style.text_shadow_offset_x,
         text_shadow_offset_y: style.text_shadow_offset_y,
         text_shadow_blur: style.text_shadow_blur,
-        auto_adapt_shadow: style.auto_adapt_shadow,
         stroke_enabled: style.stroke_enabled,
         stroke_width: style.stroke_width,
         stroke_color: color(style.stroke_color),
@@ -122,7 +120,6 @@ fn caption_style(style: &ds::CaptionStyle) -> CaptionStyle {
         line_reveal_durations: style.line_reveal_durations.clone(),
         pill_enabled: style.pill_enabled,
         pill_color: color(style.pill_color),
-        pill_adaptive: style.pill_adaptive,
         pill_padding_h: style.pill_padding_h,
         pill_padding_v: style.pill_padding_v,
         pill_radius: style.pill_radius,
@@ -133,8 +130,6 @@ fn caption_style(style: &ds::CaptionStyle) -> CaptionStyle {
             ds::PhraseLineMode::Stack => PhraseLineMode::Stack,
         },
         safe_area_preset: style.safe_area_preset.clone(),
-        scale_with_canvas: style.scale_with_canvas,
-        reference_canvas_height: style.reference_canvas_height,
         uppercase: style.uppercase,
     }
 }

@@ -10,6 +10,7 @@ mod animation_eval;
 mod api_showcase;
 mod audio;
 mod audio_api;
+mod caption_keys;
 mod caption_word_times;
 mod blend_mode_loud;
 mod compiler;

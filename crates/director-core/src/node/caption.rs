@@ -8,10 +8,10 @@ use skia_safe::{
     textlayout::{
         FontCollection, Paragraph, ParagraphBuilder, ParagraphStyle, RectHeightStyle,
         RectWidthStyle, StrutStyle, TextAlign, TextHeightBehavior,
-        TextShadow, TextStyle,
+        TextStyle,
     },
     font_style::{Slant, Weight, Width},
-    Canvas, FontStyle, Paint, Point, Rect, RRect,
+    BlurStyle, Canvas, FontStyle, MaskFilter, Paint, PaintJoin, PaintStyle, Point, Rect, RRect,
 };
 use std::any::Any;
 use std::fmt;
@@ -226,37 +226,6 @@ pub enum PhraseLineMode {
     Stack,
 }
 
-/// Serde adapter for `skia_safe::textlayout::TextAlign`.
-mod text_align_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use skia_safe::textlayout::TextAlign;
-
-    pub fn serialize<S: Serializer>(v: &TextAlign, s: S) -> Result<S::Ok, S::Error> {
-        let str = match v {
-            TextAlign::Left => "left",
-            TextAlign::Right => "right",
-            TextAlign::Center => "center",
-            TextAlign::Justify => "justify",
-            TextAlign::Start => "start",
-            TextAlign::End => "end",
-        };
-        s.serialize_str(str)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<TextAlign, D::Error> {
-        let s = String::deserialize(d)?;
-        match s.as_str() {
-            "left" => Ok(TextAlign::Left),
-            "right" => Ok(TextAlign::Right),
-            "center" => Ok(TextAlign::Center),
-            "justify" => Ok(TextAlign::Justify),
-            "start" => Ok(TextAlign::Start),
-            "end" => Ok(TextAlign::End),
-            _ => Err(serde::de::Error::custom(format!("unknown TextAlign: {}", s))),
-        }
-    }
-}
-
 /// Caption styling. Defaults target a clean, TikTok/Reels look:
 /// white text, warm yellow active word, restrained shadow only.
 /// Uniform font_size across all token states → glyph metrics never
@@ -268,9 +237,9 @@ pub struct CaptionStyle {
     pub highlight_color: Color,  // active word (default warm gold)
     pub spoken_color: Color,     // past words (default dim white)
 
+    /// Where the block sits. Lines centre on a centred anchor and align to
+    /// the side of a side or corner anchor.
     pub position: CaptionPosition,
-    #[serde(with = "text_align_serde")]
-    pub text_align: TextAlign,
     /// Horizontal margins used by `CaptionPosition::Left` and `Right`.
     pub left_margin: f32,
     pub right_margin: f32,
@@ -309,9 +278,8 @@ pub struct CaptionStyle {
     pub text_shadow_offset_y: f32,
     pub text_shadow_blur: f32,
 
-    pub auto_adapt_shadow: bool,
-
-    // Outline stroke for any-background legibility (8-direction shadow trick).
+    // Outline: a round-joined stroke `stroke_width` px wide outside the glyph
+    // edge, painted under the fill.
     pub stroke_enabled: bool,
     pub stroke_width: f32,
     pub stroke_color: Color,
@@ -328,7 +296,6 @@ pub struct CaptionStyle {
     // Rounded pill behind each display line (OpusClip / CapCut tier legibility).
     pub pill_enabled: bool,
     pub pill_color: Color,
-    pub pill_adaptive: bool,
     pub pill_padding_h: f32,
     pub pill_padding_v: f32,
     pub pill_radius: f32,
@@ -341,10 +308,6 @@ pub struct CaptionStyle {
 
     // Platform safe-area preset (`tiktok`, `youtube_shorts`, `instagram_reel`, …).
     pub safe_area_preset: Option<String>,
-
-    // Scale font/margins/pill from `reference_canvas_height` (default 1920).
-    pub scale_with_canvas: bool,
-    pub reference_canvas_height: f32,
 
     /// Render all words uppercase (layout-stable; applied at shape time).
     pub uppercase: bool,
@@ -359,7 +322,6 @@ impl Default for CaptionStyle {
             spoken_color: Color::new(0.78, 0.78, 0.78, 1.0),
 
             position: CaptionPosition::Bottom,
-            text_align: TextAlign::Center,
             left_margin: 60.0,
             right_margin: 60.0,
             text_direction: TextDirectionMode::Auto,
@@ -385,8 +347,6 @@ impl Default for CaptionStyle {
             text_shadow_offset_y: 2.0,
             text_shadow_blur: 4.0,
 
-            auto_adapt_shadow: true,
-
             stroke_enabled: true,
             stroke_width: 2.0,
             stroke_color: Color::new(0.0, 0.0, 0.0, 0.92),
@@ -399,7 +359,6 @@ impl Default for CaptionStyle {
 
             pill_enabled: true,
             pill_color: Color::new(0.0, 0.0, 0.0, 0.62),
-            pill_adaptive: true,
             pill_padding_h: 18.0,
             pill_padding_v: 10.0,
             pill_radius: 14.0,
@@ -409,9 +368,6 @@ impl Default for CaptionStyle {
             phrase_line_mode: PhraseLineMode::Replace,
 
             safe_area_preset: None,
-
-            scale_with_canvas: true,
-            reference_canvas_height: REFERENCE_SHORT_FORM_HEIGHT,
 
             uppercase: false,
         }
@@ -460,7 +416,6 @@ pub struct CueLayout {
 #[derive(Clone, Debug)]
 pub struct BlockLayout {
     pub width: f32,
-    pub canvas_height: f32,
     pub cues: Vec<CueLayout>,
     pub max_overlap: usize,
     pub max_slot_height: f32,
@@ -473,7 +428,7 @@ pub struct BlockLayout {
 /// centerY, lineIndex)`. Active emphasis never re-measures positions;
 /// it scale-transforms around the cached token center. During the
 /// optional pop window the full line is painted first, then the active
-/// word is painted again inside a clipped scale overlay.
+/// word is painted again inside an unclipped scale overlay.
 pub struct CaptionNode {
     pub lines: Vec<CaptionLine>,
     pub style: CaptionStyle,
@@ -508,16 +463,6 @@ impl fmt::Debug for CaptionNode {
 }
 
 impl CaptionNode {
-    /// Output-frame height for dimensional scaling. Content-sized caption
-    /// layout boxes must not shrink fonts to fit their own measured height.
-    pub(crate) fn effective_canvas_height(style: &CaptionStyle, node_rect_h: f32) -> f32 {
-        if style.scale_with_canvas {
-            style.reference_canvas_height
-        } else {
-            node_rect_h
-        }
-    }
-
     pub fn new(mut lines: Vec<CaptionLine>, font_collection: Arc<Mutex<FontCollection>>) -> Self {
         let style = CaptionStyle::default();
         refresh_caption_lines(&mut lines, &style);
@@ -573,38 +518,30 @@ impl CaptionNode {
         };
         s.align_self = None;
 
+        // The block spans its parent's width less the side margin of its
+        // anchor, so lines align inside the frame without a width key.
+        let len = LengthPercentageAuto::length;
+        let (left, right) = match &style.position {
+            CaptionPosition::TopLeft | CaptionPosition::BottomLeft | CaptionPosition::Left => {
+                (style.left_margin, 0.0)
+            }
+            CaptionPosition::TopRight | CaptionPosition::BottomRight | CaptionPosition::Right => {
+                (0.0, style.right_margin)
+            }
+            _ => (0.0, 0.0),
+        };
+        s.inset.left = len(left);
+        s.inset.right = len(right);
+        s.size.width = taffy::style::Dimension::auto();
+
         match &style.position {
-            CaptionPosition::Top => {
-                s.inset.top = LengthPercentageAuto::length(style.top_margin);
+            CaptionPosition::Top | CaptionPosition::TopLeft | CaptionPosition::TopRight => {
+                s.inset.top = len(style.top_margin);
             }
-            CaptionPosition::Bottom => {
-                s.inset.bottom = LengthPercentageAuto::length(style.bottom_margin);
+            CaptionPosition::Bottom | CaptionPosition::BottomLeft | CaptionPosition::BottomRight => {
+                s.inset.bottom = len(style.bottom_margin);
             }
-            CaptionPosition::TopLeft => {
-                s.inset.top = LengthPercentageAuto::length(style.top_margin);
-                s.inset.left = LengthPercentageAuto::length(style.left_margin);
-            }
-            CaptionPosition::TopRight => {
-                s.inset.top = LengthPercentageAuto::length(style.top_margin);
-                s.inset.right = LengthPercentageAuto::length(style.right_margin);
-            }
-            CaptionPosition::BottomLeft => {
-                s.inset.bottom = LengthPercentageAuto::length(style.bottom_margin);
-                s.inset.left = LengthPercentageAuto::length(style.left_margin);
-            }
-            CaptionPosition::BottomRight => {
-                s.inset.bottom = LengthPercentageAuto::length(style.bottom_margin);
-                s.inset.right = LengthPercentageAuto::length(style.right_margin);
-            }
-            CaptionPosition::Left => {
-                s.inset.left = LengthPercentageAuto::length(style.left_margin);
-                s.align_self = Some(taffy::style::AlignItems::Center);
-            }
-            CaptionPosition::Right => {
-                s.inset.right = LengthPercentageAuto::length(style.right_margin);
-                s.align_self = Some(taffy::style::AlignItems::Center);
-            }
-            CaptionPosition::Center => {
+            CaptionPosition::Left | CaptionPosition::Right | CaptionPosition::Center => {
                 s.align_self = Some(taffy::style::AlignItems::Center);
             }
             CaptionPosition::Free(_) | CaptionPosition::FreeXY { .. } => {
@@ -735,14 +672,9 @@ impl CaptionNode {
 
     // ── Per-word TextStyle ─────────────────────────────────────────
 
-    fn make_word_text_style(
-        style: &CaptionStyle,
-        color: Color,
-        opacity: f32,
-        _word: &CaptionWord,
-        shadow_color: Color,
-        is_active: bool,
-    ) -> TextStyle {
+    /// A word's text style for one coat. `visible` false paints the word
+    /// transparent so the paragraph shapes exactly like every other coat.
+    fn make_word_text_style(style: &CaptionStyle, color: Color, visible: bool, coat: Coat) -> TextStyle {
         let mut ts = TextStyle::new();
         ts.set_font_size(style.font_size);
         ts.set_font_families(&[
@@ -757,58 +689,40 @@ impl CaptionNode {
             Slant::Upright,
         ));
 
-        let mut paint = Paint::default();
-        let mut c = color;
-        c.a *= opacity;
-        paint.set_color(c.to_skia());
-        paint.set_anti_alias(true);
-        ts.set_foreground_paint(&paint);
-
-        if style.stroke_enabled && style.stroke_width > 0.0 {
-            let mut sc = style.stroke_color;
-            sc.a *= opacity;
-            let w = style.stroke_width;
-            for (dx, dy) in [
-                (-1.0, 0.0),
-                (1.0, 0.0),
-                (0.0, -1.0),
-                (0.0, 1.0),
-                (-0.7, -0.7),
-                (0.7, -0.7),
-                (-0.7, 0.7),
-                (0.7, 0.7),
-            ] {
-                ts.add_shadow(TextShadow::new(
-                    sc.to_skia(),
-                    Point::new(dx * w, dy * w),
-                    0.0,
-                ));
+        // The outline is a real stroke centred on the glyph edge at twice the
+        // visible width; the fill covers its inner half. Shadow and glow take
+        // the outlined shape, so they sit under the outline.
+        let outline = style.outline();
+        let mut c = match coat {
+            Coat::Fill => color,
+            Coat::Stroke => style.stroke_color,
+            Coat::Shadow => style.text_shadow_color,
+            Coat::Glow => {
+                let mut g = style.highlight_color;
+                g.a *= 0.65;
+                g
             }
+        };
+        if !visible {
+            c.a = 0.0;
         }
-
-        if style.text_shadow_enabled {
-            let mut sc = shadow_color;
-            sc.a *= opacity;
-            ts.add_shadow(TextShadow::new(
-                sc.to_skia(),
-                Point::new(
-                    style.text_shadow_offset_x,
-                    style.text_shadow_offset_y,
-                ),
-                style.text_shadow_blur as f64,
-            ));
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(c.to_skia());
+        if coat != Coat::Fill && outline > 0.0 {
+            paint.set_style(if coat == Coat::Stroke { PaintStyle::Stroke } else { PaintStyle::StrokeAndFill });
+            paint.set_stroke_width(2.0 * outline);
+            paint.set_stroke_join(PaintJoin::Round);
         }
-
-        if style.glow_enabled && is_active {
-            let mut gc = style.highlight_color;
-            gc.a *= opacity * 0.65;
-            ts.add_shadow(TextShadow::new(
-                gc.to_skia(),
-                Point::new(0.0, 0.0),
-                style.glow_blur as f64,
-            ));
+        let blur = match coat {
+            Coat::Shadow => style.text_shadow_blur,
+            Coat::Glow => style.glow_blur,
+            _ => 0.0,
+        };
+        if blur > 0.0 {
+            paint.set_mask_filter(MaskFilter::blur(BlurStyle::Normal, blur, None));
         }
-
+        ts.set_foreground_paint(&paint);
         ts
     }
 
@@ -818,7 +732,6 @@ impl CaptionNode {
         line_y: f32,
         display_line: &DisplayLineLayout,
         style: &CaptionStyle,
-        pill_color: Color,
         alpha: f32,
     ) {
         if !style.pill_enabled {
@@ -834,7 +747,7 @@ impl CaptionNode {
         );
         let rrect = RRect::new_rect_xy(pill_rect, style.pill_radius, style.pill_radius);
         let mut paint = Paint::default();
-        let mut c = pill_color;
+        let mut c = style.pill_color;
         c.a *= alpha;
         paint.set_color(c.to_skia());
         paint.set_anti_alias(true);
@@ -885,13 +798,8 @@ impl CaptionNode {
     //    frame-to-frame because every TextStyle shares `font_size`
     //    and per-word foreground paint only varies color. ─────────
 
-    fn build_block_layout(
-        &self,
-        layout_width: f32,
-        canvas_h: f32,
-        shadow_color: Color,
-    ) -> BlockLayout {
-        let style = self.style.resolved_for_canvas(canvas_h);
+    fn build_block_layout(&self, layout_width: f32) -> BlockLayout {
+        let style = self.style.resolved();
         let slot_assignments = Self::compute_slot_assignments(&self.lines);
         let mut cues: Vec<CueLayout> = Vec::with_capacity(self.lines.len());
 
@@ -931,12 +839,8 @@ impl CaptionNode {
                 } else {
                     4096.0
                 };
-                let (paragraph, token_char_ranges) = self.build_measure_paragraph(
-                    &style,
-                    &words_for_line,
-                    measure_layout_width,
-                    shadow_color,
-                );
+                let (paragraph, token_char_ranges) =
+                    self.build_measure_paragraph(&style, &words_for_line, measure_layout_width);
                 let line_width = paragraph.longest_line();
                 let line_height = paragraph.height();
 
@@ -1021,7 +925,6 @@ impl CaptionNode {
 
         BlockLayout {
             width: layout_width,
-            canvas_height: canvas_h,
             cues,
             max_overlap,
             max_slot_height,
@@ -1031,8 +934,7 @@ impl CaptionNode {
 
     #[doc(hidden)]
     pub fn debug_dump_block_layout(&self, layout_width: f32) -> String {
-        let shadow = Color::new(0.0, 0.0, 0.0, 0.85);
-        let layout = self.build_block_layout(layout_width, 1080.0, shadow);
+        let layout = self.build_block_layout(layout_width);
         let mut out = String::new();
         for (ci, cue) in layout.cues.iter().enumerate() {
             out.push_str(&format!("cue[{}] slot={} display_lines={}\n", ci, cue.slot, cue.display_lines.len()));
@@ -1059,7 +961,6 @@ impl CaptionNode {
         style: &CaptionStyle,
         words: &[&CaptionWord],
         layout_width: f32,
-        shadow_color: Color,
     ) -> (Paragraph, Vec<(usize, usize)>) {
         let line_text: String = words
             .iter()
@@ -1092,14 +993,7 @@ impl CaptionNode {
         for (i, word) in words.iter().enumerate() {
             // For measure / canonical layout: highlight color is fine,
             // it does not affect shaping. We just need font_size uniform.
-            let ts = Self::make_word_text_style(
-                style,
-                style.color,
-                style.future_opacity,
-                word,
-                shadow_color,
-                false,
-            );
+            let ts = Self::make_word_text_style(style, style.color, true, Coat::Fill);
             builder.push_style(&ts);
 
             let trailing_space = i + 1 < words.len();
@@ -1132,22 +1026,16 @@ impl CaptionNode {
     /// not indices into the visible-cue subset.
     /// Compute the left x-coordinate of a display line for the given caption
     /// position and layout rect.
-    fn compute_line_left_x(
-        position: &CaptionPosition,
-        rect: Rect,
-        line_width: f32,
-        left_margin: f32,
-        right_margin: f32,
-    ) -> f32 {
+    /// Left edge of a display line. Taffy insets already hold the side
+    /// margins, so the side anchors align to the layout rect itself.
+    fn compute_line_left_x(position: &CaptionPosition, rect: Rect, line_width: f32) -> f32 {
         match position {
             CaptionPosition::Left
             | CaptionPosition::TopLeft
-            | CaptionPosition::BottomLeft => rect.left + left_margin,
+            | CaptionPosition::BottomLeft => rect.left,
             CaptionPosition::Right
             | CaptionPosition::TopRight
-            | CaptionPosition::BottomRight => {
-                (rect.right - right_margin - line_width).max(rect.left)
-            }
+            | CaptionPosition::BottomRight => (rect.right - line_width).max(rect.left),
             CaptionPosition::FreeXY { x, .. } => (x - line_width / 2.0).max(rect.left),
             // Top, Bottom, Center, and legacy Free(y) all center horizontally.
             _ => rect.left + (rect.width() - line_width) / 2.0,
@@ -1206,51 +1094,6 @@ impl CaptionNode {
         }
         result
     }
-
-    // ── Bg luminance sampling for adaptive shadow color ───────────
-
-    fn sample_bg_luminance(canvas: &Canvas, rect: Rect) -> Option<f32> {
-        let pixmap = canvas.peek_pixels()?;
-        let pw = pixmap.width();
-        let ph = pixmap.height();
-        if pw <= 0 || ph <= 0 {
-            return None;
-        }
-        let info = pixmap.info();
-        let bpp = match info.color_type() {
-            skia_safe::ColorType::RGBA8888 | skia_safe::ColorType::BGRA8888 => 4,
-            _ => return None,
-        };
-        let row_bytes = pixmap.row_bytes();
-        let base = pixmap.addr() as *const u8;
-        let sample_count = 16u32;
-        let mut sum = 0.0f64;
-        let mut count = 0u32;
-        for k in 0..sample_count {
-            let ratio_x = ((k * 37 + 11) % sample_count) as f32 / sample_count as f32;
-            let ratio_y = ((k * 53 + 7) % sample_count) as f32 / sample_count as f32;
-            let x = rect.left as i32 + (ratio_x * rect.width()) as i32;
-            let y = rect.top as i32 + (ratio_y * rect.height()) as i32;
-            if x < 0 || y < 0 || x >= pw || y >= ph {
-                continue;
-            }
-            let row_offset = y as usize * row_bytes;
-            let px_offset = row_offset + x as usize * bpp;
-            unsafe {
-                let b = *base.add(px_offset) as f32;
-                let g = *base.add(px_offset + 1) as f32;
-                let r = *base.add(px_offset + 2) as f32;
-                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                sum += luma as f64;
-                count += 1;
-            }
-        }
-        if count == 0 {
-            None
-        } else {
-            Some(((sum / count as f64) / 255.0) as f32)
-        }
-    }
 }
 
 // ── Style helpers ─────────────────────────────────────────────────
@@ -1302,40 +1145,21 @@ impl Element for CaptionNode {
         };
 
         let layout_width = known_dimensions.width.unwrap_or(width);
-        let raw_h = match available_space.height {
-            AvailableSpace::Definite(h) => h,
-            _ => known_dimensions.height.unwrap_or(1080.0),
-        };
-        let canvas_h = Self::effective_canvas_height(&self.style, raw_h);
-        let layout_style = self.style.resolved_for_canvas(canvas_h);
-        let block_width = (layout_width * layout_style.layout_width_fraction).max(20.0);
+        let block_width = (layout_width * self.style.layout_width_fraction).max(20.0);
 
         // Derive content height from the same paragraph width and metrics as render.
         let stack_h = {
             let mut guard = self.block_layout.lock().unwrap_or_else(|e| e.into_inner());
-            let needs_rebuild = guard
-                .as_ref()
-                .map(|l| {
-                    (l.width - block_width).abs() > 0.5
-                        || (l.canvas_height - canvas_h).abs() > 1.0
-                })
-                .unwrap_or(true);
+            let needs_rebuild = guard.as_ref().map(|l| (l.width - block_width).abs() > 0.5).unwrap_or(true);
             if needs_rebuild {
-                *guard = Some(self.build_block_layout(
-                    block_width,
-                    canvas_h,
-                    self.style.text_shadow_color,
-                ));
+                *guard = Some(self.build_block_layout(block_width));
             }
             guard.as_ref().map(|l| l.total_height).unwrap_or(0.0)
         };
 
-        // Margins are now encoded in the Taffy style insets (via
-        // `rebuild_layout_style`), so the measured size is just the caption
-        // block height. This lets Taffy position the actual render rect at
-        // top/bottom/center instead of always at y=0.
-        let _ = layout_style.position;
-
+        // Margins are encoded in the Taffy style insets (via
+        // `rebuild_layout_style`), so the measured size is the caption
+        // block height alone.
         Size {
             width: layout_width,
             height: stack_h,
@@ -1385,48 +1209,14 @@ impl Element for CaptionNode {
             return Ok(());
         }
 
-        let canvas_h = Self::effective_canvas_height(&self.style, rect.height());
-        let layout_style = self.style.resolved_for_canvas(canvas_h);
+        let layout_style = self.style.resolved();
         let block_width = (rect.width() * layout_style.layout_width_fraction).max(20.0);
-
-        // Adaptive shadow + pill colors from background luminance.
-        let caption_sample_rect = Rect::from_xywh(
-            rect.left,
-            (rect.bottom - layout_style.bottom_margin - 120.0).max(rect.top),
-            rect.width(),
-            120.0,
-        );
-        let bg_luma = Self::sample_bg_luminance(canvas, caption_sample_rect);
-
-        let shadow_override: Option<Color> = if self.style.auto_adapt_shadow
-            && self.style.text_shadow_enabled
-        {
-            bg_luma.map(|lum| {
-                if lum > 0.55 {
-                    Color::new(0.0, 0.0, 0.0, 0.85)
-                } else if lum < 0.40 {
-                    Color::new(1.0, 1.0, 1.0, 0.85)
-                } else {
-                    self.style.text_shadow_color
-                }
-            })
-        } else {
-            None
-        };
-        let shadow_color = shadow_override.unwrap_or(self.style.text_shadow_color);
-        let pill_color = layout_style.resolve_pill_color(bg_luma);
 
         // Build / reuse block layout.
         let mut layout_guard = self.block_layout.lock().unwrap_or_else(|e| e.into_inner());
-        let needs_rebuild = layout_guard
-            .as_ref()
-            .map(|l| {
-                (l.width - block_width).abs() > 0.5
-                    || (l.canvas_height - canvas_h).abs() > 1.0
-            })
-            .unwrap_or(true);
+        let needs_rebuild = layout_guard.as_ref().map(|l| (l.width - block_width).abs() > 0.5).unwrap_or(true);
         if needs_rebuild {
-            *layout_guard = Some(self.build_block_layout(block_width, canvas_h, shadow_color));
+            *layout_guard = Some(self.build_block_layout(block_width));
         }
 
         let layout = match layout_guard.as_ref() {
@@ -1452,9 +1242,8 @@ impl Element for CaptionNode {
         // ── Single canonical global active token ────────────────
         let global_active = Self::find_global_active(&render_cues, current_time);
 
-        canvas.save();
-        canvas.clip_rect(rect, skia_safe::ClipOp::Intersect, true);
-
+        // No clip: the outline, shadow, pill and pop reach past the measured
+        // text box, as CSS overflow does.
         // The active token's pop scale: > 1.0 only during the ~80ms
         // entry window. Outside this window, scale == 1.0 and the
         // active token's paint is identical to its base paint — no
@@ -1530,98 +1319,55 @@ impl Element for CaptionNode {
                 // ── Position each DISPLAY LINE horizontally based on the
                 //    caption's anchor. Precomputed `line_width` is used to
                 //    avoid relying on a token origin as the line's left edge.
-                let _rect_w = rect.width();
-                let line_left_x = Self::compute_line_left_x(
-                    &layout_style.position,
-                    rect,
-                    display_line.line_width,
-                    layout_style.left_margin,
-                    layout_style.right_margin,
-                );
+                let line_left_x =
+                    Self::compute_line_left_x(&layout_style.position, rect, display_line.line_width);
 
                 let line_render_alpha = effective_opacity * reveal;
-                let line_needs_layer = reveal < 0.99;
+                let line_needs_layer = line_render_alpha < 0.999;
 
-                // Build ONE per-frame line paragraph containing ALL
-                // tokens on this line, with per-token foreground
-                // colors reflecting the current time state. The line
-                // paragraph's glyph layout is identical to the cached
-                // measure paragraph because every TextStyle shares
-                // `font_size` and `font_family`; only the foreground
-                // paint's color varies per token. Therefore this
-                // paragraph's glyph run x/y values match the cached
-                // TokenLayout x/y within sub-pixel precision.
-                let active_local_in_line: Option<usize> = if let Some(active) = active_in_this_cue {
-                    let target_word_idx = active.word_idx;
-                    display_line
-                        .tokens
-                        .iter()
-                        .position(|t| t.word_idx == target_word_idx)
-                } else {
-                    None
-                };
+                let active_local_in_line: Option<usize> = active_in_this_cue
+                    .and_then(|active| display_line.tokens.iter().position(|t| t.word_idx == active.word_idx));
 
-                // ── Apply reveal as a save-layer alpha when reveal
-                //    < 1.0. ─────────────────────────────────────
+                // The node opacity and the line reveal fade the pill and
+                // every coat together.
                 if line_needs_layer {
-                    let mut alpha_paint = Paint::default();
-                    alpha_paint.set_alpha_f(line_render_alpha);
-                    let bbox = Rect::from_xywh(
-                        line_left_x - layout_style.pill_padding_h - 4.0,
-                        line_y_cursor - layout_style.pill_padding_v - 4.0,
-                        display_line.line_width + (layout_style.pill_padding_h + 4.0) * 2.0,
-                        display_line.line_height + (layout_style.pill_padding_v + 4.0) * 2.0,
-                    );
-                    canvas.save_layer(
-                        &skia_safe::canvas::SaveLayerRec::default()
-                            .bounds(&bbox)
-                            .paint(&alpha_paint),
-                    );
+                    let bbox = Self::line_paint_bounds(&layout_style, display_line, line_left_x, line_y_cursor);
+                    canvas.save_layer_alpha_f(bbox, line_render_alpha);
                 }
 
-                Self::paint_line_pill(
-                    canvas,
-                    line_left_x,
-                    line_y_cursor,
-                    display_line,
-                    &layout_style,
-                    pill_color,
-                    if line_needs_layer { 1.0 } else { line_render_alpha },
-                );
+                Self::paint_line_pill(canvas, line_left_x, line_y_cursor, display_line, &layout_style, 1.0);
 
                 // Base pass: always paint the full line at scale 1.0 so
                 // non-active words stay visible every frame. While the
                 // active word pops, it is transparent here and the
                 // overlay below paints it, so it never shows twice.
                 let popping = if active_pop_active { active_local_in_line } else { None };
-                self.paint_line_paragraph_at(
-                    &layout_style,
+                let frame = LineFrame {
+                    style: &layout_style,
                     display_line,
                     line,
-                    current_time,
-                    block_width,
-                    active_local_in_line,
-                    if popping.is_some() { PopPass::ExceptActive } else { PopPass::All },
-                    shadow_color,
-                    canvas,
-                    line_left_x,
-                    line_y_cursor,
-                );
+                    time: current_time,
+                    layout_width: block_width,
+                    active: active_local_in_line,
+                    x: line_left_x,
+                    y: line_y_cursor,
+                };
+                self.paint_line(&frame, if popping.is_some() { PopPass::ExceptActive } else { PopPass::All }, canvas);
 
                 // Pop overlay: during the activation window, paint the
                 // line again scaled around the active word, with every
-                // other word transparent. No tight clip, so the scaled
-                // word's edges, stroke and shadow stay whole.
+                // other word transparent. No clip, so the scaled word's
+                // outline and shadow stay whole.
                 if let Some(local_idx) = popping {
                     let tokens = &display_line.tokens;
                     let active_token = &tokens[local_idx];
                     let cx = line_left_x + active_token.center_x;
                     let cy = line_y_cursor + active_token.center_y;
-                    // The pop never reaches a neighbor: each side grows at
-                    // most half the clear gap between the two strokes, so
-                    // a long word pops less than a short one.
-                    let stroke = if layout_style.stroke_enabled { layout_style.stroke_width } else { 0.0 };
-                    let gap = |a: &TokenLayout, b: &TokenLayout| b.x - (a.x + a.width) - 2.0 * stroke;
+                    // The popped word's outline never reaches a neighbor's
+                    // glyphs: each side grows at most half the gap left
+                    // after its own outline, so a long word pops less.
+                    let outline = layout_style.outline();
+                    let gap = |a: &TokenLayout, b: &TokenLayout| b.x - (a.x + a.width) - outline;
                     let mut room = f32::INFINITY;
                     if local_idx > 0 {
                         room = room.min(gap(&tokens[local_idx - 1], active_token));
@@ -1634,19 +1380,7 @@ impl Element for CaptionNode {
                     canvas.translate(Point::new(cx, cy));
                     canvas.scale((scale, scale));
                     canvas.translate(Point::new(-cx, -cy));
-                    self.paint_line_paragraph_at(
-                        &layout_style,
-                        display_line,
-                        line,
-                        current_time,
-                        block_width,
-                        active_local_in_line,
-                        PopPass::ActiveOnly,
-                        shadow_color,
-                        canvas,
-                        line_left_x,
-                        line_y_cursor,
-                    );
+                    self.paint_line(&frame, PopPass::ActiveOnly, canvas);
                     canvas.restore();
                 }
 
@@ -1660,7 +1394,6 @@ impl Element for CaptionNode {
             }
         }
 
-        canvas.restore();
         draw_children(canvas);
         Ok(())
     }
@@ -1691,30 +1424,94 @@ impl Element for CaptionNode {
 }
 
 impl CaptionNode {
-    // ── Build a per-frame Paragraph for a single display line.
-    // Includes ALL tokens on the line. Per-token foreground color is
-    // selected based on word state at `current_time`. Active token's
-    // foreground is the highlight color. This paragraph's glyph
-    // x/baselineY positions are IDENTICAL to the cached measure-time
-    // paragraph because every TextStyle in both shares `font_size`,
-    // `font_family`, and identical FontCollection state. Therefore,
-    // painting this paragraph at the line's cached line_left_x /
-    // line_y_cursor places every glyph inside its cached TokenLayout
-    // bbox.
-    #[allow(clippy::too_many_arguments)]
-    fn build_line_paragraph_for_frame(
-        &self,
-        style: &CaptionStyle,
-        display_line: &DisplayLineLayout,
-        line: &CaptionLine,
-        time: f64,
-        layout_width: f32,
-        active_local_in_line: Option<usize>,
-        pass: PopPass,
-        shadow_color: Color,
-    ) -> Paragraph {
-        let line_text: String = display_line
+    /// Paint one display line coat by coat: shadow, glow, outline, fill.
+    /// Words that share an opacity paint inside one layer at that opacity,
+    /// so a faded word's outline never shows through its own fill.
+    fn paint_line(&self, frame: &LineFrame, pass: PopPass, canvas: &Canvas) {
+        let style = frame.style;
+        let words: Vec<(Color, f32)> = frame
+            .display_line
             .tokens
+            .iter()
+            .enumerate()
+            .map(|(local_idx, token)| {
+                let word = &frame.line.words[token.word_idx];
+                let is_active = Some(local_idx) == frame.active;
+                let hidden = match pass {
+                    PopPass::All => false,
+                    PopPass::ExceptActive => is_active,
+                    PopPass::ActiveOnly => !is_active,
+                };
+                let (color, opacity) = if is_active {
+                    (self.style.highlight_color, self.style.active_opacity)
+                } else if frame.time >= word.end_sec {
+                    (self.style.spoken_color, self.style.spoken_color_opacity)
+                } else if frame.time < word.start_sec {
+                    (self.compute_word_color(word, frame.time, false), self.style.future_opacity)
+                } else {
+                    (self.style.color, self.style.future_opacity)
+                };
+                (color, if hidden { 0.0 } else { opacity.clamp(0.0, 1.0) })
+            })
+            .collect();
+
+        let mut groups: Vec<f32> = Vec::new();
+        for &(_, opacity) in &words {
+            if opacity > 0.0 && !groups.iter().any(|g| (g - opacity).abs() < 1e-4) {
+                groups.push(opacity);
+            }
+        }
+        let mut coats = Vec::with_capacity(4);
+        if style.text_shadow_enabled {
+            coats.push(Coat::Shadow);
+        }
+        if style.glow_enabled && style.glow_blur > 0.0 {
+            coats.push(Coat::Glow);
+        }
+        if style.outline() > 0.0 {
+            coats.push(Coat::Stroke);
+        }
+        coats.push(Coat::Fill);
+
+        let bounds = Self::line_paint_bounds(style, frame.display_line, frame.x, frame.y);
+        for group in groups {
+            let in_group = |opacity: f32| (opacity - group).abs() < 1e-4;
+            let layered = group < 0.999;
+            if layered {
+                canvas.save_layer_alpha_f(bounds, group);
+            }
+            for &coat in &coats {
+                let visible: Vec<bool> = words
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &(_, opacity))| {
+                        in_group(opacity) && (coat != Coat::Glow || Some(i) == frame.active)
+                    })
+                    .collect();
+                if !visible.contains(&true) {
+                    continue;
+                }
+                let paragraph = self.coat_paragraph(frame, &words, &visible, coat);
+                let (dx, dy) = if coat == Coat::Shadow {
+                    (style.text_shadow_offset_x, style.text_shadow_offset_y)
+                } else {
+                    (0.0, 0.0)
+                };
+                paragraph.paint(canvas, (frame.x + dx, frame.y + dy));
+            }
+            if layered {
+                canvas.restore();
+            }
+        }
+    }
+
+    /// One coat of a display line as a paragraph. Every coat shapes the same
+    /// text with the same font, so its glyphs land on the cached token
+    /// positions.
+    fn coat_paragraph(&self, frame: &LineFrame, words: &[(Color, f32)], visible: &[bool], coat: Coat) -> Paragraph {
+        let style = frame.style;
+        let tokens = &frame.display_line.tokens;
+        let line_text: String = tokens
             .iter()
             .map(|t| format_caption_word(&t.text, style.uppercase))
             .collect::<Vec<_>>()
@@ -1733,87 +1530,61 @@ impl CaptionNode {
             }
         };
         let mut builder = ParagraphBuilder::new(&paragraph_style, &*font_guard);
-        for (local_idx, token) in display_line.tokens.iter().enumerate() {
-            let word = &line.words[token.word_idx];
-            let is_active = Some(local_idx) == active_local_in_line;
-
-            let color = if is_active {
-                self.style.highlight_color
-            } else if time >= word.end_sec {
-                self.style.spoken_color
-            } else if time < word.start_sec {
-                self.compute_word_color(word, time, false)
-            } else {
-                self.style.color
-            };
-            let hidden = match pass {
-                PopPass::All => false,
-                PopPass::ExceptActive => is_active,
-                PopPass::ActiveOnly => !is_active,
-            };
-            let opacity = if hidden {
-                0.0
-            } else if is_active {
-                self.style.active_opacity
-            } else if time >= word.end_sec {
-                self.style.spoken_color_opacity
-            } else {
-                self.style.future_opacity
-            };
-            let ts = Self::make_word_text_style(
-                style,
-                color,
-                opacity,
-                word,
-                shadow_color,
-                is_active,
-            );
+        for (local_idx, token) in tokens.iter().enumerate() {
+            let word = &frame.line.words[token.word_idx];
+            let ts = Self::make_word_text_style(style, words[local_idx].0, visible[local_idx], coat);
             builder.push_style(&ts);
-
-            let trailing_space = local_idx + 1 < display_line.tokens.len();
             let display_text = format_caption_word(&word.text, style.uppercase);
-            let text = if trailing_space {
-                format!("{} ", display_text)
+            if local_idx + 1 < tokens.len() {
+                builder.add_text(format!("{display_text} "));
             } else {
-                display_text
-            };
-            builder.add_text(&text);
+                builder.add_text(&display_text);
+            }
             builder.pop();
         }
         crate::counters::count(crate::counters::Counter::paragraphs_shaped);
         let mut p = builder.build();
-        p.layout(layout_width);
+        p.layout(frame.layout_width);
         p
     }
 
-    // ── Build + paint the line paragraph in one step. ───────────
-    #[allow(clippy::too_many_arguments)]
-    fn paint_line_paragraph_at(
-        &self,
-        style: &CaptionStyle,
-        display_line: &DisplayLineLayout,
-        line: &CaptionLine,
-        time: f64,
-        layout_width: f32,
-        active_local_in_line: Option<usize>,
-        pass: PopPass,
-        shadow_color: Color,
-        canvas: &Canvas,
-        x: f32,
-        y: f32,
-    ) {
-        let p = self.build_line_paragraph_for_frame(
-            style,
-            display_line,
-            line,
-            time,
-            layout_width,
-            active_local_in_line,
-            pass,
-            shadow_color,
-        );
-        p.paint(canvas, (x, y));
+    /// Everything a display line paints: pill, outline, shadow and glow, with
+    /// room for the pop.
+    fn line_paint_bounds(style: &CaptionStyle, display_line: &DisplayLineLayout, x: f32, y: f32) -> Rect {
+        let mut pad = style.outline() + style.font_size * (style.active_pop_scale - 1.0).max(0.0) + 2.0;
+        if style.pill_enabled {
+            pad = pad.max(style.pill_padding_h.max(style.pill_padding_v) + 2.0);
+        }
+        if style.text_shadow_enabled {
+            pad += style.text_shadow_offset_x.abs().max(style.text_shadow_offset_y.abs()) + 3.0 * style.text_shadow_blur;
+        }
+        if style.glow_enabled {
+            pad += 3.0 * style.glow_blur;
+        }
+        Rect::from_xywh(x, y, display_line.line_width, display_line.line_height).with_outset((pad, pad))
     }
+}
+
+/// One display line placed for one frame.
+struct LineFrame<'a> {
+    style: &'a CaptionStyle,
+    display_line: &'a DisplayLineLayout,
+    line: &'a CaptionLine,
+    time: f64,
+    layout_width: f32,
+    /// The active word's index among the line's tokens.
+    active: Option<usize>,
+    x: f32,
+    y: f32,
+}
+
+/// One paint pass of a caption line, painted in declaration order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Coat {
+    Shadow,
+    Glow,
+    Stroke,
+    Fill,
 }
 
 /// Which words a line paint draws. While the active word pops, the base
@@ -1970,10 +1741,22 @@ impl CaptionNode {
     }
 }
 
-// ── Platform presets, phrase break, resolution scaling ────────────
+// ── Platform presets and phrase break ─────────────────────────────
 
 /// Reference canvas height for 9:16 short-form safe-area scaling (1080×1920).
 pub const REFERENCE_SHORT_FORM_HEIGHT: f32 = 1920.0;
+
+/// A platform safe area at its native 1080x1920 size.
+pub fn safe_zone(preset: &str) -> Option<crate::types::SafeZone> {
+    scaled_safe_zone(preset, REFERENCE_SHORT_FORM_HEIGHT)
+}
+
+/// Names `safe_area_preset` accepts, sorted.
+pub fn safe_area_presets() -> Vec<String> {
+    let mut names: Vec<String> = DesignSystem::new().safe_areas.keys().cloned().collect();
+    names.sort();
+    names
+}
 
 /// Scale a named platform safe zone to the output canvas height.
 pub fn scaled_safe_zone(preset: &str, canvas_h: f32) -> Option<crate::types::SafeZone> {
@@ -2049,10 +1832,24 @@ pub fn retime_words_by_display_line(line: &mut CaptionLine, style: &CaptionStyle
 /// window evenly.
 pub fn refresh_caption_lines(lines: &mut [CaptionLine], style: &CaptionStyle) {
     for line in lines.iter_mut() {
-        if style.auto_phrase_break && !line.text.contains('\n') {
+        if line.text.contains('\n') {
+            continue;
+        }
+        if style.auto_phrase_break {
             apply_phrase_break(line, style.max_words_per_line);
             if !line.measured {
                 retime_words_by_display_line(line, style);
+            }
+        } else if line.words.iter().any(|w| w.display_line_idx != 0) {
+            // A cue without breaks is one display line. Estimated words split
+            // the cue evenly again so no time stays tied to a removed line.
+            if line.measured {
+                for w in line.words.iter_mut() {
+                    w.display_line_idx = 0;
+                }
+            } else {
+                line.words.clear();
+                auto_time_words(line);
             }
         }
     }
@@ -2166,53 +1963,24 @@ pub fn estimate_legibility(text_luma: f32, bg_luma: f32) -> f32 {
 }
 
 impl CaptionStyle {
-    /// Resolve dimensional style for a concrete canvas height (safe area + scale).
-    pub fn resolved_for_canvas(&self, canvas_h: f32) -> CaptionStyle {
+    /// The style with its platform safe area applied to the top and bottom
+    /// margins.
+    pub fn resolved(&self) -> CaptionStyle {
         let mut s = self.clone();
-        let dim_scale = if s.scale_with_canvas {
-            (canvas_h / s.reference_canvas_height).clamp(0.45, 2.5)
-        } else {
-            1.0
-        };
-
-        s.font_size *= dim_scale;
-        s.line_spacing *= dim_scale;
-        s.stroke_width *= dim_scale;
-        s.text_shadow_offset_x *= dim_scale;
-        s.text_shadow_offset_y *= dim_scale;
-        s.text_shadow_blur *= dim_scale;
-        s.glow_blur *= dim_scale;
-        s.pill_padding_h *= dim_scale;
-        s.pill_padding_v *= dim_scale;
-        s.pill_radius *= dim_scale;
-        s.left_margin *= dim_scale;
-        s.right_margin *= dim_scale;
-
-        if let Some(ref preset) = s.safe_area_preset {
-            if let Some(zone) = scaled_safe_zone(preset, canvas_h) {
-                s.bottom_margin = zone.bottom;
-                s.top_margin = zone.top;
-            }
-        } else {
-            s.bottom_margin *= dim_scale;
-            s.top_margin *= dim_scale;
+        if let Some(zone) = s.safe_area_preset.as_deref().and_then(safe_zone) {
+            s.bottom_margin = zone.bottom;
+            s.top_margin = zone.top;
         }
         s
     }
 
-    /// Pill fill color, optionally inverted from sampled background luminance.
-    pub fn resolve_pill_color(&self, bg_luma: Option<f32>) -> Color {
-        if self.pill_adaptive {
-            if let Some(lum) = bg_luma {
-                if lum > 0.55 {
-                    return Color::new(0.0, 0.0, 0.0, 0.68);
-                }
-                if lum < 0.40 {
-                    return Color::new(1.0, 1.0, 1.0, 0.82);
-                }
-            }
+    /// The visible outline width in px, 0 when the outline is off.
+    pub fn outline(&self) -> f32 {
+        if self.stroke_enabled {
+            self.stroke_width.max(0.0)
+        } else {
+            0.0
         }
-        self.pill_color
     }
 }
 
@@ -2480,7 +2248,7 @@ mod tests {
             },
         ];
         let node = CaptionNode::new(lines, fc);
-        let layout = node.build_block_layout(400.0, 600.0, Color::BLACK);
+        let layout = node.build_block_layout(400.0);
         assert_eq!(layout.cues.len(), 2);
 
         let visible: Vec<(usize, &CaptionLine)> = node
@@ -2676,8 +2444,7 @@ mod tests {
         // Override font_size to match the proof4 example.
         let node = CaptionNode::new(lines.clone(), Arc::clone(&fc));
         // Build block layout directly:
-        let shadow = Color::new(0.0, 0.0, 0.0, 0.85);
-        let layout = node.build_block_layout(688.0, 600.0, shadow);
+        let layout = node.build_block_layout(688.0);
         assert_eq!(layout.cues.len(), 1);
         let cue = &layout.cues[0];
         assert_eq!(
@@ -2703,8 +2470,7 @@ mod tests {
         };
         auto_time_words(&mut line);
         let node = CaptionNode::new(vec![line], fc);
-        let shadow = Color::new(0.0, 0.0, 0.0, 0.85);
-        let layout = node.build_block_layout(400.0, 600.0, shadow);
+        let layout = node.build_block_layout(400.0);
         let tokens = &layout.cues[0].display_lines[0].tokens;
         assert!(tokens.len() >= 2);
         assert!(
@@ -2796,19 +2562,17 @@ mod tests {
     }
 
     #[test]
-    fn test_safe_area_preset_scales_bottom_margin() {
+    fn test_safe_area_preset_sets_frame_margins() {
         let style = CaptionStyle {
             safe_area_preset: Some("tiktok".to_string()),
-            scale_with_canvas: false,
             ..CaptionStyle::default()
         };
-        let at_1920 = style.resolved_for_canvas(1920.0);
-        let at_960 = style.resolved_for_canvas(960.0);
-        assert!(at_1920.bottom_margin > 100.0);
-        assert!(
-            (at_960.bottom_margin - at_1920.bottom_margin * 0.5).abs() < 2.0,
-            "tiktok bottom margin should scale with canvas height"
-        );
+        let zone = safe_zone("tiktok").expect("tiktok preset");
+        let resolved = style.resolved();
+        assert!(resolved.bottom_margin > 100.0);
+        assert_eq!(resolved.bottom_margin, zone.bottom);
+        assert_eq!(resolved.top_margin, zone.top);
+        assert_eq!(resolved.font_size, style.font_size, "presets move margins only");
     }
 
     #[test]
@@ -2818,18 +2582,6 @@ mod tests {
         assert!(style.auto_phrase_break);
         assert_eq!(style.max_words_per_line, 4);
         assert_eq!(style.phrase_line_mode, PhraseLineMode::Replace);
-    }
-
-    #[test]
-    fn test_effective_canvas_height_uses_reference_for_scaled_captions() {
-        let style = CaptionStyle::default();
-        assert_eq!(
-            CaptionNode::effective_canvas_height(&style, 280.0),
-            REFERENCE_SHORT_FORM_HEIGHT
-        );
-        let mut off = style;
-        off.scale_with_canvas = false;
-        assert_eq!(CaptionNode::effective_canvas_height(&off, 280.0), 280.0);
     }
 
     #[test]
@@ -2845,7 +2597,7 @@ mod tests {
         auto_time_words(&mut line);
         let mut node = CaptionNode::new(vec![line], fc);
         node.style.phrase_line_mode = PhraseLineMode::Replace;
-        let layout = node.build_block_layout(688.0, 1920.0, node.style.text_shadow_color);
+        let layout = node.build_block_layout(688.0);
         let cue = &layout.cues[0];
         let max_line_h = cue
             .display_lines
@@ -2881,8 +2633,7 @@ mod tests {
         auto_time_words(&mut line);
         let mut node = CaptionNode::new(vec![line], fc);
         node.style.position = CaptionPosition::Free(0.5);
-        let shadow = Color::new(0.0, 0.0, 0.0, 0.85);
-        let layout = node.build_block_layout(688.0, 1920.0, shadow);
+        let layout = node.build_block_layout(688.0);
         assert!(layout.total_height > 0.0);
 
         let rect = Rect::from_xywh(0.0, 0.0, 1080.0, 1920.0);
@@ -2904,8 +2655,7 @@ mod tests {
         auto_time_words(&mut line);
         let mut node = CaptionNode::new(vec![line], fc);
         node.style.position = CaptionPosition::Free(0.25);
-        let shadow = Color::new(0.0, 0.0, 0.0, 0.85);
-        let layout = node.build_block_layout(688.0, 1920.0, shadow);
+        let layout = node.build_block_layout(688.0);
         assert!(layout.total_height > 0.0);
 
         // Container starts at y=200 and is 400 pixels tall.
@@ -3064,8 +2814,8 @@ mod tests {
         auto_time_words(&mut line);
         let node = CaptionNode::new(vec![line], fc);
         let canvas_width = 400.0f32;
-        let canvas_h = CaptionNode::effective_canvas_height(&node.style, 600.0);
-        let layout_style = node.style.resolved_for_canvas(canvas_h);
+        let canvas_h = 600.0f32;
+        let layout_style = node.style.resolved();
         let block_width = canvas_width * layout_style.layout_width_fraction;
 
         let measured = node.measure(
@@ -3079,7 +2829,7 @@ mod tests {
             },
         );
 
-        let layout = node.build_block_layout(block_width, canvas_h, node.style.text_shadow_color);
+        let layout = node.build_block_layout(block_width);
         // Insets position the box; they are not part of its content height.
         let expected_h = layout.total_height;
         assert!(
