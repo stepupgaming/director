@@ -280,7 +280,7 @@ fn the_scene_document_keeps_the_type() {
 fn malformed_type_fails_to_compile() {
     let error = |source: &str| compile(source, options()).err().expect("a compile error").to_string();
     let e = error(&page("", ""));
-    assert!(e.contains("model without src, <splat> or <text3d> children"), "{e}");
+    assert!(e.contains("model without src, <splat>, <text3d>, <particles> or <physics> children"), "{e}");
     let e = error(&line("  ", ""));
     assert!(e.contains("text3d has no text"), "{e}");
     let e = error(&line("A", "font-family='Nope'"));
