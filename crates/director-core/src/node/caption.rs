@@ -57,8 +57,16 @@ pub struct TimedWord {
     pub end: f64,
 }
 
-/// When [`cues_from_words`] starts a new cue. The defaults match
-/// `director-engine asr transcribe --format srt`.
+/// One page of a caption: the words on screen together and when.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CaptionPage {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+}
+
+/// When [`cues_from_words`] starts and ends a cue. The grouping defaults
+/// match `director-engine asr transcribe --format srt`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CueRules {
     /// Most characters on a cue, spaces included. A longer word keeps its own cue.
@@ -69,11 +77,15 @@ pub struct CueRules {
     pub max_gap: f64,
     /// A word ending in `.`, `?` or `!` ends the cue.
     pub break_on_sentence: bool,
+    /// Seconds a cue stays up after its last word, cut short by the next
+    /// cue, so a pause shorter than this never blanks the screen. 0 ends
+    /// each cue on its last word.
+    pub hold: f64,
 }
 
 impl Default for CueRules {
     fn default() -> Self {
-        Self { max_chars: 42, max_duration: 5.0, max_gap: 0.8, break_on_sentence: true }
+        Self { max_chars: 42, max_duration: 5.0, max_gap: 0.8, break_on_sentence: true, hold: 0.5 }
     }
 }
 
@@ -437,7 +449,12 @@ pub struct TokenLayout {
 /// on this line. Built ONCE per cue lifetime and reused per frame.
 #[derive(Clone, Debug)]
 pub struct DisplayLineLayout {
+    /// Width the line's paragraphs lay out at: the column, or no limit for a
+    /// one-word line so a word with spaces inside never wraps.
     pub paragraph_layout_width: f32,
+    /// Scale that fits a one-word line wider than the column inside it, 1
+    /// when the line fits.
+    pub fit: f32,
     /// Pre-computed width of the line (longest_line()) — used to center.
     pub line_width: f32,
     /// Pre-computed height of the line — used to stack lines vertically.
@@ -537,6 +554,44 @@ impl CaptionNode {
     /// The placements `positions` switches between, in time order.
     pub fn positions(&self) -> &[CaptionPlacement] {
         &self.positions
+    }
+
+    /// Every page of display lines the caption shows, in time order. A page
+    /// is `max_lines` display lines in replace mode and a whole cue in stack
+    /// mode; it runs from its first word to the next page of its cue, the
+    /// last page to the cue end. Lines break by measured width once layout
+    /// has given the caption its box width.
+    pub fn pages(&self) -> Vec<CaptionPage> {
+        let style = self.style.resolved();
+        let together = match style.phrase_line_mode {
+            PhraseLineMode::Stack => usize::MAX,
+            PhraseLineMode::Replace => style.max_lines.max(1),
+        };
+        let mut out = Vec::new();
+        for line in &self.lines {
+            let mut groups: Vec<(usize, Vec<&CaptionWord>)> = Vec::new();
+            for word in &line.words {
+                let page = word.display_line_idx / together;
+                match groups.last_mut() {
+                    Some((p, words)) if *p == page => words.push(word),
+                    _ => groups.push((page, vec![word])),
+                }
+            }
+            if groups.is_empty() {
+                out.push(CaptionPage { start: line.start_sec, end: line.end_sec, text: line.text.clone() });
+                continue;
+            }
+            let starts: Vec<f64> = groups.iter().map(|(_, w)| w[0].start_sec.max(line.start_sec)).collect();
+            for (i, (_, words)) in groups.iter().enumerate() {
+                out.push(CaptionPage {
+                    start: starts[i],
+                    end: starts.get(i + 1).copied().unwrap_or(line.end_sec),
+                    text: words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "),
+                });
+            }
+        }
+        out.sort_by(|a, b| a.start.total_cmp(&b.start));
+        out
     }
 
     /// Move the caption over time: each placement holds from its `at` until
@@ -768,8 +823,8 @@ impl CaptionNode {
         let mut lines = std::mem::take(&mut self.lines);
         refresh_caption_lines_by(&mut lines, &style, &mut |line: &CaptionLine| {
             let (widths, space) = self.word_widths(&style, line);
-            let weak: Vec<bool> = line.words.iter().map(|w| is_weak_word(&w.text)).collect();
-            balanced_breaks(&widths, space, max_width, style.max_words_per_line, shown_together, &weak)
+            let words: Vec<&str> = line.words.iter().map(|w| w.text.as_str()).collect();
+            balanced_breaks(&widths, space, max_width, style.max_words_per_line, shown_together, &words)
         });
         self.lines = lines;
     }
@@ -778,16 +833,7 @@ impl CaptionNode {
     fn word_widths(&self, style: &CaptionStyle, line: &CaptionLine) -> (Vec<f32>, f32) {
         let words: Vec<&CaptionWord> = line.words.iter().collect();
         let (paragraph, ranges) = self.build_measure_paragraph(style, &words, 1.0e6);
-        let widths: Vec<f32> = ranges
-            .iter()
-            .map(|&(a, b)| {
-                paragraph
-                    .get_rects_for_range(a..b, RectHeightStyle::Tight, RectWidthStyle::Tight)
-                    .iter()
-                    .map(|r| r.rect.width())
-                    .sum()
-            })
-            .collect();
+        let widths: Vec<f32> = ranges.iter().map(|&(a, b)| range_extent(&paragraph, a..b).width()).collect();
         let space = if widths.len() > 1 {
             ((paragraph.longest_line() - widths.iter().sum::<f32>()) / (widths.len() - 1) as f32).max(0.0)
         } else {
@@ -1058,35 +1104,28 @@ impl CaptionNode {
                 let words_for_line: Vec<&CaptionWord> =
                     word_indices.iter().map(|&i| &line.words[i]).collect();
 
-                // Layout the measure paragraph with the SAME layout
-                // width as the per-frame paragraph so token x positions
-                // are identical (no wrapping shift). Use a very large
-                // fallback if layout_width is 0 to keep words on a
-                // single line.
-                let measure_layout_width = if layout_width > 1.0 {
-                    layout_width
-                } else {
-                    4096.0
-                };
+                // The measure paragraph lays out at the same width as
+                // the per-frame paragraph so token x positions match. A
+                // one-word line never wraps: when it is wider than the
+                // column it shrinks to fit instead.
+                let one_word = words_for_line.len() == 1;
+                let measure_layout_width = if layout_width > 1.0 && !one_word { layout_width } else { NO_WRAP };
                 let (paragraph, token_char_ranges) =
                     self.build_measure_paragraph(&style, &words_for_line, measure_layout_width);
                 let line_width = paragraph.longest_line();
                 let line_height = paragraph.height();
+                let room = layout_width - 2.0 * style.outline();
+                let fit = if one_word && layout_width > 1.0 && line_width > room && line_width > 0.0 {
+                    (room / line_width).clamp(0.05, 1.0)
+                } else {
+                    1.0
+                };
 
                 // Cache token layouts via get_rects_for_range (Tight).
                 let mut tokens: Vec<TokenLayout> = Vec::with_capacity(words_for_line.len());
                 for (i, word) in words_for_line.iter().enumerate() {
                     let (cs, ce) = token_char_ranges[i];
-                    let rects = paragraph.get_rects_for_range(
-                        cs..ce,
-                        RectHeightStyle::Tight,
-                        RectWidthStyle::Tight,
-                    );
-                    let rect = if let Some(first) = rects.first() {
-                        first.rect
-                    } else {
-                        Rect::from_xywh(0.0, 0.0, 0.0, 0.0)
-                    };
+                    let rect = range_extent(&paragraph, cs..ce);
                     tokens.push(TokenLayout {
                         word_idx: word_indices[i],
                         text: word.text.clone(),
@@ -1112,7 +1151,8 @@ impl CaptionNode {
                     .unwrap_or(0.10);
 
                 display_lines.push(DisplayLineLayout {
-                    paragraph_layout_width: layout_width,
+                    paragraph_layout_width: measure_layout_width,
+                    fit,
                     line_width,
                     line_height,
                     tokens,
@@ -1331,6 +1371,23 @@ impl CaptionNode {
 
 // ── Style helpers ─────────────────────────────────────────────────
 
+/// Layout width of a paragraph that must not wrap.
+const NO_WRAP: f32 = 1.0e6;
+
+/// Bounds of every run of the text in `range` on a laid-out paragraph, so a
+/// word with a space inside measures whole.
+fn range_extent(paragraph: &Paragraph, range: std::ops::Range<usize>) -> Rect {
+    let rects = paragraph.get_rects_for_range(range, RectHeightStyle::Tight, RectWidthStyle::Tight);
+    let mut out = match rects.first() {
+        Some(first) => first.rect,
+        None => return Rect::from_xywh(0.0, 0.0, 0.0, 0.0),
+    };
+    for r in &rects[1..] {
+        out.join(r.rect);
+    }
+    out
+}
+
 /// Left and right Taffy insets of a caption box: the side margin of its
 /// anchor's side.
 fn side_insets(style: &CaptionStyle) -> (f32, f32) {
@@ -1366,32 +1423,84 @@ const WEAK_WORDS: &[&str] = &[
     "this", "these", "those", "is", "are", "was", "were",
 ];
 
+/// Whether `word` ends a clause: a trailing `,` `.` `;` `:` `!` or `?`.
+pub fn ends_clause(word: &str) -> bool {
+    word.trim_end().ends_with([',', '.', ';', ':', '!', '?'])
+}
+
 /// Whether a line should not end on `word`.
 pub fn is_weak_word(word: &str) -> bool {
-    let key = emphasis_key(word);
     // A word that ends a clause carries its own pause.
-    let clause_end = word.trim_end().ends_with([',', '.', ';', ':', '!', '?']);
-    !clause_end && WEAK_WORDS.contains(&key.as_str())
+    !ends_clause(word) && WEAK_WORDS.contains(&emphasis_key(word).as_str())
+}
+
+/// Whether `word` reads badly on a line of its own: a weak word or one of
+/// three letters or fewer that does not end a clause.
+pub fn is_weak_alone(word: &str) -> bool {
+    !ends_clause(word) && (is_weak_word(word) || emphasis_key(word).chars().count() <= 3)
+}
+
+/// How a line split of some words reads, word by word.
+struct BreakHints {
+    /// A line should not end on this word.
+    weak: Vec<bool>,
+    /// The word ends a clause, so a line should end on it.
+    clause: Vec<bool>,
+    /// The word should not stand on a line alone.
+    weak_alone: Vec<bool>,
+}
+
+impl BreakHints {
+    fn new(words: &[&str], n: usize) -> Self {
+        let flag = |f: fn(&str) -> bool| (0..n).map(|i| words.get(i).is_some_and(|w| f(w))).collect();
+        Self { weak: flag(is_weak_word), clause: flag(ends_clause), weak_alone: flag(is_weak_alone) }
+    }
+
+    /// Flaws of the line holding words `i..j` of `n`: a weak last word, each
+    /// clause end inside it, and a weak word alone.
+    fn flaws(&self, i: usize, j: usize, n: usize) -> usize {
+        let weak_end = j < n && self.weak[j - 1];
+        let inside = self.clause[i..j - 1].iter().filter(|&&c| c).count();
+        let alone = n > 1 && j - i == 1 && self.weak_alone[i];
+        usize::from(weak_end) + inside + usize::from(alone)
+    }
+
+    /// Flaws of a whole split.
+    fn count(&self, lines: &[usize]) -> usize {
+        let n = lines.len();
+        let mut total = 0;
+        let mut start = 0;
+        for j in 1..=n {
+            if j == n || lines[j] != lines[j - 1] {
+                total += self.flaws(start, j, n);
+                start = j;
+            }
+        }
+        total
+    }
 }
 
 /// Display line of each word: the fewest lines that fit `max_width` with at
-/// most `max_words` words each (one more when that keeps a weak word off a
-/// line end), then the split among those with the most even
-/// widths, no weak word ending a line, and a lower line at least as wide as
-/// the one above it when both show together (`shown_together` lines per page).
-/// A word wider than `max_width` takes a line of its own.
+/// most `max_words` words each, then the split among those with the most even
+/// widths and the fewest flaws. A flaw is a line ending on a weak word
+/// ([`is_weak_word`]), a clause end (`,` `.` `;` `:` `!` `?`) inside a line,
+/// or a weak word alone ([`is_weak_alone`]). One more line wins when it has
+/// fewer flaws. A lower line stays at least as wide as the one above it when
+/// both show together (`shown_together` lines per page). A word wider than
+/// `max_width` takes a line of its own.
 pub fn balanced_breaks(
     widths: &[f32],
     space: f32,
     max_width: f32,
     max_words: usize,
     shown_together: usize,
-    weak: &[bool],
+    words: &[&str],
 ) -> Vec<usize> {
     let n = widths.len();
     if n == 0 {
         return Vec::new();
     }
+    let hints = BreakHints::new(words, n);
     let max_words = max_words.max(1);
     let mut prefix = vec![0.0f32; n + 1];
     for i in 0..n {
@@ -1427,13 +1536,12 @@ pub fn balanced_breaks(
         return if k <= 1 { vec![0; n] } else { greedy() };
     }
 
-    let fewest_lines = solve_breaks(k, &line_w, &fits, n, prefix[n], space, shown_together, weak);
-    let weak_ends = |lines: &[usize]| (1..n).filter(|&j| lines[j] != lines[j - 1] && weak[j - 1]).count();
+    let fewest_lines = solve_breaks(k, &line_w, &fits, n, prefix[n], space, shown_together, &hints);
     match fewest_lines {
-        // One more line is worth it when it keeps a weak word off a line end.
-        Some(lines) if weak_ends(&lines) > 0 && k < n => {
-            match solve_breaks(k + 1, &line_w, &fits, n, prefix[n], space, shown_together, weak) {
-                Some(more) if weak_ends(&more) < weak_ends(&lines) => more,
+        // One more line is worth it when it has fewer flaws.
+        Some(lines) if hints.count(&lines) > 0 && k < n => {
+            match solve_breaks(k + 1, &line_w, &fits, n, prefix[n], space, shown_together, &hints) {
+                Some(more) if hints.count(&more) < hints.count(&lines) => more,
                 _ => lines,
             }
         }
@@ -1452,12 +1560,12 @@ fn solve_breaks(
     total: f32,
     space: f32,
     shown_together: usize,
-    weak: &[bool],
+    hints: &BreakHints,
 ) -> Option<Vec<usize>> {
     let mean = ((total + space * (n - k) as f32) / k as f32).max(1.0);
     let line_cost = |i: usize, j: usize| {
         let d = (line_w(i, j) - mean) / mean;
-        d * d + if j < n && weak[j - 1] { 0.5 } else { 0.0 }
+        d * d + 0.5 * hints.flaws(i, j, n) as f32
     };
     let pair_cost = |top: (usize, usize), bottom: (usize, usize), top_line: usize| {
         if shown_together > 1 && top_line / shown_together == (top_line + 1) / shown_together {
@@ -1757,6 +1865,19 @@ impl Element for CaptionNode {
                 let line_render_alpha = effective_opacity * reveal;
                 let line_needs_layer = line_render_alpha < 0.999;
 
+                // A one-word line wider than the column paints scaled to
+                // fit, centred on the box it would take at full size.
+                let fitted = display_line.fit < 1.0;
+                if fitted {
+                    let fit = display_line.fit;
+                    let left =
+                        Self::compute_line_left_x(&layout_style.position, rect, display_line.line_width * fit);
+                    canvas.save();
+                    canvas.translate(Point::new(left, line_y_cursor + display_line.line_height * (1.0 - fit) * 0.5));
+                    canvas.scale((fit, fit));
+                    canvas.translate(Point::new(-line_left_x, -line_y_cursor));
+                }
+
                 let active_local_in_line: Option<usize> = active_in_this_cue
                     .and_then(|active| display_line.tokens.iter().position(|t| t.word_idx == active.word_idx));
 
@@ -1779,7 +1900,7 @@ impl Element for CaptionNode {
                     display_line,
                     line,
                     time: current_time,
-                    layout_width: block_width,
+                    layout_width: display_line.paragraph_layout_width,
                     active: active_local_in_line,
                     x: line_left_x,
                     y: line_y_cursor,
@@ -1817,6 +1938,9 @@ impl Element for CaptionNode {
                 }
 
                 if line_needs_layer {
+                    canvas.restore();
+                }
+                if fitted {
                     canvas.restore();
                 }
 
@@ -2326,8 +2450,9 @@ pub fn active_word_at(lines: &[CaptionLine], time: f64) -> Option<(usize, usize)
 }
 
 /// Groups measured words into cues by `rules`, in start order. Words with no
-/// text are dropped. A cue cut for length (not at a pause) hands its trailing
-/// weak words ([`is_weak_word`]) to the next cue. Every cue is measured and
+/// text are dropped. A cue cut for length (not at a pause) hands the words
+/// after its last clause end to the next cue when it keeps at least a third,
+/// else its trailing weak words ([`is_weak_word`]). Every cue is measured and
 /// spans its first word's start to its last word's end.
 pub fn cues_from_words(words: &[TimedWord], rules: &CueRules) -> Vec<CaptionLine> {
     let mut words: Vec<&TimedWord> = words.iter().filter(|w| !w.text.trim().is_empty()).collect();
@@ -2345,12 +2470,17 @@ pub fn cues_from_words(words: &[TimedWord], rules: &CueRules) -> Vec<CaptionLine
                 && word.end - cue.start_sec <= rules.max_duration
                 && !paused;
             open = fits;
-            // A cue cut for length hands its trailing articles and
-            // prepositions to the next cue, so no cue ends on "to the".
+            // A cue cut for length ends at its last clause end when that
+            // keeps at least a third of it, else before its trailing articles
+            // and prepositions, so no cue ends on "to the".
             if !fits && !paused {
-                let weak_tail = cue.words.iter().rev().take_while(|w| is_weak_word(&w.text)).count();
-                if weak_tail < cue.words.len() {
-                    carried = cue.words.split_off(cue.words.len() - weak_tail);
+                let len = cue.words.len();
+                let after_clause = cue.words.iter().rposition(|w| ends_clause(&w.text)).map(|i| len - 1 - i);
+                let tail = after_clause.filter(|&t| t > 0 && t * 3 <= len * 2).unwrap_or_else(|| {
+                    cue.words.iter().rev().take_while(|w| is_weak_word(&w.text)).count()
+                });
+                if tail < len {
+                    carried = cue.words.split_off(len - tail);
                     cue.text = cue.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
                     cue.end_sec = cue.words.iter().map(|w| w.end_sec).fold(cue.start_sec, f64::max);
                 }
@@ -2383,6 +2513,12 @@ pub fn cues_from_words(words: &[TimedWord], rules: &CueRules) -> Vec<CaptionLine
         if rules.break_on_sentence && text.ends_with(['.', '?', '!']) {
             open = false;
         }
+    }
+    let hold = rules.hold.max(0.0);
+    let starts: Vec<f64> = out.iter().skip(1).map(|c| c.start_sec).collect();
+    for (cue, next) in out.iter_mut().zip(starts.into_iter().map(Some).chain(std::iter::once(None))) {
+        let held = cue.end_sec + hold;
+        cue.end_sec = next.map_or(held, |next| held.min(next).max(cue.end_sec));
     }
     out
 }
@@ -3400,7 +3536,11 @@ mod tests {
         let lines = cues_from_words(&words, &CueRules::default());
         let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(texts, ["Root beer is the best.", "drink ever made"]);
-        assert_eq!((lines[1].start_sec, lines[1].end_sec), (2.40, 3.60));
+        assert_eq!(lines[0].end_sec, 2.40, "a short pause holds the cue until the next");
+        assert_eq!(lines[1].start_sec, 2.40);
+        assert!((lines[1].end_sec - 4.10).abs() < 1e-9, "the last cue holds 0.5 s");
+        let ends = cues_from_words(&words, &CueRules { hold: 0.0, ..CueRules::default() });
+        assert_eq!((ends[0].end_sec, ends[1].end_sec), (1.97, 3.60));
         let tight = CueRules { max_gap: 0.3, ..CueRules::default() };
         let texts: Vec<String> = cues_from_words(&spoken(), &tight).into_iter().map(|l| l.text).collect();
         assert_eq!(texts, ["Root beer", "is the best", "drink ever made"]);
@@ -3418,6 +3558,34 @@ mod tests {
         let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(texts, ["worth six hundred billion", "to the whole market"]);
         assert_eq!((lines[0].end_sec, lines[1].start_sec), (1.2, 1.2));
+    }
+
+    #[test]
+    fn a_word_wider_than_the_column_shrinks_to_one_line() {
+        let words = [tw("ON NOVEMBER 8TH,", 0.0, 1.0), tw("his", 1.0, 1.2), tw("own", 1.2, 1.4)];
+        let mut node = CaptionNode::new(cues_from_words(&words, &CueRules::default()), test_font_collection());
+        node.style.max_words_per_line = 2;
+        node.after_style_changed();
+        let wide = node.build_block_layout(4000.0);
+        let narrow = node.build_block_layout(120.0);
+        let (wide, narrow) = (&wide.cues[0].display_lines, &narrow.cues[0].display_lines);
+        assert_eq!(narrow[0].tokens.len(), 1, "the long word has a line of its own");
+        assert_eq!(narrow[0].line_height, wide[1].line_height, "and that line never wraps");
+        let shown = narrow[0].line_width * narrow[0].fit;
+        assert!(narrow[0].fit < 1.0 && shown <= 120.0 - 2.0 * node.style.outline() + 0.01, "{shown}");
+        assert!(narrow[0].tokens[0].width > 0.9 * narrow[0].line_width, "the word measures whole");
+        assert!(wide.iter().all(|l| l.fit == 1.0));
+    }
+
+    #[test]
+    fn a_cue_cut_for_length_ends_at_its_last_clause() {
+        let words: Vec<TimedWord> = "And 11 DAYS later, the man who caused it got his job back."
+            .split(' ')
+            .enumerate()
+            .map(|(i, w)| tw(w, i as f64 * 0.3, i as f64 * 0.3 + 0.3))
+            .collect();
+        let texts: Vec<String> = cues_from_words(&words, &CueRules::default()).into_iter().map(|l| l.text).collect();
+        assert_eq!(texts, ["And 11 DAYS later,", "the man who caused it got his job back."]);
     }
 
     #[test]
@@ -3500,6 +3668,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn pages_follow_the_display_lines_and_max_lines() {
+        let lines = cues_from_words(&spoken(), &CueRules::default());
+        let mut node = CaptionNode::new(lines, test_font_collection());
+        node.style.max_words_per_line = 3;
+        node.style.line_break = LineBreak::Words;
+        node.style.max_lines = 1;
+        node.after_style_changed();
+        let pages = node.pages();
+        let texts: Vec<&str> = pages.iter().map(|p| p.text.as_str()).collect();
+        assert_eq!(texts, ["Root beer is", "the best drink", "ever made"]);
+        assert_eq!((pages[0].start, pages[0].end), (0.32, 1.33));
+        assert!((pages[2].end - 4.10).abs() < 1e-9, "the last page holds with its cue");
+        node.style.max_lines = 2;
+        node.after_style_changed();
+        let texts: Vec<String> = node.pages().into_iter().map(|p| p.text).collect();
+        assert_eq!(texts, ["Root beer is the best drink", "ever made"]);
     }
 
     #[test]

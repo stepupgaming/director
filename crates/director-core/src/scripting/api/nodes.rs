@@ -1763,22 +1763,37 @@ fn parse_path_commands(props: &rhai::Map) -> Vec<PathCommand> {
     commands
 }
 
-/// Cue grouping rules for measured words from caption props.
-fn caption_cue_rules(props: &rhai::Map) -> crate::node::caption::CueRules {
+/// Cue rules for measured words from caption props. A value of the wrong
+/// type or range fails with the expected one.
+fn caption_cue_rules(props: &rhai::Map) -> Result<crate::node::caption::CueRules, String> {
     let mut rules = crate::node::caption::CueRules::default();
-    if let Some(v) = props.get("max_cue_chars").and_then(|v| v.as_int().ok()) {
-        rules.max_chars = v.max(1) as usize;
+    let number = |key: &str, min: f64| -> Result<Option<f64>, String> {
+        props
+            .get(key)
+            .map(|v| {
+                rhai_number(v)
+                    .filter(|n| n.is_finite() && *n >= min)
+                    .ok_or_else(|| format!("add_caption: {key} must be a number of at least {min}, got {v}"))
+            })
+            .transpose()
+    };
+    if let Some(v) = number("max_cue_chars", 1.0)? {
+        rules.max_chars = v as usize;
     }
-    if let Some(v) = props.get("max_cue_duration").and_then(rhai_number) {
+    if let Some(v) = number("max_cue_duration", 0.1)? {
         rules.max_duration = v;
     }
-    if let Some(v) = props.get("max_cue_gap").and_then(rhai_number) {
+    if let Some(v) = number("max_cue_gap", 0.01)? {
         rules.max_gap = v;
     }
-    if let Some(v) = props.get("break_on_sentence").and_then(|v| v.as_bool().ok()) {
-        rules.break_on_sentence = v;
+    if let Some(v) = number("cue_hold", 0.0)? {
+        rules.hold = v;
     }
-    rules
+    if let Some(v) = props.get("break_on_sentence") {
+        rules.break_on_sentence =
+            v.as_bool().map_err(|_| format!("add_caption: break_on_sentence must be true or false, got {v}"))?;
+    }
+    Ok(rules)
 }
 
 fn rhai_number(v: &rhai::Dynamic) -> Option<f64> {
@@ -1814,7 +1829,7 @@ fn rhai_timed_words(items: rhai::Array, prop: &str) -> Result<Vec<crate::node::c
 /// `content` array of cues.
 fn parse_caption_lines(d: &crate::director::Director, props: &rhai::Map) -> Result<Vec<CaptionLine>, Box<rhai::EvalAltResult>> {
     use crate::node::caption::{cues_from_words, parse_srt, parse_vtt};
-    let rules = caption_cue_rules(props);
+    let rules = caption_cue_rules(props)?;
 
     if let Some(media) = props.get("media").and_then(|v| v.clone().into_string().ok()) {
         let path = d
@@ -1922,6 +1937,7 @@ pub const CAPTION_INPUT_KEYS: &[&str] = &[
     "max_cue_chars",
     "max_cue_duration",
     "max_cue_gap",
+    "cue_hold",
     "break_on_sentence",
 ];
 

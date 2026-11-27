@@ -9,6 +9,7 @@ mod batch;
 mod sample_times;
 
 mod asr;
+mod captions;
 mod editor;
 mod html_export;
 mod inspect_deps;

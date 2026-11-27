@@ -33,8 +33,13 @@ reflows when a second line enters; exactly one global active word.
 * `cues_from_words(words, CueRules)` groups words into measured cues with
   the `director-asr` cue rules: 42 chars, 5 s, a 0.8 s pause, sentence end.
   Rhai keys `max_cue_chars`, `max_cue_duration`, `max_cue_gap`,
-  `break_on_sentence`. A cue cut for length hands its trailing weak words
-  (`is_weak_word`) to the next cue, so no cue ends on "to the".
+  `break_on_sentence` and `cue_hold` (0.5 s: a cue stays up after its last
+  word until the next cue starts), each type and range checked. A cue cut
+  for length ends at its last clause end when that keeps a third of it,
+  else hands its trailing weak words (`is_weak_word`) to the next cue.
+* `CaptionNode::pages` lists each page a laid-out caption shows (words of
+  one display line, or `max_lines` lines in Replace mode) with its start,
+  end and text.
 * `parse_vtt` reads inline `<HH:MM:SS.mmm>` word timestamps as measured
   word starts (each word ends at the next start or the cue end), cues with
   or without ids, cue settings, CRLF and a BOM. `parse_srt` stays an
@@ -153,9 +158,12 @@ Cues can contain `\n` (multi-line SRT text) or wrap their words into
 display lines via `auto_phrase_break`. `line_break: "width"` (default)
 measures each word with the caption's own paragraph and runs
 `balanced_breaks`: the fewest lines that fit the text column with at most
-`max_words_per_line` words, one more line when that keeps a weak word off
-a line end, then the most even split with no weak line end and a lower
-line at least as wide as the line above when both show. `line_break:
+`max_words_per_line` words, then the most even split with the fewest
+flaws (a weak word ending a line, a clause end inside a line, a short or
+weak word alone), one more line when that has fewer flaws, and a lower
+line at least as wide as the line above when both show. A word wider than
+the column (a merged figure such as "ON NOVEMBER 8TH,") takes a line of its
+own, never wraps, and paints scaled to fit (`DisplayLineLayout::fit`). `line_break:
 "words"` keeps fixed `max_words_per_line` chunks. `max_lines` (default 1)
 pages that many lines together in Replace mode.
 Phrase-broken display lines default to **`phrase_line_mode: Replace`**

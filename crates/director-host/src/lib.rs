@@ -24,4 +24,4 @@ pub use frames::{FrameStamp, SharedFrame, SharedFrames};
 pub use load::{Loaded, Source};
 pub use patch::{NodeSelector, Patch, PatchOp};
 pub use qa::{qa_video, QaAudio, QaIssue, QaOptions, QaReport, QaWord};
-pub use session::{import_registry, AudioWindow, ExportSettings, NodeView, Outline, OutlineClip, OutlineNode, Session, MAX_AUDIO_WINDOW};
+pub use session::{import_registry, AudioWindow, CaptionPages, ExportSettings, NodeView, Outline, OutlineClip, OutlineNode, Session, MAX_AUDIO_WINDOW};

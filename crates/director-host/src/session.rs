@@ -104,6 +104,14 @@ impl Default for ExportSettings {
     }
 }
 
+/// The pages one caption node shows.
+#[derive(Clone, Debug, Serialize)]
+pub struct CaptionPages {
+    pub id: NodeRef,
+    pub name: Option<String>,
+    pub pages: Vec<director_core::node::caption::CaptionPage>,
+}
+
 /// The node tree and timeline of one revision.
 #[derive(Clone, Debug, Serialize)]
 pub struct Outline {
@@ -458,6 +466,24 @@ impl Session {
             "audio_tracks": audio_tracks,
             "work": director_core::counters::snapshot(),
         }))
+    }
+
+    /// Every caption node's pages, after one layout so lines break by their
+    /// measured width: `(node, authored name, pages)` in scene order.
+    pub fn caption_pages(&mut self) -> Result<Vec<CaptionPages>, HostError> {
+        let names: Vec<(NodeRef, String)> = self.names.iter().map(|(name, id)| (*id, name.clone())).collect();
+        let inspector = self.inspector()?;
+        build_render_manifest(inspector, 0.0);
+        Ok(inspector
+            .scene
+            .iter_alive()
+            .filter_map(|(id, node)| {
+                let caption = node.element.as_any().downcast_ref::<director_core::node::caption::CaptionNode>()?;
+                let id = node_ref(id);
+                let name = names.iter().find(|(r, _)| *r == id).map(|(_, n)| n.clone());
+                Some(CaptionPages { id, name, pages: caption.pages() })
+            })
+            .collect())
     }
 
     /// The render manifest of the current revision at `time`: node bounds,

@@ -69,7 +69,7 @@ Pixel keys are frame pixels. `preset` applies first and its pixel values scale w
 | Key | Takes | Default | What it does |
 |---|---|---|---|
 | `auto_phrase_break` | true / false | true | Split cues into display lines. |
-| `line_break` | width / words | width | width fits each line to the measured column, balanced, with no article, preposition or conjunction at a line end; words cuts fixed chunks of max_words_per_line. |
+| `line_break` | width / words | width | width fits each line to the measured column, balanced, ending lines at clause ends, with no article, preposition or conjunction at a line end and no short word alone (a word wider than the column shrinks to fit); words cuts fixed chunks of max_words_per_line. |
 | `max_words_per_line` | whole, at least 1 | 4 | Most words on one line. |
 | `max_lines` | whole, at least 1 | 1 | Lines shown together in replace mode; each page of lines replaces the last. |
 | `phrase_line_mode` | replace / stack | replace | replace shows one page of lines at a time; stack keeps every revealed line of the cue. |
@@ -90,6 +90,22 @@ Pixel keys are frame pixels. `preset` applies first and its pixel values scale w
 |---|---|---|---|
 | `emphasis_color` | hex colour | unset | Colour of the emphasis words while they are not being spoken. |
 | `emphasis_words` | words | unset | Words to paint in emphasis_color, matched without case or edge punctuation. |
+
+## Transcript and cues
+
+Give the words with one of `file` (HTML `src`: a word-timed `.json`, `.vtt` or `.srt`), `words` (Rhai `[#{ text, start, end }]`) or `media` (transcribed with the speech model). A word-timed transcript groups into cues by these rules; `.vtt` and `.srt` cues keep their own times.
+
+| Key | Takes | Default | What it does |
+|---|---|---|---|
+| `max_cue_chars` | whole, at least 1 | 42 | Most characters on a cue; a cue cut for length ends at its last clause end, or before its trailing weak words. |
+| `max_cue_duration` | s | 5 | Longest cue. |
+| `max_cue_gap` | s | 0.8 | A pause of at least this long ends the cue. |
+| `break_on_sentence` | true / false | true | A word ending in `.`, `?` or `!` ends the cue. |
+| `cue_hold` | s | 0.5 | Seconds a cue stays up after its last word, cut short by the next cue, so short pauses never blank the screen. 0 ends each cue on its last word. |
+
+## Placement track
+
+`positions` moves the caption over time: Rhai `positions: [#{ at: 4.0, caption_position: "free(0.4)" }]`, HTML `<position at="4s" caption-position="top">` children. Each entry takes `at` (seconds) and any of `caption_position`, `top_margin`, `bottom_margin`, `left_margin`, `right_margin`; unset keys keep the caption's own value. The latest entry at or before the current time wins, so one caption can sit at its own height in every shot. `free(y)` centres the line at `y` of the frame height.
 
 ## Presets
 

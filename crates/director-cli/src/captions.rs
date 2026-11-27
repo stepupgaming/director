@@ -1,5 +1,6 @@
-//! `captions keys|presets|sheet`: the caption key table, the built-in looks,
-//! and a contact sheet that renders each look on the same timed words.
+//! `captions keys|presets|sheet|pages`: the caption key table, the built-in
+//! looks, a contact sheet that renders each look on the same timed words, and
+//! every page an input's captions show.
 
 use clap::{Parser, Subcommand, ValueEnum};
 use director_core::node::caption_keys::{caption_reference_markdown, CAPTION_KEYS, CAPTION_PRESETS};
@@ -27,6 +28,8 @@ pub enum CaptionsCommand {
     Presets,
     /// Render each preset on the same words into one PNG
     Sheet(SheetArgs),
+    /// Print every page each caption of an input shows, with its start, end and words, as JSON
+    Pages(crate::input::Input),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -113,6 +116,19 @@ pub fn run(args: CaptionsArgs) -> i32 {
                     .expect("presets serialize")
             );
             0
+        }
+        CaptionsCommand::Pages(input) => {
+            let pages = input.open().and_then(|mut session| session.caption_pages().map_err(|e| e.to_string()));
+            match pages {
+                Ok(captions) => {
+                    println!("{}", serde_json::to_string_pretty(&json!({ "captions": captions })).expect("pages serialize"));
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
         }
         CaptionsCommand::Sheet(args) => match sheet(&args) {
             Ok(()) => {

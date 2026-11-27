@@ -186,16 +186,41 @@ fn display_lines(line: &CaptionLine) -> Vec<Vec<String>> {
 #[test]
 fn balanced_breaks_take_the_fewest_even_lines() {
     let widths = [100.0; 6];
-    let weak = [false; 6];
+    let words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
     // Three words fit 320 px of a 350 px column, so two lines of three.
-    assert_eq!(balanced_breaks(&widths, 10.0, 350.0, 4, 1, &weak), vec![0, 0, 0, 1, 1, 1]);
+    assert_eq!(balanced_breaks(&widths, 10.0, 350.0, 4, 1, &words), vec![0, 0, 0, 1, 1, 1]);
     // A weak third word moves to the second line.
-    let weak = [false, false, true, false, false, false];
-    let lines = balanced_breaks(&widths, 10.0, 450.0, 4, 1, &weak);
+    let words = ["alpha", "bravo", "the", "delta", "echo", "foxtrot"];
+    let lines = balanced_breaks(&widths, 10.0, 450.0, 4, 1, &words);
     assert_eq!(lines.iter().filter(|&&l| l == 0).count(), 2, "{lines:?}");
     // One word wider than the column takes a line of its own.
-    assert_eq!(balanced_breaks(&[500.0, 50.0], 10.0, 300.0, 4, 1, &[false; 2]), vec![0, 1]);
+    assert_eq!(balanced_breaks(&[500.0, 50.0], 10.0, 300.0, 4, 1, &["alpha", "bravo"]), vec![0, 1]);
     assert!(is_weak_word("the") && !is_weak_word("the,") && !is_weak_word("billion"));
+}
+
+/// Two-word lines of `text`, each word as wide as its letters.
+fn two_word_lines(text: &str) -> Vec<String> {
+    let words: Vec<&str> = text.split(' ').collect();
+    let widths: Vec<f32> = words.iter().map(|w| 30.0 * w.len() as f32).collect();
+    let lines = balanced_breaks(&widths, 15.0, 900.0, 2, 1, &words);
+    let mut out = vec![String::new(); lines.last().map_or(0, |l| l + 1)];
+    for (word, line) in words.iter().zip(&lines) {
+        if !out[*line].is_empty() {
+            out[*line].push(' ');
+        }
+        out[*line].push_str(word);
+    }
+    out
+}
+
+#[test]
+fn lines_end_at_clauses_and_keep_short_words_company() {
+    assert_eq!(two_word_lines("And 11 DAYS later,"), ["And 11", "DAYS later,"]);
+    let lines = two_word_lines("Yes, the man who caused it got his job back.");
+    assert_eq!(lines[0], "Yes,", "{lines:?}");
+    assert!(lines.iter().all(|l| !l[..l.len() - 1].contains([',', '.'])), "{lines:?}");
+    assert!(lines.iter().all(|l| l.contains(' ') || l.ends_with([',', '.'])), "{lines:?}");
+    assert_eq!(two_word_lines("got his job back."), ["got his", "job back."]);
 }
 
 #[test]

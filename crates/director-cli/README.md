@@ -93,6 +93,9 @@ director-engine captions presets
 # Render presets on the same timed words into one PNG
 director-engine captions sheet -o looks.png
 director-engine captions sheet -o two.png --preset karaoke,pop --time 0.65 --keys 'emphasis_words: ["$600"], emphasis_color: "#FF5A5A"'
+
+# Every page each caption of a project shows, with its start and end, as JSON
+director-engine captions pages captions.rhai
 ```
 
 `sheet` times the `--text` words 0.3 s apart, captions them with each preset plus the `--keys` Rhai map entries, paints `--time` (default: the fourth word) at `--width` x `--height`, and lays the frames out three to a row at `--scale`. Bad arguments or a script error exit 1; a paint or write failure exits 2.

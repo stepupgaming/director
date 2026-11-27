@@ -24,6 +24,7 @@ pub const CAPTIONS_ATTRIBUTES: &[&str] = &[
     "max-cue-chars",
     "max-cue-duration",
     "max-cue-gap",
+    "cue-hold",
     "break-on-sentence",
     "id",
     "class",
@@ -92,6 +93,16 @@ pub fn captions_node(el: ElementRef<'_>, input: &CaptionsInput<'_>) -> Result<Ca
             "max-cue-chars" => rules.max_chars = number()?.max(1.0) as usize,
             "max-cue-duration" => rules.max_duration = number()?,
             "max-cue-gap" => rules.max_gap = number()?,
+            "cue-hold" => {
+                rules.hold = value
+                    .trim()
+                    .strip_suffix('s')
+                    .unwrap_or(value.trim())
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|n| n.is_finite() && *n >= 0.0)
+                    .ok_or_else(|| fail(format!("cue-hold must be seconds of at least 0, got {value:?}")))?
+            }
             "break-on-sentence" => {
                 rules.break_on_sentence = match value.trim() {
                     "" | "true" => true,
